@@ -29,12 +29,20 @@ var DoubleCorruptVariants = []string{"20/20"}
 // none.
 const DefaultDoubleCorruptVariant = "20/20"
 
-// DoubleCorruptModelEstimated is the model marker every result carries. The
-// outcome weights below are sourced from community documentation, not from GGG
-// — the UI must badge EV numbers as estimated rather than present them as
-// confirmed odds. If the model is ever confirmed or corrected, introduce a new
-// marker value rather than silently upgrading this one.
+// DoubleCorruptModelEstimated is the marker of results computed before the
+// destroy outcome existed (stored history in double_corrupt_snapshots.model);
+// new results carry DoubleCorruptModelProvisionalDestroy. The outcome weights
+// below are sourced from community documentation, not from GGG — the UI must
+// badge EV numbers as estimated rather than present them as confirmed odds. If
+// the model is ever confirmed or corrected, introduce a new marker value rather
+// than silently upgrading this one.
 const DoubleCorruptModelEstimated = "estimated"
+
+// DoubleCorruptModelProvisionalDestroy is the marker of results computed with
+// the provisional destroy outcome (POE-378): the weights are estimated as for
+// DoubleCorruptModelEstimated AND the destroy chance dcDestroyChanceProvisional
+// is a guess, so every surface must say the EV depends on an unverified rate.
+const DoubleCorruptModelProvisionalDestroy = "estimated-provisional-destroy"
 
 // DefaultTempleOverheadChaos is the flat chaos cost attributed to reaching the
 // Doryani's Institute room. The room is treated as sunk by default (0): the
@@ -50,6 +58,8 @@ const DefaultTempleOverheadChaos = 0.0
 //
 // Per-roll outcomes of one corruption:
 //
+//	destroyed       d      (dcDestroyChanceProvisional, applied before the
+//	                        outcome; absorbing)
 //	no-change       25%
 //	level +1        12.5%  (capped at 21)
 //	level -1        12.5%  (floored at 1)
@@ -63,8 +73,13 @@ const DefaultTempleOverheadChaos = 0.0
 // "nothing happened, twice" pair (p = 1/16) is possible; the unchanged-gem
 // cell as a whole is the modal outcome for gems with no Vaal version.
 //
+// 3.30 (patch notes, 06 League Changes): "The Lapidary Lens now has a chance to
+// destroy the item." The chance is not published; d is a guess, recorded in
+// docs/GAME-FACTS.md § Not validated. Destroyed mass is reported as
+// DestroyedProbability, never as unpriced: its value (0) is known.
+//
 // Sources and open questions (all of which is why every result is marked
-// DoubleCorruptModelEstimated):
+// DoubleCorruptModelProvisionalDestroy):
 //
 //   - maxroll.gg/poe/resources/corruption: four outcome categories "weighted
 //     equally", level ±1 capped at 21, and the Institute "corrupts the gem
@@ -101,6 +116,8 @@ const (
 	dcLevelCap         = 21
 	dcLevelFloor       = 1
 	dcRolls            = 2
+
+	dcDestroyChanceProvisional = 0.125 // PROVISIONAL guess, see docs/GAME-FACTS.md § Not validated
 )
 
 // DoubleCorruptOutcome is one market-priceable cell of the outcome
@@ -127,22 +144,27 @@ type DoubleCorruptOutcome struct {
 // DoubleCorruptResult holds the computed double-corruption EV for one gem at
 // one input variant.
 type DoubleCorruptResult struct {
-	Time                time.Time              `json:"time"`
-	Name                string                 `json:"name"`
-	Color               string                 `json:"color"` // RED, GREEN, BLUE, WHITE or "" (informational; no pool partition)
-	InputVariant        string                 `json:"inputVariant"`
-	InputCost           float64                `json:"inputCost"` // the gem's own uncorrupted price at InputVariant
-	TempleOverheadChaos float64                `json:"templeOverheadChaos"`
-	HasVaalVersion      bool                   `json:"hasVaalVersion"`
-	EV                  float64                `json:"ev"`                  // risk-adjusted expected outcome value
-	EVRaw               float64                `json:"evRaw"`               // raw-listed-price expected outcome value
-	Profit              float64                `json:"profit"`              // EV - InputCost - TempleOverheadChaos (risk-adjusted, never EVRaw)
-	PricedProbability   float64                `json:"pricedProbability"`   // mass of the distribution the market prices
-	UnpricedProbability float64                `json:"unpricedProbability"` // mass contributing 0 to EV for lack of a priced row
-	ThinOutcomeCells    int                    `json:"thinOutcomeCells"`    // priced cells with < 5 listings
-	LiquidityRisk       string                 `json:"liquidityRisk"`       // LOW, MEDIUM, HIGH
-	Outcomes            []DoubleCorruptOutcome `json:"outcomes"`
-	Model               string                 `json:"model"` // DoubleCorruptModelEstimated
+	Time                time.Time `json:"time"`
+	Name                string    `json:"name"`
+	Color               string    `json:"color"` // RED, GREEN, BLUE, WHITE or "" (informational; no pool partition)
+	InputVariant        string    `json:"inputVariant"`
+	InputCost           float64   `json:"inputCost"` // the gem's own uncorrupted price at InputVariant
+	TempleOverheadChaos float64   `json:"templeOverheadChaos"`
+	HasVaalVersion      bool      `json:"hasVaalVersion"`
+	EV                  float64   `json:"ev"`                  // risk-adjusted expected outcome value
+	EVRaw               float64   `json:"evRaw"`               // raw-listed-price expected outcome value
+	Profit              float64   `json:"profit"`              // EV - InputCost - TempleOverheadChaos (risk-adjusted, never EVRaw)
+	PricedProbability   float64   `json:"pricedProbability"`   // mass of the distribution the market prices
+	UnpricedProbability float64   `json:"unpricedProbability"` // mass contributing 0 to EV for lack of a priced row
+	// DestroyedProbability is the mass of the distribution destroyed by the
+	// altar (contributes 0 to EV). Not persisted — double_corrupt_snapshots has
+	// no column, so a row read back from the database carries 0 here and its
+	// Model marker says whether the destroy outcome was modelled.
+	DestroyedProbability float64                `json:"destroyedProbability"`
+	ThinOutcomeCells     int                    `json:"thinOutcomeCells"` // priced cells with < 5 listings
+	LiquidityRisk        string                 `json:"liquidityRisk"`    // LOW, MEDIUM, HIGH
+	Outcomes             []DoubleCorruptOutcome `json:"outcomes"`
+	Model                string                 `json:"model"` // DoubleCorruptModelProvisionalDestroy on new results
 }
 
 // IsDoubleCorruptVariant reports whether variant is one of the analyzed input
@@ -288,7 +310,10 @@ func dcCellVariant(level, quality int) string {
 // for an input gem at (level, quality), by applying dcRolls sequential rolls
 // of the outcome model and aggregating the resulting states into market cells.
 // hasVaal folds the transform weight into no-change when false.
-func doubleCorruptCellDistribution(hasVaal bool, level, quality int) map[dcCell]float64 {
+// Each roll first destroys the gem with probability dcDestroyChanceProvisional
+// (absorbing: a destroyed gem takes no further roll); the cells plus the
+// returned destroyed mass sum to 1.
+func doubleCorruptCellDistribution(hasVaal bool, level, quality int) (map[dcCell]float64, float64) {
 	dist := map[dcState]float64{{vaal: false, level: level, quality: quality}: 1.0}
 
 	noChange := dcWeightNoChange
@@ -297,21 +322,25 @@ func doubleCorruptCellDistribution(hasVaal bool, level, quality int) map[dcCell]
 		noChange += dcWeightVaalTransform
 	}
 
+	var destroyed float64
 	for roll := 0; roll < dcRolls; roll++ {
 		next := make(map[dcState]float64, len(dist)*4)
 		for st, p := range dist {
-			next[st] += p * noChange
+			destroyed += p * dcDestroyChanceProvisional
+			survive := p * (1 - dcDestroyChanceProvisional)
+
+			next[st] += survive * noChange
 
 			up := st
 			up.level = min(st.level+1, dcLevelCap)
-			next[up] += p * dcWeightLevelUp
+			next[up] += survive * dcWeightLevelUp
 
 			down := st
 			down.level = max(st.level-1, dcLevelFloor)
-			next[down] += p * dcWeightLevelDown
+			next[down] += survive * dcWeightLevelDown
 
 			span := dcQualityRerollMax - dcQualityRerollMin + 1
-			qw := p * dcWeightQualityReroll / float64(span)
+			qw := survive * dcWeightQualityReroll / float64(span)
 			for q := dcQualityRerollMin; q <= dcQualityRerollMax; q++ {
 				reroll := st
 				reroll.quality = q
@@ -321,7 +350,7 @@ func doubleCorruptCellDistribution(hasVaal bool, level, quality int) map[dcCell]
 			if hasVaal {
 				vaal := st
 				vaal.vaal = true
-				next[vaal] += p * dcWeightVaalTransform
+				next[vaal] += survive * dcWeightVaalTransform
 			}
 		}
 		dist = next
@@ -331,7 +360,7 @@ func doubleCorruptCellDistribution(hasVaal bool, level, quality int) map[dcCell]
 	for st, p := range dist {
 		cells[dcCell{vaal: st.vaal, variant: dcCellVariant(st.level, st.quality)}] += p
 	}
-	return cells
+	return cells, destroyed
 }
 
 // dcInputLevelQuality parses an uncorrupted input variant ("20/20", or a bare
@@ -430,9 +459,14 @@ func AnalyzeDoubleCorrupt(snapTime time.Time, gems []GemPrice, features []GemFea
 
 		// The cell distribution depends only on (hasVaal, level, quality), so
 		// the walk runs twice per input variant rather than once per gem.
-		distByVaal := map[bool]map[dcCell]float64{
-			false: doubleCorruptCellDistribution(false, level, quality),
-			true:  doubleCorruptCellDistribution(true, level, quality),
+		type cellsAndDestroyed struct {
+			cells     map[dcCell]float64
+			destroyed float64
+		}
+		distByVaal := map[bool]cellsAndDestroyed{}
+		for _, v := range []bool{false, true} {
+			cells, destroyed := doubleCorruptCellDistribution(v, level, quality)
+			distByVaal[v] = cellsAndDestroyed{cells, destroyed}
 		}
 
 		for i := range gems {
@@ -445,7 +479,7 @@ func AnalyzeDoubleCorrupt(snapTime time.Time, gems []GemPrice, features []GemFea
 			}
 
 			vaalName, hasVaal := vaalIdentity[g.Name]
-			cellDist := distByVaal[hasVaal]
+			cellDist := distByVaal[hasVaal].cells
 
 			outcomes := make([]DoubleCorruptOutcome, 0, len(cellDist))
 
@@ -537,13 +571,14 @@ func AnalyzeDoubleCorrupt(snapTime time.Time, gems []GemPrice, features []GemFea
 				// estimate would let Y exceed X and read as two claims about
 				// one craft. EVRaw stays on the result as the undiscounted
 				// reference, and nothing ranks or gates on it.
-				Profit:              ev - g.Chaos - templeOverheadChaos,
-				PricedProbability:   pricedProb,
-				UnpricedProbability: unpricedProb,
-				ThinOutcomeCells:    thinCells,
-				LiquidityRisk:       computeLiquidityRisk(thinCells, pricedCells),
-				Outcomes:            outcomes,
-				Model:               DoubleCorruptModelEstimated,
+				Profit:               ev - g.Chaos - templeOverheadChaos,
+				PricedProbability:    pricedProb,
+				UnpricedProbability:  unpricedProb,
+				DestroyedProbability: distByVaal[hasVaal].destroyed,
+				ThinOutcomeCells:     thinCells,
+				LiquidityRisk:        computeLiquidityRisk(thinCells, pricedCells),
+				Outcomes:             outcomes,
+				Model:                DoubleCorruptModelProvisionalDestroy,
 			})
 		}
 	}

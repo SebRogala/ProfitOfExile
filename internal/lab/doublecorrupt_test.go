@@ -13,13 +13,16 @@ import (
 // uniform 0..23, Vaal .25 when a Vaal version exists, folded into no-change
 // otherwise}), aggregated into market cells (quality 23 → "/23c", 20-22 →
 // "/20c", <20 → level-only "c"). Key exact cell masses, derived by enumerating
-// the 5×5 roll pairs:
+// the 5×5 roll pairs, conditional on surviving both rolls:
 //
 //	with a Vaal version:     20/20c = 15/128   VAAL 20/20c = 13/64
 //	                         21/20c = 11/128   VAAL 20c    = 5/48
 //	                         21/23c = 1/384
 //	without a Vaal version:  20/20c = 41/128   21/20c = 19/128
 //	                         20/23c = 5/384    21/23c = 1/384
+//
+// The provisional destroy chance d = 1/8 per roll scales every cell mass and
+// EV by 49/64 and destroys 15/64 of the mass (see doublecorrupt.go).
 //
 // A weight or cap mutation in the model moves these masses and every EV
 // constant below.
@@ -61,7 +64,7 @@ func makeDCCorrupted(name, variant string, chaos float64, listings int) GemPrice
 // input for "Arc of Surging" (Vaal version present), all at 50+ listings so
 // risk adjustment is a no-op (sell probability 1.0, no stability discount).
 //
-// EVRaw over these prices = 10395/64 = 162.421875 exactly.
+// EVRaw over these prices = 10395/64 × 49/64 = 509355/4096 = 124.354248046875 exactly.
 func fullyPricedArcSnapshot() []GemPrice {
 	vaal := "Vaal Arc (Arc of Surging)"
 	return []GemPrice{
@@ -119,8 +122,8 @@ func TestAnalyzeDoubleCorrupt_EVRawIsProbabilityWeightedSumOverPricedCells(t *te
 
 	r := singleDCResult(t, results, "Arc of Surging")
 
-	if math.Abs(r.EVRaw-162.421875) > dcEps {
-		t.Errorf("EVRaw = %v, want 162.421875 (10395/64, the exact weighted sum)", r.EVRaw)
+	if math.Abs(r.EVRaw-124.354248046875) > dcEps {
+		t.Errorf("EVRaw = %v, want 124.354248046875 (509355/4096, the survival-weighted sum; 162.421875 before the destroy outcome)", r.EVRaw)
 	}
 	// All cells carry 50+ listings, so risk adjustment must be a no-op.
 	if math.Abs(r.EV-r.EVRaw) > dcEps {
@@ -129,12 +132,51 @@ func TestAnalyzeDoubleCorrupt_EVRawIsProbabilityWeightedSumOverPricedCells(t *te
 	// Input cost is the gem's own uncorrupted 20/20 price; the room is sunk.
 	// (EV and EVRaw coincide here, so the basis is pinned by
 	// TestAnalyzeDoubleCorrupt_ProfitIsMeasuredOffTheRiskAdjustedEV instead.)
-	if math.Abs(r.Profit-(162.421875-100)) > dcEps {
+	if math.Abs(r.Profit-(124.354248046875-100)) > dcEps {
 		t.Errorf("Profit = %v, want EV - 100 input cost", r.Profit)
 	}
-	if math.Abs(r.PricedProbability-1.0) > dcEps || r.UnpricedProbability > dcEps {
-		t.Errorf("fully priced set: priced/unpriced mass = %v/%v, want 1/0",
-			r.PricedProbability, r.UnpricedProbability)
+}
+
+func TestAnalyzeDoubleCorrupt_DestroyedMassIsWhatSurvivesNeitherRoll(t *testing.T) {
+	results := AnalyzeDoubleCorrupt(time.Now(), fullyPricedArcSnapshot(), nil, DefaultTempleOverheadChaos)
+	r := singleDCResult(t, results, "Arc of Surging")
+
+	// 1 - (1 - 1/8)² = 15/64: each of the two rolls destroys with d = 1/8.
+	if math.Abs(r.DestroyedProbability-15.0/64) > dcEps {
+		t.Errorf("DestroyedProbability = %v, want 15/64 = 0.234375", r.DestroyedProbability)
+	}
+}
+
+func TestAnalyzeDoubleCorrupt_OutcomeMassesPlusDestroyedMassSumToOne(t *testing.T) {
+	results := AnalyzeDoubleCorrupt(time.Now(), fullyPricedArcSnapshot(), nil, DefaultTempleOverheadChaos)
+	r := singleDCResult(t, results, "Arc of Surging")
+
+	total := r.DestroyedProbability
+	for _, o := range r.Outcomes {
+		total += o.Probability
+	}
+	if math.Abs(total-1.0) > dcEps {
+		t.Errorf("outcome masses + destroyed mass = %v, want 1", total)
+	}
+}
+
+func TestAnalyzeDoubleCorrupt_DestroyedMassIsNotCountedAsUnpriced(t *testing.T) {
+	// Every reachable cell is priced, so any unpriced mass could only be the
+	// destroyed share — whose value (0) is known, not missing.
+	results := AnalyzeDoubleCorrupt(time.Now(), fullyPricedArcSnapshot(), nil, DefaultTempleOverheadChaos)
+	r := singleDCResult(t, results, "Arc of Surging")
+
+	if r.UnpricedProbability > dcEps {
+		t.Errorf("UnpricedProbability = %v, want 0 — destroyed mass is not unpriced", r.UnpricedProbability)
+	}
+}
+
+func TestAnalyzeDoubleCorrupt_PricedMassIsTheSurvivingShare(t *testing.T) {
+	results := AnalyzeDoubleCorrupt(time.Now(), fullyPricedArcSnapshot(), nil, DefaultTempleOverheadChaos)
+	r := singleDCResult(t, results, "Arc of Surging")
+
+	if math.Abs(r.PricedProbability-49.0/64) > dcEps {
+		t.Errorf("PricedProbability = %v, want 49/64 — the mass surviving both rolls", r.PricedProbability)
 	}
 }
 
@@ -148,11 +190,11 @@ func TestAnalyzeDoubleCorrupt_OutcomeMassesMatchTheModel(t *testing.T) {
 		variant string
 		mass    float64
 	}{
-		{"Arc of Surging", "20/20c", 15.0 / 128},
-		{vaal, "20/20c", 13.0 / 64},
-		{"Arc of Surging", "21/20c", 11.0 / 128},
-		{vaal, "20c", 5.0 / 48},
-		{"Arc of Surging", "21/23c", 1.0 / 384},
+		{"Arc of Surging", "20/20c", 735.0 / 8192},
+		{vaal, "20/20c", 637.0 / 4096},
+		{"Arc of Surging", "21/20c", 539.0 / 8192},
+		{vaal, "20c", 245.0 / 3072},
+		{"Arc of Surging", "21/23c", 49.0 / 24576},
 	}
 	for _, w := range wantMass {
 		got := outcomeCell(t, r, w.name, w.variant).Probability
@@ -165,8 +207,8 @@ func TestAnalyzeDoubleCorrupt_OutcomeMassesMatchTheModel(t *testing.T) {
 	for _, o := range r.Outcomes {
 		total += o.Probability
 	}
-	if math.Abs(total-1.0) > dcEps {
-		t.Errorf("outcome masses sum to %v, want 1", total)
+	if math.Abs(total-49.0/64) > dcEps {
+		t.Errorf("outcome masses sum to %v, want 49/64 (the surviving mass)", total)
 	}
 }
 
@@ -180,10 +222,10 @@ func TestAnalyzeDoubleCorrupt_LevelCapsAt21(t *testing.T) {
 		}
 	}
 	// The capped double-up pair lands on 21/20c: without the cap its mass
-	// would be 10/128, not 11/128.
+	// would be 245/4096, not 539/8192.
 	got := outcomeCell(t, r, "Arc of Surging", "21/20c").Probability
-	if math.Abs(got-11.0/128) > dcEps {
-		t.Errorf("P(21/20c) = %v, want 11/128 (includes the capped +1/+1 pair)", got)
+	if math.Abs(got-539.0/8192) > dcEps {
+		t.Errorf("P(21/20c) = %v, want 539/8192 (includes the capped +1/+1 pair)", got)
 	}
 }
 
@@ -202,8 +244,8 @@ func TestAnalyzeDoubleCorrupt_NeverProducesAVaalGemAt2123(t *testing.T) {
 			t.Fatalf("model produced a Vaal 21/23c cell with mass %v", o.Probability)
 		}
 	}
-	if math.Abs(r.EVRaw-162.421875) > dcEps {
-		t.Errorf("EVRaw = %v, want 162.421875 — the impossible cell's price leaked in", r.EVRaw)
+	if math.Abs(r.EVRaw-124.354248046875) > dcEps {
+		t.Errorf("EVRaw = %v, want 124.354248046875 — the impossible cell's price leaked in", r.EVRaw)
 	}
 }
 
@@ -225,10 +267,10 @@ func TestAnalyzeDoubleCorrupt_NoVaalVersionFoldsTransformWeightIntoNoChange(t *t
 		}
 	}
 	// With the transform's 25% folded into no-change, the unchanged cell's
-	// mass rises from 15/128 to 41/128.
+	// mass rises from 735/8192 to 2009/8192.
 	got := outcomeCell(t, r, "Rolling Magma of Nothing", "20/20c").Probability
-	if math.Abs(got-41.0/128) > dcEps {
-		t.Errorf("P(20/20c) = %v, want 41/128 under the folded model", got)
+	if math.Abs(got-2009.0/8192) > dcEps {
+		t.Errorf("P(20/20c) = %v, want 2009/8192 under the folded model", got)
 	}
 }
 
@@ -246,15 +288,15 @@ func TestAnalyzeDoubleCorrupt_UnpricedCellsReportTheirMassInsteadOfSilentlyZeroi
 	results := AnalyzeDoubleCorrupt(time.Now(), gems, nil, DefaultTempleOverheadChaos)
 	r := singleDCResult(t, results, "Rolling Magma of Nothing")
 
-	// 41/128·100 + 19/128·300 + 5/384·500 + 1/384·2000 = 2825/32.
-	if math.Abs(r.EVRaw-88.28125) > dcEps {
-		t.Errorf("EVRaw = %v, want 88.28125 over the priced cells only", r.EVRaw)
+	// (41/128·100 + 19/128·300 + 5/384·500 + 1/384·2000) × 49/64 = 138425/2048.
+	if math.Abs(r.EVRaw-67.59033203125) > dcEps {
+		t.Errorf("EVRaw = %v, want 67.59033203125 over the priced cells only", r.EVRaw)
 	}
-	if math.Abs(r.UnpricedProbability-33.0/64) > dcEps {
-		t.Errorf("UnpricedProbability = %v, want 33/64", r.UnpricedProbability)
+	if math.Abs(r.UnpricedProbability-1617.0/4096) > dcEps {
+		t.Errorf("UnpricedProbability = %v, want 1617/4096", r.UnpricedProbability)
 	}
-	if math.Abs(r.PricedProbability-31.0/64) > dcEps {
-		t.Errorf("PricedProbability = %v, want 31/64", r.PricedProbability)
+	if math.Abs(r.PricedProbability-1519.0/4096) > dcEps {
+		t.Errorf("PricedProbability = %v, want 1519/4096", r.PricedProbability)
 	}
 
 	unpriced := outcomeCell(t, r, "Rolling Magma of Nothing", "20c")
@@ -278,11 +320,11 @@ func TestAnalyzeDoubleCorrupt_ThinOutcomeCellIsDownWeighted(t *testing.T) {
 
 	// EVRaw takes the listed price at face value; EV applies the thin-market
 	// sell-probability floor (0.3 at 2 listings, no feature data).
-	if math.Abs(r.EVRaw-32.03125) > dcEps {
-		t.Errorf("EVRaw = %v, want 41/128·100 = 32.03125", r.EVRaw)
+	if math.Abs(r.EVRaw-24.52392578125) > dcEps {
+		t.Errorf("EVRaw = %v, want 41/128·100·49/64 = 24.52392578125", r.EVRaw)
 	}
-	if math.Abs(r.EV-9.609375) > dcEps {
-		t.Errorf("EV = %v, want 0.3 × EVRaw = 9.609375", r.EV)
+	if math.Abs(r.EV-7.357177734375) > dcEps {
+		t.Errorf("EV = %v, want 0.3 × EVRaw = 7.357177734375", r.EV)
 	}
 	cell := outcomeCell(t, r, "Rolling Magma of Nothing", "20/20c")
 	if !cell.Thin {
@@ -297,8 +339,8 @@ func TestAnalyzeDoubleCorrupt_ThinOutcomeCellIsDownWeighted(t *testing.T) {
 }
 
 func TestAnalyzeDoubleCorrupt_ProfitIsMeasuredOffTheRiskAdjustedEV(t *testing.T) {
-	// The same snapshot as the thin-cell test, chosen because EV (9.609375)
-	// and EVRaw (32.03125) differ there: profit off EVRaw would read -17.97
+	// The same snapshot as the thin-cell test, chosen because EV (7.357177734375)
+	// and EVRaw (24.52392578125) differ there: profit off EVRaw would read -25.48
 	// and turn a losing craft into a smaller-looking loss — and on richer gems
 	// into a headline profit larger than the estimate printed beside it.
 	gems := []GemPrice{
@@ -309,8 +351,8 @@ func TestAnalyzeDoubleCorrupt_ProfitIsMeasuredOffTheRiskAdjustedEV(t *testing.T)
 	results := AnalyzeDoubleCorrupt(time.Now(), gems, nil, DefaultTempleOverheadChaos)
 	r := singleDCResult(t, results, "Rolling Magma of Nothing")
 
-	if math.Abs(r.Profit-(9.609375-50)) > dcEps {
-		t.Errorf("Profit = %v, want EV - input cost = -40.390625 (not EVRaw - input cost = -17.96875)", r.Profit)
+	if math.Abs(r.Profit-(7.357177734375-50)) > dcEps {
+		t.Errorf("Profit = %v, want EV - input cost = -42.642822265625 (not EVRaw - input cost = -25.47607421875)", r.Profit)
 	}
 }
 
@@ -371,17 +413,16 @@ func TestAnalyzeDoubleCorrupt_LowConfidenceOutcomeCellIsExcludedRatherThanDiscou
 	if outlier.Listings != 2 {
 		t.Errorf("Listings = %d, want the refused row's 2 kept for the explanation", outlier.Listings)
 	}
-	// Only the 20/20c cell survives: 41/128 · 100. Pricing the outlier at face
-	// value would add 1/384 · 36960 = 96.25 and nearly quadruple the EV.
-	if math.Abs(r.EVRaw-32.03125) > dcEps {
-		t.Errorf("EVRaw = %v, want 32.03125 over the confident cells only", r.EVRaw)
+	// Only the 20/20c cell survives: 41/128 · 100 · 49/64. Pricing the outlier at
+	// face value would add 49/24576 · 36960 ≈ 73.69 and nearly quadruple the EV.
+	if math.Abs(r.EVRaw-24.52392578125) > dcEps {
+		t.Errorf("EVRaw = %v, want 24.52392578125 over the confident cells only", r.EVRaw)
 	}
-	if math.Abs(r.PricedProbability-41.0/128) > dcEps {
-		t.Errorf("PricedProbability = %v, want 41/128 — the refused mass belongs to unpriced", r.PricedProbability)
+	if math.Abs(r.PricedProbability-2009.0/8192) > dcEps {
+		t.Errorf("PricedProbability = %v, want 2009/8192 — the refused mass belongs to unpriced", r.PricedProbability)
 	}
-	if math.Abs(r.PricedProbability+r.UnpricedProbability-1.0) > dcEps {
-		t.Errorf("priced + unpriced = %v, want 1 — refused mass must be accounted, not dropped",
-			r.PricedProbability+r.UnpricedProbability)
+	if total := r.PricedProbability + r.UnpricedProbability + r.DestroyedProbability; math.Abs(total-1.0) > dcEps {
+		t.Errorf("priced + unpriced + destroyed = %v, want 1 — refused mass must be accounted, not dropped", total)
 	}
 }
 
@@ -401,9 +442,9 @@ func TestAnalyzeDoubleCorrupt_OutcomeCellAtExactlyFortyPercentOfMedianDepthIsSti
 		t.Errorf("cell lowConfidence=%v priced=%v, want priced at exactly 0.4 depth",
 			cell.LowConfidence, cell.Priced)
 	}
-	// 1/384 · 3840 = 10.
-	if math.Abs(r.EVRaw-10) > dcEps {
-		t.Errorf("EVRaw = %v, want 10", r.EVRaw)
+	// 49/24576 · 3840 = 7.65625.
+	if math.Abs(r.EVRaw-7.65625) > dcEps {
+		t.Errorf("EVRaw = %v, want 7.65625", r.EVRaw)
 	}
 }
 
@@ -459,8 +500,8 @@ func TestAnalyzeDoubleCorrupt_AnotherGemsCorruptedMarketDoesNotLeak(t *testing.T
 	results := AnalyzeDoubleCorrupt(time.Now(), gems, nil, DefaultTempleOverheadChaos)
 	r := singleDCResult(t, results, "Rolling Magma of Nothing")
 
-	if math.Abs(r.EVRaw-32.03125) > dcEps {
-		t.Errorf("EVRaw = %v, want 32.03125 from the gem's own cells only", r.EVRaw)
+	if math.Abs(r.EVRaw-24.52392578125) > dcEps {
+		t.Errorf("EVRaw = %v, want 24.52392578125 from the gem's own cells only", r.EVRaw)
 	}
 	for _, o := range r.Outcomes {
 		if strings.HasPrefix(o.Name, "Spark") {
@@ -717,14 +758,15 @@ func TestAnalyzeDoubleCorrupt_SupportGemsAreLegitimateInputs(t *testing.T) {
 	}
 }
 
-func TestAnalyzeDoubleCorrupt_ResultCarriesEstimatedModelMarker(t *testing.T) {
+func TestAnalyzeDoubleCorrupt_ResultCarriesTheProvisionalDestroyModelMarker(t *testing.T) {
 	gems := []GemPrice{
 		makeDCInput("Rolling Magma of Nothing", "BLUE", 50, 30),
 	}
 	results := AnalyzeDoubleCorrupt(time.Now(), gems, nil, DefaultTempleOverheadChaos)
 	r := singleDCResult(t, results, "Rolling Magma of Nothing")
-	if r.Model != DoubleCorruptModelEstimated {
-		t.Errorf("Model = %q, want %q — the UI badges EVs as estimated off this field",
-			r.Model, DoubleCorruptModelEstimated)
+	// A string literal: it is the wire value the desktop branches on.
+	if r.Model != "estimated-provisional-destroy" {
+		t.Errorf("Model = %q, want %q — the UI flags the unverified destroy rate off this field",
+			r.Model, "estimated-provisional-destroy")
 	}
 }

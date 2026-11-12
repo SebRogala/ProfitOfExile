@@ -192,8 +192,8 @@ type doubleCorruptGolden struct {
 }
 
 const doubleCorruptGoldenNote = "Probability-derived floats (outcome probability; result ev, evRaw, profit, " +
-	"pricedProbability, unpricedProbability) are compared within 1e-12 relative, every other field exactly: " +
-	"doubleCorruptCellDistribution (internal/lab/doublecorrupt.go:299-330) sums float probabilities in Go map " +
+	"pricedProbability, unpricedProbability, destroyedProbability) are compared within 1e-12 relative, every other field exactly: " +
+	"doubleCorruptCellDistribution (internal/lab/doublecorrupt.go) sums float probabilities in Go map " +
 	"order, so those floats differ in the last bits between runs, and outcomes are compared as a set keyed by " +
 	"(name, variant) because a last-bit difference can reorder two equal probabilities."
 
@@ -231,7 +231,7 @@ func assertProbabilityClose(t *testing.T, label string, got, want float64) {
 // exact on every field except the probability-derived floats.
 //
 // Those floats are non-deterministic today: doubleCorruptCellDistribution
-// (doublecorrupt.go:299-330) accumulates probabilities over Go map iteration,
+// (doublecorrupt.go) accumulates probabilities over Go map iteration,
 // and float addition is not associative, so Probability, EV, EVRaw, Profit,
 // PricedProbability and UnpricedProbability differ in the last bits between
 // runs. They are compared within 1e-12 relative (assertProbabilityClose), and
@@ -298,6 +298,7 @@ func compareDoubleCorruptCase(t *testing.T, name string, got, want doubleCorrupt
 		assertProbabilityClose(t, label+" Profit", g.Profit, w.Profit)
 		assertProbabilityClose(t, label+" PricedProbability", g.PricedProbability, w.PricedProbability)
 		assertProbabilityClose(t, label+" UnpricedProbability", g.UnpricedProbability, w.UnpricedProbability)
+		assertProbabilityClose(t, label+" DestroyedProbability", g.DestroyedProbability, w.DestroyedProbability)
 
 		type cellKey struct{ name, variant string }
 		gotCells := make(map[cellKey]DoubleCorruptOutcome, len(g.Outcomes))

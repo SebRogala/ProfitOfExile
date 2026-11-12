@@ -381,3 +381,19 @@ Recorded so the status is explicit, not so they can be built on.
   price-rise narrative explicitly unvalidated. Until a measurement settles it,
   temporal normalisation is an accuracy enhancer, not a prerequisite, and
   nothing may judge system accuracy on hour 0–6 data.
+
+- **3.30 double-corruption destroy chance.** The double-corruption EV
+  (`internal/lab/doublecorrupt.go`) destroys the gem with
+  `dcDestroyChanceProvisional` = 0.125 per corruption roll (two rolls, so
+  15/64 ≈ 23% of attempts end destroyed and count as worth 0). Source: none — a
+  guess. The 3.30 notes (06 League Changes) say only that "The Lapidary Lens now
+  has a chance to destroy the item"; the community temple sheet's "chance for
+  poof" at Doryani's Institute gives no rate. The model also assumes,
+  unverified, that Doryani's Institute's gem device is the double-corruption
+  device those notes describe and that it still applies two independent rolls
+  to an uncorrupted gem; the notes say the devices now "Corrupt an Equipment
+  Item or Gem a second time", which may mean one roll on an already-corrupted
+  gem. Results built on this guess carry the model marker
+  `estimated-provisional-destroy`, and the desktop Comparator says the EV
+  depends on an unverified rate. Measure the destroy rate (and the roll count)
+  in 3.30.
