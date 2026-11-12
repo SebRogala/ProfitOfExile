@@ -291,6 +291,10 @@ impl LootOwner {
         if self.pending.as_ref().is_some_and(|p| p.close_at_ms.is_some_and(|t| now >= t)) { self.pending = None; }
         if self.frame.as_ref().is_some_and(|f| f.until_ms.is_some_and(|t| now >= t)) { self.frame = None; }
     }
+    pub fn retire_and_due_id(&mut self, now: u64) -> Option<u64> {
+        self.retire(now);
+        self.pending.as_ref().filter(|p| p.phase == Phase::Open && p.deadline_ms.is_some_and(|t| now >= t)).map(|p| p.id)
+    }
     fn pause_conflict(&mut self, id: u64) {
         if let Some(p) = self.pending.as_mut().filter(|p| p.id == id) {
             p.merge_blocked = true; p.phase = Phase::Open; p.deadline_ms = None;
@@ -366,8 +370,7 @@ pub fn snapshot(state: &crate::AppState) -> LootSlice {
     let enabled = state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get(MODULE_ID) == Some(&true);
     let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let number_format = *state.number_format.lock().unwrap_or_else(|e| e.into_inner());
-    let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
-    owner.retire(now_ms());
+    let owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
     LootSlice { enabled, settings, number_format, pending: if enabled { owner.pending.clone() } else { None },
         frame: if enabled { owner.frame.clone() } else { None }, rebind: owner.rebind, now_ms: now_ms() }
 }
@@ -488,8 +491,7 @@ pub fn spawn_hotkey_poller(app: tauri::AppHandle, cancel: tokio::sync::watch::Re
                 if work_cancelled(&cancel) { break; }
                 platform::preview(&app, foreground);
             }
-            let due = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).pending.as_ref()
-                .filter(|p| p.phase == Phase::Open && p.deadline_ms.is_some_and(|t| now_ms() >= t)).map(|p| p.id);
+            let due = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).retire_and_due_id(now_ms());
             if let Some(id) = due {
                 let app = app.clone();
                 let cancel = cancel.clone();
@@ -533,7 +535,7 @@ mod platform {
         let game = *state.game_monitor.lock().unwrap_or_else(|e| e.into_inner());
         let Some(g) = game else { return };
         let rect = capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height));
-        let league = crate::ssot::build_snapshot(&state).league.name.unwrap_or_default();
+        let league = crate::ssot::league_name(&state).unwrap_or_default();
         // Freeze the area, seed, profile, league and identity BEFORE grabbing/OCR.
         let begin = {
             let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
@@ -669,6 +671,47 @@ mod owner_tests {
         StoredRun { profile: ProfileRef::from(&profile()), id: "1".into(), league: "test".into(),
             run: 1, date: None, seed: Some("42".into()), version,
             items: RunItems { quantities: selection(&[("Cinderswallow Urn", 1)]), counted: counted(&profile(), &LootSettings::default()) } }
+    }
+    fn expired_frame() -> Frame { Frame { rect: [0; 4], phase: "saved".into(), attribution: None, until_ms: Some(0) } }
+    #[test]
+    fn ssot_read_leaves_an_expired_capture_and_frame_in_place() {
+        let state = crate::settings::tests::test_app_state();
+        state.modules_enabled.lock().unwrap().insert(MODULE_ID.into(), true);
+        let (owner, id) = pending(&LootSettings::default());
+        let mut owner = owner.into_inner().unwrap();
+        owner.pending.as_mut().unwrap().phase = Phase::Saved;
+        owner.pending.as_mut().unwrap().close_at_ms = Some(0);
+        owner.frame = Some(expired_frame());
+        *state.boss_loot.lock().unwrap() = owner;
+        snapshot(&state);
+        let owner = state.boss_loot.lock().unwrap();
+        assert_eq!(owner.pending.as_ref().map(|p| p.id), Some(id));
+        assert!(owner.frame.is_some());
+    }
+    #[test]
+    fn tick_retires_a_saved_capture_past_its_close_time() {
+        let (owner, _) = pending(&LootSettings::default());
+        let mut owner = owner.into_inner().unwrap();
+        owner.pending.as_mut().unwrap().phase = Phase::Saved;
+        owner.pending.as_mut().unwrap().close_at_ms = Some(0);
+        owner.retire_and_due_id(1);
+        assert!(owner.pending.is_none());
+    }
+    #[test]
+    fn tick_returns_the_open_capture_past_its_deadline() {
+        let (owner, id) = pending(&LootSettings::default());
+        let mut owner = owner.into_inner().unwrap();
+        owner.pending.as_mut().unwrap().phase = Phase::Open;
+        owner.pending.as_mut().unwrap().deadline_ms = Some(0);
+        assert_eq!(owner.retire_and_due_id(now_ms()), Some(id));
+    }
+    #[test]
+    fn tick_returns_no_capture_before_its_deadline() {
+        let (owner, _) = pending(&LootSettings::default());
+        let mut owner = owner.into_inner().unwrap();
+        owner.pending.as_mut().unwrap().phase = Phase::Open;
+        owner.pending.as_mut().unwrap().deadline_ms = Some(u64::MAX);
+        assert_eq!(owner.retire_and_due_id(now_ms()), None);
     }
     fn pending(settings: &LootSettings) -> (Mutex<LootOwner>, u64) {
         pending_with_ocr(settings, &["Serpentine Staff"])

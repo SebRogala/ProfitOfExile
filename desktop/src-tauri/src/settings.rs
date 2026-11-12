@@ -1121,7 +1121,7 @@ pub fn settings_path_before_app(identifier: &str) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     #[test]
     fn boss_loot_settings_survive_unrelated_writes_and_echo_through_ssot() {
         use crate::loot_capture::{LootLayout, NumberFormat, Shortcut};
@@ -1355,7 +1355,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
     use std::sync::Mutex;
 
-    /// A bare `AppState` for the settings round-trip tests — the same literal
+    /// A bare `AppState` for tests — the same literal
     /// `run()` builds, minus the runtime-only bits. Deliberately not a
     /// `Default` impl: `run()` stays the one production construction site, and
     /// a new field breaking this helper is the intended signal to decide

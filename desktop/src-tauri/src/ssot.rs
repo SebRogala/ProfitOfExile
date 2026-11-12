@@ -648,6 +648,10 @@ const TEMPLE_MODULE_ID: &str = "temple";
 /// guards at once), matching the lock-then-emit discipline documented on
 /// `emit_ssot`. Both `get_ssot` and `emit_ssot` go through here so the two
 /// paths cannot compose different snapshots.
+pub fn league_name(state: &AppState) -> Option<String> {
+    state.ssot.lock().unwrap_or_else(|e| e.into_inner()).league.name.clone()
+}
+
 pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     let mut base = {
         let guard = state.ssot.lock().unwrap_or_else(|e| e.into_inner());
@@ -1753,6 +1757,18 @@ mod tests {
 
     /// Locks the fail-closed default: a fresh snapshot reports the league as
     /// not-yet-fetched (`None`), never a spuriously "valid" empty name.
+    #[test]
+    fn league_name_reads_the_resolved_league() {
+        let state = crate::settings::tests::test_app_state();
+        state.ssot.lock().unwrap().league.name = Some("Mirage".into());
+        assert_eq!(league_name(&state), Some("Mirage".into()));
+    }
+
+    #[test]
+    fn league_name_is_none_before_resolution() {
+        assert_eq!(league_name(&crate::settings::tests::test_app_state()), None);
+    }
+
     #[test]
     fn default_snapshot_league_is_unfetched() {
         let snap = AppSsotSnapshot::default();
