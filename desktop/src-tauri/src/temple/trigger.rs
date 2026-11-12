@@ -533,6 +533,17 @@ impl ArmState {
     /// stand-down with no event behind it — a clock runs out and nothing is
     /// written at the moment it does — which is why it is stamped here instead.
     pub fn arm_manual(&mut self, now_ms: u64) -> Transition {
+        // How long a manual **Re-arm** keeps the loop armed.
+        //
+        // The merc module's own value, and for the same reason: it is a promise to the
+        // PERSON who pressed it rather than a deadline measured from an event, so it
+        // has to outlive an alt-tab back into the game.
+        //
+        // **The only deadline left in this module** since WI-1 retired `ALVA_TAIL_MS`
+        // and `PANEL_TAIL_MS` (2026-09-07). It is what a manual stand-down reports
+        // ([`StandDown::GraceOver`]), and it is not the only way a manual arm ends: a
+        // Re-arm whose sheet is read and then closed ends by the cycle rule like any
+        // other arm.
         let transition = self.arm.arm(
             ArmReason::Manual,
             Some(now_ms.saturating_add(MANUAL_ARM_GRACE_MS)),
