@@ -963,6 +963,205 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     }
 }
 
+/// Apply loaded settings to AppState.
+///
+/// Returns one ready-to-log line per value this build refused, in the order the
+/// fields are applied. Empty on a clean load, which is the common case.
+///
+/// A fallback that leaves no trace is the failure mode this return value
+/// exists for: the file still says `apex_score: NaN`, the module runs on the
+/// Rush, and nothing anywhere tells the user which of the two they are looking
+/// at. There is no error channel here — a rejected value must not become the
+/// running one and a rejected value must not fail the whole load either — so
+/// the rejections come back as text and the caller logs them.
+#[must_use = "a silent settings rejection is the bug this return value exists to prevent"]
+pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<String> {
+    let mut rejected: Vec<String> = Vec::new();
+    let boss_loot = match settings.boss_loot.validate() {
+        Ok(()) => settings.boss_loot.clone(),
+        Err(reason) => { rejected.push(format!("boss loot settings: {reason}; using defaults")); Default::default() }
+    };
+    *state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()) = boss_loot;
+    *state.number_format.lock().unwrap_or_else(|e| e.into_inner()) =
+        crate::loot_capture::NumberFormat::migrate(settings.number_format, settings.ui_prefs.get("numberFormat"));
+    *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = settings.client_txt_path.clone();
+    *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = settings.server_url.clone();
+    *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()) = settings.sidebar_open;
+    *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_warn_secs;
+    *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_critical_secs;
+    *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_auto_refresh_secs;
+    *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.auto_trade_enabled;
+    *state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_mode.clone();
+    *state.compass_strategy.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_strategy.clone();
+    *state.compass_difficulty.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_difficulty.clone();
+    *state.shrine_warn_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_enabled;
+    *state.shrine_warn_size.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_size.clone();
+    *state.shrine_warn_corner.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_corner.clone();
+    *state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_on_take.clone();
+    *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab_overlays_enabled;
+    *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab_mode.clone();
+    *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner()) = settings.autoclear_minutes;
+    *state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()) = settings.dedication_pool.clone();
+    *state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.dedication_variant.clone();
+    *state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.normal_variant.clone();
+    *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()) = settings.show_low_confidence;
+    *state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()) = settings.ui_prefs.clone();
+    // Widget placements, straight through: unlike `modules` there is no
+    // registry default to overlay here — a widget with no entry renders at the
+    // shipped CSS default the frontend registry holds, and an entry for a
+    // widget this build does not declare is simply never looked up.
+    *state.widgets.lock().unwrap_or_else(|e| e.into_inner()) = settings.widgets.clone();
+    // The owner map holds the EFFECTIVE state, not the persisted delta:
+    // registry defaults overlaid with what the user chose (see modules.rs).
+    *state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()) =
+        crate::modules::effective_modules(&settings.modules, &crate::modules::module_lifecycles());
+    // The two temple fields recombine into the one Mutex the module reads. A
+    // profile from a file this build would reject falls back to the default
+    // rather than poisoning every later ranking — and says so, through
+    // `rejected`, because the file and the running value now disagree.
+    //
+    // The Custom TABLE is the one exception, and POE-257 is why: it is 25
+    // independent numbers, not one profile, so a single malformed entry costs
+    // its own room and the other 24 load. `TempleCustomSettings::overrides`
+    // owns that rule and names every entry it refused; the warnings join the
+    // same `rejected` list, so the disagreement between the file and the
+    // running value is reported either way.
+    //
+    // What is STORED is the salvaged table, not the file's own (POE-259). The
+    // echo the editor reads is this value, and the editor writes back a whole
+    // table — so a raw bad entry, or a rate this build cannot apply, would be
+    // handed straight to `TempleCustomSettings::validate`, which refuses the
+    // write over a value the player is not editing and cannot see. The rule
+    // for both halves is `TempleCustomSettings::salvaged`, which is also where
+    // the trade-off is written down: what it changed, having been reported
+    // here, does not survive the next save.
+    //
+    // The warnings are about a table that may not be the one in force, so each
+    // one says which it is rather than being suppressed. Suppressing them
+    // would hide a fault in a file the player is expected to hand-edit — they
+    // would fix nothing, switch to Custom, and meet the same broken entry with
+    // no history; and the repo's visibility rule is that a flag is added, never
+    // that a finding is hidden.
+    // A block the file could not state at all is reported before the finer
+    // refusals inside it: the user has lost a whole table, not one entry, and
+    // `log::` cannot tell them (see `Salvaged`).
+    if settings.temple_custom.was_salvaged() {
+        rejected.push(
+            "temple custom table was not a table; using defaults (the shipped rates, no overrides)"
+                .to_string(),
+        );
+    }
+    if settings.temple_preset.was_salvaged() {
+        rejected.push("temple preset was not a known preset; using Default".to_string());
+    }
+    let in_force = *settings.temple_preset == crate::temple::preset::Preset::Custom;
+    let (accepted_table, warnings) = settings.temple_custom.salvaged();
+    for warning in warnings {
+        rejected.push(if in_force {
+            warning
+        } else {
+            format!("(Custom table, not in force) {warning}")
+        });
+    }
+    *state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()) =
+        crate::temple::slice::TempleSettings {
+            profile: match settings.temple_profile.validate() {
+                Ok(()) => settings.temple_profile.clone(),
+                Err(why) => {
+                    rejected.push(format!(
+                        "temple settings: profile rejected ({why}), using default"
+                    ));
+                    Default::default()
+                }
+            },
+            config: settings.temple_config.clone(),
+            preset: *settings.temple_preset,
+            custom: accepted_table,
+        };
+
+    // The enabled-guide set (POE-199), with its one-time migration from the
+    // ADR-013 preference. A stored id this build does not know is dropped
+    // rather than failing the load, and says so — the file and the running
+    // value now disagree, which is exactly what `rejected` is for.
+    {
+        let legacy = settings
+            .ui_prefs
+            .get(crate::mercenary::sources::LEGACY_PREF_KEY);
+        let (accepted, refused) = crate::mercenary::sources::migrate_sources_off(
+            settings.merc_sources_off.as_ref(),
+            legacy,
+        );
+        for id in refused {
+            rejected.push(format!(
+                "merc settings: {id:?} is not a guide, ignoring it in the off-list"
+            ));
+        }
+        *state.merc_sources_off.lock().unwrap_or_else(|e| e.into_inner()) = accepted;
+    }
+
+    // The trade auto-search (POE-202). The floor is CLAMPED rather than
+    // refused: a file holding a tier that is not a tier still describes a user
+    // who wants loosening, and failing the load over it would take every other
+    // preference in the file with it.
+    //
+    // Clamped to the nearest legal tier and NOT reset to the default: 0 is a
+    // user asking for the loosest search there is, and answering it with 3 —
+    // the tightest — inverts what the file says. Reported either way, because
+    // the file and the running value now disagree.
+    *state.merc_trade_auto.lock().unwrap_or_else(|e| e.into_inner()) = settings.merc_trade_auto;
+    *state.merc_tier_floor.lock().unwrap_or_else(|e| e.into_inner()) =
+        match crate::mercenary::validate_tier_floor(settings.merc_tier_floor) {
+            Ok(floor) => floor,
+            Err(why) => {
+                let clamped = settings.merc_tier_floor.clamp(1, 3);
+                rejected.push(format!("merc settings: {why}, using {clamped}"));
+                clamped
+            }
+        };
+
+    // The remembered screen scale (POE-214 D2), loaded under `Remembered` so a
+    // consumer can see it was not measured this run. Numbers that cannot
+    // describe a screen are refused rather than loaded — and REPORTED, because
+    // the file and the running value now disagree (see `is_sane`).
+    //
+    // **No prune here, and this is the deliberate half of it.** A value stored
+    // at another monitor's size is left in place: `apply_to_state` has no
+    // `AppHandle`, so the primary monitor's size is not cheaply known at this
+    // seam, and inventing a lock order to go and get one would cost more than
+    // the staleness does. The merc tick is the cure — `ssot::accepts` takes
+    // every frame fit, so the first frame measurement of the real screen
+    // overwrites this seed outright, whatever its dims were. A session that
+    // never measures (merc module off) therefore runs on a `remembered` label,
+    // which is exactly what that label is for: a consumer that cannot afford a
+    // stale screen weighs the label and waits for a measurement.
+    let remembered = match settings.screen_scale {
+        Some(s) if !s.is_sane() => {
+            rejected.push(format!(
+                "screen scale: {}x{} at ui_scale {} is not a screen, ignoring it",
+                s.width, s.height, s.ui_scale
+            ));
+            None
+        }
+        other => other.map(|s| s.to_slice()),
+    };
+    *state.screen.lock().unwrap_or_else(|e| e.into_inner()) = remembered;
+
+    // Seed the slice's settings echo, so the page and the overlay render the
+    // persisted flags and profile from the first poll — including while the
+    // module is OFF and no loop will ever publish them. Taken from the owner
+    // just written rather than from `settings`, so a rejected value is echoed
+    // as the one actually in force. The `temple_settings` guard is released
+    // before `temple` is taken; nothing else locks the two together.
+    let temple = state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    {
+        let mut slice = state.temple.lock().unwrap_or_else(|e| e.into_inner());
+        slice.config = temple.config;
+        slice.profile = temple.profile;
+    }
+
+    rejected
+}
+
 /// Keep the stored screen scale when this session has nothing to replace it
 /// with (POE-214 WI-B2).
 ///
@@ -3645,203 +3844,4 @@ pub(crate) mod tests {
         assert_eq!(parsed.anchors, None);
     }
 
-}
-
-/// Apply loaded settings to AppState.
-///
-/// Returns one ready-to-log line per value this build refused, in the order the
-/// fields are applied. Empty on a clean load, which is the common case.
-///
-/// A fallback that leaves no trace is the failure mode this return value
-/// exists for: the file still says `apex_score: NaN`, the module runs on the
-/// Rush, and nothing anywhere tells the user which of the two they are looking
-/// at. There is no error channel here — a rejected value must not become the
-/// running one and a rejected value must not fail the whole load either — so
-/// the rejections come back as text and the caller logs them.
-#[must_use = "a silent settings rejection is the bug this return value exists to prevent"]
-pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<String> {
-    let mut rejected: Vec<String> = Vec::new();
-    let boss_loot = match settings.boss_loot.validate() {
-        Ok(()) => settings.boss_loot.clone(),
-        Err(reason) => { rejected.push(format!("boss loot settings: {reason}; using defaults")); Default::default() }
-    };
-    *state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()) = boss_loot;
-    *state.number_format.lock().unwrap_or_else(|e| e.into_inner()) =
-        crate::loot_capture::NumberFormat::migrate(settings.number_format, settings.ui_prefs.get("numberFormat"));
-    *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = settings.client_txt_path.clone();
-    *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = settings.server_url.clone();
-    *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()) = settings.sidebar_open;
-    *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_warn_secs;
-    *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_critical_secs;
-    *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_auto_refresh_secs;
-    *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.auto_trade_enabled;
-    *state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_mode.clone();
-    *state.compass_strategy.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_strategy.clone();
-    *state.compass_difficulty.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_difficulty.clone();
-    *state.shrine_warn_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_enabled;
-    *state.shrine_warn_size.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_size.clone();
-    *state.shrine_warn_corner.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_corner.clone();
-    *state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_on_take.clone();
-    *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab_overlays_enabled;
-    *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab_mode.clone();
-    *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner()) = settings.autoclear_minutes;
-    *state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()) = settings.dedication_pool.clone();
-    *state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.dedication_variant.clone();
-    *state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.normal_variant.clone();
-    *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()) = settings.show_low_confidence;
-    *state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()) = settings.ui_prefs.clone();
-    // Widget placements, straight through: unlike `modules` there is no
-    // registry default to overlay here — a widget with no entry renders at the
-    // shipped CSS default the frontend registry holds, and an entry for a
-    // widget this build does not declare is simply never looked up.
-    *state.widgets.lock().unwrap_or_else(|e| e.into_inner()) = settings.widgets.clone();
-    // The owner map holds the EFFECTIVE state, not the persisted delta:
-    // registry defaults overlaid with what the user chose (see modules.rs).
-    *state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()) =
-        crate::modules::effective_modules(&settings.modules, &crate::modules::module_lifecycles());
-    // The two temple fields recombine into the one Mutex the module reads. A
-    // profile from a file this build would reject falls back to the default
-    // rather than poisoning every later ranking — and says so, through
-    // `rejected`, because the file and the running value now disagree.
-    //
-    // The Custom TABLE is the one exception, and POE-257 is why: it is 25
-    // independent numbers, not one profile, so a single malformed entry costs
-    // its own room and the other 24 load. `TempleCustomSettings::overrides`
-    // owns that rule and names every entry it refused; the warnings join the
-    // same `rejected` list, so the disagreement between the file and the
-    // running value is reported either way.
-    //
-    // What is STORED is the salvaged table, not the file's own (POE-259). The
-    // echo the editor reads is this value, and the editor writes back a whole
-    // table — so a raw bad entry, or a rate this build cannot apply, would be
-    // handed straight to `TempleCustomSettings::validate`, which refuses the
-    // write over a value the player is not editing and cannot see. The rule
-    // for both halves is `TempleCustomSettings::salvaged`, which is also where
-    // the trade-off is written down: what it changed, having been reported
-    // here, does not survive the next save.
-    //
-    // The warnings are about a table that may not be the one in force, so each
-    // one says which it is rather than being suppressed. Suppressing them
-    // would hide a fault in a file the player is expected to hand-edit — they
-    // would fix nothing, switch to Custom, and meet the same broken entry with
-    // no history; and the repo's visibility rule is that a flag is added, never
-    // that a finding is hidden.
-    // A block the file could not state at all is reported before the finer
-    // refusals inside it: the user has lost a whole table, not one entry, and
-    // `log::` cannot tell them (see `Salvaged`).
-    if settings.temple_custom.was_salvaged() {
-        rejected.push(
-            "temple custom table was not a table; using defaults (the shipped rates, no overrides)"
-                .to_string(),
-        );
-    }
-    if settings.temple_preset.was_salvaged() {
-        rejected.push("temple preset was not a known preset; using Default".to_string());
-    }
-    let in_force = *settings.temple_preset == crate::temple::preset::Preset::Custom;
-    let (accepted_table, warnings) = settings.temple_custom.salvaged();
-    for warning in warnings {
-        rejected.push(if in_force {
-            warning
-        } else {
-            format!("(Custom table, not in force) {warning}")
-        });
-    }
-    *state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()) =
-        crate::temple::slice::TempleSettings {
-            profile: match settings.temple_profile.validate() {
-                Ok(()) => settings.temple_profile.clone(),
-                Err(why) => {
-                    rejected.push(format!(
-                        "temple settings: profile rejected ({why}), using default"
-                    ));
-                    Default::default()
-                }
-            },
-            config: settings.temple_config.clone(),
-            preset: *settings.temple_preset,
-            custom: accepted_table,
-        };
-
-    // The enabled-guide set (POE-199), with its one-time migration from the
-    // ADR-013 preference. A stored id this build does not know is dropped
-    // rather than failing the load, and says so — the file and the running
-    // value now disagree, which is exactly what `rejected` is for.
-    {
-        let legacy = settings
-            .ui_prefs
-            .get(crate::mercenary::sources::LEGACY_PREF_KEY);
-        let (accepted, refused) = crate::mercenary::sources::migrate_sources_off(
-            settings.merc_sources_off.as_ref(),
-            legacy,
-        );
-        for id in refused {
-            rejected.push(format!(
-                "merc settings: {id:?} is not a guide, ignoring it in the off-list"
-            ));
-        }
-        *state.merc_sources_off.lock().unwrap_or_else(|e| e.into_inner()) = accepted;
-    }
-
-    // The trade auto-search (POE-202). The floor is CLAMPED rather than
-    // refused: a file holding a tier that is not a tier still describes a user
-    // who wants loosening, and failing the load over it would take every other
-    // preference in the file with it.
-    //
-    // Clamped to the nearest legal tier and NOT reset to the default: 0 is a
-    // user asking for the loosest search there is, and answering it with 3 —
-    // the tightest — inverts what the file says. Reported either way, because
-    // the file and the running value now disagree.
-    *state.merc_trade_auto.lock().unwrap_or_else(|e| e.into_inner()) = settings.merc_trade_auto;
-    *state.merc_tier_floor.lock().unwrap_or_else(|e| e.into_inner()) =
-        match crate::mercenary::validate_tier_floor(settings.merc_tier_floor) {
-            Ok(floor) => floor,
-            Err(why) => {
-                let clamped = settings.merc_tier_floor.clamp(1, 3);
-                rejected.push(format!("merc settings: {why}, using {clamped}"));
-                clamped
-            }
-        };
-
-    // The remembered screen scale (POE-214 D2), loaded under `Remembered` so a
-    // consumer can see it was not measured this run. Numbers that cannot
-    // describe a screen are refused rather than loaded — and REPORTED, because
-    // the file and the running value now disagree (see `is_sane`).
-    //
-    // **No prune here, and this is the deliberate half of it.** A value stored
-    // at another monitor's size is left in place: `apply_to_state` has no
-    // `AppHandle`, so the primary monitor's size is not cheaply known at this
-    // seam, and inventing a lock order to go and get one would cost more than
-    // the staleness does. The merc tick is the cure — `ssot::accepts` takes
-    // every frame fit, so the first frame measurement of the real screen
-    // overwrites this seed outright, whatever its dims were. A session that
-    // never measures (merc module off) therefore runs on a `remembered` label,
-    // which is exactly what that label is for: a consumer that cannot afford a
-    // stale screen weighs the label and waits for a measurement.
-    let remembered = match settings.screen_scale {
-        Some(s) if !s.is_sane() => {
-            rejected.push(format!(
-                "screen scale: {}x{} at ui_scale {} is not a screen, ignoring it",
-                s.width, s.height, s.ui_scale
-            ));
-            None
-        }
-        other => other.map(|s| s.to_slice()),
-    };
-    *state.screen.lock().unwrap_or_else(|e| e.into_inner()) = remembered;
-
-    // Seed the slice's settings echo, so the page and the overlay render the
-    // persisted flags and profile from the first poll — including while the
-    // module is OFF and no loop will ever publish them. Taken from the owner
-    // just written rather than from `settings`, so a rejected value is echoed
-    // as the one actually in force. The `temple_settings` guard is released
-    // before `temple` is taken; nothing else locks the two together.
-    let temple = state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    {
-        let mut slice = state.temple.lock().unwrap_or_else(|e| e.into_inner());
-        slice.config = temple.config;
-        slice.profile = temple.profile;
-    }
-
-    rejected
 }
