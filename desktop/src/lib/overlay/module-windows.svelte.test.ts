@@ -46,6 +46,14 @@ function row(label: string, moduleId: string, enabled: boolean | undefined, gran
 	return { label, moduleId, granted: () => granted, enabled: () => enabled, debug: () => false };
 }
 
+function mutableRow(
+	label: string,
+	moduleId: string,
+	inputs: { enabled: boolean | undefined; granted: boolean }
+): ModuleWindowRow {
+	return { label, moduleId, granted: () => inputs.granted, enabled: () => inputs.enabled, debug: () => false };
+}
+
 afterEach(() => {
 	h.created.length = 0;
 });
@@ -107,6 +115,36 @@ describe('createModuleWindows', () => {
 		mw.setSessions({ 'win-a': { shown: true } });
 
 		expect(fakeOf('win-b').wanted()).toBe(false);
+	});
+
+	it('getSessions returns the map setSessions stored', () => {
+		const mw = createModuleWindows([row('win-a', 'mod-a', false, true)]);
+
+		mw.setSessions({ 'win-a': { shown: true } });
+
 		expect(mw.getSessions()).toEqual({ 'win-a': { shown: true } });
+	});
+
+	it('wanted() drops when the module flag turns off on the same table', () => {
+		const inputs = { enabled: true as boolean | undefined, granted: true };
+		createModuleWindows([mutableRow('win-a', 'mod-a', inputs)]);
+		const wanted = fakeOf('win-a').wanted;
+		expect(wanted()).toBe(true);
+
+		inputs.enabled = false;
+
+		expect(wanted()).toBe(false);
+	});
+
+	it('wanted() drops a session-held window when the grant is withdrawn on the same table', () => {
+		const inputs = { enabled: false as boolean | undefined, granted: true };
+		const mw = createModuleWindows([mutableRow('win-a', 'mod-a', inputs)]);
+		mw.setSessions({ 'win-a': { shown: true } });
+		const wanted = fakeOf('win-a').wanted;
+		expect(wanted()).toBe(true);
+
+		inputs.granted = false;
+
+		expect(wanted()).toBe(false);
 	});
 });
