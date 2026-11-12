@@ -30,7 +30,7 @@ func dcRow(name, inputVariant string, profit float64) lab.DoubleCorruptResult {
 		Time: time.Now(), Name: name, InputVariant: inputVariant, Color: "BLUE",
 		InputCost: 10, EV: profit + 10, EVRaw: profit + 10, Profit: profit,
 		PricedProbability: 0.79, UnpricedProbability: 0.21,
-		LiquidityRisk: "LOW", Model: lab.DoubleCorruptModelEstimated,
+		LiquidityRisk: "LOW", Model: lab.DoubleCorruptModelProvisionalDestroy,
 	}
 }
 
@@ -65,9 +65,9 @@ func TestDoubleCorruptAnalysis_WarmCacheServesWithoutQuerying(t *testing.T) {
 	if len(rows) != 1 || rows[0].Name != "Arc of Surging" {
 		t.Fatalf("rows = %+v, want the one cached result", rows)
 	}
-	if rows[0].Model != lab.DoubleCorruptModelEstimated {
-		t.Errorf("model = %q, want %q — a consumer badges these odds as estimates off this field",
-			rows[0].Model, lab.DoubleCorruptModelEstimated)
+	if rows[0].Model != lab.DoubleCorruptModelProvisionalDestroy {
+		t.Errorf("model = %q, want %q — a consumer flags the unverified destroy rate off this field",
+			rows[0].Model, lab.DoubleCorruptModelProvisionalDestroy)
 	}
 }
 
@@ -168,8 +168,9 @@ func TestCompareAnalysis_ServesDoubleCorruptFieldsFromTheWarmCorpus(t *testing.T
 	if row.DoubleCorruptProfit != 750 {
 		t.Errorf("doubleCorruptProfit = %v, want 750", row.DoubleCorruptProfit)
 	}
-	if row.DoubleCorruptModel != lab.DoubleCorruptModelEstimated {
-		t.Errorf("doubleCorruptModel = %q, want %q", row.DoubleCorruptModel, lab.DoubleCorruptModelEstimated)
+	if row.DoubleCorruptModel != lab.DoubleCorruptModelProvisionalDestroy {
+		t.Errorf("doubleCorruptModel = %q, want %q — a consumer flags the unverified destroy rate off this field",
+			row.DoubleCorruptModel, lab.DoubleCorruptModelProvisionalDestroy)
 	}
 }
 

@@ -5,7 +5,7 @@
 	import { hasTradeListings, toListingRow } from '$lib/tradeApi';
 	import { SIGNAL_TOOLTIPS } from '$lib/tooltips';
 	import { formatPrice, formatPriceSigned } from '$lib/price.svelte';
-	import { showsDoubleCorruptCard, doubleCorruptHeadline } from '$lib/double-corrupt-card';
+	import { showsDoubleCorruptCard, doubleCorruptHeadline, doubleCorruptEvTooltip, doubleCorruptCoverageTooltip } from '$lib/double-corrupt-card';
 	import { store } from '$lib/stores/status.svelte';
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import { createComparatorController, productionDependencies } from '$lib/comparator/controller.svelte';
@@ -447,15 +447,15 @@
 						Double-corruption (POE-125). Shown on every gem the server priced
 						at a profit, tiebreak winner or not: a gem that is weak at this
 						variant but strong corrupted is the whole case this feature
-						exists for. The visibility rule and the headline's wording live in
+						exists for. The visibility rule, the headline's wording and the tooltip copy live in
 						$lib/double-corrupt-card, where they are tested.
 					-->
 					{#if showsDoubleCorruptCard(gem)}
 						<div class="dc-candidate">
 							<span class="dc-headline">{doubleCorruptHeadline(gem)}</span>
-							<Tooltip text="Estimated: double-corruption odds come from community documentation, not from GGG. Read it as a rough expected value, not a price."><span class="dc-numbers">est. ~{formatPrice(gem.doubleCorruptEv)} corrupted &middot; {formatPriceSigned(gem.doubleCorruptProfit)} vs selling here</span></Tooltip>
+							<Tooltip text={doubleCorruptEvTooltip(gem)}><span class="dc-numbers">est. ~{formatPrice(gem.doubleCorruptEv)} corrupted &middot; {formatPriceSigned(gem.doubleCorruptProfit)} vs selling here</span></Tooltip>
 							{#if gem.doubleCorruptPricedProbability > 0}
-								<Tooltip text="The estimate only counts outcomes the corrupted market prices. The rest is mostly structural — poe.ninja lists no corrupted gem below level 20, and a bad quality roll lands there."><span class="dc-coverage">covers {Math.round(gem.doubleCorruptPricedProbability * 100)}% of outcomes</span></Tooltip>
+								<Tooltip text={doubleCorruptCoverageTooltip(gem)}><span class="dc-coverage">covers {Math.round(gem.doubleCorruptPricedProbability * 100)}% of outcomes</span></Tooltip>
 							{/if}
 						</div>
 					{/if}

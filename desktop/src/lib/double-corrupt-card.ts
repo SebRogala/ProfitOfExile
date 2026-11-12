@@ -1,5 +1,11 @@
 import type { CompareGem } from './api';
 
+/**
+ * The marker of results whose EV also carries a guessed destroy chance.
+ * Mirrors lab.DoubleCorruptModelProvisionalDestroy (internal/lab/doublecorrupt.go).
+ */
+export const DOUBLE_CORRUPT_MODEL_PROVISIONAL_DESTROY = 'estimated-provisional-destroy';
+
 /** The fields the double-corrupt card's copy is decided from. */
 export type DoubleCorruptCardGem = Pick<
 	CompareGem,
@@ -37,4 +43,27 @@ export function doubleCorruptHeadline(gem: DoubleCorruptCardGem): string {
 		return 'Strong double-corrupt candidate';
 	}
 	return `Weak as ${gem.variant}, ${strong}`;
+}
+
+/**
+ * The EV line's tooltip. A provisional-destroy result also rests on a guessed
+ * destroy chance; rows stored before that outcome existed keep their own copy.
+ * Tooltip renders this through innerHTML, so the copy holds no markup characters.
+ */
+export function doubleCorruptEvTooltip(gem: Pick<CompareGem, 'doubleCorruptModel'>): string {
+	if (gem.doubleCorruptModel === DOUBLE_CORRUPT_MODEL_PROVISIONAL_DESTROY) {
+		return 'Estimated: double-corruption odds come from community documentation, not from GGG. The chance that the corruption destroys the gem is guessed, not measured (a destroyed gem counts as nothing); it will be corrected when 3.30 data arrives. Read it as a rough expected value, not a price.';
+	}
+	return 'Estimated: double-corruption odds come from community documentation, not from GGG. Read it as a rough expected value, not a price.';
+}
+
+/**
+ * The coverage line's tooltip. With the destroy outcome, destroyed gems are part
+ * of the unpriced remainder, so "mostly structural" holds only for older rows.
+ */
+export function doubleCorruptCoverageTooltip(gem: Pick<CompareGem, 'doubleCorruptModel'>): string {
+	if (gem.doubleCorruptModel === DOUBLE_CORRUPT_MODEL_PROVISIONAL_DESTROY) {
+		return 'The estimate only counts outcomes the corrupted market prices. The rest is gems the corruption destroys, at an unverified guessed rate, and outcomes poe.ninja does not list — it lists no corrupted gem below level 20, and a bad quality roll lands there.';
+	}
+	return 'The estimate only counts outcomes the corrupted market prices. The rest is mostly structural — poe.ninja lists no corrupted gem below level 20, and a bad quality roll lands there.';
 }

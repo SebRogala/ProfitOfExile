@@ -243,7 +243,9 @@ export interface CompareGem {
 	/**
 	 * Double-corruption at Doryani's Institute (POE-125), in chaos.
 	 *
-	 * `doubleCorruptModel` is the server's honesty marker ('estimated'): the odds
+	 * `doubleCorruptModel` is the server's honesty marker
+	 * (`'estimated-provisional-destroy'` on current results — the destroy chance
+	 * is a guess, too; `'estimated'` on rows computed before POE-378): the odds
 	 * behind these numbers come from community documentation, not from GGG, so no
 	 * surface may render them as a settled price. Empty when the server did not
 	 * model this gem at this variant — that is the flag to test before showing
