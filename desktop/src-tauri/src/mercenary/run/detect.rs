@@ -381,6 +381,9 @@ fn capture_location(
         img.dimensions()
     };
     let screen = [iw, ih];
+    if let Some(line) = admit_oversize_frame(&mut session.errors, iw, ih, crate::ocr::max_image_dimension()) {
+        crate::app_log(app, line);
+    }
     // Before ANY remembered geometry is read (POE-227). `iw`/`ih` are the whole
     // grab's dimensions even on a cropped tick — the platform layer captures a
     // monitor, and only the OCR view is narrowed below — so this is the screen's
@@ -453,11 +456,6 @@ fn capture_location(
             full_frame = true;
             view = &img;
             frame = geometry::Frame::full(screen);
-            if let Some(msg) = super::oversize_frame_warning(iw, ih, crate::ocr::max_image_dimension()) {
-                if let Some(line) = session.errors.admit(&msg) {
-                    crate::app_log(app, line);
-                }
-            }
             let lines = match crate::ocr::recognize_lines(view) {
                 Ok(lines) => frame.to_screen(lines),
                 Err(e) => {

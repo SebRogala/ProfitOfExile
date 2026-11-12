@@ -1063,13 +1063,19 @@ impl OnceLog {
 }
 
 /// The warning for a frame the OCR engine will refuse, or `None` when it fits
-/// (POE-361). Only the full-frame locate hands OCR the raw grab; every other
-/// merc read is a crop of it, so it cannot be larger.
+/// (POE-361). Checked on the raw grab: every merc OCR input is that frame or a
+/// crop of it, and a crop is never larger.
 pub(super) fn oversize_frame_warning(w: u32, h: u32, limit: Option<u32>) -> Option<String> {
     let limit = limit?;
     (w > limit || h > limit).then(|| {
-        format!("Merc: frame {w}x{h} exceeds the OCR limit of {limit} px — the full-screen locate will fail")
+        format!("Merc: frame {w}x{h} exceeds the OCR limit of {limit} px — merc detection OCR on it may fail")
     })
+}
+
+/// The line a merc grab of `w`×`h` logs, at most once per distinct size and
+/// limit per session (POE-361).
+pub(super) fn admit_oversize_frame(log: &mut OnceLog, w: u32, h: u32, limit: Option<u32>) -> Option<String> {
+    log.admit(&oversize_frame_warning(w, h, limit)?)
 }
 
 /// The screen region a hover-confirm OCRs, clamped to the screen (D5).
@@ -3403,6 +3409,9 @@ fn probe_tick(
         use image::GenericImageView;
         img.dimensions()
     };
+    if let Some(line) = admit_oversize_frame(&mut session.errors, iw, ih, crate::ocr::max_image_dimension()) {
+        crate::app_log(app, line);
+    }
     let screen = [iw, ih];
     let grabbed_on = (grab.monitor_id, grab.origin, grab.client);
     crate::ssot::drop_if_mismatched(app, (iw, ih), grabbed_on.1, grabbed_on.2);
@@ -5512,7 +5521,7 @@ mod tests {
     fn a_frame_wider_than_the_ocr_limit_is_warned_about_with_its_size_and_the_limit() {
         assert_eq!(
             oversize_frame_warning(10_001, 4320, Some(10_000)).as_deref(),
-            Some("Merc: frame 10001x4320 exceeds the OCR limit of 10000 px — the full-screen locate will fail")
+            Some("Merc: frame 10001x4320 exceeds the OCR limit of 10000 px — merc detection OCR on it may fail")
         );
     }
 
@@ -5524,6 +5533,16 @@ mod tests {
     #[test]
     fn a_frame_exactly_at_the_ocr_limit_gets_no_warning() {
         assert_eq!(oversize_frame_warning(10_000, 10_000, Some(10_000)), None);
+    }
+
+    #[test]
+    fn an_oversize_grab_is_logged_once_per_distinct_size_across_repeated_ticks() {
+        let mut log = OnceLog::default();
+
+        assert!(admit_oversize_frame(&mut log, 10_001, 4320, Some(10_000)).is_some());
+        assert_eq!(admit_oversize_frame(&mut log, 10_001, 4320, Some(10_000)), None);
+        assert!(admit_oversize_frame(&mut log, 10_002, 4320, Some(10_000)).is_some());
+        assert_eq!(admit_oversize_frame(&mut log, 3840, 2160, Some(10_000)), None);
     }
 
     #[test]
