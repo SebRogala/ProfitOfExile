@@ -73,6 +73,26 @@ pub fn record_language_warning_globally(warning: &str) -> bool {
     record_language_warning(&OCR_LANGUAGE_WARNING, Some(warning.to_string()))
 }
 
+/// One OCR line with its bounding rect, in screen px.
+///
+/// The Windows OCR path builds these by merging an `OcrLine`'s words'
+/// `BoundingRect()`s (WI-3); nothing that reads them cares where they came
+/// from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OcrLineBox {
+    pub text: String,
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl OcrLineBox {
+    pub fn centre_y(&self) -> f32 {
+        self.y as f32 + self.h as f32 / 2.0
+    }
+}
+
 #[cfg(windows)]
 mod platform {
     use image::DynamicImage;
@@ -83,7 +103,7 @@ mod platform {
     use windows::Globalization::Language;
     use windows::core::HSTRING;
 
-    use crate::mercenary::geometry::OcrLineBox;
+    use super::OcrLineBox;
 
     use std::cell::RefCell;
 
@@ -373,7 +393,7 @@ mod platform {
 mod platform {
     use image::DynamicImage;
 
-    use crate::mercenary::geometry::OcrLineBox;
+    use super::OcrLineBox;
 
     /// The one message every non-Windows OCR entry point returns, so the merc
     /// loop's `unavailable` status and the debug command's error read the same.

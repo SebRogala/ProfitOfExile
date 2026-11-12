@@ -3721,7 +3721,7 @@ fn panel_text(
     img: &DynamicImage,
     layout: &TempleLayout,
     wanted: &[&'static str],
-) -> Option<Vec<crate::mercenary::geometry::OcrLineBox>> {
+) -> Option<Vec<crate::ocr::OcrLineBox>> {
     let mut lines = Vec::new();
     for (name, rect) in text_regions(layout) {
         if !wanted.contains(&name) {

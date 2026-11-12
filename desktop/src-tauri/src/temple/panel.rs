@@ -54,7 +54,7 @@ use strsim::jaro_winkler;
 
 use super::lattice::{Lattice, Slot};
 use super::rooms::{self, Match, OfferKind, RoomIdentity};
-use crate::mercenary::geometry::OcrLineBox;
+use crate::ocr::OcrLineBox;
 
 /// Jaro-Winkler score a single **word** must reach to count as one of the
 /// panel's fixed keywords (`kill`, `to`, `change`, `upgrade`, `incursions`,

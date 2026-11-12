@@ -70,7 +70,8 @@ use crate::modules::ModuleJoin;
 use crate::AppState;
 
 use super::cellfit::{self, FitSource, FittedScale};
-use super::geometry::{self, OcrLineBox};
+use super::geometry;
+use crate::ocr::OcrLineBox;
 use super::icons::{CellSig, LearnOutcome, LoadedStore, Origin, Rekeyed, TemplateStore};
 use super::read::{
     build_planned, capture_complete, carry_capture, fold_header, fold_unresolved_header,
@@ -3027,7 +3028,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // manual one ([`locate_decision`]). With no placement the probe OCRs
         // nothing and hands the frame to the cold-start locate.
         let mut probed: Option<crate::capture::Capture> = None;
-        let mut probed_lines: Option<Vec<geometry::OcrLineBox>> = None;
+        let mut probed_lines: Option<Vec<crate::ocr::OcrLineBox>> = None;
         // When the probe's GRAB started, on the iterations a hit hands that
         // grab to the detect below. See the timing comment there.
         let mut probe_started: Option<Instant> = None;
@@ -3393,7 +3394,7 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
 fn probe_tick(
     app: &AppHandle,
     session: &mut Session,
-) -> (DetectTick, Option<crate::capture::Capture>, Option<Vec<geometry::OcrLineBox>>) {
+) -> (DetectTick, Option<crate::capture::Capture>, Option<Vec<crate::ocr::OcrLineBox>>) {
     let tick = DetectTick::probe();
 
     let started = Instant::now();

@@ -14,7 +14,7 @@ use super::super::read::ReadResult;
 type GrabbedOn = (u32, (i32, i32), [i32; 4]);
 type PlacedReadData = (
     ([i32; 4], f32),
-    Vec<geometry::OcrLineBox>,
+    Vec<crate::ocr::OcrLineBox>,
     Result<geometry::MercLayout, geometry::DetectMiss>,
 );
 
@@ -68,7 +68,7 @@ struct ReadStage {
 
 fn placed_read_with<O, E>(
     placement: Option<([i32; 4], f32)>,
-    probed_lines: Option<Vec<geometry::OcrLineBox>>,
+    probed_lines: Option<Vec<crate::ocr::OcrLineBox>>,
     view: &image::DynamicImage,
     frame: geometry::Frame,
     merc_geometry: &MercGeometry,
@@ -77,7 +77,7 @@ fn placed_read_with<O, E>(
     recognize: O,
 ) -> Result<Option<PlacedReadData>, E>
 where
-    O: FnOnce(&image::DynamicImage) -> Result<Vec<geometry::OcrLineBox>, E>,
+    O: FnOnce(&image::DynamicImage) -> Result<Vec<crate::ocr::OcrLineBox>, E>,
 {
     let Some((panel, scale)) = placement else {
         return Ok(None);
@@ -326,7 +326,7 @@ pub(super) fn detect_tick(
     cursor: Option<(i32, i32)>,
     cancel: &watch::Receiver<bool>,
     grabbed: Option<crate::capture::Capture>,
-    probed_lines: Option<Vec<geometry::OcrLineBox>>,
+    probed_lines: Option<Vec<crate::ocr::OcrLineBox>>,
     tick_started: Option<Instant>,
     gate: trigger::GateStep,
 ) -> DetectTick {
@@ -355,7 +355,7 @@ fn capture_location(
     session: &mut Session,
     cursor: Option<(i32, i32)>,
     grabbed: Option<crate::capture::Capture>,
-    probed_lines: Option<Vec<geometry::OcrLineBox>>,
+    probed_lines: Option<Vec<crate::ocr::OcrLineBox>>,
     tick_started: Option<Instant>,
     gate: trigger::GateStep,
 ) -> Result<CaptureLocation, DetectTick> {
@@ -1441,7 +1441,7 @@ mod tests {
         let image = image::DynamicImage::new_rgba8(200, 200);
         let frame = geometry::Frame::full([200, 200]);
         let geometry = MercGeometry::default();
-        let probe_lines = vec![geometry::OcrLineBox {
+        let probe_lines = vec![crate::ocr::OcrLineBox {
             text: "Ice Shot".into(),
             x: 20,
             y: 40,

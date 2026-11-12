@@ -986,7 +986,7 @@ pub(super) const PC_SCREEN: [u32; 2] = [1920, 1080];
 /// at UI scale 0.90 — and `icons`' corpus readers need both halves of it to
 /// cut a cell at a scale no committed crop was harvested at (POE-214 Part C).
 #[cfg(test)]
-pub(super) fn pc_lines() -> Vec<super::geometry::OcrLineBox> {
+pub(super) fn pc_lines() -> Vec<crate::ocr::OcrLineBox> {
     use super::geometry::test_line;
     vec![
         test_line("Wager: 8 831", 700, 580),
@@ -1011,18 +1011,18 @@ pub(super) const SORYN_SCREEN: [u32; 2] = [1920, 1080];
 pub(super) const SORYN_SCALE: f32 = 0.90093094;
 
 #[cfg(test)]
-pub(super) fn soryn_lines() -> Vec<super::geometry::OcrLineBox> {
+pub(super) fn soryn_lines() -> Vec<crate::ocr::OcrLineBox> {
     vec![
-        super::geometry::OcrLineBox { text: "Nager: 6 832".into(), x: 698, y: 209, w: 114, h: 19 },
-        super::geometry::OcrLineBox { text: "FROST BOMB".into(), x: 743, y: 611, w: 76, h: 11 },
-        super::geometry::OcrLineBox { text: "FROSTBITE".into(), x: 743, y: 654, w: 61, h: 11 },
-        super::geometry::OcrLineBox { text: "ICESTORM".into(), x: 743, y: 698, w: 60, h: 11 },
-        super::geometry::OcrLineBox { text: "FROSTBOLT".into(), x: 743, y: 741, w: 65, h: 11 },
-        super::geometry::OcrLineBox { text: "LIGHTNING WARP".into(), x: 743, y: 785, w: 112, h: 11 },
-        super::geometry::OcrLineBox { text: "PURITY OF ICE".into(), x: 743, y: 828, w: 84, h: 11 },
-        super::geometry::OcrLineBox { text: "Should Recruit@".into(), x: 1060, y: 199, w: 158, h: 29 },
-        super::geometry::OcrLineBox { text: "TAKE ITEM".into(), x: 732, y: 881, w: 81, h: 12 },
-        super::geometry::OcrLineBox { text: "REMATCH".into(), x: 875, y: 881, w: 74, h: 12 },
+        crate::ocr::OcrLineBox { text: "Nager: 6 832".into(), x: 698, y: 209, w: 114, h: 19 },
+        crate::ocr::OcrLineBox { text: "FROST BOMB".into(), x: 743, y: 611, w: 76, h: 11 },
+        crate::ocr::OcrLineBox { text: "FROSTBITE".into(), x: 743, y: 654, w: 61, h: 11 },
+        crate::ocr::OcrLineBox { text: "ICESTORM".into(), x: 743, y: 698, w: 60, h: 11 },
+        crate::ocr::OcrLineBox { text: "FROSTBOLT".into(), x: 743, y: 741, w: 65, h: 11 },
+        crate::ocr::OcrLineBox { text: "LIGHTNING WARP".into(), x: 743, y: 785, w: 112, h: 11 },
+        crate::ocr::OcrLineBox { text: "PURITY OF ICE".into(), x: 743, y: 828, w: 84, h: 11 },
+        crate::ocr::OcrLineBox { text: "Should Recruit@".into(), x: 1060, y: 199, w: 158, h: 29 },
+        crate::ocr::OcrLineBox { text: "TAKE ITEM".into(), x: 732, y: 881, w: 81, h: 12 },
+        crate::ocr::OcrLineBox { text: "REMATCH".into(), x: 875, y: 881, w: 74, h: 12 },
     ]
 }
 
@@ -1047,8 +1047,8 @@ pub(super) const K4_PANEL: [i32; 4] = [1448, 1107, 999, 859];
 /// The 4K panel's OCR lines as the dump's `report.json` recorded them: the
 /// wager anchor, the six skill names and the footer buttons.
 #[cfg(test)]
-pub(super) fn k4_lines() -> Vec<super::geometry::OcrLineBox> {
-    use super::geometry::OcrLineBox as L;
+pub(super) fn k4_lines() -> Vec<crate::ocr::OcrLineBox> {
+    use crate::ocr::OcrLineBox as L;
     vec![
         L { text: "Wager: 8,091".into(), x: 1412, y: 418, w: 212, h: 36 },
         L { text: "Should Recruit@".into(), x: 2116, y: 399, w: 318, h: 56 },
@@ -1198,7 +1198,7 @@ pub(super) fn both_registrations(
     file: &str,
     origin: (i32, i32),
     screen: [u32; 2],
-    lines: Vec<super::geometry::OcrLineBox>,
+    lines: Vec<crate::ocr::OcrLineBox>,
 ) -> (DynamicImage, Frame, MercLayout, Refined) {
     let g = MercGeometry::default();
     let img = fixture(file);
@@ -1371,7 +1371,8 @@ pub(super) fn labelled_fixture_cells() -> Vec<LabelledCell> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mercenary::geometry::{detect, reference_lines, OcrLineBox};
+    use crate::mercenary::geometry::{detect, reference_lines};
+    use crate::ocr::OcrLineBox;
     use crate::mercenary::icons::read_tier;
     use crate::mercenary::seed;
     use image::Rgba;

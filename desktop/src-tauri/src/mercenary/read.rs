@@ -1309,7 +1309,8 @@ fn name_band(row: &MercLayoutRow, layout: &MercLayout, g: &MercGeometry) -> [i32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mercenary::geometry::{detect, OcrLineBox, NAME_CROP_LEAD};
+    use crate::mercenary::geometry::{detect, NAME_CROP_LEAD};
+    use crate::ocr::OcrLineBox;
     use image::{Rgba, RgbaImage};
 
     fn vocab() -> MercVocab {

@@ -28,7 +28,8 @@ use image::{DynamicImage, GenericImageView, Rgba};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use super::geometry::{self, Frame, OcrLineBox};
+use super::geometry::{self, Frame};
+use crate::ocr::OcrLineBox;
 use super::read::{build_capture, crop_rgba, pass2_texts, CellDebug};
 use super::run::{now_ms, publish};
 use super::vocab::MercVocab;

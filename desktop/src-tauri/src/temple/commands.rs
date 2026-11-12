@@ -535,7 +535,7 @@ fn debug_capture_blocking(
     let regions = super::run::text_regions(&layout);
     report.panel_rect = Some(regions[0].1);
     report.remaining_rect = Some(regions[1].1);
-    let mut lines: Vec<crate::mercenary::geometry::OcrLineBox> = Vec::new();
+    let mut lines: Vec<crate::ocr::OcrLineBox> = Vec::new();
     let mut dumped: Vec<DumpRegion> = Vec::new();
     for (name, rect) in regions {
         let Some((crop, origin)) = super::run::crop_clipped(&img, rect) else {
@@ -756,7 +756,7 @@ pub struct OcrLinesDump {
 }
 
 /// One OCR line, for the dump.
-fn dump_line(line: &crate::mercenary::geometry::OcrLineBox) -> DumpLine {
+fn dump_line(line: &crate::ocr::OcrLineBox) -> DumpLine {
     DumpLine {
         text: line.text.clone(),
         rect: [line.x, line.y, line.w, line.h],

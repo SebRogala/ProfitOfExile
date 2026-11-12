@@ -326,11 +326,11 @@ pub struct TempleSettings {
 /// What the module is doing, in the one field a page can switch on.
 ///
 /// `Error` carries no message: the text lives in [`TempleSlice::last_error`],
-/// matching [`crate::mercenary::MercStatus`]. One flat string enum keeps the
+/// matching the mercenary module's `MercStatus`. One flat string enum keeps the
 /// TypeScript side a plain union instead of a tagged one, and the two fields
 /// are written together in the same publish.
 ///
-/// `snake_case` wire strings, matching [`crate::mercenary::MercStatus`] and the
+/// `snake_case` wire strings, matching the mercenary module's `MercStatus` and the
 /// convention `desktop/src/lib/README.md` records for this app's enums
 /// (camelCase FIELDS, snake_case enum VARIANTS). The struct views in this file
 /// keep `camelCase` because that attribute renames their fields, not variants.

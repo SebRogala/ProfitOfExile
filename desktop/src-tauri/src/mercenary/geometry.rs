@@ -18,27 +18,8 @@ use image::GenericImageView;
 use serde::{Deserialize, Serialize};
 
 use super::vocab::MercVocab;
+use crate::ocr::OcrLineBox;
 use super::{MercGeometry, MercHeader, ReadState};
-
-/// One OCR line with its bounding rect, in screen px.
-///
-/// The Windows OCR path builds these by merging an `OcrLine`'s words'
-/// `BoundingRect()`s (WI-3); nothing in this module cares where they came
-/// from.
-#[derive(Debug, Clone, PartialEq)]
-pub struct OcrLineBox {
-    pub text: String,
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
-}
-
-impl OcrLineBox {
-    pub fn centre_y(&self) -> f32 {
-        self.y as f32 + self.h as f32 / 2.0
-    }
-}
 
 /// Where a grabbed frame sits on the screen.
 ///
