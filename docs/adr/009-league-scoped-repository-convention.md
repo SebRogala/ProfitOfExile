@@ -166,9 +166,9 @@ Implementation evidence:
   and `internal/server/handlers/boss_loot.go` (`Submit`) passes that scope to
   the repository. (Evidence amended 2026-11-12, POE-344; decision unchanged.)
 
-## Amended 2026-11-12 (POE-118): fence-loss contract (interim, pending owner)
+## Amended 2026-11-12 (POE-118): fence-loss contract
 
-Status: interim pending owner decision (exit vs stay-up-and-stop-writers).
+Status: final (Operator ruling 2026-11-12): on fence loss the server exits and restarts.
 
 The server supervises its fence connection (the `ServerLockKey` session) every
 `fenceCheckInterval` (5 s) with a `fenceCheckTimeout` (2 s) per check
