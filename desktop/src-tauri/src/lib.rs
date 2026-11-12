@@ -368,11 +368,9 @@ pub struct AppState {
     /// instrument, not a setting, and deliberately not tied to `debug_mode`,
     /// which the owner runs permanently (2026-09-09).
     pub gem_band_dump: std::sync::atomic::AtomicBool,
-    /// Trade staleness thresholds (seconds) — configurable from settings.
-    pub trade_stale_warn_secs: Mutex<u32>,
-    pub trade_stale_critical_secs: Mutex<u32>,
-    pub trade_auto_refresh_secs: Mutex<u32>,
-    pub auto_trade_enabled: Mutex<bool>,
+    /// Trade staleness thresholds and auto-trade — see `settings::TradeSettings`.
+    /// Taken alone.
+    pub trade_settings: Mutex<crate::settings::TradeSettings>,
     /// Aspirant's Trial entry count (reset on Aspirants' Plaza). Font OCR starts at 3.
     pub aspirant_trial_count: AtomicU32,
     /// True when player is inside the labyrinth (between PlazaEntered and LabExited).
@@ -384,13 +382,9 @@ pub struct AppState {
     /// (merc OCR) read this one: over our own window they would otherwise
     /// capture the app itself (measured 2026-08-24).
     pub game_in_foreground: AtomicBool,
-    pub compass_mode: Mutex<String>,
-    pub compass_strategy: Mutex<String>,
-    pub compass_difficulty: Mutex<String>,
-    pub shrine_warn_enabled: Mutex<bool>,
-    pub shrine_warn_size: Mutex<String>,
-    pub shrine_warn_corner: Mutex<String>,
-    pub shrine_warn_on_take: Mutex<String>,
+    /// The compass and shrine-warning selections — see
+    /// `settings::CompassSettings`. Taken alone.
+    pub compass_settings: Mutex<crate::settings::CompassSettings>,
     pub lab_overlays_enabled: Mutex<bool>,
     /// The lab selections — see `settings::LabSettings`. Taken alone.
     pub lab_settings: Mutex<crate::settings::LabSettings>,
@@ -628,6 +622,7 @@ pub struct AppState {
 fn build_status(state: &AppState) -> AppStatus {
     let client_txt_path = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let client_txt_exists = std::path::Path::new(&client_txt_path).exists();
+    let trade = state.trade_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     AppStatus {
         state: format!("{:?}", *state.lab_state.lock().unwrap_or_else(|e| e.into_inner())),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -638,10 +633,10 @@ fn build_status(state: &AppState) -> AppStatus {
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
         game_focused: *state.game_focused.lock().unwrap_or_else(|e| e.into_inner()),
-        trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
-        trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
-        trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
-        auto_trade_enabled: *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()),
+        trade_stale_warn_secs: trade.trade_stale_warn_secs,
+        trade_stale_critical_secs: trade.trade_stale_critical_secs,
+        trade_auto_refresh_secs: trade.trade_auto_refresh_secs,
+        auto_trade_enabled: trade.auto_trade_enabled,
         device_id: state.device_id.clone(),
         device_id_dev_salt: fingerprint::USES_DEV_SALT,
         font_session_rounds: state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner()).rounds.len(),
@@ -1047,9 +1042,12 @@ fn set_sidebar_open(open: bool, app: AppHandle) {
 #[tauri::command]
 fn set_trade_staleness_settings(warn_secs: u32, critical_secs: u32, auto_refresh_secs: u32, app: AppHandle) {
     let state = app.state::<AppState>();
-    *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()) = warn_secs;
-    *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()) = critical_secs;
-    *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()) = auto_refresh_secs;
+    {
+        let mut trade = state.trade_settings.lock().unwrap_or_else(|e| e.into_inner());
+        trade.trade_stale_warn_secs = warn_secs;
+        trade.trade_stale_critical_secs = critical_secs;
+        trade.trade_auto_refresh_secs = auto_refresh_secs;
+    }
     persist_settings(&app);
     emit_status(&app);
 }
@@ -1057,7 +1055,7 @@ fn set_trade_staleness_settings(warn_secs: u32, critical_secs: u32, auto_refresh
 #[tauri::command]
 fn set_auto_trade(enabled: bool, app: AppHandle) {
     let state = app.state::<AppState>();
-    *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()) = enabled;
+    state.trade_settings.lock().unwrap_or_else(|e| e.into_inner()).auto_trade_enabled = enabled;
     persist_settings(&app);
     emit_status(&app);
 }
@@ -1065,50 +1063,47 @@ fn set_auto_trade(enabled: bool, app: AppHandle) {
 #[tauri::command]
 fn get_compass_settings(app: AppHandle) -> serde_json::Value {
     let state = app.state::<AppState>();
-    let mode = state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let strategy = state.compass_strategy.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let difficulty = state.compass_difficulty.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let shrine_enabled = *state.shrine_warn_enabled.lock().unwrap_or_else(|e| e.into_inner());
-    let shrine_size = state.shrine_warn_size.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let shrine_corner = state.shrine_warn_corner.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let shrine_on_take = state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let compass = state.compass_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     serde_json::json!({
-        "mode": mode, "strategy": strategy, "difficulty": difficulty,
-        "shrine_warn_enabled": shrine_enabled,
-        "shrine_warn_size": shrine_size,
-        "shrine_warn_corner": shrine_corner,
-        "shrine_warn_on_take": shrine_on_take,
+        "mode": compass.compass_mode, "strategy": compass.compass_strategy, "difficulty": compass.compass_difficulty,
+        "shrine_warn_enabled": compass.shrine_warn_enabled,
+        "shrine_warn_size": compass.shrine_warn_size,
+        "shrine_warn_corner": compass.shrine_warn_corner,
+        "shrine_warn_on_take": compass.shrine_warn_on_take,
     })
 }
 
 #[tauri::command]
 fn set_compass_mode(mode: String, app: AppHandle) {
     let state = app.state::<AppState>();
-    *state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()) = mode;
+    state.compass_settings.lock().unwrap_or_else(|e| e.into_inner()).compass_mode = mode;
     persist_settings(&app);
 }
 
 #[tauri::command]
 fn set_compass_strategy(strategy: String, app: AppHandle) {
     let state = app.state::<AppState>();
-    *state.compass_strategy.lock().unwrap_or_else(|e| e.into_inner()) = strategy;
+    state.compass_settings.lock().unwrap_or_else(|e| e.into_inner()).compass_strategy = strategy;
     persist_settings(&app);
 }
 
 #[tauri::command]
 fn set_compass_difficulty(difficulty: String, app: AppHandle) {
     let state = app.state::<AppState>();
-    *state.compass_difficulty.lock().unwrap_or_else(|e| e.into_inner()) = difficulty;
+    state.compass_settings.lock().unwrap_or_else(|e| e.into_inner()).compass_difficulty = difficulty;
     persist_settings(&app);
 }
 
 #[tauri::command]
 fn set_shrine_warn(enabled: bool, size: String, corner: String, on_take: String, app: AppHandle) {
     let state = app.state::<AppState>();
-    *state.shrine_warn_enabled.lock().unwrap_or_else(|e| e.into_inner()) = enabled;
-    *state.shrine_warn_size.lock().unwrap_or_else(|e| e.into_inner()) = size;
-    *state.shrine_warn_corner.lock().unwrap_or_else(|e| e.into_inner()) = corner;
-    *state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()) = on_take;
+    {
+        let mut compass = state.compass_settings.lock().unwrap_or_else(|e| e.into_inner());
+        compass.shrine_warn_enabled = enabled;
+        compass.shrine_warn_size = size;
+        compass.shrine_warn_corner = corner;
+        compass.shrine_warn_on_take = on_take;
+    }
     persist_settings(&app);
 }
 
@@ -3386,20 +3381,11 @@ pub fn run() {
         focus_poller_stop: Mutex::new(None),
         debug_mode: Mutex::new(false),
         gem_band_dump: std::sync::atomic::AtomicBool::new(false),
-        trade_stale_warn_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_WARN_SECS),
-        trade_stale_critical_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_CRITICAL_SECS),
-        trade_auto_refresh_secs: Mutex::new(settings::DEFAULT_TRADE_AUTO_REFRESH_SECS),
-        auto_trade_enabled: Mutex::new(false),
+        trade_settings: Mutex::new(settings::TradeSettings::default()),
         aspirant_trial_count: AtomicU32::new(0),
         in_lab: AtomicBool::new(false),
         game_in_foreground: AtomicBool::new(false),
-        compass_mode: Mutex::new(String::from("minimap")),
-        compass_strategy: Mutex::new(String::from("shortest")),
-        compass_difficulty: Mutex::new(String::from("Uber")),
-        shrine_warn_enabled: Mutex::new(true),
-        shrine_warn_size: Mutex::new(String::from("medium")),
-        shrine_warn_corner: Mutex::new(String::from("bottom-right")),
-        shrine_warn_on_take: Mutex::new(String::from("green")),
+        compass_settings: Mutex::new(settings::CompassSettings::default()),
         lab_overlays_enabled: Mutex::new(true),
         lab_settings: Mutex::new(settings::LabSettings::default()),
         ui_prefs: Mutex::new(std::collections::HashMap::new()),
@@ -4464,7 +4450,7 @@ mod tests {
             #[test]
             fn $name() {
                 let state = crate::settings::tests::test_app_state();
-                *state.$field.lock().unwrap() = $value;
+                state.trade_settings.lock().unwrap().$field = $value;
                 assert_eq!(super::build_status(&state).$field, $value);
             }
         )*};

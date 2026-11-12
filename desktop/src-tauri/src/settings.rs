@@ -12,6 +12,59 @@ use tauri::Manager;
 
 const SETTINGS_FILENAME: &str = "settings.json";
 
+/// The trade staleness selections, owned by `AppState.trade_settings`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TradeSettings {
+    /// Yellow indicator threshold for trade data age (seconds).
+    pub trade_stale_warn_secs: u32,
+    /// Red indicator threshold for trade data age (seconds).
+    pub trade_stale_critical_secs: u32,
+    /// Auto-refresh trade data after this many seconds.
+    pub trade_auto_refresh_secs: u32,
+    /// Whether auto-trade is enabled (fetch trade data automatically on compare).
+    pub auto_trade_enabled: bool,
+}
+
+impl Default for TradeSettings {
+    fn default() -> Self {
+        Self {
+            trade_stale_warn_secs: DEFAULT_TRADE_STALE_WARN_SECS,
+            trade_stale_critical_secs: DEFAULT_TRADE_STALE_CRITICAL_SECS,
+            trade_auto_refresh_secs: DEFAULT_TRADE_AUTO_REFRESH_SECS,
+            auto_trade_enabled: false,
+        }
+    }
+}
+
+/// The compass and shrine-warning selections, owned by
+/// `AppState.compass_settings`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CompassSettings {
+    pub compass_mode: String,
+    pub compass_strategy: String,
+    pub compass_difficulty: String,
+    pub shrine_warn_enabled: bool,
+    pub shrine_warn_size: String,
+    pub shrine_warn_corner: String,
+    pub shrine_warn_on_take: String,
+}
+
+impl Default for CompassSettings {
+    fn default() -> Self {
+        Self {
+            compass_mode: String::from("minimap"),
+            compass_strategy: String::from("darkshrines-on-route"),
+            compass_difficulty: String::from("Uber"),
+            shrine_warn_enabled: true,
+            shrine_warn_size: String::from("medium"),
+            shrine_warn_corner: String::from("bottom-right"),
+            shrine_warn_on_take: String::from("green"),
+        }
+    }
+}
+
 /// The lab page's persisted selections, owned by `AppState.lab_settings`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -76,21 +129,13 @@ pub struct Settings {
     pub mercenary_overlay: Option<OverlaySettings>,
     /// Master toggle for all lab overlays (compass + pathstrip + timer).
     pub lab_overlays_enabled: bool,
-    /// Yellow indicator threshold for trade data age (seconds).
-    pub trade_stale_warn_secs: u32,
-    /// Red indicator threshold for trade data age (seconds).
-    pub trade_stale_critical_secs: u32,
-    /// Auto-refresh trade data after this many seconds.
-    pub trade_auto_refresh_secs: u32,
-    /// Whether auto-trade is enabled (fetch trade data automatically on compare).
-    pub auto_trade_enabled: bool,
-    pub compass_mode: String,
-    pub compass_strategy: String,
-    pub compass_difficulty: String,
-    pub shrine_warn_enabled: bool,
-    pub shrine_warn_size: String,
-    pub shrine_warn_corner: String,
-    pub shrine_warn_on_take: String,
+    /// The trade staleness selections, flattened so the file keeps their flat
+    /// keys at this position — see `TradeSettings`.
+    #[serde(flatten)]
+    pub trade: TradeSettings,
+    /// The compass selections, flattened like `trade` — see `CompassSettings`.
+    #[serde(flatten)]
+    pub compass: CompassSettings,
     /// Timer overlay background opacity (0.0–1.0, default 0.75).
     pub timer_bg_opacity: Option<f32>,
     /// Timer overlay text stroke/outline enabled (default true).
@@ -684,17 +729,8 @@ impl Default for Settings {
             timer_overlay: None,
             mercenary_overlay: None,
             lab_overlays_enabled: true,
-            trade_stale_warn_secs: DEFAULT_TRADE_STALE_WARN_SECS,
-            trade_stale_critical_secs: DEFAULT_TRADE_STALE_CRITICAL_SECS,
-            trade_auto_refresh_secs: DEFAULT_TRADE_AUTO_REFRESH_SECS,
-            auto_trade_enabled: false,
-            compass_mode: String::from("minimap"),
-            compass_strategy: String::from("darkshrines-on-route"),
-            compass_difficulty: String::from("Uber"),
-            shrine_warn_enabled: true,
-            shrine_warn_size: String::from("medium"),
-            shrine_warn_corner: String::from("bottom-right"),
-            shrine_warn_on_take: String::from("green"),
+            trade: TradeSettings::default(),
+            compass: CompassSettings::default(),
             timer_bg_opacity: None,
             timer_text_stroke: None,
             lab: LabSettings::default(),
@@ -886,7 +922,9 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     // the whole statement, and this one is taken alone (modules.rs "Lock
     // order").
     let owner_modules = state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    // Bound here for the same reason; taken alone.
+    // Bound here for the same reason; each taken alone.
+    let trade = state.trade_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let compass = state.compass_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     Settings {
         boss_loot,
@@ -901,17 +939,8 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         timer_overlay: None,     // Overlay settings saved separately, not from AppState
         mercenary_overlay: None, // Overlay settings saved separately, not from AppState
         lab_overlays_enabled: *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()),
-        trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
-        trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
-        trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
-        auto_trade_enabled: *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()),
-        compass_mode: state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        compass_strategy: state.compass_strategy.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        compass_difficulty: state.compass_difficulty.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        shrine_warn_enabled: *state.shrine_warn_enabled.lock().unwrap_or_else(|e| e.into_inner()),
-        shrine_warn_size: state.shrine_warn_size.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        shrine_warn_corner: state.shrine_warn_corner.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        shrine_warn_on_take: state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        trade,
+        compass,
         timer_bg_opacity: None,    // Appearance settings saved separately, not from AppState
         timer_text_stroke: None,   // Appearance settings saved separately, not from AppState
         lab,
@@ -980,17 +1009,8 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = settings.client_txt_path.clone();
     *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = settings.server_url.clone();
     *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()) = settings.sidebar_open;
-    *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_warn_secs;
-    *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_critical_secs;
-    *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_auto_refresh_secs;
-    *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.auto_trade_enabled;
-    *state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_mode.clone();
-    *state.compass_strategy.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_strategy.clone();
-    *state.compass_difficulty.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_difficulty.clone();
-    *state.shrine_warn_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_enabled;
-    *state.shrine_warn_size.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_size.clone();
-    *state.shrine_warn_corner.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_corner.clone();
-    *state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_on_take.clone();
+    *state.trade_settings.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade.clone();
+    *state.compass_settings.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass.clone();
     *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab_overlays_enabled;
     *state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab.clone();
     *state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()) = settings.ui_prefs.clone();
@@ -1581,20 +1601,11 @@ pub(crate) mod tests {
             focus_poller_stop: Mutex::new(None),
             debug_mode: Mutex::new(false),
             gem_band_dump: AtomicBool::new(false),
-            trade_stale_warn_secs: Mutex::new(DEFAULT_TRADE_STALE_WARN_SECS),
-            trade_stale_critical_secs: Mutex::new(DEFAULT_TRADE_STALE_CRITICAL_SECS),
-            trade_auto_refresh_secs: Mutex::new(DEFAULT_TRADE_AUTO_REFRESH_SECS),
-            auto_trade_enabled: Mutex::new(false),
+            trade_settings: Mutex::new(crate::settings::TradeSettings::default()),
             aspirant_trial_count: AtomicU32::new(0),
             in_lab: AtomicBool::new(false),
             game_in_foreground: AtomicBool::new(false),
-            compass_mode: Mutex::new(String::new()),
-            compass_strategy: Mutex::new(String::new()),
-            compass_difficulty: Mutex::new(String::new()),
-            shrine_warn_enabled: Mutex::new(true),
-            shrine_warn_size: Mutex::new(String::new()),
-            shrine_warn_corner: Mutex::new(String::new()),
-            shrine_warn_on_take: Mutex::new(String::new()),
+            compass_settings: Mutex::new(crate::settings::CompassSettings::default()),
             lab_overlays_enabled: Mutex::new(true),
             lab_settings: Mutex::new(crate::settings::LabSettings::default()),
             ui_prefs: Mutex::new(std::collections::HashMap::new()),
@@ -3836,17 +3847,17 @@ pub(crate) mod tests {
         s.lab_overlays_enabled = false;
         s.timer_bg_opacity = Some(0.5);
         s.timer_text_stroke = Some(false);
-        s.trade_stale_warn_secs = 121;
-        s.trade_stale_critical_secs = 601;
-        s.trade_auto_refresh_secs = 901;
-        s.auto_trade_enabled = true;
-        s.compass_mode = "fixture-mode".into();
-        s.compass_strategy = "fixture-strategy".into();
-        s.compass_difficulty = "fixture-difficulty".into();
-        s.shrine_warn_enabled = false;
-        s.shrine_warn_size = "fixture-size".into();
-        s.shrine_warn_corner = "fixture-corner".into();
-        s.shrine_warn_on_take = "fixture-on-take".into();
+        s.trade.trade_stale_warn_secs = 121;
+        s.trade.trade_stale_critical_secs = 601;
+        s.trade.trade_auto_refresh_secs = 901;
+        s.trade.auto_trade_enabled = true;
+        s.compass.compass_mode = "fixture-mode".into();
+        s.compass.compass_strategy = "fixture-strategy".into();
+        s.compass.compass_difficulty = "fixture-difficulty".into();
+        s.compass.shrine_warn_enabled = false;
+        s.compass.shrine_warn_size = "fixture-size".into();
+        s.compass.shrine_warn_corner = "fixture-corner".into();
+        s.compass.shrine_warn_on_take = "fixture-on-take".into();
         s.lab.lab_mode = "Dedication".into();
         s.lab.autoclear_minutes = 7;
         s.lab.dedication_pool = "transfigured".into();
@@ -3886,17 +3897,17 @@ pub(crate) mod tests {
         a_settings_file_without_dedication_variant_loads_21_23: lab.dedication_variant == "21/23";
         a_settings_file_without_normal_variant_loads_20_20: lab.normal_variant == "20/20";
         a_settings_file_without_show_low_confidence_loads_false: lab.show_low_confidence == false;
-        a_settings_file_without_compass_mode_loads_minimap: compass_mode == "minimap";
-        a_settings_file_without_compass_strategy_loads_darkshrines_on_route: compass_strategy == "darkshrines-on-route";
-        a_settings_file_without_compass_difficulty_loads_uber: compass_difficulty == "Uber";
-        a_settings_file_without_shrine_warn_enabled_loads_true: shrine_warn_enabled == true;
-        a_settings_file_without_shrine_warn_size_loads_medium: shrine_warn_size == "medium";
-        a_settings_file_without_shrine_warn_corner_loads_bottom_right: shrine_warn_corner == "bottom-right";
-        a_settings_file_without_shrine_warn_on_take_loads_green: shrine_warn_on_take == "green";
-        a_settings_file_without_trade_stale_warn_secs_loads_120: trade_stale_warn_secs == 120;
-        a_settings_file_without_trade_stale_critical_secs_loads_600: trade_stale_critical_secs == 600;
-        a_settings_file_without_trade_auto_refresh_secs_loads_900: trade_auto_refresh_secs == 900;
-        a_settings_file_without_auto_trade_enabled_loads_false: auto_trade_enabled == false;
+        a_settings_file_without_compass_mode_loads_minimap: compass.compass_mode == "minimap";
+        a_settings_file_without_compass_strategy_loads_darkshrines_on_route: compass.compass_strategy == "darkshrines-on-route";
+        a_settings_file_without_compass_difficulty_loads_uber: compass.compass_difficulty == "Uber";
+        a_settings_file_without_shrine_warn_enabled_loads_true: compass.shrine_warn_enabled == true;
+        a_settings_file_without_shrine_warn_size_loads_medium: compass.shrine_warn_size == "medium";
+        a_settings_file_without_shrine_warn_corner_loads_bottom_right: compass.shrine_warn_corner == "bottom-right";
+        a_settings_file_without_shrine_warn_on_take_loads_green: compass.shrine_warn_on_take == "green";
+        a_settings_file_without_trade_stale_warn_secs_loads_120: trade.trade_stale_warn_secs == 120;
+        a_settings_file_without_trade_stale_critical_secs_loads_600: trade.trade_stale_critical_secs == 600;
+        a_settings_file_without_trade_auto_refresh_secs_loads_900: trade.trade_auto_refresh_secs == 900;
+        a_settings_file_without_auto_trade_enabled_loads_false: trade.auto_trade_enabled == false;
     }
 
     /// `state` saved through `from_state` and the JSON file, then loaded onto a
@@ -3910,13 +3921,13 @@ pub(crate) mod tests {
     }
 
     macro_rules! state_round_trip {
-        ($($name:ident: $field:ident = $value:expr;)*) => {$(
+        ($($name:ident: $owner:ident.$field:ident = $value:expr;)*) => {$(
             #[test]
             fn $name() {
                 let state = test_app_state();
-                *state.$field.lock().unwrap() = $value.into();
+                state.$owner.lock().unwrap().$field = $value.into();
                 let restarted = restarted_from(&state);
-                assert_eq!(*restarted.$field.lock().unwrap(), $value);
+                assert_eq!(restarted.$owner.lock().unwrap().$field, $value);
             }
         )*};
     }
@@ -3924,17 +3935,17 @@ pub(crate) mod tests {
     // `shrine_warn_enabled` uses the value that differs from `test_app_state`'s,
     // so a dropped mapping line cannot pass by accident.
     state_round_trip! {
-        compass_mode_survives_a_restart: compass_mode = "fixture-mode";
-        compass_strategy_survives_a_restart: compass_strategy = "fixture-strategy";
-        compass_difficulty_survives_a_restart: compass_difficulty = "fixture-difficulty";
-        shrine_warn_enabled_survives_a_restart: shrine_warn_enabled = false;
-        shrine_warn_size_survives_a_restart: shrine_warn_size = "fixture-size";
-        shrine_warn_corner_survives_a_restart: shrine_warn_corner = "fixture-corner";
-        shrine_warn_on_take_survives_a_restart: shrine_warn_on_take = "fixture-on-take";
-        trade_stale_warn_secs_survives_a_restart: trade_stale_warn_secs = 121u32;
-        trade_stale_critical_secs_survives_a_restart: trade_stale_critical_secs = 601u32;
-        trade_auto_refresh_secs_survives_a_restart: trade_auto_refresh_secs = 901u32;
-        auto_trade_enabled_survives_a_restart: auto_trade_enabled = true;
+        compass_mode_survives_a_restart: compass_settings.compass_mode = "fixture-mode";
+        compass_strategy_survives_a_restart: compass_settings.compass_strategy = "fixture-strategy";
+        compass_difficulty_survives_a_restart: compass_settings.compass_difficulty = "fixture-difficulty";
+        shrine_warn_enabled_survives_a_restart: compass_settings.shrine_warn_enabled = false;
+        shrine_warn_size_survives_a_restart: compass_settings.shrine_warn_size = "fixture-size";
+        shrine_warn_corner_survives_a_restart: compass_settings.shrine_warn_corner = "fixture-corner";
+        shrine_warn_on_take_survives_a_restart: compass_settings.shrine_warn_on_take = "fixture-on-take";
+        trade_stale_warn_secs_survives_a_restart: trade_settings.trade_stale_warn_secs = 121u32;
+        trade_stale_critical_secs_survives_a_restart: trade_settings.trade_stale_critical_secs = 601u32;
+        trade_auto_refresh_secs_survives_a_restart: trade_settings.trade_auto_refresh_secs = 901u32;
+        auto_trade_enabled_survives_a_restart: trade_settings.auto_trade_enabled = true;
     }
 
     macro_rules! lab_round_trip {
