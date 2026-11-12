@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { isSource, type TradeLookupResult, type TradeQueueDisplay, type TradeQueueEvent } from '$lib/tradeApi';
 import { floorQuote, quoteDelta, type QueueItem } from '$lib/session-queue';
+import { createLeagueReadGuard } from './league-fence';
 
 interface Selection { variant: string; mode: string; divineRate: number; autoTrade: boolean }
 interface OverlayPayload {
@@ -241,23 +242,11 @@ export function productionDependencies(
 	};
 }
 
-/** Component-owned queue reads use a captured lease; invalidation never writes a second queue. */
-function createLeagueReadGuard() {
-	let generation = 0;
-	return {
-		invalidate() { generation++; },
-		capture() {
-			const mine = generation;
-			return (result?: TradeLookupResult) => mine === generation && (!result || result.league === ssot.league);
-		}
-	};
-}
-
 export function createLabQueueController(dependencies: {
 	queue: { items: QueueItem[] };
 	lookup: (item: QueueItem) => Promise<TradeLookupResult>;
 }) {
-	const guard = createLeagueReadGuard();
+	const guard = createLeagueReadGuard(() => ssot.league);
 	function clear() {
 		guard.invalidate();
 		dependencies.queue.items = [];

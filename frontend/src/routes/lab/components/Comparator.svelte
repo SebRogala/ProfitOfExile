@@ -4,6 +4,7 @@
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { hasTradeListings, lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
+	import { createLeagueReadGuard, createLeagueTransition } from '$lib/comparator/league-fence';
 	import { formatPrice, formatPriceSigned } from '$lib/price.svelte';
 	import { getPairCode, clearPairCode, subscribeToDesktopGems } from '$lib/desktopBridge';
 	import SignalBadge from './SignalBadge.svelte';
@@ -34,19 +35,19 @@
 	let compareGeneration = 0;
 	let disposed = false;
 	const tradeListeners = new Set<() => void>();
-	let loadedLeague: string | undefined;
+	const leagueChanged = createLeagueTransition();
+	const leagueReads = createLeagueReadGuard(() => league);
 	$effect(() => {
 		const current = league;
 		untrack(() => {
-			if (loadedLeague !== undefined && loadedLeague !== current) {
+			if (leagueChanged(current)) {
 				clearAll();
 				void loadResults();
 			}
-			loadedLeague = current;
 		});
 	});
 	$effect(() => () => {
-		disposed = true; requestGeneration++; compareGeneration++;
+		disposed = true; requestGeneration++; leagueReads.invalidate(); compareGeneration++;
 		if (searchDebounce) clearTimeout(searchDebounce);
 		for (const stop of tradeListeners) stop();
 		tradeListeners.clear();
@@ -88,6 +89,7 @@
 	// labels moved.
 	function dropTradeData() {
 		requestGeneration++;
+		leagueReads.invalidate();
 		compareGeneration++;
 		results = [];
 		for (const stop of tradeListeners) stop();
@@ -270,10 +272,11 @@
 	 *  Returns 204 on cache miss (no API call queued). */
 	async function fetchTradeCacheOnly(gem: string) {
 		const generation = requestGeneration;
+		const inLeague = leagueReads.capture();
 		const requestedVariant = variant;
 		try {
 			const { immediate } = await lookupTrade(gem, requestedVariant, false, true);
-			if (!disposed && generation === requestGeneration && immediate?.league === league) {
+			if (!disposed && generation === requestGeneration && immediate !== null && inLeague(immediate)) {
 				tradeData[gem] = immediate;
 			}
 		} catch (err) {

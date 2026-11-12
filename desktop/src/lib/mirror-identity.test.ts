@@ -49,7 +49,7 @@ const ROOTS: MirrorRoot[] = [
 		name: 'lib',
 		desktop: byRelativePath(desktopLib, DESKTOP_LIB),
 		web: byRelativePath(webLib, WEB_LIB),
-		identical: ['trade-utils.ts', 'trade-utils.test.ts', 'price.svelte.ts', 'session-queue.ts'],
+		identical: ['trade-utils.ts', 'trade-utils.test.ts', 'price.svelte.ts', 'session-queue.ts', 'comparator/league-fence.ts', 'comparator/league-fence.test.ts'],
 		divergent: {
 			'api.ts':
 				'transport halves: desktop Tauri base/headers + 5 topics; web same-origin + 2 topics + trade dispatch; web connectMercure keeps positional callbacks and a reopen-only league hint until POE-345 WI-3',
