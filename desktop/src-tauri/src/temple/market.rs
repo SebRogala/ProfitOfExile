@@ -1,9 +1,8 @@
 //! The market read a room valuation is computed against (POE-257).
 //!
 //! POE-255 serves one aggregated, league-keyed object at
-//! `GET /api/analysis/temple-market`: every room-tier's sale delta, every
-//! recipe member's price, and the recipe table that ties them together. This
-//! module is the desktop's mirror of that payload, plus the poll that fetches
+//! `GET /api/analysis/temple-market`: every room-tier's sale delta and every
+//! room unique's price. This module is the desktop's mirror of that payload, plus the poll that fetches
 //! it and publishes it onto the temple slice.
 //!
 //! The poll ([`spawn_temple_market_poll`], POE-258) lives here as its own tokio
@@ -79,7 +78,7 @@ pub struct RoomQuote {
     pub low_confidence: bool,
 }
 
-/// One recipe member's price — a vial, a base unique or an upgraded unique.
+/// One room unique's price.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemQuote {
     /// Chaos price. Zero is legal and means the feed prices it at zero; an item
@@ -94,18 +93,6 @@ pub struct ItemQuote {
     pub window_priced: bool,
 }
 
-/// `vial` + `base` -> `upgraded`. Names only; the prices live in
-/// [`MarketInput::items`] so a member appearing in two recipes is priced once.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Recipe {
-    /// The vial that performs the upgrade.
-    pub vial: String,
-    /// The unique the vial is used on.
-    pub base: String,
-    /// What it becomes.
-    pub upgraded: String,
-}
-
 // --------------------------------------------------------------- the input --
 
 /// One market snapshot, as the valuation reads it.
@@ -114,7 +101,7 @@ pub struct Recipe {
 pub struct MarketInput {
     /// The league the server priced against, as it named it — `"Allflame"` on
     /// the committed capture. Prices are league-local: a Standard read and a
-    /// challenge-league read of the same vial are two different numbers, so the
+    /// challenge-league read of the same unique are two different numbers, so the
     /// value the overlay shows has to be able to say which league it is from
     /// (POE-260), and POE-258 has to notice when the server switches league.
     /// Empty when the payload carried none.
@@ -129,13 +116,11 @@ pub struct MarketInput {
     pub floor: f64,
     /// Room-tiers keyed by `(poe.ninja room name, tier)`.
     pub rooms: BTreeMap<(String, u8), RoomQuote>,
-    /// Priced recipe members, keyed by poe.ninja's own `lines[].name`.
+    /// Priced uniques, keyed by poe.ninja's own `lines[].name`.
     pub items: BTreeMap<String, ItemQuote>,
-    /// Recipe members the feed carries no usable line for. Distinct from
+    /// Uniques the feed carries no usable line for. Distinct from
     /// absent-from-the-payload, and never a zero price.
     pub unpriced: BTreeSet<String>,
-    /// The static vial -> unique recipe table.
-    pub recipes: Vec<Recipe>,
 }
 
 /// How old an observation may be before the read stops pricing anything, in
@@ -164,7 +149,6 @@ impl MarketInput {
             rooms: BTreeMap::new(),
             items: BTreeMap::new(),
             unpriced: BTreeSet::new(),
-            recipes: Vec::new(),
         }
     }
 
@@ -237,7 +221,7 @@ impl MarketInput {
     /// in two units at once and is exactly what the cap exists to prevent.
     ///
     /// Rooms OR items: a payload that carries no room quotes can still price a
-    /// vial, and a valuation that ignored it would throw away the only number
+    /// unique, and a valuation that ignored it would throw away the only number
     /// it had.
     pub fn prices_anything(&self) -> bool {
         self.is_live()
@@ -271,7 +255,7 @@ impl MarketInput {
         }
     }
 
-    /// The price of one recipe member, by poe.ninja's own name for it.
+    /// The price of one unique, by poe.ninja's own name for it.
     ///
     /// `None` for an unpriced item and for every item while the read is stale.
     pub fn price(&self, item: &str) -> Option<&ItemQuote> {
@@ -283,7 +267,7 @@ impl MarketInput {
 
     /// Whether the payload carried this item and could not price it — the
     /// reason a drop term contributes nothing, as opposed to the item simply
-    /// not being in the recipe table.
+    /// not being in the served item set.
     pub fn is_unpriced(&self, item: &str) -> bool {
         self.unpriced.contains(item)
     }
@@ -309,8 +293,6 @@ struct WireMarket {
     rooms: Vec<WireRoom>,
     #[serde(default)]
     items: Vec<WireItem>,
-    #[serde(default)]
-    recipes: Vec<Recipe>,
 }
 
 #[derive(Deserialize)]
@@ -395,7 +377,6 @@ impl From<WireMarket> for MarketInput {
             rooms,
             items,
             unpriced,
-            recipes: wire.recipes,
         }
     }
 }
@@ -430,7 +411,7 @@ pub enum MarketPoll {
     /// read.
     Accepted,
     /// The payload prices a DIFFERENT league. Discarded — a Standard price and
-    /// a challenge-league price for the same vial are two different numbers,
+    /// a challenge-league price for the same unique are two different numbers,
     /// and showing the old server's as current is the failure the DEBUG/PROD
     /// toggle makes reachable in one click.
     WrongLeague,
@@ -763,7 +744,8 @@ pub fn on_server_url_changed(app: &AppHandle) {
 /// server on 2026-09-06, league Allflame — byte-for-byte as it was served.
 ///
 /// Nothing was trimmed: the endpoint's own answer is already exactly the 86
-/// room-tier lines, the 31 recipe members and the 11 recipes, which is what
+/// room-tier lines, the 31 priced items and the 11 vial recipes (inert since
+/// POE-366: the desktop no longer reads `recipes`), which is what
 /// POE-257's brief asked the fixture to be scoped to. Two rooms are above the
 /// floor of 10 c — Locus of Corruption tier 3 at 856 (delta 846) and Doryani's
 /// Institute tier 3 at 400 (delta 390) — and those two numbers are what the
@@ -883,29 +865,29 @@ mod tests {
     fn a_priced_item_carries_its_chaos_and_its_thin_market_flags() {
         let market = allflame();
 
-        let vial = market
-            .price("Vial of Summoning")
-            .expect("the capture prices Vial of Summoning");
+        let unique = market
+            .price("Architect's Hand")
+            .expect("the capture prices Architect's Hand");
 
-        assert_eq!(vial.chaos, 60.0);
-        assert_eq!(vial.listings, 168);
-        assert!(!vial.low_confidence);
-        assert!(!vial.window_priced);
+        assert_eq!(unique.chaos, 75.4);
+        assert_eq!(unique.listings, 214);
+        assert!(!unique.low_confidence);
+        assert!(!unique.window_priced);
     }
 
     #[test]
     fn a_window_priced_item_carries_both_thin_market_flags() {
-        // Vial of Sacrifice is the capture's one thin line: 11 listings, priced
-        // off the 24-hour window rather than the newest print (POE-252).
+        // Zerphi's Heart is a thin line: 29 listings, priced off the 24-hour
+        // window rather than the newest print (POE-252).
         let market = allflame();
 
-        let vial = market
-            .price("Vial of Sacrifice")
-            .expect("the capture prices Vial of Sacrifice");
+        let unique = market
+            .price("Zerphi's Heart")
+            .expect("the capture prices Zerphi's Heart");
 
-        assert_eq!(vial.chaos, 428.0);
-        assert!(vial.low_confidence);
-        assert!(vial.window_priced);
+        assert_eq!(unique.chaos, 1280.0);
+        assert!(unique.low_confidence);
+        assert!(unique.window_priced);
     }
 
     #[test]
@@ -922,7 +904,7 @@ mod tests {
     #[test]
     fn a_negative_price_is_read_as_unpriced() {
         let market: MarketInput = serde_json::from_str(
-            r#"{"floor":10,"rooms":[],"recipes":[],
+            r#"{"floor":10,"rooms":[],
                 "items":[{"name":"Broken","price":{"chaos":-5,"listings":3,
                           "lowConfidence":false,"windowPriced":false},"unpriced":false}]}"#,
         )
@@ -935,7 +917,7 @@ mod tests {
     #[test]
     fn a_null_price_lands_in_the_unpriced_set() {
         let market: MarketInput = serde_json::from_str(
-            r#"{"floor":10,"rooms":[],"recipes":[],
+            r#"{"floor":10,"rooms":[],
                 "items":[{"name":"Nobody Sells This","price":null,"unpriced":true}]}"#,
         )
         .expect("the wire mirror accepts a partial payload");
@@ -948,7 +930,7 @@ mod tests {
     #[test]
     fn a_negative_sale_delta_is_read_as_no_sale() {
         let market: MarketInput = serde_json::from_str(
-            r#"{"floor":10,"items":[],"recipes":[],
+            r#"{"floor":10,"items":[],
                 "rooms":[{"line":"Locus of Corruption","tier":3,"chaos":1,"saleDelta":-9,
                           "aboveFloor":false,"listings":2,"lowConfidence":false}]}"#,
         )
@@ -957,19 +939,25 @@ mod tests {
         assert_eq!(market.sale_delta("Locus of Corruption", tier(3)), 0.0);
     }
 
+    /// POE-366 (decisions T9): a server from before the vial removal still
+    /// serves `recipes` objects carrying `vial`, and vial items. The desktop no
+    /// longer reads either, and the payload must still decode — a decode
+    /// error drops the board to the cold ladder with nothing on screen to say
+    /// why. Fails if `WireMarket` starts refusing unknown fields.
     #[test]
-    fn the_recipe_table_survives_the_mirror() {
-        let market = allflame();
+    fn an_old_server_payload_with_vial_recipes_still_decodes() {
+        let market: MarketInput = serde_json::from_str(
+            r#"{"floor":10,"rooms":[],
+                "recipes":[{"vial":"Vial of Fate","base":"Story of the Vaal",
+                            "upgraded":"Fate of the Vaal"}],
+                "items":[{"name":"Story of the Vaal","price":{"chaos":5,"listings":291,
+                          "lowConfidence":false,"windowPriced":false},"unpriced":false},
+                         {"name":"Vial of Fate","price":{"chaos":1,"listings":343,
+                          "lowConfidence":false,"windowPriced":false},"unpriced":false}]}"#,
+        )
+        .expect("an old server's payload still decodes");
 
-        assert_eq!(market.recipes.len(), 11, "11 vial recipes in the capture");
-        assert!(
-            market.recipes.contains(&Recipe {
-                vial: "Vial of Consequence".to_string(),
-                base: "Coward's Chains".to_string(),
-                upgraded: "Coward's Legacy".to_string(),
-            }),
-            "direction is base + vial -> upgraded"
-        );
+        assert_eq!(market.price("Story of the Vaal").map(|q| q.chaos), Some(5.0));
     }
 
     #[test]
@@ -980,7 +968,7 @@ mod tests {
         assert!(!market.is_live());
         assert!(market.room("Locus of Corruption", tier(3)).is_none());
         assert_eq!(market.sale_delta("Locus of Corruption", tier(3)), 0.0);
-        assert!(market.price("Vial of Summoning").is_none());
+        assert!(market.price("Story of the Vaal").is_none());
     }
 
     /// The capture's own `asOf`, so the ages below are measured from a real
@@ -1039,7 +1027,7 @@ mod tests {
         assert!(market.is_live(), "empty is not the same claim as stale");
         assert_eq!(market.as_of_ms(), None);
         assert_eq!(market.sale_delta("Locus of Corruption", tier(3)), 0.0);
-        assert!(market.price("Vial of Summoning").is_none());
+        assert!(market.price("Story of the Vaal").is_none());
     }
 
     // ----------------------------------- the temple market poll (POE-258) --
@@ -1079,7 +1067,7 @@ mod tests {
     /// so nothing in the payload may be shown as current.
     ///
     /// Fails if the league check is dropped — which is the failure that puts
-    /// last league's vial prices on this league's board after one click of the
+    /// last league's prices on this league's board after one click of the
     /// server toggle.
     #[test]
     fn a_payload_for_another_league_is_discarded() {
@@ -1106,14 +1094,12 @@ mod tests {
     /// The cold server: reachable, 200, and nothing observed yet.
     ///
     /// Told apart from a failed fetch by `asOf` alone, exactly as the endpoint's
-    /// own contract says — the recipe table and the floor rule are served warm
+    /// own contract says — the floor rule is served warm
     /// or cold, so the arrays cannot be the test.
     #[test]
     fn a_cold_server_answer_is_not_mistaken_for_a_priced_one() {
         let cold: MarketInput = serde_json::from_str(
-            r#"{"league":"Allflame","asOf":null,"floor":0,"rooms":[],"items":[],
-                "recipes":[{"vial":"Vial of Consequence","base":"Coward's Chains",
-                            "upgraded":"Coward's Legacy"}]}"#,
+            r#"{"league":"Allflame","asOf":null,"floor":0,"rooms":[],"items":[]}"#,
         )
         .expect("the cold answer parses");
 

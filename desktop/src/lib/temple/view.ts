@@ -42,8 +42,6 @@ import type {
 	ModWorth,
 	OfferView,
 	RankedView,
-	RecipeItemView,
-	RecipeView,
 	RoomValueView,
 	SlotId,
 	SlotView,
@@ -641,8 +639,8 @@ export interface OfferBox {
 	/** The dropped items and the sale, in display order, at most
 	 *  [`FULL_DRIVER_ROWS`]. */
 	drivers: OfferDriver[];
-	/** The unique/vial cells in their fixed two-column order; null means absent. */
-	dropPair: [OfferDriver | null, OfferDriver | null];
+	/** The unique cell, or null where the line drops no unique. */
+	uniqueDrop: OfferDriver | null;
 	/** How many rows there were before the cap — what the collapse rule reads
 	 *  (`offersCompact` in `overlay-geometry.ts`). */
 	driverCount: number;
@@ -655,15 +653,6 @@ export interface OfferBox {
 	 *  line's worth, the player's own number, or a line that drops nothing at
 	 *  all. Null when the rows say it themselves. */
 	note: string | null;
-	/** The vial upgrade for this line's unique, or null. Most lines have none;
-	 *  Locus of Corruption is the case that proves it.
-	 *
-	 *  Since POE-277's v5 the overlay draws only its `upgraded` member, as the
-	 *  third cell of the one item row — the `base → vial → upgraded` chain was
-	 *  redrawing the row's own two icons at half size underneath themselves.
-	 *  The whole object stays here: the Temple page and the tests read all
-	 *  three members, and the cell needs the row it is the result OF. */
-	recipe: OfferRecipe | null;
 	/** The compact form's price strip — `"68 · 41 · 30c"` — or null with no
 	 *  priced driver to put in it. */
 	stripPrices: string | null;
@@ -714,7 +703,7 @@ export type BoxMark = 'F' | 'G';
 export type DriverMark = 'W' | 'L' | 'G';
 
 /** Which term of the value a driver row is — it decides the icon's frame. */
-export type OfferDriverKind = 'sale' | 'unique' | 'vial' | 'mod';
+export type OfferDriverKind = 'sale' | 'unique' | 'mod';
 
 /** One row under the value: what the room drops, and what it goes for. */
 export interface OfferDriver {
@@ -734,13 +723,9 @@ export interface OfferDriver {
 	priced: boolean;
 	/** `"×0.25"`, or null where the term has no count (the sale). */
 	perRun: string | null;
-	/** `"4.8% / run"` or `"1 in ~850 runs"` for a rare unique/vial drop
+	/** `"4.8% / run"` or `"1 in ~850 runs"` for a rare unique drop
 	 *  ([`formatDropRate`]), or null otherwise. */
 	caption: string | null;
-	/** `"as Zerphi's Heart"` when [`price`](Self.price) is BORROWED — an
-	 *  unquoted vial priced at the unique it upgrades into (`standIn` on the
-	 *  wire) — else null. The price then carries a `~`. */
-	source: string | null;
 	marks: DriverMark[];
 }
 
@@ -752,38 +737,12 @@ export interface OfferBonus {
 	amount: string | null;
 }
 
-/** One member of the recipe row. */
-export interface OfferRecipeItem {
-	name: string;
-	/** The poe.ninja name to fetch an icon for — never null here, a recipe
-	 *  member always has one. */
-	iconName: string;
-	/** `"68c"` or `"—"`. */
-	price: string;
-	/** False when [`price`](Self.price) is a refusal rather than a number —
-	 *  the same field, and the same meaning, `OfferDriver.priced` carries.
-	 *  Here so the overlay's item row can style a refusal without matching the
-	 *  refusal STRING: a surface that tests for `'—'` breaks the day the
-	 *  wording changes, and the wording is this file's to change. */
-	priced: boolean;
-}
-
-/** Base unique + vial → upgraded unique, priced. */
-export interface OfferRecipe {
-	base: OfferRecipeItem;
-	vial: OfferRecipeItem;
-	upgraded: OfferRecipeItem;
-}
-
 /**
  * How many driver rows the full form draws (POE-260 design §7).
  *
  * Three. The fourth and beyond fold into one muted line rather than growing
  * the box: the height is designed against the 316 px the panel's own diagonal
- * admits at 1920×1080. The one approved overrun is the borrowed-price line,
- * which takes a box to 323 (`FULL_BOX_BUDGET_CSS`, owner 2026-10-20); the
- * placer lifts such a box 7 px clear of plate C0 rather than covering it. Any
- * other row grows the box past plate C0.
+ * admits at 1920×1080. Any other row grows the box past plate C0.
  */
 export const FULL_DRIVER_ROWS = 3;
 
@@ -842,7 +801,6 @@ function offerState(priced: string): OfferValueState {
 const ROW_KINDS: Record<string, OfferDriverKind> = {
 	sale: 'sale',
 	unique_drop: 'unique',
-	vial_drop: 'vial',
 	mod_item: 'mod'
 };
 
@@ -862,17 +820,11 @@ const SCALED_SALE_ROW_NAME = 'tier 3 sale price';
  * `—` means the market has no answer at all — the read is cold or stale and
  * every term on the board is in the same state. `no price` means this ITEM was
  * looked up and came back empty while other terms priced. Never `0c` for
- * either: zero is a real price and neither of these is one. A `borrowed`
- * amount — another item's price standing in — prints with a `~`.
+ * either: zero is a real price and neither of these is one.
  */
-function driverPrice(
-	amount: number | null,
-	ladder: boolean,
-	gain: boolean,
-	borrowed: boolean
-): string {
+function driverPrice(amount: number | null, ladder: boolean, gain: boolean): string {
 	if (amount === null) return ladder ? '—' : 'no price';
-	return `${gain ? '+' : ''}${borrowed ? '~' : ''}${offerChaos(amount)}c`;
+	return `${gain ? '+' : ''}${offerChaos(amount)}c`;
 }
 
 /** Below this per-run rate a caption reads as odds rather than a percentage. */
@@ -915,14 +867,12 @@ interface DriverTerm {
 	row: OfferDriver;
 	shown: number | null;
 	contributed: number | null;
-	/** Whether `shown` is a stand-in's price ([`OfferDriver.source`]). */
-	borrowed: boolean;
 }
 
 /**
  * The rows under the value: the sale delta, then what the room drops.
  *
- * Wire order is kept — `valuation.rs` pushes sale, unique, vial, mod in that
+ * Wire order is kept — `valuation.rs` pushes sale, unique, mod in that
  * order — so the sale leads and the drops follow it, which is the order the
  * design draws.
  *
@@ -952,37 +902,31 @@ function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverT
 			// count beside it. Two different numbers, because a drop's own
 			// contribution — 0.25 of a unique — is not a price anybody trades
 			// at, and a player checking the box against poe.ninja is looking up
-			// the item. The count goes through `formatCount` because since
-			// POE-262 a vial rate is DERIVED (0.1 x 2815/1689), and the raw
-			// float renders as `×0.16666666666666666`.
+			// the item. The count goes through `formatCount` because a derived
+			// rate's raw float renders as `×0.16666666666666666`.
 			//
 			// On a SCALED box the delta is the one thing the sale row may not
 			// print — see [`rowsAreTier3`] — so it falls back to the same
 			// number every other row shows: the tier-3 room's own price.
 			const saleDelta = sale && !scaled;
 			const shown = saleDelta ? driver.chaos : driver.unitPrice;
-			// A borrowed price is never drawn as the item's own quote: a `~` on
-			// the number and a line naming whose price it is.
-			const standIn = sale ? null : (driver.standIn ?? null);
 			return {
 				row: {
 					kind,
 					name: sale ? (scaled ? SCALED_SALE_ROW_NAME : SALE_ROW_NAME) : driver.name,
 					iconName: sale ? null : driver.name,
-					price: driverPrice(shown, ladder, saleDelta, standIn !== null && shown !== null),
+					price: driverPrice(shown, ladder, saleDelta),
 					priced: shown !== null,
 					perRun: driver.count === null || sale ? null : `×${formatCount(driver.count)}`,
 					caption:
-						(kind === 'unique' || kind === 'vial') &&
+						kind === 'unique' &&
 						driver.count !== null &&
 						driver.count < 0.05
 							? formatDropRate(driver.count)
 							: null,
-					source: standIn === null || shown === null ? null : `as ${standIn}`,
 					marks: driverMarks(driver)
 				},
 				shown,
-				borrowed: standIn !== null && shown !== null,
 				contributed: driver.chaos
 			};
 		});
@@ -994,12 +938,9 @@ function saleAddedNothing(driver: DriverView, ladder: boolean): boolean {
 	return driver.chaos === 0 || (ladder && driver.unitPrice !== null);
 }
 
-/** The full form's fixed drop columns: unique on the left, vial on the right. */
-export function offerDropPair(drivers: OfferDriver[]): [OfferDriver | null, OfferDriver | null] {
-	return [
-		drivers.find((driver) => driver.kind === 'unique') ?? null,
-		drivers.find((driver) => driver.kind === 'vial') ?? null
-	];
+/** The full form's unique cell, or null where the line drops no unique. */
+export function offerUniqueDrop(drivers: OfferDriver[]): OfferDriver | null {
+	return drivers.find((driver) => driver.kind === 'unique') ?? null;
 }
 
 /**
@@ -1108,7 +1049,7 @@ function offerNote(state: OfferValueState, rows: OfferDriver[], content: string 
 	}
 	if (content !== null) return null;
 	if (rows.length === 0 && state !== 'fallback') {
-		return 'this line drops no unique and no vial';
+		return 'this line drops no unique';
 	}
 	return null;
 }
@@ -1155,26 +1096,6 @@ function offerBoxMarks(
 	return marks;
 }
 
-/** One recipe member, with the em dash for a price this read does not have. */
-function recipeItem(item: RecipeItemView): OfferRecipeItem {
-	return {
-		name: item.name,
-		iconName: item.name,
-		price: item.chaos === null ? '—' : `${offerChaos(item.chaos)}c`,
-		priced: item.chaos !== null
-	};
-}
-
-/** The vial upgrade, worded, or null. */
-function offerRecipe(recipe: RecipeView | null): OfferRecipe | null {
-	if (recipe === null) return null;
-	return {
-		base: recipeItem(recipe.base),
-		vial: recipeItem(recipe.vial),
-		upgraded: recipeItem(recipe.upgraded)
-	};
-}
-
 /**
  * The compact strip's prices — `"68 · 41 · 30c"`, one unit at the end.
  *
@@ -1185,22 +1106,8 @@ function offerRecipe(recipe: RecipeView | null): OfferRecipe | null {
 function offerStripPrices(terms: DriverTerm[]): string | null {
 	const priced = terms.filter((term) => term.shown !== null);
 	if (priced.length === 0) return null;
-	const amounts = priced.map(
-		(term) => `${term.borrowed ? '~' : ''}${offerChaos(term.shown as number)}`
-	);
+	const amounts = priced.map((term) => offerChaos(term.shown as number));
 	return `${amounts.join(' · ')}c`;
-}
-
-/**
- * Whether a box draws the borrowed-price line UNDER a rate caption — the one
- * shape that takes its item row from 69 to 81 px and the box past the
- * diagonal (`overlay-geometry.ts`'s `FULL_BOX_BORROWED_MAX_CSS`).
- * `offersCompact` budgets the pair on it before anything is measured.
- */
-export function offerBoxBorrowedLine(box: OfferBox): boolean {
-	return box.dropPair.some(
-		(driver) => driver !== null && driver.caption !== null && driver.source !== null
-	);
 }
 
 /**
@@ -1222,7 +1129,7 @@ export function offerBoxBorrowedLine(box: OfferBox): boolean {
  * is wrong about the code: a stale read prices nothing (`MarketInput::is_live`
  * is false, so `prices_anything` is false), every line takes `cold_fallback`'s
  * single `GradeFallback` driver, and the box comes back in the FALLBACK form —
- * the grade and an `F`, no rows, em dashes in the recipe. It gets SHORTER, not
+ * the grade and an `F`, no rows. It gets SHORTER, not
  * equal. What makes `stale` redundant in this string is that `state` is already
  * in it: the transition a snapshot ageing causes is `market` → `fallback`, and
  * that re-measures on the field that names the form. The flag itself buys no
@@ -1242,11 +1149,9 @@ export function offerBoxBorrowedLine(box: OfferBox): boolean {
  * cell is a value over a word. Their numbers are not here and must not be —
  * `+2/4/6%` becoming `+22/44/66%` is text, and text moves nothing.
  *
- * `content` is present when the content cell draws, and each `dropPair` caption
- * presence is present because the rare-caption threshold is a row-height change.
- * Each `source` presence (a borrowed price's `as <unique>` line) is there for
- * the same reason, and the two are emitted RAW rather than folded: a source
- * alone is the 69 px row, a source under a caption the 81 px one.
+ * `content` is present when the content cell draws, and the `uniqueDrop`
+ * caption presence is present because the rare-caption threshold is a
+ * row-height change.
  *
  * `mod.slots.length` is present and is the one COUNT here that is not a row
  * count: the `Appears on:` chips wrap once the row passes 272 px — five
@@ -1270,13 +1175,11 @@ export function offerBoxSignature(box: OfferBox, compact: boolean): string {
 		box.bonus ? 'bonus' : '-',
 		box.note ? 'note' : '-',
 		box.content !== null ? 'content' : '-',
-		box.recipe ? 'recipe' : '-',
 		box.ladder ? 'ladder' : '-',
 		box.ladder?.quant ? 'q' : '-',
 		box.ladder?.rarity ? 'r' : '-',
-		box.dropPair.map((driver) => driver?.kind ?? '-').join('/'),
-		box.dropPair.map((driver) => (driver?.caption ? 'caption' : '-')).join('/'),
-		box.dropPair.map((driver) => (driver?.source ? 'source' : '-')).join('/'),
+		box.uniqueDrop ? 'unique' : '-',
+		box.uniqueDrop?.caption ? 'caption' : '-',
 		box.mod ? 1 : 0,
 		box.mod?.slots.length ?? 0,
 		box.ageLine ? 'age' : '-'
@@ -1420,12 +1323,11 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 			chip: state === null ? null : offerChip(state, allRows),
 			marks: value === null || state === null ? [] : offerBoxMarks(value, state, allRows),
 			drivers,
-			dropPair: offerDropPair(drivers),
+			uniqueDrop: offerUniqueDrop(drivers),
 			driverCount: terms.length,
 			fold: value === null ? null : offerFold(value, terms),
 			bonus: value === null ? null : offerBonusLine(value),
 			note: state === null ? null : offerNote(state, allRows, content),
-			recipe: offerRecipe(offer.recipe ?? null),
 			stripPrices: offerStripPrices(terms),
 			// Off the MARKET view and not off the value's own `asOf`, which is
 			// null on a stale read by construction: the whole point of the flag

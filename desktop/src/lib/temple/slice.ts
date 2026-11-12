@@ -362,21 +362,6 @@ export interface OfferView {
 	 *  Optional on the wire: a snapshot from a build before POE-257 carries no
 	 *  field at all, so read it as `offer.value ?? null`. */
 	value?: RoomValueView | null;
-	/** The vial upgrade for the unique this kill's LINE drops, priced off the
-	 *  same read as `value` — base + vial → upgraded (POE-260).
-	 *
-	 *  Null far more often than not, and the box draws nothing for every one
-	 *  of the reasons: nineteen lines drop no unique, a line's unique may be
-	 *  the base of no recipe, and a payload that has never
-	 *  reached the server carries no recipe table to look in.
-	 *
-	 *  On the OFFER rather than inside `RoomValueView`, because it is a fact
-	 *  about the LINE and not about a tier's sum — the same three prices would
-	 *  otherwise ride on all three rows of every `temple_value_table` line,
-	 *  where nothing reads them.
-	 *
-	 *  Optional on the wire and normalised to `null` by `normaliseTemple`. */
-	recipe?: RecipeView | null;
 	/** Drop facts for the line this offer builds, or null when it did not resolve.
 	 *  Optional on the wire and normalised to `null` by `normaliseTemple`. */
 	line?: LineView | null;
@@ -402,27 +387,6 @@ export interface LineView {
 	modWorth: ModWorth | null;
 	quantityPct: [number, number, number] | null;
 	rarityPct: [number, number, number] | null;
-}
-
-/** One line's vial upgrade: base unique + vial → upgraded unique (POE-260). */
-export interface RecipeView {
-	/** The unique this line's tier-3 chest drops. */
-	base: RecipeItemView;
-	/** The vial that transforms it. NOT necessarily the vial this line's own
-	 *  architect rolls for — on Locus of Corruption they are different items,
-	 *  which is why Rust keys the lookup on `base`. */
-	vial: RecipeItemView;
-	/** What the two become. */
-	upgraded: RecipeItemView;
-}
-
-/** One priced member of a `RecipeView`. */
-export interface RecipeItemView {
-	/** poe.ninja's own name — the price's join key and the temple icon key. */
-	name: string;
-	/** Chaos, or null where this read priced nothing for it. Never `0` standing
-	 *  in for a missing price. */
-	chaos: number | null;
 }
 
 /** One room-tier's chaos value and the terms behind it. */
@@ -467,7 +431,7 @@ export interface RoomValueView {
 
 /** One term of a `RoomValueView`'s sum. */
 export interface DriverView {
-	/** `"sale"`, `"unique_drop"`, `"vial_drop"`, `"mod_item"`,
+	/** `"sale"`, `"unique_drop"`, `"mod_item"`,
 	 *  `"quantity_bonus"`, `"rarity_bonus"`, `"tier_fraction"`,
 	 *  `"grade_fallback"`, `"instrumental"` or `"custom_override"`.
 	 *  `snake_case`, this app's convention for enum variants on the wire.
@@ -495,10 +459,6 @@ export interface DriverView {
 	lowConfidence: boolean;
 	/** POE-252: that price is a trailing-window median, not the newest print. */
 	windowPriced: boolean;
-	/** The item whose price `unitPrice` borrows — an unquoted vial priced at
-	 *  the unique it upgrades into (`valuation.rs`'s `vial_unit_price`). Null
-	 *  where the price is the named item's own. */
-	standIn: string | null;
 }
 
 /** The side panel, as text gave it. */

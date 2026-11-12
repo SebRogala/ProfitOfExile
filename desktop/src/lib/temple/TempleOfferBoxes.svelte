@@ -10,7 +10,9 @@
 	 * gets a cyan frame — that frame IS the pointer; no arrows anywhere."*
 	 * POE-277 (2026-09-09) replaced the rating and reason lines with the
 	 * area-bonus ladder and the temple-mod block, led the header with the room,
-	 * and dropped the unique/vial names from the rows.
+	 * and dropped the unique/vial names from the rows. POE-366 (3.30) removed
+	 * vials, and with them the vial cell, the upgrade cell and the borrowed
+	 * price: the item row is the line's unique alone.
 	 *
 	 * What it replaces is the single kill callout (POE-244), which named ONE
 	 * block and said one reason about it. The player is choosing BETWEEN two
@@ -34,8 +36,8 @@
 	 * - **Ramp.** Seven font sizes with no relationship became six: 22 (the
 	 *   value), 17 (the grade letter), 15 (the room name and the ladder rungs),
 	 *   13 (prices, sale gain, mod name), 11 (kind, sale name, fold, the ladder's
-	 *   stat word, the `+`/`→` connectors, market line), 10 (the three section
-	 *   labels, the chips and the `upgraded` caption). The 15 px yellow ladder
+	 *   stat word, market line), 10 (the three section labels, the chips and
+	 *   the rate caption). The 15 px yellow ladder
 	 *   used to out-shout the 16 px room name; it is the room name that is 15
 	 *   now, and the rungs keep 15 at the owner's own ask. The compact strip's
 	 *   12 px price run is the one figure outside the ramp, and it is a
@@ -47,16 +49,10 @@
 	 *   transparency fades the words as well as the chrome. Both boxes carry a
 	 *   2 px frame — cyan on the pick — so the pick buys no height, which is
 	 *   why `pick` left `offerBoxSignature`.
-	 * - **One item row, `A + B ……→…… C`.** `base → vial → upgraded` under the
-	 *   drop pair redrew the row's own two icons at half size underneath
-	 *   themselves (Vertolka, 12:19). The recipe ROW is gone and its sentence
-	 *   moved into the item row's own layout: the two drops packed left with a
-	 *   muted `+` between them, a stretched muted `→`, and the upgrade on the
-	 *   right edge. Each price sits CENTRED UNDER its own art rather than
+	 * - **One item row.** The price sits CENTRED UNDER its art rather than
 	 *   beside it — a run of icon-then-price left nothing saying which price
-	 *   belonged to which item. Two equal HALVES were tried in between and left
-	 *   "very weird spacings" (owner, off the in-game look): a cell centred in
-	 *   129 px of empty half sits nowhere in particular.
+	 *   belonged to which item. Since POE-366 the row is one cell: the line's
+	 *   unique (3.30 removed the vial and the vial upgrade beside it).
 	 * - **The ladder gets a name, at its left.** Two ladder columns sitting
 	 *   directly under two ICON columns read as "quant from the gloves, rarity
 	 *   from the vial". Named, they read as the ROOM's bonus, which is what
@@ -84,8 +80,7 @@
 	 * The number POE-257 computes is the whole of the ranking. The box leads with
 	 * the resolved room and tier, then shows that value in chaos and what makes it
 	 * up: the items the room drops, as ICONS with prices, the quantity / rarity
-	 * bonus ladder, the vial upgrade for the line's unique where there is one,
-	 * and the temple mod at the end. Everything on screen comes from the offer
+	 * bonus ladder, and the temple mod at the end. Everything on screen comes from the offer
 	 * view — the same `Valued` row the advisor ranked on (POE-257 D6) — so no box can
 	 * justify a number the recommendation did not use.
 	 *
@@ -160,7 +155,7 @@
 	import { getIconUrl } from '$lib/icons';
 	import { offersCompact, offerStackPlacement } from './overlay-geometry';
 	import { SLOT_NAMES } from './slice';
-	import { offerBoxBorrowedLine, offerBoxSignature } from './view';
+	import { offerBoxSignature } from './view';
 	import type { OfferBox, OfferDriver } from './view';
 	import type { HostSize, WidgetRect } from '$lib/overlay/widgets/widget-geometry';
 
@@ -203,7 +198,6 @@
 	const compact = $derived(
 		offersCompact({
 			driverCounts: boxes.map((box) => box.driverCount),
-			borrowed: boxes.map(offerBoxBorrowedLine),
 			blocks,
 			panel,
 			host
@@ -279,24 +273,19 @@
 		})
 	);
 
-	/** One cell of the item row — art and a price, and for a drop or the third one a
-	 *  caption. The two sources it unifies say the same thing in different
-	 *  shapes: a dropped item is an `OfferDriver`, the upgrade is an
-	 *  `OfferRecipeItem`, and the row draws them identically. */
+	/** The item row's one cell — the line's unique: art, a price and, for a
+	 *  rare drop, its rate caption. */
 	interface ItemCell {
 		iconName: string;
 		/** Which item-frame colour the art gets — the GAME's, not this app's. */
 		kind: string;
 		price: string;
 		/** False when `price` is a refusal (`no price`, `—`) rather than a
-		 *  number. Read off the view's own `priced` on both sources; matching
+		 *  number. Read off the view's own `priced`; matching
 		 *  the refusal STRING here would break the day `view.ts` rewords it. */
 		priced: boolean;
-		/** `upgraded` under the third cell's price, or a rare drop's rate, else null. */
+		/** A rare drop's rate, else null. */
 		caption: string | null;
-		/** `as <unique>` when the price is borrowed (`OfferDriver.source`), else
-		 *  null. A yellow line under `caption`: with both, the row is 81 px. */
-		source: string | null;
 	}
 
 	/** The icon endpoint's URL for one item, or null where there is no item.
@@ -313,7 +302,7 @@
 		return box.drivers.find((driver) => driver.kind === 'sale') ?? null;
 	}
 
-	/** One drop cell, or null where the line has no such drop. */
+	/** The unique cell, or null where the line drops no unique. */
 	function dropCell(driver: OfferDriver | null): ItemCell | null {
 		if (driver === null || driver.iconName === null) return null;
 		return {
@@ -321,49 +310,8 @@
 			kind: driver.kind,
 			price: driver.price,
 			priced: driver.priced,
-			caption: driver.caption,
-			source: driver.source
+			caption: driver.caption
 		};
-	}
-
-	/**
-	 * The item row's three COLUMNS, always three, in a fixed order: the line's
-	 * unique, the vial its architect rolls for, and what the two become.
-	 *
-	 * **Position, not packing** (owner, 2026-09-10). An absent drop leaves its
-	 * column EMPTY rather than sliding the next one left, so the vial sits in
-	 * the same place on every box and the two boxes of a pair can be compared
-	 * column by column — which is the whole reason there are two of them.
-	 *
-	 * **The upgrade rides on the drops.** A recipe is a property of the LINE and
-	 * not of either drop cell, so the guard is that the line dropped SOMETHING
-	 * — not that the unique in particular is there or priced. With no drop at
-	 * all the row would be one lone cell captioned `upgraded`, naming a result
-	 * with nothing on screen to be the result of, and that is exactly the
-	 * fallback state: no rows, and a recipe whose members are all em dashes.
-	 * Branching on `OfferBox.state` would say the same thing, and `view.ts`
-	 * states the rule that this file may not: what a state changes is words,
-	 * and the words are there.
-	 */
-	function itemCells(box: OfferBox): (ItemCell | null)[] {
-		const unique = dropCell(box.dropPair[0]);
-		const vial = dropCell(box.dropPair[1]);
-		const drops = unique !== null || vial !== null;
-		const upgraded = box.recipe;
-		return [
-			unique,
-			vial,
-			upgraded === null || !drops
-				? null
-				: {
-						iconName: upgraded.upgraded.iconName,
-						kind: 'unique',
-						price: upgraded.upgraded.price,
-						priced: upgraded.upgraded.priced,
-						caption: 'upgraded',
-						source: null
-					}
-		];
 	}
 
 	/**
@@ -414,7 +362,7 @@
 	     is what stops the icons shimmering against the game's own inventory
 	     art. The compact strip's 26 px is the other integer downscale — it was
 	     20 px, which is neither, and shimmered for that reason. The colours are
-	     the GAME's item-frame colours (unique brown, vial purple) rather than
+	     the GAME's item-frame colour (unique brown) rather than
 	     this app's palette, because they are what the player is already reading
 	     two inches to the right. -->
 	<span
@@ -452,26 +400,24 @@
 	</div>
 {/snippet}
 
-<!-- One item cell: art over its price, and under the third one its caption. -->
+<!-- One item cell: art over its price, and under it a rare drop's caption. -->
 {#snippet itemCell(cell: ItemCell)}
 	<div class="item">
 		{@render icon(cell.iconName, cell.kind, 39)}
 		<span class="pr" class:none={!cell.priced}>{cell.price}</span>
 		{#if cell.caption}<span class="cap">{cell.caption}</span>{/if}
-		{#if cell.source}<span class="cap as">{cell.source}</span>{/if}
 	</div>
 {/snippet}
 
 {#each boxes as box, i (signature + "|" + box.offer.index)}
 	{@const sale = saleDriver(box)}
-	{@const cells = itemCells(box)}
+	{@const cell = dropCell(box.uniqueDrop)}
 	<!-- Two of the four optional sections as booleans (the mod's own `{#if}`
 	     is the third and the warning line the fourth), because the hairlines
 	     BETWEEN sections are conditional: a rule with nothing under it is a
 	     line the box drew for its own sake. Each one is a PRESENCE over fields
 	     `offerBoxSignature` already carries, so nothing new re-measures. -->
-	{@const hasCells = cells.some((cell) => cell !== null)}
-	{@const hasItems = sale !== null || hasCells || box.content !== null || box.fold !== null || box.note !== null}
+	{@const hasItems = sale !== null || cell !== null || box.content !== null || box.fold !== null || box.note !== null}
 	{@const hasBonus = box.ladder !== null || box.bonus !== null}
 	{@const amount = bonusAmount(box)}
 	<div
@@ -541,50 +487,17 @@
 			{/if}
 
 			{#if box.content !== null}
-				<!-- A content line has no recipe chain: its vial, when present, is
-				     the left fact and the line's prose is the right fact. The
+				<!-- A content line draws its prose alone: it drops no unique. The
 				     drops-nothing note yields to it; the instrumental and own-number
 				     wordings still print under the row (299 px worst case, inside
 				     the budget). -->
-				<div
-					class="items"
-					class:aftersale={sale !== null}
-					class:captioned={cells.some(
-						(cell) => cell !== null && (cell.caption !== null || cell.source !== null)
-					)}
-					class:sourced={cells.some(
-						(cell) => cell !== null && cell.caption !== null && cell.source !== null
-					)}
-				>
-					{#if cells[1] !== null}{@render itemCell(cells[1])}{/if}
+				<div class="items" class:aftersale={sale !== null}>
 					<span class="content-spacer"></span>
 					<span class="content-cell"><span class="content">{box.content}</span></span>
 				</div>
-			{:else if hasCells}
-				<!-- ONE flex row that reads as the recipe it is (owner, after the
-				     in-game look): `A + B ……→…… C`. The two drops pack LEFT with a
-				     muted `+` between them, a flexible spacer carries the muted
-				     `→` at its own centre, and the upgrade sits on the row's right
-				     edge. The spacer is what makes the arrow mean something — it
-				     is the only gap on the row wide enough to read as a step from
-				     one thing to another. -->
-				<div
-					class="items"
-					class:aftersale={sale !== null}
-					class:captioned={cells.some(
-						(cell) => cell !== null && (cell.caption !== null || cell.source !== null)
-					)}
-					class:sourced={cells.some(
-						(cell) => cell !== null && cell.caption !== null && cell.source !== null
-					)}
-				>
-					{#if cells[0] !== null}{@render itemCell(cells[0])}{/if}
-					{#if cells[0] !== null && cells[1] !== null}<span class="join">+</span>{/if}
-					{#if cells[1] !== null}{@render itemCell(cells[1])}{/if}
-					{#if cells[2] !== null}
-						<span class="step"><span class="join">→</span></span>
-						{@render itemCell(cells[2])}
-					{/if}
+			{:else if cell !== null}
+				<div class="items" class:aftersale={sale !== null} class:captioned={cell.caption !== null}>
+					{@render itemCell(cell)}
 				</div>
 			{/if}
 
@@ -903,24 +816,9 @@
 		color: var(--color-lab-text-muted);
 	}
 
-	/* Row 5: height 57 (69 captioned, 81 with a borrowed-price line under a
-	   rate caption), margin-top 0 — 5 under a sale row.
-	   ONE row, THREE equal columns: the line's unique, the vial its architect
-	   rolls for, and what the two become. The `base → vial → upgraded` chain
-	   this replaces redrew the row's own two icons at half size underneath
-	   themselves.
-
-	   ONE flex row reading `A + B ……→…… C` (owner, after the in-game look): the
-	   two drops packed left on 8 px gaps with a muted `+` between them, then a
-	   flexible spacer carrying a muted `→` at its centre, then the upgrade on
-	   the row's right edge. Two equal HALVES were tried first and left, in the
-	   owner's words, "very weird spacings" — a cell centred in 129 px of empty
-	   half sits nowhere in particular, while an edge and a stretched arrow say
-	   which items are the room's and which one they buy.
-
-	   Cells are simply omitted when the line has none: the `+` goes with either
-	   drop, and the spacer and the arrow go with the upgrade, so a two-item row
-	   is `A + B` packed left and nothing else. */
+	/* Row 5: height 57 (69 captioned), margin-top 0 — 5 under a sale row.
+	   ONE cell packed left: the line's unique. POE-366 removed the vial cell,
+	   the `+` and `→` connectors and the upgrade cell with 3.30's vials. */
 	.items {
 		display: flex;
 		align-items: flex-start;
@@ -931,8 +829,8 @@
 		margin-top: 6px;
 	}
 
-	/* A content line gets the same item-row budget: its vial, if any, stays on
-	   the left and the line prose takes the right. The content cell replaces the
+	/* A content line gets the same item-row budget: the line prose takes the
+	   right. The content cell replaces the
 	   drops-nothing `.note`, so the fact is not duplicated or left out on
 	   fallback; an instrumental or override box still prints its own wording
 	   under this row. */
@@ -968,51 +866,16 @@
 		color: var(--color-lab-text);
 	}
 
-	/* The stretch between what the room drops and what those two become. It
-	   holds the arrow at its own centre, and being the only `flex: 1` on the
-	   row it is also what pins the upgrade to the right edge. */
-	.step {
-		display: flex;
-		flex: 1 1 auto;
-		align-items: center;
-		justify-content: center;
-		min-width: 0;
-		height: 39px;
-	}
-
-	/* The two connectors, and deliberately the quietest marks on the box: they
-	   say how the three items relate, which is a thing the player reads once.
-	   Their line box is the ART's 39 px, so they centre on the icons rather
-	   than on the cell — a cell is taller than its art by a price and, in the
-	   third one, a caption. */
-	.join {
-		flex: 0 0 auto;
-		height: 39px;
-		font-size: 11px;
-		font-weight: 400;
-		line-height: 39px;
-		color: var(--color-lab-text-muted);
-	}
-
 	.items.captioned {
 		height: 69px;
-	}
-
-	/* A cell carrying BOTH a rate caption and a borrowed price's source line:
-	   one more 12 px caption line. Owner-approved 2026-10-20 past the diagonal's
-	   316 px; `FULL_BOX_BORROWED_MAX_CSS` counts it and `offersCompact` budgets
-	   the pair for it per box (`offerBoxBorrowedLine`). */
-	.items.sourced {
-		height: 81px;
 	}
 
 	.items.aftersale {
 		margin-top: 8px;
 	}
 
-	/* The price sits UNDER its art, centred, rather than beside it: three cells
-	   of icon-then-price ran the row into one long strip of alternating art and
-	   numerals with nothing saying which price belonged to which item. */
+	/* The price sits UNDER its art, centred, rather than beside it: a run of
+	   icon-then-price left nothing saying which price belonged to which item. */
 	.item {
 		display: flex;
 		flex-direction: column;
@@ -1053,15 +916,8 @@
 		color: var(--color-lab-text-muted);
 	}
 
-	/* A borrowed price's source, under the caption at the caption's size, in the
-	   box's warning yellow (the stale underline, the market warning line): the
-	   number above it is not this item's own market. */
-	.item .cap.as {
-		color: var(--color-lab-yellow);
-	}
-
 	/* Row 6: height 13, margin-top 3 — inside the item group, not a new one.
-	   Unreachable as the wording stands (`view.ts`'s four `ROW_KINDS` minus the
+	   Unreachable as the wording stands (`view.ts`'s three `ROW_KINDS` minus the
 	   mod cannot exceed `FULL_DRIVER_ROWS`) and styled anyway, because the day
 	   a fifth row kind is added is not the day to discover it has no rule. */
 	.fold {
@@ -1091,10 +947,6 @@
 	   and this app's palette has no opinion about item rarity. */
 	.icon.unique {
 		outline-color: #af6025;
-	}
-
-	.icon.vial {
-		outline-color: var(--color-lab-purple);
 	}
 
 	/* The compact strip's only null-icon row: the sale term has no item, so it

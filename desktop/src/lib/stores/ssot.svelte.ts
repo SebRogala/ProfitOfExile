@@ -603,11 +603,6 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 							// box tests `value === null` to decide whether to
 							// print a price line at all.
 							value: offer.value ?? null,
-							// POE-260's recipe, same rule again: the box tests
-							// `recipe === null` to decide whether it prints an
-							// upgrade line at all, and `undefined` there is
-							// falsy by accident rather than by contract.
-							recipe: offer.recipe ?? null,
 							// POE-277's line facts, same rule again: `serde(default)`
 							// on the Rust side, and the ladder row tests `line ===
 							// null` to decide whether it draws at all.

@@ -47,7 +47,6 @@ import {
 	marketStale,
 	offerBoxes,
 	offerBoxSignature,
-	offerBoxBorrowedLine,
 	offerChaos,
 	formatDropRate,
 	type OfferBox
@@ -1007,7 +1006,7 @@ describe('offerBoxes', () => {
 
 	it('names what a content line gives instead of a chest unique', () => {
 		// The 19 lines with no tier-3 chest are worth their USE, and WI-6 puts
-		// that use in the item row where the `A + B → C` recipe sits on a chest
+		// that use in the item row where the unique sits on a chest
 		// box. The prose is the wire's — `view.ts` words none of it.
 		const boxes = offerBoxes(
 			slice([offer({
@@ -1247,7 +1246,6 @@ function term(over: Partial<DriverView> & { kind: string; name: string }): Drive
 		guessed: false,
 		lowConfidence: false,
 		windowPriced: false,
-		standIn: null,
 		...over
 	};
 }
@@ -1266,10 +1264,12 @@ const uniqueTerm = (over: Partial<DriverView> = {}) =>
 		guessed: true,
 		...over
 	});
-const vialTerm = (over: Partial<DriverView> = {}) =>
+/** A second drop row, for the tests that need more rows than one line's
+ *  unique: the fold, the chip, the strip and the per-row marks. */
+const secondUniqueTerm = (over: Partial<DriverView> = {}) =>
 	term({
-		kind: 'vial_drop',
-		name: 'Vial of Fate',
+		kind: 'unique_drop',
+		name: "Apep's Slumber",
 		count: 0.1,
 		unitPrice: 41,
 		chaos: 4.1,
@@ -1581,11 +1581,11 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 
 	it('excludes the mod row from visible driver counts', () => {
 		const box = only(
-			offer({ value: value({ drivers: [saleTerm(), uniqueTerm(), vialTerm(), modTerm()] }) })
+			offer({ value: value({ drivers: [saleTerm(), uniqueTerm(), modTerm()] }) })
 		);
 
-		expect(box.drivers.map((driver) => driver.kind)).toEqual(['sale', 'unique', 'vial']);
-		expect(box.driverCount).toBe(3);
+		expect(box.drivers.map((driver) => driver.kind)).toEqual(['sale', 'unique']);
+		expect(box.driverCount).toBe(2);
 		expect(box.fold).toBeNull();
 	});
 
@@ -1619,25 +1619,25 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.marks).toEqual(['G']);
 	});
 
-	it('does not call a mod-only line an empty unique and vial drop', () => {
+	it('does not call a mod-only line an empty unique drop', () => {
 		const box = only(offer({ value: value({ drivers: [modTerm()] }) }));
 
 		expect(box.note).toBeNull();
 	});
 
 	it('lists the sale first and then what the room drops, in the wire order', () => {
-		// `valuation.rs` pushes sale, unique, vial, mod, and the box draws that
+		// `valuation.rs` pushes sale, unique, mod, and the box draws that
 		// order: the sale is money the room pays out now and the drops are what
 		// falls out of it, which is the order a player reads them in. A box
-		// re-sorting them by price would put a 428 c vial above the 846 c sale.
-		const box = only(offer({ value: value({ drivers: [saleTerm(), uniqueTerm(), vialTerm()] }) }));
+		// re-sorting them by price would put a 600 c unique above the 186 c sale.
+		const box = only(
+			offer({ value: value({ drivers: [saleTerm(), uniqueTerm({ unitPrice: 600 })] }) })
+		);
 
 		expect(box.drivers.map((driver) => [driver.kind, driver.name])).toEqual([
 			['sale', 'sale price above floor'],
-			['unique', 'Story of the Vaal'],
-			['vial', 'Vial of Fate']
+			['unique', 'Story of the Vaal']
 		]);
-		expect(box.dropPair.map((driver) => driver?.kind ?? null)).toEqual(['unique', 'vial']);
 	});
 
 	it('prints the ITEM price and its count on a drop row, not the term it contributed', () => {
@@ -1650,39 +1650,37 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.drivers[0].price).toBe('68c');
 		expect(box.drivers[0].perRun).toBe('×0.25');
 		expect(box.drivers[0].iconName).toBe('Story of the Vaal');
-		expect(box.dropPair.map((driver) => driver?.kind ?? null)).toEqual(['unique', null]);
 	});
 
-	it('puts a vial-only drop in the vial cell and leaves the unique cell empty', () => {
-		const box = only(offer({ value: value({ drivers: [vialTerm()] }) }));
+	it('offerBoxes gives a chest-line offer its unique as its only drop', () => {
+		// POE-366: 3.30 removed vials, so the item row is the line's unique
+		// alone — no second drop slot and no vial upgrade beside it.
+		const box = only(offer({ value: value({ drivers: [saleTerm(), uniqueTerm()] }) }));
 
-		expect(box.drivers.map((driver) => driver.kind)).toEqual(['vial']);
-		expect(box.dropPair.map((driver) => driver?.kind ?? null)).toEqual([null, 'vial']);
+		expect(box.uniqueDrop?.name).toBe('Story of the Vaal');
+		expect(box).not.toHaveProperty('recipe');
+		expect(box).not.toHaveProperty('dropPair');
 	});
 
 	it('never lifts a sale into a drop cell', () => {
 		// The full form draws the sale on its own full-width row above the
-		// two-column drop cell, because a sale is chaos the room pays out and a
+		// drop cell, because a sale is chaos the room pays out and a
 		// drop is an item that falls out of it. A sale in a drop cell would sit
 		// under a unique's 39 px icon column with no icon to put there.
 		const box = only(offer({ value: value({ drivers: [saleTerm()] }) }));
 
 		expect(box.drivers.map((driver) => driver.kind)).toEqual(['sale']);
-		expect(box.dropPair).toEqual([null, null]);
+		expect(box.uniqueDrop).toBeNull();
 	});
 
-	// The count on the row beside it is no longer a number anybody typed:
-	// POE-262 derives a vial rate per line from poedb's chance stat, so
-	// Glittering Halls' is 0.1 x 2815/1689 and interpolating it raw puts
-	// `×0.16666666666666666` in a 24 px overlay cell. Fails if `formatCount`
-	// stops being applied to the count.
+	// A derived count interpolated raw puts `×0.16666666666666666` in a 24 px
+	// overlay cell. Fails if `formatCount` stops being applied to the count.
 	it('rounds a DERIVED count rather than printing the float the wire carried', () => {
 		const box = only(
 			offer({
 				value: value({
 					drivers: [
-						vialTerm({
-							name: 'Vial of Transcendence',
+						uniqueTerm({
 							count: 0.1 * (2815 / 1689),
 							unitPrice: 428,
 							chaos: 71.33
@@ -1696,16 +1694,14 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 	});
 
 	it('captions a drop the player will rarely see with its chance per run', () => {
-		// Defense Research Lab's own rate on the committed capture, 0.1 x
-		// 804/1689. `×0.05` is a count a player reads as "some fraction"; the
+		// 0.1 x 804/1689. `×0.05` is a count a player reads as "some fraction"; the
 		// same number as 4.8% of runs is the sentence they can act on, which is
 		// the whole reason the caption exists.
 		const box = only(
 			offer({
 				value: value({
 					drivers: [
-						vialTerm({
-							name: 'Vial of Dominance',
+						uniqueTerm({
 							count: 0.1 * (804 / 1689),
 							unitPrice: 41,
 							chaos: 1.95
@@ -1719,15 +1715,13 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 	});
 
 	it('states the rarest rate in the table as odds rather than a percentage', () => {
-		// Locus of Corruption and Throne of Atziri, 0.1 x 20/1689 — the two
-		// smallest rates POE-262 derives, one in 844.5 runs. `0.1% / run` was
-		// a decimal place away from reading as never.
+		// 0.1 x 20/1689, one in 844.5 runs. `0.1% / run` was a decimal place
+		// away from reading as never.
 		const box = only(
 			offer({
 				value: value({
 					drivers: [
-						vialTerm({
-							name: 'Vial of Sacrifice',
+						uniqueTerm({
 							count: 0.1 * (20 / 1689),
 							unitPrice: 428,
 							chaos: 0.51
@@ -1740,23 +1734,11 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.drivers[0].caption).toBe('1 in ~840 runs');
 	});
 
-	it('captions a rare unique on the same rule as a rare vial', () => {
-		// The threshold is stated over BOTH drop kinds. Nothing in the table
-		// trips the unique half today — Vertolka's 0.25 is every chest line's
-		// rate — so this is the assertion that the rule does not quietly become
-		// a vial-only one the day a unique rate is derived like a vial's is.
-		const box = only(
-			offer({ value: value({ drivers: [uniqueTerm({ count: 0.1 * (804 / 1689) })] }) })
-		);
-
-		expect(box.drivers[0].caption).toBe('4.8% / run');
-	});
-
 	it('captions nothing at exactly the five-percent line', () => {
 		// The threshold is `< 0.05`, not `<= 0.05`: a drop the player sees on
 		// one run in twenty is not one the box has to explain, and a caption
 		// there costs the row 12 px it did not need to spend.
-		const box = only(offer({ value: value({ drivers: [vialTerm({ count: 0.05 })] }) }));
+		const box = only(offer({ value: value({ drivers: [uniqueTerm({ count: 0.05 })] }) }));
 
 		expect(box.drivers[0].caption).toBeNull();
 	});
@@ -1800,47 +1782,9 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		});
 
 		it('never prints a zero rate as odds', () => {
-			// `vialsPerRun` 0 still lists the row; one in Infinity is no sentence.
+			// A zero count still lists the row; one in Infinity is no sentence.
 			expect(formatDropRate(0)).toBe('0.0% / run');
 		});
-	});
-
-	/** Locus of Corruption's vial on prod 2026-10-20: no poe.ninja line, so
-	 *  Rust priced it at Zerphi's Heart (`vial_unit_price`). */
-	const borrowedVial = () =>
-		vialTerm({
-			name: 'Vial of Sacrifice',
-			count: 0.1 * (20 / 1689),
-			unitPrice: 4578,
-			chaos: 5.42,
-			standIn: "Zerphi's Heart"
-		});
-
-	it('marks a borrowed vial price with a tilde', () => {
-		const box = only(offer({ value: value({ drivers: [borrowedVial()] }) }));
-
-		expect(box.drivers[0].price).toBe('~4578c');
-	});
-
-	it('names the unique a borrowed vial price came from', () => {
-		const box = only(offer({ value: value({ drivers: [borrowedVial()] }) }));
-
-		expect(box.drivers[0].source).toBe("as Zerphi's Heart");
-	});
-
-	it('marks a borrowed price on the compact strip as well', () => {
-		const box = only(offer({ value: value({ drivers: [uniqueTerm(), borrowedVial()] }) }));
-
-		expect(box.stripPrices).toBe('68 · ~4578c');
-	});
-
-	it('gives a vial quoted on its own market neither the tilde nor a source', () => {
-		const box = only(
-			offer({ value: value({ drivers: [vialTerm({ name: 'Vial of Sacrifice', unitPrice: 428 })] }) })
-		);
-
-		expect(box.drivers[0].price).toBe('428c');
-		expect(box.drivers[0].source).toBeNull();
 	});
 
 	it('never captions the sale row, whatever count the wire hung on it', () => {
@@ -1883,12 +1827,12 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		// price cell, never a fabricated 0. A production change that read a
 		// missing price as zero prints `0c` here and fails.
 		const box = only(
-			offer({ value: value({ priced: 'partial', drivers: [uniqueTerm(), vialTerm({ unitPrice: null, chaos: null })] }) })
+			offer({ value: value({ priced: 'partial', drivers: [uniqueTerm(), secondUniqueTerm({ unitPrice: null, chaos: null })] }) })
 		);
 
 		expect(box.drivers[1].price).toBe('no price');
 		expect(box.drivers[1].priced).toBe(false);
-		expect(box.drivers[1].iconName).toBe('Vial of Fate');
+		expect(box.drivers[1].iconName).toBe("Apep's Slumber");
 	});
 
 	it('says an em dash instead where there is no market to have an answer', () => {
@@ -1908,7 +1852,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			offer({
 				value: value({
 					priced: 'partial',
-					drivers: [uniqueTerm({ unitPrice: null, chaos: null }), vialTerm({ unitPrice: null, chaos: null })]
+					drivers: [uniqueTerm({ unitPrice: null, chaos: null }), secondUniqueTerm({ unitPrice: null, chaos: null })]
 				})
 			})
 		);
@@ -1933,7 +1877,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 					drivers: [
 						saleTerm({ chaos: 186 }),
 						uniqueTerm(),
-						vialTerm(),
+						secondUniqueTerm(),
 						modTerm({ unitPrice: null, chaos: null })
 					]
 				})
@@ -2008,7 +1952,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(offer({ value: value({ drivers: [quantityTerm()] }) }));
 
 		expect(box.drivers).toEqual([]);
-		expect(box.note).toBe('this line drops no unique and no vial');
+		expect(box.note).toBe('this line drops no unique');
 	});
 
 	it('keeps the instrumental wording under a content row', () => {
@@ -2038,7 +1982,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 	});
 
 	it('yields the empty-drop wording to the content cell', () => {
-		// `this line drops no unique and no vial` is the negative of what the
+		// `this line drops no unique` is the negative of what the
 		// content cell states positively, and every content line is a line with
 		// no chest unique — so on this box the note would print under the cell
 		// on all nineteen of them.
@@ -2123,7 +2067,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				value: value({
 					total: 676.8,
 					scaledFromTier3: 846,
-					drivers: [uniqueTerm(), vialTerm(), fractionTerm()]
+					drivers: [uniqueTerm(), secondUniqueTerm(), fractionTerm()]
 				})
 			})
 		);
@@ -2139,7 +2083,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(
 			offer({
 				value: value({
-					drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), vialTerm(), uniqueTerm({ name: 'Fate of the Vaal' })]
+					drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), secondUniqueTerm(), uniqueTerm({ name: 'Fate of the Vaal' })]
 				})
 			})
 		);
@@ -2159,7 +2103,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				value: value({
 					total: 676.8,
 					scaledFromTier3: 846,
-					drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), vialTerm(), uniqueTerm({ name: 'Fate of the Vaal' }), fractionTerm()]
+					drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), secondUniqueTerm(), uniqueTerm({ name: 'Fate of the Vaal' }), fractionTerm()]
 				})
 			})
 		);
@@ -2278,53 +2222,10 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 
 	it('folds nothing at three rows', () => {
 		const box = only(
-			offer({ value: value({ drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), vialTerm()] }) })
+			offer({ value: value({ drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), secondUniqueTerm()] }) })
 		);
 
 		expect(box.fold).toBeNull();
-	});
-
-	it('carries the vial upgrade with a price for each of its three members', () => {
-		const box = only(
-			offer({
-				value: value({ drivers: [uniqueTerm()] }),
-				recipe: {
-					base: { name: 'Story of the Vaal', chaos: 5 },
-					vial: { name: 'Vial of Fate', chaos: 1 },
-					upgraded: { name: 'Fate of the Vaal', chaos: 39.2 }
-				}
-			})
-		);
-
-		expect(box.recipe?.base).toEqual({
-			name: 'Story of the Vaal',
-			iconName: 'Story of the Vaal',
-			price: '5c',
-			priced: true
-		});
-		expect(box.recipe?.upgraded.price).toBe('39c');
-	});
-
-	it('draws no recipe line for a line no vial upgrades', () => {
-		// A line whose unique is nobody's recipe base: the box prints no recipe
-		// row rather than inventing one, which would name two items the room
-		// never drops.
-		expect(only(offer({ value: value({ drivers: [uniqueTerm()] }) })).recipe).toBeNull();
-	});
-
-	it('draws an em dash for a recipe member this read could not price', () => {
-		const box = only(
-			offer({
-				value: value({ drivers: [uniqueTerm()] }),
-				recipe: {
-					base: { name: 'Story of the Vaal', chaos: 5 },
-					vial: { name: 'Vial of Fate', chaos: null },
-					upgraded: { name: 'Fate of the Vaal', chaos: null }
-				}
-			})
-		);
-
-		expect(box.recipe?.vial.price).toBe('—');
 	});
 
 	it('marks the row that was priced from a window, and the one that is thin', () => {
@@ -2334,7 +2235,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(
 			offer({
 				value: value({
-					drivers: [uniqueTerm({ windowPriced: true, guessed: false }), vialTerm({ lowConfidence: true })]
+					drivers: [uniqueTerm({ windowPriced: true, guessed: false }), secondUniqueTerm({ lowConfidence: true })]
 				})
 			})
 		);
@@ -2360,7 +2261,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			offer({
 				value: value({
 					guessed: false,
-					drivers: [uniqueTerm({ guessed: false }), vialTerm({ guessed: false })]
+					drivers: [uniqueTerm({ guessed: false }), secondUniqueTerm({ guessed: false })]
 				})
 			})
 		);
@@ -2470,7 +2371,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 	});
 
 	it('gives the compact strip its prices', () => {
-		// The compact form drops the counts, the bonus, the recipe and the
+		// The compact form drops the counts, the bonus and the
 		// mod block. Only the PRICED rows reach the strip: a bare `no price` in a
 		// run of numerals
 		// reads as one of them.
@@ -2478,7 +2379,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			offer({
 				value: value({
 					priced: 'partial',
-					drivers: [uniqueTerm(), vialTerm(), modTerm()]
+					drivers: [uniqueTerm(), secondUniqueTerm(), modTerm()]
 				})
 			})
 		);
@@ -2588,16 +2489,28 @@ describe('offerBoxSignature', () => {
 		expect(offerBoxSignature(two, false)).not.toBe(offerBoxSignature(one, false));
 	});
 
-	it('changes when the unique/vial row changes from one cell to two', () => {
+	it('changes when the unique cell appears', () => {
 		const one = box({});
-		const vial = { ...one.drivers[0], kind: 'vial' as const };
-		const paired = box({ dropPair: [one.drivers[0], vial] });
+		const none = box({ uniqueDrop: null });
 
-		expect(offerBoxSignature(paired, false)).not.toBe(offerBoxSignature(one, false));
+		expect(offerBoxSignature(none, false)).not.toBe(offerBoxSignature(one, false));
 	});
 
-	it('changes when the content cell appears in place of the recipe row', () => {
-		// A content box draws prose where a chest box draws `A + B → C`, and the
+	it('does not change when only a driver\'s price changes', () => {
+		// A price is text in a fixed-height cell: `68c` becoming `75c` moves
+		// nothing, and a signature keyed on it would re-measure the pair on
+		// every market poll.
+		const one = box({});
+		const repriced = box({
+			drivers: [{ ...one.drivers[0], price: '75c' }],
+			uniqueDrop: { ...one.drivers[0], price: '75c' }
+		});
+
+		expect(offerBoxSignature(repriced, false)).toBe(offerBoxSignature(one, false));
+	});
+
+	it('changes when the content cell appears in place of the unique cell', () => {
+		// A content box draws prose where a chest box draws its unique, and the
 		// two are not the same height. A signature blind to it would leave the
 		// pair measured for the box the offer used to be.
 		expect(offerBoxSignature(box({ content: 'Queen Atziri' }), false)).not.toBe(
@@ -2606,92 +2519,13 @@ describe('offerBoxSignature', () => {
 	});
 
 	it('changes when a drop cell gains its rare-chance caption', () => {
-		// The caption takes the item row from 57 px to 69, and the rate it keys
-		// on is not fixed: the vials-per-run knob scales every derived rate, so
-		// a player moving it can carry a cell across the 5% line without
-		// touching the board.
+		// The caption takes the item row from 57 px to 69.
 		const one = box({});
 		const captioned = box({
-			dropPair: [{ ...one.drivers[0], caption: '4.8% / run' }, null]
+			uniqueDrop: { ...one.drivers[0], caption: '4.8% / run' }
 		});
 
 		expect(offerBoxSignature(captioned, false)).not.toBe(offerBoxSignature(one, false));
-	});
-
-	it('changes when a drop cell gains a borrowed-price source line', () => {
-		// A cell with no rare-rate caption gains a line under its price when
-		// its price is borrowed, which is the same 12 px row-height change.
-		const one = box({});
-		const sourced = box({
-			dropPair: [{ ...one.drivers[0], caption: null, source: "as Zerphi's Heart" }, null]
-		});
-
-		expect(offerBoxSignature(sourced, false)).not.toBe(offerBoxSignature(one, false));
-	});
-
-	it('changes when a captioned drop cell also gains a borrowed-price line', () => {
-		// Caption plus source is the 81 px row, one line taller than the 69 px
-		// row a caption alone draws.
-		const one = box({});
-		const captioned = box({
-			dropPair: [{ ...one.drivers[0], caption: '1 in ~840 runs', source: null }, null]
-		});
-		const both = box({
-			dropPair: [
-				{ ...one.drivers[0], caption: '1 in ~840 runs', source: "as Zerphi's Heart" },
-				null
-			]
-		});
-
-		expect(offerBoxSignature(both, false)).not.toBe(offerBoxSignature(captioned, false));
-	});
-
-	describe('offerBoxBorrowedLine', () => {
-		it('is true for a cell carrying both a rate caption and a source line', () => {
-			const one = box({});
-			const both = box({
-				dropPair: [
-					null,
-					{ ...one.drivers[0], caption: '1 in ~840 runs', source: "as Zerphi's Heart" }
-				]
-			});
-
-			expect(offerBoxBorrowedLine(both)).toBe(true);
-		});
-
-		it('is false for a source line with no rate caption above it', () => {
-			const one = box({});
-			const sourceOnly = box({
-				dropPair: [null, { ...one.drivers[0], caption: null, source: "as Zerphi's Heart" }]
-			});
-
-			expect(offerBoxBorrowedLine(sourceOnly)).toBe(false);
-		});
-
-		it('is false for a rate caption with no source line', () => {
-			const one = box({});
-			const captionOnly = box({
-				dropPair: [null, { ...one.drivers[0], caption: '1 in ~840 runs', source: null }]
-			});
-
-			expect(offerBoxBorrowedLine(captionOnly)).toBe(false);
-		});
-	});
-
-	it('tells a source-only cell from a caption-plus-source cell', () => {
-		// A source alone is the 69 px row; under a rate caption it is 81 px.
-		const one = box({});
-		const sourceOnly = box({
-			dropPair: [{ ...one.drivers[0], caption: null, source: "as Zerphi's Heart" }, null]
-		});
-		const both = box({
-			dropPair: [
-				{ ...one.drivers[0], caption: '1 in ~840 runs', source: "as Zerphi's Heart" },
-				null
-			]
-		});
-
-		expect(offerBoxSignature(both, false)).not.toBe(offerBoxSignature(sourceOnly, false));
 	});
 
 	it('ignores what the caption SAYS once a cell has one', () => {
@@ -2701,10 +2535,10 @@ describe('offerBoxSignature', () => {
 		// frame — every time a price move nudged a rate.
 		const one = box({});
 		const captioned = box({
-			dropPair: [{ ...one.drivers[0], caption: '4.8% / run' }, null]
+			uniqueDrop: { ...one.drivers[0], caption: '4.8% / run' }
 		});
 		const otherText = box({
-			dropPair: [{ ...one.drivers[0], caption: '1.2% / run' }, null]
+			uniqueDrop: { ...one.drivers[0], caption: '1.2% / run' }
 		});
 
 		expect(offerBoxSignature(otherText, false)).toBe(offerBoxSignature(captioned, false));
@@ -2746,20 +2580,9 @@ describe('offerBoxSignature', () => {
 
 	it('changes when a row appears that was not there', () => {
 		// Every optional row is in the signature because every one of them is
-		// height. The recipe is the tallest of them at 39 px.
-		const without = box({ recipe: null });
-		const withOne = box({
-			recipe: {
-				base: { name: 'Story of the Vaal', iconName: 'Story of the Vaal', price: '5c', priced: true },
-				vial: { name: 'Vial of Fate', iconName: 'Vial of Fate', price: '1c', priced: true },
-				upgraded: {
-					name: 'Fate of the Vaal',
-					iconName: 'Fate of the Vaal',
-					price: '39c',
-					priced: true
-				}
-			}
-		});
+		// height. The note is the one that wraps.
+		const without = box({ note: null });
+		const withOne = box({ note: 'this line drops no unique' });
 
 		expect(offerBoxSignature(withOne, false)).not.toBe(offerBoxSignature(without, false));
 	});
