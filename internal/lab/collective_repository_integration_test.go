@@ -777,3 +777,428 @@ func TestCollectivePage_HugePageIsEmptyWithTotal(t *testing.T) {
 		t.Errorf("rows = %v, total = %d; want no rows and total 3", pageNames(got), got.Total)
 	}
 }
+
+// --- Dedication ---------------------------------------------------------
+
+// dedicationGem is one gem_snapshots row. Zero values are filled by
+// seedDedication with a corrupted BLUE skill gem at 21/23c and 20 listings.
+type dedicationGem struct {
+	name, variant, color string
+	chaos                float64
+	listings             int
+	transfigured         bool
+	uncorrupted          bool
+}
+
+// dedicationCost is one dedication_snapshots row's input cost.
+type dedicationCost struct {
+	variant, color, gemType, mode string
+	cost                          float64
+}
+
+func dedicationLeague(t *testing.T, pool *pgxpool.Pool, id string) league.Scope {
+	t.Helper()
+	registerLeague(t, pool, id)
+	t.Cleanup(func() {
+		for _, table := range []string{"gem_snapshots", "dedication_snapshots"} {
+			if _, err := pool.Exec(context.Background(), "DELETE FROM "+table+" WHERE league = $1", id); err != nil {
+				t.Logf("cleanup warning: delete %s for %q: %v", table, id, err)
+			}
+		}
+	})
+	return league.Historical(id)
+}
+
+func seedDedication(t *testing.T, pool *pgxpool.Pool, scope league.Scope, at time.Time, gems []dedicationGem, costs []dedicationCost) {
+	t.Helper()
+	ctx := context.Background()
+	for _, g := range gems {
+		if g.variant == "" {
+			g.variant = "21/23c"
+		}
+		if g.color == "" {
+			g.color = "BLUE"
+		}
+		if g.listings == 0 {
+			g.listings = 20
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO gem_snapshots
+				(league, time, name, variant, is_corrupted, is_transfigured, chaos, listings, gem_color)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			scope.ID(), at, g.name, g.variant, !g.uncorrupted, g.transfigured, g.chaos, g.listings, g.color); err != nil {
+			t.Fatalf("seed gem %q: %v", g.name, err)
+		}
+	}
+	for _, c := range costs {
+		if c.variant == "" {
+			c.variant = "21/23c"
+		}
+		if c.color == "" {
+			c.color = "BLUE"
+		}
+		if c.gemType == "" {
+			c.gemType = "skill"
+		}
+		if c.mode == "" {
+			c.mode = "safe"
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO dedication_snapshots (league, time, variant, color, gem_type, mode, pool, winners, input_cost)
+			VALUES ($1, $2, $3, $4, $5, $6, 1, 1, $7)`,
+			scope.ID(), at, c.variant, c.color, c.gemType, c.mode, c.cost); err != nil {
+			t.Fatalf("seed input cost %+v: %v", c, err)
+		}
+	}
+}
+
+func dedicationQuery(page, size int, sort CollectiveSort) DedicationCollectiveQuery {
+	return DedicationCollectiveQuery{Variant: "21/23c", Page: page, PageSize: size, Sort: sort}
+}
+
+func dedicationPage(t *testing.T, repo *Repository, scope league.Scope, q DedicationCollectiveQuery) CollectivePage {
+	t.Helper()
+	got, err := repo.DedicationCollectivePage(context.Background(), scope, q)
+	if err != nil {
+		t.Fatalf("DedicationCollectivePage(%+v): %v", q, err)
+	}
+	return got
+}
+
+// pricedDedicationGems returns n BLUE skill gems "Ded 00".. priced 1000, 999, …
+func pricedDedicationGems(n int) []dedicationGem {
+	gems := make([]dedicationGem, 0, n)
+	for i := 0; i < n; i++ {
+		gems = append(gems, dedicationGem{name: fmt.Sprintf("Ded %02d", i), chaos: float64(1000 - i)})
+	}
+	return gems
+}
+
+var blueSkillCost = []dedicationCost{{cost: 100}}
+
+func TestDedicationCollectivePage_TotalAndPage(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-Total")
+	seedDedication(t, pool, scope, time.Now(), pricedDedicationGems(12), blueSkillCost)
+
+	got := dedicationPage(t, NewRepository(pool), scope, dedicationQuery(2, 5, CollectiveSortPrice))
+
+	if got.Total != 12 {
+		t.Errorf("total = %d, want 12", got.Total)
+	}
+	assertNames(t, pageNames(got), "Ded 05", "Ded 06", "Ded 07", "Ded 08", "Ded 09")
+}
+
+func TestDedicationCollectivePage_FiltersByPool(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-Pool")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{
+		{name: "Arc", chaos: 500},
+		{name: "Arc of Surging", chaos: 400, transfigured: true},
+	}, []dedicationCost{{cost: 100}, {gemType: "transfigured", cost: 50}})
+
+	q := dedicationQuery(1, 10, CollectiveSortPrice)
+	q.Pool = "transfigured"
+	got := dedicationPage(t, NewRepository(pool), scope, q)
+
+	assertNames(t, pageNames(got), "Arc of Surging")
+	if got.Total != 1 || got.Rows[0].BaseName != "transfigured" || got.Rows[0].ROI != 350 {
+		t.Errorf("total %d, row %+v; want 1 transfigured row with ROI 350 (400c against the 50c transfigured input)", got.Total, got.Rows[0])
+	}
+}
+
+func TestDedicationCollectivePage_FiltersByColor(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-Color")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{
+		{name: "Arc", chaos: 500},
+		{name: "Cleave", chaos: 400, color: "RED"},
+	}, []dedicationCost{{cost: 100}, {color: "RED", cost: 100}})
+
+	q := dedicationQuery(1, 10, CollectiveSortPrice)
+	q.Color = "RED"
+	got := dedicationPage(t, NewRepository(pool), scope, q)
+
+	assertNames(t, pageNames(got), "Cleave")
+	if got.Total != 1 {
+		t.Errorf("total = %d, want 1", got.Total)
+	}
+}
+
+func TestDedicationCollectivePage_BudgetDropsNoBaseAndAboveInputCost(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-Budget")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{
+		{name: "Cleave", chaos: 500, color: "RED"},   // input 100: at the budget, kept
+		{name: "Arc", chaos: 900},                    // input 101: above it
+		{name: "Frenzy", chaos: 800, color: "GREEN"}, // no input cost: NO_BASE
+	}, []dedicationCost{{color: "RED", cost: 100}, {cost: 101}})
+
+	q := dedicationQuery(1, 10, CollectiveSortPrice)
+	q.Budget = 100
+	got := dedicationPage(t, NewRepository(pool), scope, q)
+
+	assertNames(t, pageNames(got), "Cleave")
+	if got.Total != 1 {
+		t.Errorf("total = %d, want 1", got.Total)
+	}
+}
+
+func TestDedicationCollectivePage_HideLowConfidenceDropsThinAndNoBaseRows(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-HideLow")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{
+		{name: "Arc", chaos: 500, listings: 2},              // LOW/FAIR, not low confidence
+		{name: "Spark", chaos: 900, listings: 1},            // RISKY: low confidence
+		{name: "Frenzy", chaos: 800, color: "GREEN"},        // NO_BASE: low confidence
+		{name: "Ball Lightning", chaos: 300, listings: 400}, // OK
+	}, blueSkillCost)
+
+	q := dedicationQuery(1, 10, CollectiveSortPrice)
+	q.HideLowConfidence = true
+	got := dedicationPage(t, NewRepository(pool), scope, q)
+
+	assertNames(t, pageNames(got), "Arc", "Ball Lightning")
+	if got.Total != 2 {
+		t.Errorf("total = %d, want 2", got.Total)
+	}
+}
+
+// weightedRoi is the raw ROI for Dedication (no risk adjustment), so it orders
+// like roi; roiPct orders by the raw percentage.
+func TestDedicationCollectivePage_SortsByEachClientKey(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-Sorts")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{
+		{name: "Cleave", chaos: 1000, color: "RED"},  // ROI 100, 11%
+		{name: "Arc", chaos: 500},                    // ROI 400, 400%
+		{name: "Frenzy", chaos: 300, color: "GREEN"}, // ROI 290, 2900%
+	}, []dedicationCost{{color: "RED", cost: 900}, {cost: 100}, {color: "GREEN", cost: 10}})
+
+	for _, tt := range []struct {
+		sort CollectiveSort
+		want []string
+	}{
+		{CollectiveSortPrice, []string{"Cleave", "Arc", "Frenzy"}},
+		{CollectiveSortROI, []string{"Arc", "Frenzy", "Cleave"}},
+		{CollectiveSortWeightedROI, []string{"Arc", "Frenzy", "Cleave"}},
+		{CollectiveSortROIPct, []string{"Frenzy", "Arc", "Cleave"}},
+	} {
+		t.Run(string(tt.sort), func(t *testing.T) {
+			got := dedicationPage(t, NewRepository(pool), scope, dedicationQuery(1, 10, tt.sort))
+			assertNames(t, pageNames(got), tt.want...)
+		})
+	}
+}
+
+// The rankings table below the Dedication EV grid shows one variant's pool. A
+// gem of the other variant appearing there would be priced against an input
+// cost that never bought it.
+func TestDedicationCollectivePage_RanksOnlyTheRequestedVariant(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-Variant")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{
+		{name: "Arc", chaos: 500},
+		{name: "Spark", variant: "21/20c", chaos: 40},
+	}, []dedicationCost{{variant: "21/20c", cost: 10}})
+
+	q := dedicationQuery(1, 10, CollectiveSortPrice)
+	q.Variant = "21/20c"
+	got := dedicationPage(t, NewRepository(pool), scope, q)
+
+	assertNames(t, pageNames(got), "Spark")
+	if len(got.Rows) == 1 && (got.Rows[0].Variant != "21/20" || got.Rows[0].ROI != 30) {
+		t.Errorf("row = %+v, want variant 21/20 (no corrupted suffix) and ROI 30 (40c against the 21/20c input of 10c)", got.Rows[0])
+	}
+}
+
+func TestDedicationCollectivePage_VariantWithNoGemsAnswersZeroTotal(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-Empty")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{{name: "Arc", chaos: 500}}, blueSkillCost)
+
+	q := dedicationQuery(1, 10, CollectiveSortPrice)
+	q.Variant = "21/20c"
+	got := dedicationPage(t, NewRepository(pool), scope, q)
+
+	if got.Total != 0 || len(got.Rows) != 0 {
+		t.Errorf("total %d, rows %v; want an empty 21/20c answer", got.Total, pageNames(got))
+	}
+}
+
+// Without an input cost there is no cost basis, so a row must not report the
+// gem's whole listed price as profit — that reads exactly like a real ROI.
+func TestDedicationCollectivePage_MarksRowsNoBaseWhenTheMarketHasNoInputCost(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-NoBase")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{{name: "Spark", chaos: 400}}, nil)
+
+	got := dedicationPage(t, NewRepository(pool), scope, dedicationQuery(1, 10, CollectiveSortPrice))
+
+	row := rowNamed(t, got, "Spark")
+	if row.ROI != 0 || row.ROIPct != 0 || row.BasePrice != 0 {
+		t.Errorf("ROI/ROIPct/BasePrice = %v/%v/%v, want 0/0/0 — an unknown cost basis is not free", row.ROI, row.ROIPct, row.BasePrice)
+	}
+	if row.Confidence != ConfidenceNoBase || !row.LowConfidence {
+		t.Errorf("Confidence %q lowConfidence %v, want %q and true", row.Confidence, row.LowConfidence, ConfidenceNoBase)
+	}
+	if row.TransfiguredPrice != 400 {
+		t.Errorf("TransfiguredPrice = %v, want 400 — the listed price is still known", row.TransfiguredPrice)
+	}
+}
+
+func TestDedicationCollectivePage_ExcludesSupportTrarthusVaalAndUncorrupted(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-Excludes")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{
+		{name: "Arc", chaos: 100},
+		{name: "Empower Support", chaos: 900},
+		{name: "Sunder of Trarthus", chaos: 900, transfigured: true},
+		{name: "Vaal Arc", chaos: 900},
+		{name: "Spark", chaos: 900, uncorrupted: true},
+		{name: "Frenzy", chaos: 900, color: "WHITE"},
+	}, blueSkillCost)
+
+	got := dedicationPage(t, NewRepository(pool), scope, dedicationQuery(1, 10, CollectiveSortPrice))
+
+	assertNames(t, pageNames(got), "Arc")
+}
+
+// A variant's ROI is measured against that variant's input cost.
+func TestDedicationCollectivePage_PricesEachVariantAgainstItsOwnInputCost(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-OwnCost")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{
+		{name: "Arc", chaos: 500},
+		{name: "Arc", variant: "21/20c", chaos: 40},
+	}, []dedicationCost{{cost: 100}, {variant: "21/20c", cost: 10}})
+
+	repo := NewRepository(pool)
+	for variant, want := range map[string]struct{ cost, roi float64 }{"21/23c": {100, 400}, "21/20c": {10, 30}} {
+		q := dedicationQuery(1, 10, CollectiveSortPrice)
+		q.Variant = variant
+		if row := rowNamed(t, dedicationPage(t, repo, scope, q), "Arc"); row.ROI != want.roi || row.BasePrice != want.cost {
+			t.Errorf("%s ROI/BasePrice = %v/%v, want %v/%v", variant, row.ROI, row.BasePrice, want.roi, want.cost)
+		}
+	}
+}
+
+func TestDedicationCollectivePage_ListingsSetConfidence(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-Listings")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{
+		{name: "Five", chaos: 500, listings: 5},
+		{name: "Four", chaos: 400, listings: 4},
+		{name: "Two", chaos: 300, listings: 2},
+		{name: "One", chaos: 200, listings: 1},
+	}, blueSkillCost)
+
+	got := dedicationPage(t, NewRepository(pool), scope, dedicationQuery(1, 10, CollectiveSortPrice))
+
+	for _, tt := range []struct {
+		name, confidence, sell string
+		low                    bool
+	}{
+		{"Five", "OK", "", false},
+		{"Four", "LOW", "FAIR", false},
+		{"Two", "LOW", "FAIR", false},
+		{"One", "LOW", "RISKY", true},
+	} {
+		row := rowNamed(t, got, tt.name)
+		if row.Confidence != tt.confidence || row.SellConfidence != tt.sell || row.LowConfidence != tt.low {
+			t.Errorf("%s: confidence %q sell %q low %v; want %q %q %v",
+				tt.name, row.Confidence, row.SellConfidence, row.LowConfidence, tt.confidence, tt.sell, tt.low)
+		}
+	}
+}
+
+func TestDedicationCollectivePage_LegacyOrderIsPriceDesc(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-Legacy")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{
+		{name: "Arc", chaos: 40},
+		{name: "Spark", chaos: 900},
+		{name: "Ball Lightning", chaos: 120},
+	}, blueSkillCost)
+
+	q := DedicationCollectiveQuery{Variant: "21/23c", Sort: CollectiveSortPrice, Page: 1, PageSize: 2, Legacy: true}
+	got := dedicationPage(t, NewRepository(pool), scope, q)
+
+	assertNames(t, pageNames(got), "Spark", "Ball Lightning")
+	if got.Total != 3 {
+		t.Errorf("total = %d, want 3", got.Total)
+	}
+}
+
+// A legacy search narrows the whole list and then applies the limit, so it
+// returns its top matches rather than the matches within the top N.
+func TestDedicationCollectivePage_LegacySearchMatchesBeforeTheLimit(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-LegacySearch")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{
+		{name: "Spark", chaos: 900},
+		{name: "Ball Lightning", chaos: 800},
+		{name: "Arc", chaos: 300},
+		{name: "Arcanist Brand", chaos: 200},
+	}, blueSkillCost)
+
+	q := DedicationCollectiveQuery{Variant: "21/23c", Sort: CollectiveSortPrice, Page: 1, PageSize: 1, Legacy: true, Search: "ARC"}
+	got := dedicationPage(t, NewRepository(pool), scope, q)
+
+	assertNames(t, pageNames(got), "Arc")
+}
+
+func TestDedicationCollectivePage_PagedSearchIgnoresPageSize(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-Search")
+	seedDedication(t, pool, scope, time.Now(), []dedicationGem{
+		{name: "Spark", chaos: 900},
+		{name: "Arc", chaos: 300},
+		{name: "Arcanist Brand", chaos: 200},
+		{name: "Arc_Wild", chaos: 100},
+	}, blueSkillCost)
+
+	q := dedicationQuery(2, 1, CollectiveSortPrice)
+	q.Search = "arc"
+	got := dedicationPage(t, NewRepository(pool), scope, q)
+
+	assertNames(t, pageNames(got), "Arc", "Arcanist Brand", "Arc_Wild")
+}
+
+func TestDedicationCollectivePage_RejectsInvalidScope(t *testing.T) {
+	pool := labIntegrationPool(t)
+	_, err := NewRepository(pool).DedicationCollectivePage(context.Background(), league.Scope{}, dedicationQuery(1, 10, CollectiveSortPrice))
+	if err == nil {
+		t.Fatal("DedicationCollectivePage with a zero scope returned no error, want the scope validation error")
+	}
+}
+
+// BEGIN + count + page + COMMIT; Dedication rows carry no decoration reads.
+const dedicationPageStatementBudget = 4
+
+func TestDedicationCollectivePage_StatementCountIsIndependentOfPageSize(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := dedicationLeague(t, pool, "ADR030-Ded-Statements")
+	seedDedication(t, pool, scope, time.Now(), pricedDedicationGems(60), blueSkillCost)
+
+	counted, counter := countingPool(t, pool.Config().ConnString())
+	repo := NewRepository(counted)
+	run := func(size int) (int, int) {
+		counter.reset()
+		got, err := repo.DedicationCollectivePage(context.Background(), scope, dedicationQuery(1, size, CollectiveSortPrice))
+		if err != nil {
+			t.Fatalf("DedicationCollectivePage(pageSize %d): %v", size, err)
+		}
+		return counter.reset(), len(got.Rows)
+	}
+	run(5) // warm the connection so connect-time statements are not counted
+
+	small, smallRows := run(5)
+	large, largeRows := run(50)
+	if smallRows != 5 || largeRows != 50 {
+		t.Fatalf("rows = %d and %d, want 5 and 50", smallRows, largeRows)
+	}
+	if small != dedicationPageStatementBudget || large != dedicationPageStatementBudget {
+		t.Errorf("statements = %d (pageSize 5) and %d (pageSize 50), want %d for both", small, large, dedicationPageStatementBudget)
+	}
+}

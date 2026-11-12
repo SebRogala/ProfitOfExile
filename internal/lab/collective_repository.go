@@ -2,6 +2,7 @@ package lab
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -230,6 +231,168 @@ func (r *Repository) CollectiveBasePrices(ctx context.Context, scope league.Scop
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("lab repo: collective base price rows: %w", err)
+	}
+	return out, nil
+}
+
+// DedicationLegacyMaxLimit caps a legacy Dedication request's limit.
+const DedicationLegacyMaxLimit = 500
+
+var dedicationPools = map[string]bool{"skill": true, "transfigured": true}
+
+// DedicationCollectiveQuery is one page request of the Dedication ranking.
+// Variant is the stored market ("21/23c"); Pool "" means both pools, Color ""
+// every colour, Budget 0 off. A legacy request (no pageSize) ranks by price,
+// takes up to DedicationLegacyMaxLimit rows and applies its search before the
+// limit; a paged search ignores Page/PageSize.
+type DedicationCollectiveQuery struct {
+	Variant           string
+	Pool              string
+	Color             string
+	Budget            float64
+	HideLowConfidence bool
+	Search            string
+	Sort              CollectiveSort
+	Page              int
+	PageSize          int
+	Legacy            bool
+}
+
+// Validate enforces the page bounds and the whitelists.
+func (q DedicationCollectiveQuery) Validate() error {
+	if !IsDedicationVariant(q.Variant) {
+		return errors.New("variant must be one of " + strings.Join(DedicationVariants, ", "))
+	}
+	if q.Page < 1 {
+		return errors.New("page must be a positive integer")
+	}
+	maxSize := CollectiveMaxPageSize
+	if q.Legacy {
+		maxSize = DedicationLegacyMaxLimit
+	}
+	if q.PageSize < 1 || q.PageSize > maxSize {
+		return fmt.Errorf("pageSize must be an integer from 1 to %d", maxSize)
+	}
+	if _, ok := dedicationOrderBy[q.Sort]; !ok {
+		return errors.New("sort must be one of price, roi, weightedRoi, roiPct")
+	}
+	if q.Pool != "" && !dedicationPools[q.Pool] {
+		return errors.New("pool must be skill or transfigured")
+	}
+	if q.Color != "" && !collectiveColors[q.Color] {
+		return errors.New("color must be RED, GREEN, BLUE or ALL")
+	}
+	if q.Budget < 0 || math.IsNaN(q.Budget) || math.IsInf(q.Budget, 0) {
+		return errors.New("budget must be a finite non-negative number")
+	}
+	return nil
+}
+
+// dedicationRankedCTE prices the latest snapshot's Dedication outcomes at one
+// variant against the input cost of their (colour, pool) from the latest
+// Dedication analysis of that variant. The input cost is the same in every mode,
+// so any one mode's row serves. No input cost → NO_BASE, low confidence, ROI 0:
+// an unknown cost basis is not a free gem. Listings set confidence: ≥ 5 OK,
+// ≥ 2 LOW/FAIR, else LOW/RISKY and low confidence.
+//
+// Params: $1 league, $2 variant, $3 pool (empty = both), $4 colour (empty =
+// all), $5 budget (<= 0 = off), $6 hide low confidence, $7 escaped ILIKE search
+// (empty = none).
+const dedicationRankedCTE = `
+WITH g AS (
+	SELECT name, COALESCE(chaos, 0)::float8 AS chaos, COALESCE(listings, 0) AS listings, gem_color,
+		CASE WHEN is_transfigured THEN 'transfigured' ELSE 'skill' END AS pool
+	FROM gem_snapshots
+	WHERE league = $1 AND time = (SELECT MAX(time) FROM gem_snapshots WHERE league = $1)
+	  AND variant = $2::text AND ` + sqlIsDedicationOutcome + `
+), cost AS (
+	SELECT DISTINCT ON (color, gem_type) color, gem_type, COALESCE(input_cost, 0)::float8 AS input_cost
+	FROM dedication_snapshots
+	WHERE league = $1 AND variant = $2::text
+	  AND time = (SELECT MAX(time) FROM dedication_snapshots WHERE league = $1 AND variant = $2::text)
+	ORDER BY color, gem_type, mode
+), priced AS (
+	SELECT g.name, g.chaos, g.listings, g.gem_color, g.pool, COALESCE(cost.input_cost, 0) AS input_cost
+	FROM g LEFT JOIN cost ON cost.color = g.gem_color AND cost.gem_type = g.pool
+), ranked AS (
+	SELECT name, chaos, listings, gem_color, pool,
+		input_cost <= 0 AS no_base,
+		CASE WHEN input_cost > 0 THEN input_cost ELSE 0 END AS base_price,
+		CASE WHEN input_cost > 0 THEN chaos - input_cost ELSE 0 END AS roi,
+		CASE WHEN input_cost > 0 THEN (chaos - input_cost) / input_cost * 100 ELSE 0 END AS roi_pct,
+		CASE WHEN input_cost <= 0 THEN 'NO_BASE' WHEN listings >= 5 THEN 'OK' ELSE 'LOW' END AS confidence,
+		CASE WHEN input_cost <= 0 OR listings >= 5 THEN '' WHEN listings >= 2 THEN 'FAIR' ELSE 'RISKY' END AS sell_confidence,
+		(input_cost <= 0 OR listings < 2) AS low_confidence
+	FROM priced
+), matched AS (
+	SELECT * FROM ranked
+	WHERE ($3::text = '' OR pool = $3::text)
+	  AND ($4::text = '' OR gem_color = $4::text)
+	  AND ($5::float8 <= 0 OR (NOT no_base AND base_price <= $5::float8))
+	  AND (NOT $6::boolean OR NOT low_confidence)
+	  AND ($7::text = '' OR name ILIKE '%' || $7::text || '%')
+)`
+
+// dedicationOrderBy is the only source of the Dedication page's ORDER BY.
+// weightedRoi is the raw ROI: Dedication rankings carry no risk adjustment.
+var dedicationOrderBy = map[CollectiveSort]string{
+	CollectiveSortPrice:       "chaos DESC, name ASC",
+	CollectiveSortROI:         "roi DESC, chaos DESC, name ASC",
+	CollectiveSortWeightedROI: "roi DESC, chaos DESC, name ASC",
+	CollectiveSortROIPct:      "roi_pct DESC, chaos DESC, name ASC",
+}
+
+// DedicationCollectivePage counts and pages the Dedication ranking of one
+// variant in one repeatable-read, read-only transaction.
+func (r *Repository) DedicationCollectivePage(ctx context.Context, scope league.Scope, q DedicationCollectiveQuery) (CollectivePage, error) {
+	if err := scope.Validate(); err != nil {
+		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective page: %w", err)
+	}
+	if err := q.Validate(); err != nil {
+		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective page: %w", err)
+	}
+	limit, offset := q.PageSize, math.MaxInt64
+	if q.Page-1 <= math.MaxInt64/q.PageSize {
+		offset = (q.Page - 1) * q.PageSize
+	}
+	if q.Search != "" && !q.Legacy {
+		limit, offset = CollectiveSearchLimit, 0
+	}
+	args := []any{scope.ID(), q.Variant, q.Pool, q.Color, q.Budget, q.HideLowConfidence, likeEscaper.Replace(q.Search)}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective page begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var out CollectivePage
+	if err := tx.QueryRow(ctx, dedicationRankedCTE+` SELECT COUNT(*) FROM matched`, args...).Scan(&out.Total); err != nil {
+		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective count: %w", err)
+	}
+	rows, err := tx.Query(ctx,
+		dedicationRankedCTE+` SELECT name, pool, COALESCE(gem_color, ''), chaos, listings, base_price, roi, roi_pct,
+			confidence, sell_confidence, low_confidence
+		FROM matched ORDER BY `+dedicationOrderBy[q.Sort]+` LIMIT $8 OFFSET $9`,
+		append(args, limit, offset)...)
+	if err != nil {
+		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective page query: %w", err)
+	}
+	defer rows.Close()
+	variant := strings.TrimSuffix(q.Variant, "c")
+	for rows.Next() {
+		cr := CollectiveResult{Variant: variant}
+		if err := rows.Scan(&cr.TransfiguredName, &cr.BaseName, &cr.GemColor, &cr.TransfiguredPrice, &cr.TransfiguredListings,
+			&cr.BasePrice, &cr.ROI, &cr.ROIPct, &cr.Confidence, &cr.SellConfidence, &cr.LowConfidence); err != nil {
+			return CollectivePage{}, fmt.Errorf("lab repo: scan dedication collective row: %w", err)
+		}
+		out.Rows = append(out.Rows, cr)
+	}
+	if err := rows.Err(); err != nil {
+		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective rows: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective page commit: %w", err)
 	}
 	return out, nil
 }

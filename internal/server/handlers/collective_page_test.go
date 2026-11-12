@@ -240,3 +240,133 @@ func TestCollectiveAnalysis_LegacyUnknownVariantReachesTheSourceAndAnswersEmpty(
 		t.Errorf("count = %d, data = %v; want the empty success envelope", resp.Count, resp.Data)
 	}
 }
+
+// fakeDedicationPager stands in for the Dedication SQL ranker.
+type fakeDedicationPager struct {
+	page    lab.CollectivePage
+	queries []lab.DedicationCollectiveQuery
+}
+
+func (f *fakeDedicationPager) DedicationCollectivePage(_ context.Context, _ league.Scope, q lab.DedicationCollectiveQuery) (lab.CollectivePage, error) {
+	f.queries = append(f.queries, q)
+	return f.page, nil
+}
+
+func serveDedication(t *testing.T, pager *fakeDedicationPager, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	collectiveAnalysis(pager, nil, nil, dedicationScope).ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+	return w
+}
+
+func TestDedicationCollective_PagedRequestPassesPoolAndColor(t *testing.T) {
+	pager := &fakeDedicationPager{}
+	w := serveDedication(t, pager, "/api/analysis/collective?mode=dedication&pageSize=10&page=2&variant=21/20&pool=transfigured&color=RED&sort=roi&budget=80&hideLowConfidence=true&search=arc")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	want := lab.DedicationCollectiveQuery{
+		Variant: "21/20c", Pool: "transfigured", Color: "RED", Budget: 80, HideLowConfidence: true,
+		Search: "arc", Sort: lab.CollectiveSortROI, Page: 2, PageSize: 10,
+	}
+	if len(pager.queries) != 1 || pager.queries[0] != want {
+		t.Errorf("pager queries = %+v, want exactly %+v", pager.queries, want)
+	}
+}
+
+func TestDedicationCollective_LegacyIgnoresBudget(t *testing.T) {
+	pager := &fakeDedicationPager{}
+	serveDedication(t, pager, "/api/analysis/collective?mode=dedication&budget=50&limit=700&search=Arc")
+	want := lab.DedicationCollectiveQuery{
+		Variant: "21/23c", Search: "Arc", Sort: lab.CollectiveSortPrice, Page: 1, PageSize: 500, Legacy: true,
+	}
+	if len(pager.queries) != 1 || pager.queries[0] != want {
+		t.Errorf("pager queries = %+v, want exactly %+v (budget ignored, limit capped at 500)", pager.queries, want)
+	}
+}
+
+func TestDedicationCollective_LegacyDefaultsToOneHundredRows(t *testing.T) {
+	pager := &fakeDedicationPager{}
+	serveDedication(t, pager, "/api/analysis/collective?mode=dedication&limit=abc")
+	if len(pager.queries) != 1 || pager.queries[0].PageSize != 100 {
+		t.Errorf("pager queries = %+v, want one with PageSize 100 (an unparsable limit keeps the default)", pager.queries)
+	}
+}
+
+func TestDedicationCollective_LegacyResponseCarriesTotalWithoutPage(t *testing.T) {
+	pager := &fakeDedicationPager{page: lab.CollectivePage{
+		Rows:  []lab.CollectiveResult{{TransfiguredName: "Arc", Variant: "21/23", ROI: 40, ROIPct: 80}},
+		Total: 9,
+	}}
+	w := serveDedication(t, pager, "/api/analysis/collective?mode=dedication")
+	var resp map[string]json.RawMessage
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := resp["page"]; ok {
+		t.Error("legacy response carries page, want it omitted")
+	}
+	if string(resp["count"]) != "1" || string(resp["total"]) != "9" {
+		t.Errorf("count = %s, total = %s; want 1 and 9", resp["count"], resp["total"])
+	}
+	var rows []struct {
+		WeightedROI    float64         `json:"weightedRoi"`
+		WeightedROIPct float64         `json:"weightedRoiPct"`
+		Sparkline      json.RawMessage `json:"sparkline"`
+	}
+	if err := json.Unmarshal(resp["data"], &rows); err != nil {
+		t.Fatalf("decode rows: %v", err)
+	}
+	if len(rows) != 1 || rows[0].WeightedROI != 40 || rows[0].WeightedROIPct != 80 || string(rows[0].Sparkline) != "[]" {
+		t.Errorf("rows = %+v, want weightedRoi = roi (40), weightedRoiPct = roiPct (80), sparkline []", rows)
+	}
+}
+
+func TestDedicationCollective_PagedResponseCarriesPageAndPageSize(t *testing.T) {
+	pager := &fakeDedicationPager{page: lab.CollectivePage{Total: 30}}
+	w := serveDedication(t, pager, "/api/analysis/collective?mode=dedication&pageSize=10&page=4")
+	var resp struct {
+		Count, Total, Page, PageSize int
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Count != 0 || resp.Total != 30 || resp.Page != 4 || resp.PageSize != 10 {
+		t.Errorf("envelope = %+v, want count 0, total 30, page 4, pageSize 10", resp)
+	}
+}
+
+func TestDedicationCollective_PagedRequestRejectsBadParams(t *testing.T) {
+	for _, tt := range []struct {
+		query, param string
+	}{
+		{"pageSize=0", "pageSize"},
+		{"pageSize=101", "pageSize"},
+		{"pageSize=10&page=0", "page"},
+		{"pageSize=10&sort=pct", "sort"},
+		{"pageSize=10&pool=gem", "pool"},
+		{"pageSize=10&color=WHITE", "color"},
+		{"pageSize=10&budget=-1", "budget"},
+		{"pageSize=10&budget=NaN", "budget"},
+		{"pageSize=10&hideLowConfidence=maybe", "hideLowConfidence"},
+		{"pageSize=10&variant=20/20", "variant"},
+	} {
+		t.Run(tt.query, func(t *testing.T) {
+			pager := &fakeDedicationPager{}
+			w := serveDedication(t, pager, "/api/analysis/collective?mode=dedication&"+tt.query)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", w.Code)
+			}
+			var body map[string]string
+			if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+				t.Fatalf("decode error body: %v", err)
+			}
+			if !strings.Contains(body["error"], tt.param) {
+				t.Errorf("error = %q, want it to name %q", body["error"], tt.param)
+			}
+			if len(pager.queries) != 0 {
+				t.Errorf("pager was queried for a rejected request: %+v", pager.queries)
+			}
+		})
+	}
+}

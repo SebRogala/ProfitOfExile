@@ -430,57 +430,6 @@ func applyDoubleCorruptTiebreak(results []CompareResult) {
 	results[winner].DoubleCorruptTiebreak = true
 }
 
-// BuildDedicationCompareResults builds compare results for Dedication lab mode.
-// Each gem is scored against the corrupted 21/23c pool. The pool type (skill vs
-// transfigured) is auto-detected from the gem name: names containing " of " are
-// transfigured, others are non-transfigured skills.
-// dedicationResults provides per-color input costs and pool context.
-// RankDedicationCollective returns the corrupted gems of one Dedication variant
-// ranked by price for the Dedication lab rankings table. Maps gems into
-// CollectiveResult shape so the existing ByVariant/BestPlays frontend
-// components can render them. dedicationResults must be the same variant's —
-// its input costs are what each gem's ROI is measured against.
-//
-// It is the cold-cache path only. The tick pre-computes the same list unfiltered
-// (limit 0, no search) and the request narrows it with FilterDedicationRankings;
-// this composes the two so the served and pre-computed orderings cannot drift.
-func RankDedicationCollective(
-	gems []GemPrice,
-	dedicationResults []DedicationResult,
-	limit int,
-	searchName string,
-	variant string,
-) []CollectiveResult {
-	return FilterDedicationRankings(
-		rankDedicationCollectiveAll(gems, dedicationResults, variant),
-		searchName, limit,
-	)
-}
-
-// FilterDedicationRankings narrows an already-ranked Dedication list by gem-name
-// search and then by limit — in that order, so a search returns its top matches
-// rather than the matches within the top N.
-//
-// It runs entirely in memory over a list the tick built, and never mutates it:
-// the search allocates a new slice and the limit only reslices, so the cached
-// ranking is left exactly as stored.
-func FilterDedicationRankings(ranked []CollectiveResult, searchName string, limit int) []CollectiveResult {
-	if searchName != "" {
-		q := strings.ToLower(searchName)
-		matched := make([]CollectiveResult, 0, len(ranked))
-		for _, cr := range ranked {
-			if strings.Contains(strings.ToLower(cr.TransfiguredName), q) {
-				matched = append(matched, cr)
-			}
-		}
-		ranked = matched
-	}
-	if limit > 0 && len(ranked) > limit {
-		ranked = ranked[:limit]
-	}
-	return ranked
-}
-
 // SelectGemPricesByNames returns the entries of gems whose name is in names,
 // preserving the order of gems. It is the in-memory equivalent of
 // Repository.CorruptedGemPricesByNames' `name = ANY($2)` over a corpus the cache
@@ -502,102 +451,11 @@ func SelectGemPricesByNames(gems []GemPrice, names []string) []GemPrice {
 	return out
 }
 
-// rankDedicationCollectiveAll ranks every gem of one variant, unfiltered.
-func rankDedicationCollectiveAll(
-	gems []GemPrice,
-	dedicationResults []DedicationResult,
-	variant string,
-) []CollectiveResult {
-	// Index Dedication results by (color, gemType) for input cost + tier lookup.
-	type dedKey struct{ color, gemType string }
-	inputCosts := make(map[dedKey]float64)
-	for _, dr := range dedicationResults {
-		k := dedKey{dr.Color, dr.GemType}
-		if _, exists := inputCosts[k]; !exists {
-			inputCosts[k] = dr.InputCost
-		}
-	}
-
-	// Filter to this variant's corrupted gems (no supports, no Trarthus).
-	var pool []GemPrice
-	for _, g := range gems {
-		if !isDedicationOutcome(g) {
-			continue
-		}
-		if g.Variant != variant {
-			continue
-		}
-		pool = append(pool, g)
-	}
-
-	// Sort by price descending.
-	sort.Slice(pool, func(i, j int) bool {
-		return pool[i].Chaos > pool[j].Chaos
-	})
-
-	results := make([]CollectiveResult, 0, len(pool))
-	for _, g := range pool {
-		gemType := "skill"
-		if g.IsTransfigured {
-			gemType = "transfigured"
-		}
-
-		inputCost := inputCosts[dedKey{g.GemColor, gemType}]
-		roi := g.Chaos - inputCost
-
-		// No input cost for this (color, pool) means the analysis has nothing for
-		// the market being ranked — not that the gems are free. Reporting
-		// `roi = full listed price` there is a fabricated number that reads
-		// exactly like a real one, so the row is marked no-base instead and the
-		// ROI columns are left at zero. ConfidenceNoBase is what BestPlays
-		// already renders as "—".
-		if inputCost <= 0 {
-			results = append(results, CollectiveResult{
-				TransfiguredName:     g.Name,
-				BaseName:             gemType,
-				Variant:              strings.TrimSuffix(variant, "c"),
-				GemColor:             g.GemColor,
-				TransfiguredPrice:    g.Chaos,
-				TransfiguredListings: g.Listings,
-				Confidence:           ConfidenceNoBase,
-				LowConfidence:        true,
-			})
-			continue
-		}
-
-		cr := CollectiveResult{
-			TransfiguredName:     g.Name,
-			BaseName:             gemType,
-			Variant:              strings.TrimSuffix(variant, "c"),
-			GemColor:             g.GemColor,
-			TransfiguredPrice:    g.Chaos,
-			TransfiguredListings: g.Listings,
-			BasePrice:            inputCost,
-			ROI:                  roi,
-		}
-		if inputCost > 0 {
-			cr.ROIPct = (roi / inputCost) * 100
-		}
-
-		// Confidence based on listings.
-		switch {
-		case g.Listings >= 5:
-			cr.Confidence = "OK"
-		case g.Listings >= 2:
-			cr.SellConfidence = "FAIR"
-			cr.Confidence = "LOW"
-		default:
-			cr.SellConfidence = "RISKY"
-			cr.Confidence = "LOW"
-			cr.LowConfidence = true
-		}
-
-		results = append(results, cr)
-	}
-
-	return results
-}
-
+// BuildDedicationCompareResults builds compare results for Dedication lab mode.
+// Each gem is scored against the corrupted 21/23c pool. The pool type (skill vs
+// transfigured) is auto-detected from the gem name: names containing " of " are
+// transfigured, others are non-transfigured skills.
+// dedicationResults provides per-color input costs and pool context.
 func BuildDedicationCompareResults(
 	names []string,
 	gemPrices []GemPrice,

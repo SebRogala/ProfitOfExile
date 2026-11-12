@@ -107,15 +107,10 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 	return combined
 }
 
-// BuildDedicationCorpus derives everything the Dedication read paths need from
+// BuildDedicationCorpus derives what the Dedication compare path needs from
 // the snapshot the analysis was computed over, so a request never has to load
-// the snapshot itself.
-//
-// The two request-shaped halves are the whole point. The collective rankings
-// used to be built per request from a full LatestGemPrices materialisation
-// (7,325 rows, two queries) whose only other input — the analysis — was already
-// cached; the compare path re-queried the same snapshot for a handful of names.
-// Both are pure functions of (gems, analysis), so the tick computes them once.
+// the snapshot itself: the compare path used to re-query the same snapshot for a
+// handful of names. The rankings are paged in SQL per request (ADR-030).
 //
 // A key is emitted for every DedicationVariants entry even when the snapshot
 // holds nothing at that variant, because an absent key and an empty one are the
@@ -123,20 +118,9 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 func BuildDedicationCorpus(gems []GemPrice, analysis DedicationAnalysis) DedicationCorpus {
 	corpus := DedicationCorpus{
 		Analysis:  analysis,
-		Rankings:  make(map[string][]CollectiveResult, len(DedicationVariants)),
 		GemPrices: make(map[string][]GemPrice, len(DedicationVariants)),
 	}
 	for _, variant := range DedicationVariants {
-		// This variant's results from both pools — the same narrowing the
-		// handlers used to do per request, and what the ranking's ROI is
-		// measured against.
-		results := FilterDedicationVariant(analysis.Skills, variant)
-		results = append(results, FilterDedicationVariant(analysis.Transfigured, variant)...)
-
-		// Unfiltered: search and limit are the request's, applied by
-		// FilterDedicationRankings over this list.
-		corpus.Rankings[variant] = RankDedicationCollective(gems, results, 0, "", variant)
-
 		// Every corrupted gem at the variant, not just the rankable ones. The
 		// compare path answers for names the font can never hand out — a Vaal
 		// gem above all — and marks them as not an outcome, so narrowing this to

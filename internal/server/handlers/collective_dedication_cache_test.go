@@ -10,8 +10,8 @@ import (
 	"profitofexile/internal/lab"
 )
 
-// The Dedication collective and compare paths are served from the corpus the
-// tick builds, so neither should reach the database on a warm cache. The seam is
+// The Dedication compare path is served from the corpus the
+// tick builds, so it should not reach the database on a warm cache. The seam is
 // this package's usual one: a nil *lab.Repository panics if a query survives.
 //
 // Response-shape assertions cannot see the defect these guard — the body is the
@@ -51,85 +51,6 @@ func dedicationCorpusCache(t *testing.T) *lab.Cache {
 		},
 	}, time.Now())
 	return cache
-}
-
-type collectiveNameRow struct {
-	TransfiguredName string  `json:"transfiguredName"`
-	ROI              float64 `json:"roi"`
-}
-
-func decodeCollectiveNames(t *testing.T, w *httptest.ResponseRecorder) []collectiveNameRow {
-	t.Helper()
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
-	}
-	var resp struct {
-		Data []collectiveNameRow `json:"data"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	return resp.Data
-}
-
-// The route this replaces materialised all 7,325 rows of the latest snapshot on
-// every request to re-derive a ranking whose other input was already cached.
-func TestDedicationCollective_WarmCacheServesTheRankingWithoutQuerying(t *testing.T) {
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, dedicationCorpusCache(t), dedicationScope),
-		"/api/analysis/collective?mode=dedication&variant=21/23c")
-
-	rows := decodeCollectiveNames(t, w)
-	if len(rows) != 2 {
-		t.Fatalf("got %d rows %+v, want Arc and Spark (a Vaal gem is never a font outcome)", len(rows), rows)
-	}
-	if rows[0].TransfiguredName != "Arc" || rows[0].ROI != 400 {
-		t.Errorf("top row = %+v, want Arc with ROI 400 (500c against a 100c input cost)", rows[0])
-	}
-}
-
-// The whole point of pre-ranking: search and limit narrow the cached list in
-// memory rather than sending the request back to the snapshot.
-func TestDedicationCollective_WarmCacheAppliesSearchWithoutQuerying(t *testing.T) {
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, dedicationCorpusCache(t), dedicationScope),
-		"/api/analysis/collective?mode=dedication&variant=21/23c&search=spark")
-
-	rows := decodeCollectiveNames(t, w)
-	if len(rows) != 1 || rows[0].TransfiguredName != "Spark" {
-		t.Errorf("rows = %+v, want only Spark", rows)
-	}
-}
-
-func TestDedicationCollective_WarmCacheAppliesLimitWithoutQuerying(t *testing.T) {
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, dedicationCorpusCache(t), dedicationScope),
-		"/api/analysis/collective?mode=dedication&variant=21/23c&limit=1")
-
-	rows := decodeCollectiveNames(t, w)
-	if len(rows) != 1 || rows[0].TransfiguredName != "Arc" {
-		t.Errorf("rows = %+v, want only the highest-priced row, Arc", rows)
-	}
-}
-
-// Both variants are ranked in the same pass, so a warm cache holding nothing for
-// one of them is authoritative — the database has nothing either, and re-asking
-// it would query on every poll of a dashboard endpoint forever.
-func TestDedicationCollective_WarmCacheAnswersAnUnpopulatedVariantWithoutQuerying(t *testing.T) {
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, dedicationCorpusCache(t), dedicationScope),
-		"/api/analysis/collective?mode=dedication&variant=21/20c")
-
-	if rows := decodeCollectiveNames(t, w); len(rows) != 0 {
-		t.Errorf("rows = %+v, want none — the 21/23c gems must not leak into a 21/20c answer", rows)
-	}
-}
-
-// The fallback stays reachable. Without it a restart leaves no input cost at
-// all and every row's ROI silently becomes the gem's full listed price.
-func TestDedicationCollective_ColdCacheFallsBackToTheRepository(t *testing.T) {
-	cold := lab.NewCache(dedicationScope)
-
-	if !queriedRepository(CollectiveAnalysis(nil, cold, dedicationScope),
-		"/api/analysis/collective?mode=dedication&variant=21/23c") {
-		t.Fatal("cold cache did not reach the repository; the database fallback is gone")
-	}
 }
 
 type compareNameRow struct {

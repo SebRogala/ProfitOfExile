@@ -359,4 +359,9 @@ const (
 	// sqlNotColorlessByRule instead unless the query really does partition the
 	// market by colour — this fragment is false for an unresolved colour too.
 	sqlHasAttributeColor = `COALESCE(gem_color, '') IN ('RED', 'GREEN', 'BLUE')`
+
+	// sqlIsDedicationOutcome matches isDedicationOutcome. isDedicationFeed's
+	// Vaal-at-21/23c rule needs no SQL form: an outcome excludes every Vaal gem.
+	sqlIsDedicationOutcome = `(` + sqlHasAttributeColor + ` AND is_corrupted AND ` + sqlNotSupportGem +
+		` AND ` + sqlNotHeistOnly + ` AND name NOT LIKE 'Vaal %')`
 )

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -105,13 +106,12 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 	return collectiveAnalysis(repo, repo, cache, scope)
 }
 
-// collectiveAnalysis takes the Normal ranking source separately from the
-// repository the Dedication mode reads, so a test can serve a fixed page.
-func collectiveAnalysis(repo *lab.Repository, src lab.CollectiveSource, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
+// collectiveAnalysis takes the Dedication and Normal ranking sources
+// separately, so a test can serve a fixed page for either mode.
+func collectiveAnalysis(dedication dedicationCollectivePager, src lab.CollectiveSource, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Dedication mode: return corrupted 21/23 gems ranked by price.
 		if r.URL.Query().Get("mode") == "dedication" {
-			serveDedicationCollective(w, r, repo, cache, scope)
+			serveDedicationCollective(w, r, dedication, scope)
 			return
 		}
 
@@ -260,63 +260,113 @@ func parseCollectivePage(r *http.Request) (lab.CollectiveQuery, string) {
 	return q, ""
 }
 
-// serveDedicationCollective handles ?mode=dedication on the collective endpoint.
-// Returns the corrupted gems of one Dedication variant (?variant=, default
-// 21/23c) ranked by price, mapped to the same response shape as the Normal
-// collective so the frontend ByVariant/BestPlays components work unchanged.
-func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab.Repository, cache *lab.Cache, scope league.Scope) {
+// dedicationCollectivePager is the Dedication SQL ranker. *lab.Repository
+// implements it.
+type dedicationCollectivePager interface {
+	DedicationCollectivePage(ctx context.Context, scope league.Scope, q lab.DedicationCollectiveQuery) (lab.CollectivePage, error)
+}
+
+// parseDedicationLegacy reads a Dedication request without pageSize as before
+// paging existed: limit default 100, capped at 500, an unparsable limit keeps
+// the default, budget ignored, price order.
+func parseDedicationLegacy(r *http.Request, variant string) lab.DedicationCollectiveQuery {
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = min(n, lab.DedicationLegacyMaxLimit)
+		}
+	}
+	return lab.DedicationCollectiveQuery{
+		Variant:  variant,
+		Search:   r.URL.Query().Get("search"),
+		Sort:     lab.CollectiveSortPrice,
+		Page:     1,
+		PageSize: limit,
+		Legacy:   true,
+	}
+}
+
+// parseDedicationPage reads a paged Dedication request. Bounds and whitelists
+// beyond the syntax are lab.DedicationCollectiveQuery.Validate's. The second
+// return is the 400 message, or "".
+func parseDedicationPage(r *http.Request, variant string) (lab.DedicationCollectiveQuery, string) {
+	params := r.URL.Query()
+	q := lab.DedicationCollectiveQuery{Variant: variant, Page: 1}
+	n, err := strconv.Atoi(params.Get("pageSize"))
+	if err != nil {
+		return q, "pageSize must be an integer from 1 to 100"
+	}
+	q.PageSize = n
+	if v := params.Get("page"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return q, "page must be a positive integer"
+		}
+		q.Page = n
+	}
+	sort, ok := collectivePageSorts[params.Get("sort")]
+	if !ok {
+		return q, "sort must be one of price, roi, weightedRoi, roiPct"
+	}
+	q.Sort = sort
+	q.Pool = params.Get("pool")
+	if color := params.Get("color"); color != "ALL" {
+		q.Color = color
+	}
+	budget, msg := parseCollectiveBudget(r)
+	if msg != "" {
+		return q, msg
+	}
+	q.Budget = budget
+	switch params.Get("hideLowConfidence") {
+	case "", "false":
+	case "true":
+		q.HideLowConfidence = true
+	default:
+		return q, "hideLowConfidence must be true or false"
+	}
+	q.Search = params.Get("search")
+	return q, ""
+}
+
+// serveDedicationCollective handles ?mode=dedication on the collective endpoint:
+// the corrupted gems of one Dedication variant (?variant=, default 21/23c),
+// ranked, counted and paged in SQL, mapped to the same row shape as the Normal
+// collective so the ByVariant/BestPlays components work unchanged.
+func serveDedicationCollective(w http.ResponseWriter, r *http.Request, pager dedicationCollectivePager, scope league.Scope) {
 	variant, ok := parseDedicationVariant(w, r)
 	if !ok {
 		return
 	}
 
-	limit := 100
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			if n > 500 {
-				n = 500
-			}
-			limit = n
-		}
-	}
-	searchName := r.URL.Query().Get("search")
-
-	// Fast path: the tick already ranked this variant. search and limit are pure
-	// in-memory narrowings of that list, so a warm cache answers with no query at
-	// all — this used to materialise the whole 7,325-row snapshot per request
-	// (LatestGemPrices, two queries, ~90 ms) purely to re-derive a ranking whose
-	// only other input was already cached.
-	//
-	// Warmth is the cache's own answer, not the size of the ranking: the analyzer
-	// computes every variant in one pass, so a warm cache with nothing for this
-	// variant is authoritative and the database has nothing to add.
-	var results []lab.CollectiveResult
-	warm := cache != nil && cache.For(scope).HasDedication()
-	if warm {
-		results = lab.FilterDedicationRankings(
-			cache.For(scope).DedicationRankings(variant), searchName, limit)
+	var input lab.DedicationCollectiveQuery
+	var msg string
+	if r.URL.Query().Has("pageSize") {
+		input, msg = parseDedicationPage(r, variant)
 	} else {
-		// Cold cache: rebuild the ranking from the database. Without this a
-		// restart leaves no input cost at all and every row's ROI silently
-		// becomes the gem's full listed price.
-		gems, _, err := repo.LatestGemPrices(r.Context(), scope)
-		if err != nil {
-			slog.Error("dedication collective: gem prices query failed", "error", err)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
+		input = parseDedicationLegacy(r, variant)
+	}
+	if msg == "" {
+		if err := input.Validate(); err != nil {
+			msg = err.Error()
 		}
-		dedicationResults, err := repo.LatestDedicationResults(r.Context(), scope, variant, "", "", 500)
-		if err != nil {
-			slog.Error("dedication collective: dedication results query failed", "error", err)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
-		}
-		results = lab.RankDedicationCollective(gems, dedicationResults, limit, searchName, variant)
+	}
+	if msg != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": msg})
+		return
 	}
 
-	// Map to the same row shape as Normal collective.
-	rows := make([]collectiveRow, 0, len(results))
-	for _, cr := range results {
+	page, err := pager.DedicationCollectivePage(r.Context(), scope, input)
+	if err != nil {
+		slog.Error("dedication collective: page query failed", "error", err)
+		http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	rows := make([]collectiveRow, 0, len(page.Rows))
+	for _, cr := range page.Rows {
 		rows = append(rows, collectiveRow{
 			TransfiguredName:     cr.TransfiguredName,
 			BaseName:             cr.BaseName,
@@ -340,11 +390,17 @@ func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
+	body := map[string]any{
 		"count": len(rows),
+		"total": page.Total,
 		"data":  rows,
-	}); err != nil {
+	}
+	if !input.Legacy {
+		body["page"] = input.Page
+		body["pageSize"] = input.PageSize
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(body); err != nil {
 		slog.Error("dedication collective: encode response", "error", err)
 	}
 }

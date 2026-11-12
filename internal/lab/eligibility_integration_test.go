@@ -421,6 +421,7 @@ func TestSQLExclusionsMatchGoPredicates(t *testing.T) {
 		{"sqlHasAttributeColor vs hasAttributeColor", sqlHasAttributeColor, hasAttributeColor},
 		{"sqlNotColorlessByRule vs isColorlessByRule", sqlNotColorlessByRule,
 			func(g GemPrice) bool { return !isColorlessByRule(g) }},
+		{"sqlIsDedicationOutcome vs isDedicationOutcome", sqlIsDedicationOutcome, isDedicationOutcome},
 	}
 
 	// "Support Cyclone" and "Supportive" are the cases the pre-POE-142
@@ -435,26 +436,30 @@ func TestSQLExclusionsMatchGoPredicates(t *testing.T) {
 	}
 	gemColors := []*string{ptr("RED"), ptr("GREEN"), ptr("BLUE"), ptr("WHITE"), ptr(""), nil}
 
+	// 21/20c is the variant where a Vaal gem is a legal feed, so only the
+	// outcome's own Vaal rule can drop it there.
 	for _, rule := range rules {
 		for _, name := range gemNames {
 			for _, color := range gemColors {
-				g := GemPrice{Name: name}
-				shown := "NULL"
-				if color != nil {
-					g.GemColor = *color
-					shown = `"` + *color + `"`
-				}
+				for _, corrupted := range []bool{false, true} {
+					g := GemPrice{Name: name, Variant: "21/20c", IsCorrupted: corrupted}
+					shown := "NULL"
+					if color != nil {
+						g.GemColor = *color
+						shown = `"` + *color + `"`
+					}
 
-				var sqlKeeps bool
-				if err := pool.QueryRow(ctx,
-					`SELECT `+rule.fragment+` FROM (SELECT $1::text AS name, $2::text AS gem_color) g`,
-					name, color).Scan(&sqlKeeps); err != nil {
-					t.Fatalf("evaluate %q for name %q colour %s: %v", rule.fragment, name, shown, err)
-				}
+					var sqlKeeps bool
+					if err := pool.QueryRow(ctx,
+						`SELECT `+rule.fragment+` FROM (SELECT $1::text AS name, $2::text AS gem_color, $3::boolean AS is_corrupted) g`,
+						name, color, corrupted).Scan(&sqlKeeps); err != nil {
+						t.Fatalf("evaluate %q for name %q colour %s corrupted %v: %v", rule.fragment, name, shown, corrupted, err)
+					}
 
-				if want := rule.keep(g); sqlKeeps != want {
-					t.Errorf("%s disagree on name %q colour %s: SQL keeps=%v, Go keeps=%v",
-						rule.name, name, shown, sqlKeeps, want)
+					if want := rule.keep(g); sqlKeeps != want {
+						t.Errorf("%s disagree on name %q colour %s corrupted %v: SQL keeps=%v, Go keeps=%v",
+							rule.name, name, shown, corrupted, sqlKeeps, want)
+					}
 				}
 			}
 		}

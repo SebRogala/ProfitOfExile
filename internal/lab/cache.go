@@ -157,8 +157,7 @@ type Cache struct {
 	dedicationSet          bool
 	dedicationSkills       []DedicationResult
 	dedicationTransfigured []DedicationResult
-	dedicationRankings     map[string][]CollectiveResult // variant -> price-ranked corrupted gems
-	dedicationGemPrices    map[string][]GemPrice         // variant -> that variant's corrupted gems
+	dedicationGemPrices    map[string][]GemPrice // variant -> that variant's corrupted gems
 	// Double-corruption (Doryani's Institute) EV results, plus the per-input-
 	// variant view derived from the same pass. doubleCorruptSet is the
 	// COLD/WARM discriminator for both fields — see SetDoubleCorrupt.
@@ -505,23 +504,20 @@ func (c *Cache) GemFeatures() ([]GemFeature, bool) {
 }
 
 // DedicationCorpus is everything one Dedication tick fills as a unit: the EV
-// analysis both pools are served from, the price-ranked list behind
-// /api/analysis/collective?mode=dedication, and this snapshot's corrupted gem
-// prices behind /api/analysis/compare?mode=dedication.
+// analysis both pools are served from, and this snapshot's corrupted gem prices
+// behind /api/analysis/compare?mode=dedication.
 //
-// The three are one corpus, not three. All of them are derived in-process from
+// The two are one corpus, not two. Both are derived in-process from
 // the single gem snapshot AnalyzeDedication was handed, so there is no partial
 // outcome where one is authoritative and another is not — which is why they
 // share one warmth flag. See BuildDedicationCorpus.
 //
-// Rankings and GemPrices are keyed by the DB-format variant ("21/23c"). Both
-// maps carry a key for every DedicationVariants entry, so a variant a caller may
-// legitimately ask for (parseDedicationVariant validates against that same list)
+// GemPrices is keyed by the DB-format variant ("21/23c"). It carries a key for
+// every DedicationVariants entry, so a variant a caller may legitimately ask for (parseDedicationVariant validates against that same list)
 // is always addressable, and an empty value under it means "this snapshot had no
 // such gems" rather than "not computed".
 type DedicationCorpus struct {
 	Analysis  DedicationAnalysis
-	Rankings  map[string][]CollectiveResult
 	GemPrices map[string][]GemPrice
 }
 
@@ -538,7 +534,6 @@ func (c *Cache) SetDedication(corpus DedicationCorpus) {
 	c.dedicationSet = true
 	c.dedicationSkills = corpus.Analysis.Skills
 	c.dedicationTransfigured = corpus.Analysis.Transfigured
-	c.dedicationRankings = corpus.Rankings
 	c.dedicationGemPrices = corpus.GemPrices
 	c.lastUpdated = time.Now()
 }
@@ -554,8 +549,8 @@ func (c *Cache) SetDedication(corpus DedicationCorpus) {
 // caller must narrow it with FilterDedicationVariant rather than fall back; when
 // ok is false the slices are nil and the fallback is the only correct move.
 //
-// ok is the same signal HasDedication reports; the keyed reads over the other
-// two corpus fields take it from there, because comma-ok on a keyed read would
+// ok is the same signal HasDedication reports; the keyed read over the other
+// corpus field takes it from there, because comma-ok on a keyed read would
 // answer "this variant is present" instead.
 func (c *Cache) Dedication() (DedicationAnalysis, bool) {
 	c.mu.RLock()
@@ -567,30 +562,16 @@ func (c *Cache) Dedication() (DedicationAnalysis, bool) {
 }
 
 // HasDedication reports whether a Dedication tick has stored a corpus. It is the
-// warmth predicate for the two keyed reads below — check it first, then read.
+// warmth predicate for the keyed read below — check it first, then read.
 //
 // It covers all of DedicationCorpus because one tick fills all of it from one
 // snapshot: unlike the corrupted autocomplete pools, which come from two
 // separate queries and so report warmth separately, there is no way for the
-// rankings to be authoritative while the prices are not.
+// analysis to be authoritative while the prices are not.
 func (c *Cache) HasDedication() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.dedicationSet
-}
-
-// DedicationRankings returns the pre-ranked corrupted gem list for one variant,
-// price-descending and unfiltered — apply search and limit with
-// FilterDedicationRankings, which is what RankDedicationCollective applies to
-// the same list.
-//
-// Keyed read: check HasDedication first. A nil result from a warm cache means
-// this snapshot held no rankable gems at variant, which the database would
-// answer identically.
-func (c *Cache) DedicationRankings(variant string) []CollectiveResult {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.dedicationRankings[variant]
 }
 
 // CorruptedGemPrices returns the latest snapshot's corrupted gem prices at one
