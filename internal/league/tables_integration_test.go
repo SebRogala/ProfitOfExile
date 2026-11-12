@@ -56,12 +56,14 @@ func TestScopedTablesMatchesPublicLeagueForeignKeys(t *testing.T) {
 }
 
 func TestScopedTablesReturnsMeasuredWipeOrder(t *testing.T) {
-	// D6 adopts the sixteen-table TRUNCATE order in the league migration runbook.
+	// D6 adopts the sixteen-table TRUNCATE order in the league migration runbook;
+	// ADR-030 appends the two currency-exchange plays tables.
 	want := []string{
 		"gem_snapshots", "currency_snapshots", "fragment_snapshots", "font_snapshots",
 		"transfigure_results", "quality_results", "trend_results", "gem_features",
 		"gem_signals", "dedication_snapshots", "trade_lookups", "market_context",
 		"currency_exchange_markets", "currency_exchange_cursor", "double_corrupt_snapshots", "item_snapshots",
+		"currency_exchange_plays", "currency_exchange_play_sets",
 	}
 	if got := ScopedTables(); !slices.Equal(got, want) {
 		t.Errorf("ScopedTables() = %q, want measured wipe order %q", got, want)

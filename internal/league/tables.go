@@ -20,5 +20,7 @@ func ScopedTables() []string {
 		"currency_exchange_cursor",
 		"double_corrupt_snapshots",
 		"item_snapshots",
+		"currency_exchange_plays",
+		"currency_exchange_play_sets",
 	}
 }

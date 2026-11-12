@@ -221,8 +221,14 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	// LabRepo. The route is therefore registered UNCONDITIONALLY, outside the
 	// `if cfg.LabRepo != nil` block above — a server started without lab
 	// analysis still serves currency-exchange plays. The handler treats a nil
-	// ExchangeCache as cold, so registration never depends on the wiring.
-	r.Get("/api/currency-exchange/plays", handlers.CurrencyExchangePlays(cfg.ExchangeCache))
+	// ExchangeCache as cold, so registration never depends on the wiring. A
+	// paged request (ADR-030) reads the stored plays; without a pool it answers
+	// cold as well.
+	var exchangePager exchange.PlaysPager
+	if cfg.Pool != nil {
+		exchangePager = exchange.ScopedPlaysPager{Repo: exchange.NewRepository(cfg.Pool), Scope: cfg.League}
+	}
+	r.Get("/api/currency-exchange/plays", handlers.CurrencyExchangePlaysPaged(cfg.ExchangeCache, exchangePager))
 	r.Get("/api/currency-exchange/divine-rate", handlers.CurrencyExchangeDivineRate(cfg.ExchangeCache))
 	r.Get("/api/harvest", handlers.Harvest(cfg.HarvestCache))
 

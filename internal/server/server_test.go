@@ -602,3 +602,44 @@ func TestNewRouter_MercTemplateRoutesAreAbsentWithoutTheirLimiter(t *testing.T) 
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/desktop/merc-templates", nil))
 	assertAPINotFound(t, w)
 }
+
+func TestRouter_CurrencyExchangePlaysAnswersAPagedRequest(t *testing.T) {
+	// The route serves the ADR-030 paged contract: a request with pageSize gets
+	// the paged body (total, afterRules, itemUniverse), cold without a pool.
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/currency-exchange/plays?mode=all&horizon=recent&pageSize=50&sort=expected", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusOK, w.Body.String())
+	}
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	for _, key := range []string{"total", "afterRules", "afterGates", "matched", "showConvert", "itemUniverse"} {
+		if _, ok := body[key]; !ok {
+			t.Errorf("paged body has no %q key", key)
+		}
+	}
+	if string(body["warm"]) != "false" {
+		t.Errorf("warm = %s, want false without a pool", body["warm"])
+	}
+}
+
+func TestRouter_CurrencyExchangePlaysRejectsABadPageSize(t *testing.T) {
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/currency-exchange/plays?pageSize=30", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "pageSize") {
+		t.Errorf("body %s does not name pageSize", w.Body.String())
+	}
+}

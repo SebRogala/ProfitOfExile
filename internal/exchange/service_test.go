@@ -2,6 +2,7 @@ package exchange
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"reflect"
@@ -52,8 +53,11 @@ type fakeRows struct {
 	rows    []StoredRow
 	loadErr error
 
+	replaceErr error
+
 	newestHours []newestHourCall
 	loads       []loadCall
+	replaced    [][]Result
 
 	// started receives one value per NewestHour call and is buffered, so the
 	// fake never blocks on a test that is not reading it.
@@ -85,6 +89,13 @@ func (f *fakeRows) LoadRows(_ context.Context, scope league.Scope, from, to time
 		return nil, f.loadErr
 	}
 	return f.rows, nil
+}
+
+func (f *fakeRows) ReplacePlays(_ context.Context, _ league.Scope, results []Result) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.replaced = append(f.replaced, results)
+	return f.replaceErr
 }
 
 func (f *fakeRows) newestHourCalls() []newestHourCall {
@@ -937,4 +948,95 @@ func TestDebouncer_unusableDebouncer_signalsAreNoOps(t *testing.T) {
 	// Nothing to observe but the absence of a panic: reaching this line after a
 	// timer would have fired is the assertion.
 	time.Sleep(20 * time.Millisecond)
+}
+
+var errReplacePlays = errors.New("replace plays: serialization failure")
+
+func TestRecompute_WriteFailureLeavesCacheAndSkipsNotify(t *testing.T) {
+	rows := twoHourRows()
+	service, cache, notify := newTestService(t, rows, Config{})
+	first, err := service.Recompute(context.Background())
+	if err != nil {
+		t.Fatalf("first recompute: %v", err)
+	}
+	if len(first.Plays) == 0 {
+		t.Fatal("first recompute ranked no plays; the fixture cannot show a kept answer")
+	}
+
+	// The next feed state ranks nothing, so a cache write would be visible.
+	rows.mu.Lock()
+	rows.rows, rows.replaceErr = nil, errReplacePlays
+	rows.mu.Unlock()
+
+	_, err = service.Recompute(context.Background())
+
+	if !errors.Is(err, errReplacePlays) {
+		t.Fatalf("error = %v, want %v", err, errReplacePlays)
+	}
+	for _, h := range DefaultHorizons() {
+		got, warm := cache.Snapshot(h.Horizon)
+		if !warm || len(got.Plays) != len(first.Plays) {
+			t.Errorf("%s cache = warm %v with %d plays, want the first answer's %d plays", h.Horizon, warm, len(got.Plays), len(first.Plays))
+		}
+	}
+	if n := notify.count(); n != 1 {
+		t.Errorf("notify called %d times, want 1 (the first recompute only)", n)
+	}
+}
+
+func TestRecompute_PersistsEveryHorizonsCachedResult(t *testing.T) {
+	rows := eightHourRows()
+	service, cache, _ := newTestService(t, rows, Config{})
+
+	if _, err := service.Recompute(context.Background()); err != nil {
+		t.Fatalf("recompute: %v", err)
+	}
+
+	rows.mu.Lock()
+	replaced := rows.replaced
+	rows.mu.Unlock()
+	if len(replaced) != 1 {
+		t.Fatalf("ReplacePlays called %d times, want 1", len(replaced))
+	}
+	horizons := DefaultHorizons()
+	if len(replaced[0]) != len(horizons) {
+		t.Fatalf("persisted %d results, want one per horizon (%d)", len(replaced[0]), len(horizons))
+	}
+	for i, h := range horizons {
+		cached, _ := cache.Snapshot(h.Horizon)
+		if !reflect.DeepEqual(replaced[0][i], cached) {
+			t.Errorf("persisted %s result differs from the cached one:\n got %+v\nwant %+v", h.Horizon, replaced[0][i], cached)
+		}
+	}
+}
+
+func TestRecompute_CachesPlaysWithoutDisplay(t *testing.T) {
+	// ADR-030 r2 M1: the legacy body is the cached plays, and it must stay the
+	// pre-paging body: BestPlays' plays exactly, with no display key.
+	rows := twoHourRows()
+	service, cache, _ := newTestService(t, rows, Config{})
+	if _, err := service.Recompute(context.Background()); err != nil {
+		t.Fatalf("recompute: %v", err)
+	}
+
+	cfg := (Config{}).withDefaults()
+	want := BestPlays(serviceScope.ID(), rows.rows, horizonConfig(cfg, cfg.Horizons[0]))
+	got, _ := cache.Snapshot(cfg.Horizons[0].Horizon)
+	if len(got.Plays) == 0 {
+		t.Fatal("recompute cached no plays; nothing to compare")
+	}
+	gotJSON, err := json.Marshal(got.Plays)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantJSON, err := json.Marshal(want.Plays)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotJSON) != string(wantJSON) {
+		t.Errorf("cached plays JSON differs from BestPlays':\n got %s\nwant %s", gotJSON, wantJSON)
+	}
+	if strings.Contains(string(gotJSON), `"display"`) {
+		t.Errorf("cached plays carry a display key: %s", gotJSON)
+	}
 }

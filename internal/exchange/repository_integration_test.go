@@ -4,11 +4,16 @@ package exchange
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
+	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/league"
@@ -695,5 +700,465 @@ func TestNewestHour_anotherLeaguesLaterHour_isIgnored(t *testing.T) {
 	if !newest.Equal(mine) {
 		t.Errorf("newest = %s, want %s — the other league's later hour must not anchor this window",
 			newest, mine)
+	}
+}
+
+// newPlaysRepository returns a repository and registers the cleanup of the
+// scope's stored plays and set headers.
+func newPlaysRepository(t *testing.T, pool *pgxpool.Pool, scopes ...league.Scope) *Repository {
+	t.Helper()
+	requirePlaysTables(t, pool)
+	scopes = append(scopes, integrationScope)
+	t.Cleanup(func() {
+		ctx := context.Background()
+		for _, scope := range scopes {
+			for _, stmt := range []string{
+				"DELETE FROM currency_exchange_plays WHERE league = $1",
+				"DELETE FROM currency_exchange_play_sets WHERE league = $1",
+			} {
+				if _, err := pool.Exec(ctx, stmt, scope.ID()); err != nil {
+					t.Logf("cleanup warning: %q: %v", stmt, err)
+				}
+			}
+		}
+	})
+	return NewRepository(pool)
+}
+
+func requirePlaysTables(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	var exists bool
+	if err := pool.QueryRow(context.Background(),
+		"SELECT to_regclass('currency_exchange_plays') IS NOT NULL").Scan(&exists); err != nil {
+		t.Fatalf("check currency_exchange_plays: %v", err)
+	}
+	if !exists {
+		t.Fatal("currency_exchange_plays table not found (migration not applied)")
+	}
+}
+
+// keyedPlays is a horizon Result holding one direct play per key, in order.
+func keyedPlays(horizon Horizon, keys ...string) Result {
+	res := Result{
+		League: integrationScope.ID(), Horizon: string(horizon),
+		From: baseHour, To: baseHour.Add(6 * time.Hour), Hours: 6, DivineChaosRate: 196,
+		Plays: []Play{},
+	}
+	for i, key := range keys {
+		res.Plays = append(res.Plays, Play{
+			Key: key, Mode: ModeDirect,
+			Legs:       []Leg{{Action: "buy", Item: cardID, Quote: ChaosID, PriceItemQty: 1, PriceQuoteQty: 10}},
+			Investment: 10, Roi: float64(len(keys) - i), ExpectedRoi: 1, SimEntries: 1, Depth: 1,
+		})
+	}
+	return res
+}
+
+func storedKeys(t *testing.T, pool *pgxpool.Pool, scope league.Scope, horizon Horizon) []string {
+	t.Helper()
+	rows, err := pool.Query(context.Background(),
+		`SELECT play_key FROM currency_exchange_plays WHERE league = $1 AND horizon = $2 ORDER BY served_rank`,
+		scope.ID(), string(horizon))
+	if err != nil {
+		t.Fatalf("read stored keys: %v", err)
+	}
+	defer rows.Close()
+	keys := []string{}
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, k)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return keys
+}
+
+type storedHeader struct {
+	Hours int
+	Rate  float64
+	From  time.Time
+}
+
+func storedHeaders(t *testing.T, pool *pgxpool.Pool, scope league.Scope) map[string]storedHeader {
+	t.Helper()
+	rows, err := pool.Query(context.Background(),
+		`SELECT horizon, hours, divine_chaos_rate, window_from FROM currency_exchange_play_sets WHERE league = $1`, scope.ID())
+	if err != nil {
+		t.Fatalf("read headers: %v", err)
+	}
+	defer rows.Close()
+	out := map[string]storedHeader{}
+	for rows.Next() {
+		var h string
+		var v storedHeader
+		if err := rows.Scan(&h, &v.Hours, &v.Rate, &v.From); err != nil {
+			t.Fatal(err)
+		}
+		v.From = v.From.UTC()
+		out[h] = v
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestReplacePlays_StoresEveryPlayInServedOrderPerHorizon(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newPlaysRepository(t, pool)
+
+	recent := keyedPlays(HorizonRecent, "c", "a", "b")
+	day := keyedPlays(HorizonDay, "z", "y")
+	if err := repo.ReplacePlays(context.Background(), integrationScope, []Result{recent, day}); err != nil {
+		t.Fatalf("ReplacePlays: %v", err)
+	}
+
+	if got := storedKeys(t, pool, integrationScope, HorizonRecent); !reflect.DeepEqual(got, []string{"c", "a", "b"}) {
+		t.Errorf("recent keys = %q, want [c a b]", got)
+	}
+	if got := storedKeys(t, pool, integrationScope, HorizonDay); !reflect.DeepEqual(got, []string{"z", "y"}) {
+		t.Errorf("day keys = %q, want [z y]", got)
+	}
+}
+
+func TestReplacePlays_SecondCallReplacesTheFirstAnswer(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newPlaysRepository(t, pool)
+	ctx := context.Background()
+	if err := repo.ReplacePlays(ctx, integrationScope, []Result{keyedPlays(HorizonRecent, "old1", "old2"), keyedPlays(HorizonDay, "oldday")}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.ReplacePlays(ctx, integrationScope, []Result{keyedPlays(HorizonRecent, "new1"), keyedPlays(HorizonDay)}); err != nil {
+		t.Fatalf("ReplacePlays: %v", err)
+	}
+
+	if got := storedKeys(t, pool, integrationScope, HorizonRecent); !reflect.DeepEqual(got, []string{"new1"}) {
+		t.Errorf("recent keys = %q, want [new1]", got)
+	}
+	if got := storedKeys(t, pool, integrationScope, HorizonDay); len(got) != 0 {
+		t.Errorf("day keys = %q, want none", got)
+	}
+}
+
+func TestReplacePlays_ReplacesOnlyTheScopedLeague(t *testing.T) {
+	pool := integrationPool(t)
+	// Registered first so its cleanup runs after the plays cleanup (FK order).
+	other := registerSecondLeague(t, pool, "PlaysOtherLeague")
+	repo := newPlaysRepository(t, pool, other)
+	ctx := context.Background()
+	if err := repo.ReplacePlays(ctx, other, []Result{keyedPlays(HorizonRecent, "kept")}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.ReplacePlays(ctx, integrationScope, []Result{keyedPlays(HorizonRecent, "mine")}); err != nil {
+		t.Fatalf("ReplacePlays: %v", err)
+	}
+
+	if got := storedKeys(t, pool, other, HorizonRecent); !reflect.DeepEqual(got, []string{"kept"}) {
+		t.Errorf("other league keys = %q, want [kept]", got)
+	}
+	if _, ok := storedHeaders(t, pool, other)[string(HorizonRecent)]; !ok {
+		t.Error("other league's recent header was removed")
+	}
+}
+
+func TestReplacePlays_FailureAfterTheDeleteKeepsBothPriorHorizonSets(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newPlaysRepository(t, pool)
+	ctx := context.Background()
+	if err := repo.ReplacePlays(ctx, integrationScope, []Result{keyedPlays(HorizonRecent, "r1", "r2"), keyedPlays(HorizonDay, "d1")}); err != nil {
+		t.Fatal(err)
+	}
+	wantHeaders := storedHeaders(t, pool, integrationScope)
+	if len(wantHeaders) != 2 {
+		t.Fatalf("prior headers = %v, want both horizons", wantHeaders)
+	}
+
+	// The empty key violates the plays CHECK during the COPY, after the delete.
+	broken := keyedPlays(HorizonRecent, "n1", "")
+	broken.Hours = 99
+	err := repo.ReplacePlays(ctx, integrationScope, []Result{broken, keyedPlays(HorizonDay, "n2")})
+
+	if err == nil {
+		t.Fatal("ReplacePlays succeeded, want the CHECK violation")
+	}
+	if got := storedKeys(t, pool, integrationScope, HorizonRecent); !reflect.DeepEqual(got, []string{"r1", "r2"}) {
+		t.Errorf("recent keys = %q, want the prior [r1 r2]", got)
+	}
+	if got := storedKeys(t, pool, integrationScope, HorizonDay); !reflect.DeepEqual(got, []string{"d1"}) {
+		t.Errorf("day keys = %q, want the prior [d1]", got)
+	}
+	if got := storedHeaders(t, pool, integrationScope); !reflect.DeepEqual(got, wantHeaders) {
+		t.Errorf("headers = %v, want the prior %v", got, wantHeaders)
+	}
+}
+
+// storeParity stores the parity fixture's plays, in fixture order, as the
+// recent horizon at the fixture's divine rate.
+func storeParity(t *testing.T, repo *Repository) parityFixture {
+	t.Helper()
+	f := loadParity(t)
+	res := Result{
+		League: integrationScope.ID(), Horizon: string(HorizonRecent),
+		From: baseHour, To: baseHour.Add(6 * time.Hour), Hours: 6, DivineChaosRate: f.DivineChaosRate,
+	}
+	for _, p := range f.Plays {
+		play := p.Play
+		applyNonFinite(t, &play, p.NonFinite)
+		res.Plays = append(res.Plays, play)
+	}
+	if err := repo.ReplacePlays(context.Background(), integrationScope, []Result{res}); err != nil {
+		t.Fatalf("store parity plays: %v", err)
+	}
+	return f
+}
+
+type parityCase struct {
+	Name         string              `json:"name"`
+	Params       map[string][]string `json:"params"`
+	Total        int                 `json:"total"`
+	AfterRules   int                 `json:"afterRules"`
+	AfterGates   int                 `json:"afterGates"`
+	Matched      int                 `json:"matched"`
+	ShowConvert  bool                `json:"showConvert"`
+	OrderedKeys  []string            `json:"orderedKeys"`
+	PageKeys     []string            `json:"pageKeys"`
+	ItemUniverse []struct {
+		ID        string `json:"id"`
+		PlayCount int    `json:"playCount"`
+	} `json:"itemUniverse"`
+}
+
+func loadParityCases(t *testing.T) []parityCase {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/page-parity.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Cases []parityCase `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Cases) == 0 {
+		t.Fatal("parity fixture carries no cases")
+	}
+	return f.Cases
+}
+
+func parityQuery(t *testing.T, params map[string][]string, pageSize string) PlaysPageQuery {
+	t.Helper()
+	values := url.Values{}
+	for k, v := range params {
+		values[k] = v
+	}
+	if pageSize != "" {
+		values.Set("pageSize", pageSize)
+	} else if !values.Has("pageSize") {
+		values.Set("pageSize", "all")
+	}
+	q, err := ParsePlaysPageQuery(values)
+	if err != nil {
+		t.Fatalf("parse %v: %v", values, err)
+	}
+	q.Mode, q.Horizon = "all", HorizonRecent
+	return q
+}
+
+func pageKeys(page PlaysPage) []string {
+	keys := []string{}
+	for _, p := range page.Plays {
+		keys = append(keys, p.Key)
+	}
+	return keys
+}
+
+func TestPlaysPage_MatchesTheClientChainOnEveryParityCase(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newPlaysRepository(t, pool)
+	storeParity(t, repo)
+	ctx := context.Background()
+
+	for _, tc := range loadParityCases(t) {
+		t.Run(tc.Name, func(t *testing.T) {
+			page, err := repo.PlaysPage(ctx, integrationScope, parityQuery(t, tc.Params, ""))
+			if err != nil {
+				t.Fatalf("PlaysPage: %v", err)
+			}
+			got := [4]int{page.Total, page.AfterRules, page.AfterGates, page.Matched}
+			want := [4]int{tc.Total, tc.AfterRules, tc.AfterGates, tc.Matched}
+			if got != want {
+				t.Errorf("total/afterRules/afterGates/matched = %v, want %v", got, want)
+			}
+			if page.ShowConvert != tc.ShowConvert {
+				t.Errorf("showConvert = %v, want %v", page.ShowConvert, tc.ShowConvert)
+			}
+			if keys := pageKeys(page); !reflect.DeepEqual(keys, tc.PageKeys) {
+				t.Errorf("page keys = %q\nwant %q", keys, tc.PageKeys)
+			}
+			all, err := repo.PlaysPage(ctx, integrationScope, parityQuery(t, tc.Params, "all"))
+			if err != nil {
+				t.Fatalf("PlaysPage all: %v", err)
+			}
+			if keys := pageKeys(all); !reflect.DeepEqual(keys, tc.OrderedKeys) {
+				t.Errorf("ordered keys = %q\nwant %q", keys, tc.OrderedKeys)
+			}
+			wantUniverse := map[string]int{}
+			for _, item := range tc.ItemUniverse {
+				wantUniverse[item.ID] = item.PlayCount
+			}
+			gotUniverse := map[string]int{}
+			for _, item := range page.ItemUniverse {
+				gotUniverse[item.ID] = item.PlayCount
+			}
+			if !reflect.DeepEqual(gotUniverse, wantUniverse) {
+				t.Errorf("item universe = %v\nwant %v", gotUniverse, wantUniverse)
+			}
+		})
+	}
+}
+
+func TestPlaysPage_TotalIsServedAfterModeNotAfterFilters(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newPlaysRepository(t, pool)
+	f := storeParity(t, repo)
+	direct := 0
+	for _, p := range f.Plays {
+		if p.Play.Mode == ModeDirect {
+			direct++
+		}
+	}
+	q := parityQuery(t, map[string][]string{"onlyCategory": {"Divination Cards"}}, "25")
+	q.Mode = string(ModeDirect)
+
+	page, err := repo.PlaysPage(context.Background(), integrationScope, q)
+
+	if err != nil {
+		t.Fatalf("PlaysPage: %v", err)
+	}
+	if page.Total != direct {
+		t.Errorf("total = %d, want the %d direct plays", page.Total, direct)
+	}
+	if page.Matched >= page.Total {
+		t.Errorf("matched = %d, want fewer than total %d (the rule cuts)", page.Matched, page.Total)
+	}
+}
+
+func TestPlaysPage_PageTwoContinuesTheOrder(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newPlaysRepository(t, pool)
+	storeParity(t, repo)
+	all := loadParityCases(t)[0].OrderedKeys
+	q := parityQuery(t, nil, "25")
+	q.Page = 2
+
+	page, err := repo.PlaysPage(context.Background(), integrationScope, q)
+
+	if err != nil {
+		t.Fatalf("PlaysPage: %v", err)
+	}
+	if keys := pageKeys(page); !reflect.DeepEqual(keys, all[25:]) {
+		t.Errorf("page 2 keys = %q\nwant %q", keys, all[25:])
+	}
+}
+
+func TestPlaysPage_ServesTheDisplayOfEveryPlay(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newPlaysRepository(t, pool)
+	f := storeParity(t, repo)
+	want := map[string]PlayDisplay{}
+	for _, p := range f.Plays {
+		want[p.Play.Key] = p.Display
+	}
+
+	page, err := repo.PlaysPage(context.Background(), integrationScope, parityQuery(t, nil, "all"))
+
+	if err != nil {
+		t.Fatalf("PlaysPage: %v", err)
+	}
+	if len(page.Plays) != len(f.Plays) {
+		t.Fatalf("served %d plays, want %d", len(page.Plays), len(f.Plays))
+	}
+	for _, p := range page.Plays {
+		if p.Display == nil {
+			t.Errorf("%s: no display", p.Key)
+			continue
+		}
+		if d := displayDiff(*p.Display, want[p.Key]); len(d) > 0 {
+			t.Errorf("%s display: %v", p.Key, d)
+		}
+	}
+}
+
+func TestPlaysPage_HorizonWithoutAStoredSetIsCold(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newPlaysRepository(t, pool)
+
+	page, err := repo.PlaysPage(context.Background(), integrationScope, parityQuery(t, nil, "25"))
+
+	if err != nil {
+		t.Fatalf("PlaysPage: %v", err)
+	}
+	if page.Warm || len(page.Plays) != 0 || page.Total != 0 {
+		t.Errorf("page = warm %v, %d plays, total %d; want cold and empty", page.Warm, len(page.Plays), page.Total)
+	}
+}
+
+// countingTracer counts the statements a pool sends, BEGIN and COMMIT included.
+type countingTracer struct{ n atomic.Int64 }
+
+func (c *countingTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	c.n.Add(1)
+	return ctx
+}
+
+func (c *countingTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+// playsPageStatements is the documented budget: BEGIN, header, stage counts,
+// item universe, page, COMMIT.
+const playsPageStatements = 6
+
+func TestPlaysPage_StatementCountIsIndependentOfPageSize(t *testing.T) {
+	pool := integrationPool(t)
+	storeParity(t, newPlaysRepository(t, pool))
+	cfg, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracer := &countingTracer{}
+	cfg.ConnConfig.Tracer = tracer
+	traced, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(traced.Close)
+	repo := NewRepository(traced)
+	if err := traced.Ping(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	counts := map[string]int64{}
+	for _, size := range []string{"25", "all"} {
+		before := tracer.n.Load()
+		page, err := repo.PlaysPage(context.Background(), integrationScope, parityQuery(t, nil, size))
+		if err != nil {
+			t.Fatalf("PlaysPage %s: %v", size, err)
+		}
+		if len(page.Plays) == 0 {
+			t.Fatalf("PlaysPage %s served nothing", size)
+		}
+		counts[size] = tracer.n.Load() - before
+	}
+
+	for size, n := range counts {
+		if n != playsPageStatements {
+			t.Errorf("pageSize %s sent %d statements, want %d", size, n, playsPageStatements)
+		}
 	}
 }

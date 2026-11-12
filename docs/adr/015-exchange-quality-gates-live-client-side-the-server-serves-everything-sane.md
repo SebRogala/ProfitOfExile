@@ -103,3 +103,16 @@ survives of that bullet is the knobs themselves and the spelling of off: an
 explicit `0` still turns a gate off, and now so does leaving it alone. The split
 this ADR decided is unchanged — the server serves everything sane, the quality
 bar is the reader's — with the bar now empty until the reader sets it.
+
+## Amended 2026-11 (POE-336, ADR-030)
+
+The gates stay the reader's. Their levels are still owned by the client
+(`gateDefaults` in `desktop/src/lib/exchange/filters.ts`), but a paged request
+to `GET /api/currency-exchange/plays` now sends them as request params
+(`minItemPrice`, `minItemPriceDiv`, `minRoiChaos`, `minTurnover`, `maxTickPct`,
+`minEdgeTickRatio`, `minRoiPct`), and the server applies them in SQL with the
+`applyGates` comparisons (`exchange.Repository.PlaysPage`). The server never
+defaults a gate: an absent gate is 0, and 0 is off (`exchange.PlaysPageQuery`).
+The split this ADR decided holds: the server still serves everything sane, and
+the bar is still the one the reader sends. A legacy request without `pageSize`
+is served the whole cached list unchanged, and the gates run on the client.

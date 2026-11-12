@@ -186,16 +186,30 @@ type RowSource interface {
 	LoadRows(ctx context.Context, scope league.Scope, from, to time.Time) ([]StoredRow, error)
 }
 
-// The repository is the production RowSource. Asserting it here means a change
-// to either signature fails at this line rather than in cmd/server's wiring.
-var _ RowSource = (*Repository)(nil)
+// PlaysWriter is the store the paged endpoint reads (ADR-030). A RowSource
+// that also implements it gets every recompute persisted before the cache is
+// written. It is a separate interface because RowSource has other consumers
+// (internal/harvest) that rank rows and persist nothing.
+type PlaysWriter interface {
+	// ReplacePlays atomically replaces the stored plays of every horizon with
+	// results.
+	ReplacePlays(ctx context.Context, scope league.Scope, results []Result) error
+}
+
+// The repository is the production RowSource and PlaysWriter. Asserting it
+// here means a change to a signature fails at this line rather than in
+// cmd/server's wiring, which passes the repository as the RowSource.
+var (
+	_ RowSource   = (*Repository)(nil)
+	_ PlaysWriter = (*Repository)(nil)
+)
 
 // Service recomputes the league's best plays and keeps the Cache current.
 //
 // It is the server-side counterpart of the collector's Runner: the Runner writes
-// hours, the Service reads them back and republishes the derived answer. Nothing
-// here is persisted — BestPlays is cheap enough to re-run from stored rows, and
-// storing plays is POE-180's call.
+// hours, the Service reads them back and republishes the derived answer. Each
+// recompute's plays are also persisted (ReplacePlays) so the paged endpoint can
+// filter and page them in SQL (ADR-030); the cache stays the legacy read path.
 //
 // # Why lab.Throttler is not reused
 //
@@ -273,8 +287,11 @@ func NewService(rows RowSource, scope league.Scope, cfg Config, cache *Cache, no
 // — warm, empty and honest — rather than erroring, because "nothing ingested
 // yet" is the normal state of a fresh league.
 //
+// Every horizon is ranked first and persisted in one ReplacePlays before any
+// cache write, so the stored and cached answers move together.
+//
 // On any error the cache is left untouched and notify is NOT called: a failed
-// read must not turn a good cached answer into an empty one, and must not tell
+// read or write must not turn a good cached answer into an empty one, and must not tell
 // clients that something changed.
 func (s *Service) Recompute(ctx context.Context) (Result, error) {
 	if err := s.scope.Validate(); err != nil {
@@ -299,13 +316,27 @@ func (s *Service) Recompute(ctx context.Context) (Result, error) {
 		}
 	}
 
-	var served Result
-	for i, horizon := range s.cfg.Horizons {
+	results := make([]Result, 0, len(s.cfg.Horizons))
+	for _, horizon := range s.cfg.Horizons {
 		res := Result{League: s.scope.ID(), Horizon: string(horizon.Horizon), Plays: []Play{}}
 		if found {
 			res = BestPlays(s.scope.ID(), rows, horizonConfig(s.cfg, horizon))
 			res.Horizon = string(horizon.Horizon)
 		}
+		results = append(results, res)
+	}
+
+	// The store decorates the copy it persists; the cache keeps the plays
+	// undecorated, so the legacy body carries no display (ADR-030 r2 M1).
+	if writer, ok := s.rows.(PlaysWriter); ok {
+		if err := writer.ReplacePlays(ctx, s.scope, results); err != nil {
+			return Result{}, fmt.Errorf("exchange service: recompute: %w", err)
+		}
+	}
+
+	var served Result
+	for i, horizon := range s.cfg.Horizons {
+		res := results[i]
 		s.cache.Set(horizon.Horizon, res)
 		if i == 0 {
 			served = res

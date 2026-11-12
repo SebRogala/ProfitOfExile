@@ -32,7 +32,7 @@ func wipeTestTx(t *testing.T, ctx context.Context, pool *pgxpool.Pool) pgx.Tx {
 
 // Legacy shapes mirror insertLegacyScopedRows in migrations_integration_test.go,
 // with league added and dedication's mandatory variant from its later migration.
-// The final four shapes come from their respective table-creation migrations.
+// The final six shapes come from their respective table-creation migrations.
 func seedWipeRows(t *testing.T, ctx context.Context, tx pgx.Tx, id string) {
 	t.Helper()
 	for _, statement := range []string{
@@ -52,6 +52,8 @@ func seedWipeRows(t *testing.T, ctx context.Context, tx pgx.Tx, id string) {
 		`INSERT INTO currency_exchange_cursor (league,next_hour) VALUES ($1,1)`,
 		`INSERT INTO double_corrupt_snapshots (league,time,name,input_variant) VALUES ($1,NOW(),'WI3 Corrupt','20/20')`,
 		`INSERT INTO item_snapshots (league,time,category,ninja_id) VALUES ($1,NOW(),'IncursionTemple',1)`,
+		`INSERT INTO currency_exchange_plays (league,horizon,play_key,served_rank,mode,leg_count,side_items,side_categories,side_names,first_quote,play) VALUES ($1,'recent','WI3 Play',0,'direct',2,'{}','{}','{}','','{}')`,
+		`INSERT INTO currency_exchange_play_sets (league,horizon,hours,divine_chaos_rate,window_from,window_to) VALUES ($1,'recent',6,1,NOW(),NOW())`,
 	} {
 		if _, err := tx.Exec(ctx, statement, id); err != nil {
 			t.Fatalf("seed %s: %v", statement, err)

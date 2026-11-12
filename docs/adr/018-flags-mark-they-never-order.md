@@ -97,3 +97,14 @@ and re-opens both this ADR and
 reordered or skipped rows to decide which head to keep would break the sort
 rule above, and a cap that went unnamed on screen or could not be lifted in one
 click would be `feedback_visibility_default`'s hiding by a quieter name.
+
+## Amended 2026-11 (POE-336, ADR-030)
+
+The row cap is now a page size. A paged request sends `pageSize`
+(`25`/`50`/`100`/`200`/`all`) and the server returns that head of the sorted,
+filtered list, with the full counts (`total`, `afterRules`, `afterGates`,
+`matched`) so the counter still names the cap. The three properties above hold
+on the server: the sort keys are the printed columns (`display.sortKeys`), no
+flag orders or partitions a row, and ties keep the served order (`served_rank`).
+A search still bypasses the cap. Show all (`pageSize=all`) stays uncapped as an
+interim owner call (ADR-030 D7/D8).
