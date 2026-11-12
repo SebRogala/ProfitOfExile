@@ -512,8 +512,9 @@ fn preprocess_with(
     // at 2× is 13760 px. The factor is clamped to the limit instead
     // (`ocr_upscale_factor`); a client that wide renders its UI at ~2.67×, so
     // its glyphs are already past the size the 2× exists for. The other large
-    // crops (font panel, temple panel, merc header and detect) are sub-regions
-    // of the same frame and take the same clamp here.
+    // crops (font panel, temple panel, merc header) are sub-regions of the
+    // same frame and take the same clamp here. The merc detect path skips this
+    // function and hands OCR the frame unscaled, so the clamp never reaches it.
     let (out_w, out_h) = ocr_upscaled_size(w, h, crate::ocr::max_image_dimension());
     let upscaled = image::imageops::resize(&contrasted, out_w, out_h, filter);
     image::DynamicImage::ImageLuma8(upscaled)
