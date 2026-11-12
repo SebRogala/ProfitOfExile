@@ -342,7 +342,7 @@ impl LineDrops {
 
     /// Vertolka's own `Commentary` cell for this line, **verbatim** —
     /// [`VERTOLKA_SHEET`] is the source and its typos are his ("you should't
-    /// need it", the stray closing bracket on Wealth of the Vaal). Nine of the
+    /// need it", the stray closing bracket on Wealth of the Vaal). Eight of the
     /// twenty-five rows carry one; the rest are `None`.
     ///
     /// It is prose for the overlay, never a join key and never a number. In
@@ -426,7 +426,8 @@ pub const DROPS: [LineDrops; 25] = [
         key: "chamber_of_iron",
         unique: None,
         content: Some("Armour drops"),
-        note: Some("sometimes can drop temple mod item + fracture/veiled items"),
+        // 3.30 removed temple-mod items and this cell's 3.30 text is unverified (sheet not fetched).
+        note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
@@ -939,15 +940,12 @@ mod tests {
         "toxic_grove",
     ];
 
-    /// Vertolka's nine non-blank `Commentary` cells, transcribed from the CSV
-    /// with his typos left in place ("you should't", the unmatched bracket on
-    /// Wealth of the Vaal), in [`DROPS`] order. Reworded commentary is not his
-    /// commentary, so this is a character-for-character copy.
-    const SHEET_COMMENTARY: [(&str, &str); 9] = [
-        (
-            "chamber_of_iron",
-            "sometimes can drop temple mod item + fracture/veiled items",
-        ),
+    /// Eight of Vertolka's nine non-blank `Commentary` cells, transcribed from
+    /// the CSV with his typos left in place ("you should't", the unmatched
+    /// bracket on Wealth of the Vaal), in [`DROPS`] order. Reworded commentary
+    /// is not his commentary, so this is a character-for-character copy.
+    /// Chamber of Iron's cell is dropped as stale in 3.30 pending a re-read.
+    const SHEET_COMMENTARY: [(&str, &str); 8] = [
         (
             "court_of_sealed_death",
             "In T3 Arcanist and Diviner Stronboxes are quite common",
