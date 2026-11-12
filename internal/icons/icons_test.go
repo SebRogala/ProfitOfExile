@@ -399,7 +399,7 @@ func TestNewSets_embeddedCategoriesBuildIndependentCaches(t *testing.T) {
 		t.Fatalf("NewSets() error = %v, want nil", err)
 	}
 
-	wantCounts := map[string]int{"gems": 763, "items": 9, "temple": 32}
+	wantCounts := map[string]int{"gems": 765, "items": 9, "temple": 32}
 	for category, want := range wantCounts {
 		c := sets.caches[category]
 		if c == nil {
