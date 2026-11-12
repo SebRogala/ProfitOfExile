@@ -303,16 +303,16 @@ describe('lab session ordering and catch-up', () => {
 
 	it('delivers a live event during the layout wait and again from the catch-up', async () => {
 		const h = makeHarness();
-		h.state.catchupEvents = [PLAZA];
+		h.state.catchupEvents = [ROOM1];
 		const layout = h.holdLayout();
 		const a = recorder();
 		h.session.acquire(a.hooks);
 		await flush();
-		h.send('lab-nav', PLAZA);
-		expect(a.types()).toEqual(['PlazaEntered']);
+		h.send('lab-nav', ROOM1);
+		expect(a.events.map((e) => e.event)).toEqual([ROOM1]);
 		layout.resolve(makeLayout());
 		await flush();
-		expect(a.types()).toEqual(['PlazaEntered', 'PlazaEntered']);
+		expect(a.events.map((e) => e.event)).toEqual([ROOM1, ROOM1]);
 	});
 });
 
