@@ -207,7 +207,7 @@ pub struct Settings {
     /// it: [`persist_overlay_settings`] carries it across saves.
     pub webview_gpu_disabled: bool,
     /// Proxy for every outbound request (POE-360): `http://`, `https://` or
-    /// `socks5://`, optionally with `user:pass@`; empty = none. Validated by
+    /// `socks5://`, no credentials; empty = none. Validated by
     /// `http::ProxyUrl::parse` on write and read once by [`proxy_url_in`] at
     /// startup, so a change applies on the next launch. File-owned like
     /// `webview_gpu_disabled`: [`persist_overlay_settings`] carries it.

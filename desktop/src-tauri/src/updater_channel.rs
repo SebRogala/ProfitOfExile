@@ -41,6 +41,23 @@ pub struct UpdateMetadata {
     raw_json: serde_json::Value,
 }
 
+/// The updater for one manifest, routed through `proxy` when one is in effect.
+fn endpoint_updater<R: Runtime, M: Manager<R>>(
+    manager: &M,
+    endpoint: reqwest::Url,
+    proxy: Option<&crate::http::ProxyUrl>,
+) -> Result<tauri_plugin_updater::Updater, String> {
+    let mut builder = manager.updater_builder();
+    if let Some(proxy) = proxy {
+        builder = builder.proxy(reqwest::Url::parse(proxy.as_str()).map_err(|e| format!("bad proxy: {e}"))?);
+    }
+    builder
+        .endpoints(vec![endpoint])
+        .map_err(|e| format!("updater endpoint rejected: {e}"))?
+        .build()
+        .map_err(|e| format!("updater build failed: {e}"))
+}
+
 /// Check one caller-supplied manifest for an update.
 ///
 /// `Ok(None)` means the endpoint answered and offers nothing newer than the
@@ -65,15 +82,7 @@ pub async fn check_update_from_endpoint<R: Runtime>(
     // re-exported by a dependency this crate already has.
     let url = reqwest::Url::parse(&endpoint).map_err(|e| format!("bad updater endpoint: {e}"))?;
 
-    let mut builder = webview.updater_builder();
-    if let Some(proxy) = webview.state::<crate::AppState>().proxy_in_effect.as_ref() {
-        builder = builder.proxy(reqwest::Url::parse(proxy.as_str()).map_err(|e| format!("bad proxy: {e}"))?);
-    }
-    let updater = builder
-        .endpoints(vec![url])
-        .map_err(|e| format!("updater endpoint rejected: {e}"))?
-        .build()
-        .map_err(|e| format!("updater build failed: {e}"))?;
+    let updater = endpoint_updater(&webview, url, webview.state::<crate::AppState>().proxy_in_effect.as_ref())?;
 
     let update = updater
         .check()
@@ -99,4 +108,61 @@ pub async fn check_update_from_endpoint<R: Runtime>(
         raw_json: update.raw_json.clone(),
         rid: webview.resources_table().add(update),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::endpoint_updater;
+    use crate::http::ProxyUrl;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// A mock app with the updater plugin registered the way `run()` does.
+    fn app() -> tauri::App<tauri::test::MockRuntime> {
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().plugins.0.insert(
+            "updater".into(),
+            serde_json::json!({ "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IHRlc3QK", "endpoints": [] }),
+        );
+        tauri::test::mock_builder()
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .build(context)
+            .unwrap()
+    }
+
+    /// Records the first request line it receives and answers 204 (no update).
+    fn recording_listener() -> (u16, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut buf = [0u8; 2048];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let _ = tx.send(request.lines().next().unwrap_or_default().to_string());
+                let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n");
+            }
+        });
+        (port, rx)
+    }
+
+    /// The beta arm's manifest request goes to the proxy in effect: the
+    /// listener sees the absolute-form request line only a proxy receives.
+    #[tokio::test]
+    async fn endpoint_updater_sends_the_manifest_request_through_the_proxy() {
+        let app = app();
+        let (proxy_port, seen) = recording_listener();
+        let proxy = ProxyUrl::parse(&format!("http://127.0.0.1:{proxy_port}")).unwrap().unwrap();
+        let endpoint = reqwest::Url::parse("http://beta.invalid/latest.json").unwrap();
+        let updater = endpoint_updater(app.handle(), endpoint, Some(&proxy)).unwrap();
+        let _ = updater.check().await;
+        assert_eq!(
+            seen.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "GET http://beta.invalid/latest.json HTTP/1.1"
+        );
+    }
 }

@@ -837,7 +837,7 @@
 							id="proxy-url"
 							type="text"
 							class="setting-input"
-							placeholder="socks5://host:port or http://user:pass@host:port"
+							placeholder="socks5://host:port or http://host:port"
 							bind:value={editProxyValue}
 							onkeydown={(e) => { if (e.key === 'Enter') saveProxy(); if (e.key === 'Escape') cancelEditProxy(); }}
 						/>

@@ -13,7 +13,8 @@ const WEBVIEW2_BYPASS_LIST: &str = "localhost;127.0.0.1;[::1];*.localhost";
 const ACCEPTED_SCHEMES: [&str; 3] = ["http", "https", "socks5"];
 
 /// A proxy URL that every transport accepts: `http://`, `https://` or
-/// `socks5://`, optionally with `user:pass@`.
+/// `socks5://`, without credentials — WebView2's `--proxy-server` cannot carry
+/// them, so a `user:pass@` URL would route only part of the app.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProxyUrl(String);
 
@@ -33,6 +34,9 @@ impl ProxyUrl {
         if url.host_str().is_none_or(str::is_empty) {
             return Err("Proxy URL has no host".to_string());
         }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err("Credentials in the proxy URL are not supported — use socks5://host:port or http://host:port".to_string());
+        }
         reqwest::Proxy::all(trimmed).map_err(|e| format!("Proxy URL rejected: {e}"))?;
         Ok(Some(ProxyUrl(trimmed.to_string())))
     }
@@ -41,20 +45,7 @@ impl ProxyUrl {
         &self.0
     }
 
-    /// The URL with any `user:pass@` replaced, for logs.
-    pub fn redacted(&self) -> String {
-        match reqwest::Url::parse(&self.0) {
-            Ok(mut url) if !url.username().is_empty() || url.password().is_some() => {
-                let _ = url.set_password(None);
-                let _ = url.set_username("***");
-                url.to_string()
-            }
-            _ => self.0.clone(),
-        }
-    }
-
-    /// `scheme://host[:port]` without credentials: Chromium's
-    /// `--proxy-server` takes no `user:pass@`.
+    /// `scheme://host[:port]`: Chromium's `--proxy-server` takes no path.
     fn server_for_webview2(&self) -> String {
         let url = reqwest::Url::parse(&self.0).expect("validated by ProxyUrl::parse");
         let host = url.host_str().expect("validated by ProxyUrl::parse");
@@ -106,8 +97,6 @@ mod tests {
             "http://127.0.0.1:8080",
             "https://proxy.example:443",
             "socks5://127.0.0.1:1080",
-            "http://user:pass@proxy.example:3128",
-            "socks5://user:pass@127.0.0.1:1080",
         ] {
             assert_eq!(ProxyUrl::parse(raw).unwrap().map(|p| p.0), Some(raw.to_string()), "{raw}");
         }
@@ -132,17 +121,22 @@ mod tests {
     }
 
     #[test]
-    fn redacted_hides_credentials() {
-        let shown = proxy("http://alice:s3cret@proxy.example:3128").redacted();
-        assert!(!shown.contains("alice") && !shown.contains("s3cret"), "{shown}");
-        assert!(shown.contains("proxy.example:3128"), "{shown}");
-        assert_eq!(proxy("socks5://127.0.0.1:1080").redacted(), "socks5://127.0.0.1:1080");
+    fn proxy_url_rejects_credentials_for_every_scheme() {
+        for raw in [
+            "http://user:pass@proxy.example:3128",
+            "https://user@proxy.example:443",
+            "socks5://user:pass@127.0.0.1:1080",
+            "http://:pass@proxy.example:3128",
+        ] {
+            let err = ProxyUrl::parse(raw).expect_err(raw);
+            assert!(err.contains("Credentials in the proxy URL are not supported"), "{raw}: {err}");
+        }
     }
 
     #[test]
-    fn webview2_proxy_args_name_the_server_without_credentials_and_bypass_local_hosts() {
+    fn webview2_proxy_args_name_the_server_and_bypass_local_hosts() {
         assert_eq!(
-            webview2_proxy_args(&proxy("http://alice:s3cret@proxy.example:3128")),
+            webview2_proxy_args(&proxy("http://proxy.example:3128")),
             "--proxy-server=http://proxy.example:3128 --proxy-bypass-list=localhost;127.0.0.1;[::1];*.localhost"
         );
         assert_eq!(

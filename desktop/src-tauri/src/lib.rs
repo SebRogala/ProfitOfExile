@@ -2027,7 +2027,7 @@ fn set_proxy_url(url: String, app: AppHandle) -> Result<(), String> {
     let mut s = settings::load(&app);
     s.proxy_url = proxy.as_ref().map(|p| p.as_str().to_string()).unwrap_or_default();
     settings::save(&app, &s);
-    let shown = proxy.map(|p| p.redacted()).unwrap_or_else(|| "none".into());
+    let shown = proxy.as_ref().map_or("none", |p| p.as_str());
     app_log(&app, format!("Proxy set to {shown} — applies after restart"));
     Ok(())
 }
@@ -3528,7 +3528,7 @@ pub fn run() {
                 app_log(&handle, "WebView2 started with --disable-gpu (GPU-free rendering setting)".into());
             }
             if let Some(proxy) = &proxy_in_effect {
-                app_log(&handle, format!("Proxy in effect: {}", proxy.redacted()));
+                app_log(&handle, format!("Proxy in effect: {}", proxy.as_str()));
             }
             if let Some(rejection) = &proxy_rejection {
                 app_log(&handle, format!("Saved proxy ignored, connecting directly: {rejection}"));

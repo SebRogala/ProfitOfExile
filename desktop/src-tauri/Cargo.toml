@@ -76,3 +76,7 @@ xcap = "0.0.13"
 # incremental rebuild, and the capture/image crates run at release speed.
 [profile.dev.package."*"]
 opt-level = 3
+
+[dev-dependencies]
+# Mock app for the updater_channel proxy test.
+tauri = { version = "2", features = ["test"] }
