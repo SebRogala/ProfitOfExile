@@ -3772,6 +3772,297 @@
     },
     {
       "play": {
+        "key": "synthetic:expected-roi-tiny",
+        "mode": "direct",
+        "legs": [
+          {
+            "action": "buy",
+            "item": "Metadata/Items/Tattoos/JourneyTattoo",
+            "quote": "Metadata/Items/Currency/CurrencyModValues",
+            "price": 0.52,
+            "priceItemQty": 25,
+            "priceQuoteQty": 13,
+            "fair": 0.6,
+            "fairOk": true,
+            "tick": 0.04,
+            "volume": 1000,
+            "stock": 600,
+            "depletedSide": false,
+            "suspect": false,
+            "windowPriced": false,
+            "windowHours": 0,
+            "windowVolume": 0,
+            "itemName": "Journey Tattoo",
+            "itemIcon": null,
+            "itemCategory": "",
+            "quoteName": "Divine Orb",
+            "quoteIcon": null,
+            "quoteCategory": "Currency"
+          },
+          {
+            "action": "sell",
+            "item": "Metadata/Items/Tattoos/JourneyTattoo",
+            "quote": "Metadata/Items/Currency/CurrencyModValues",
+            "price": 0.68,
+            "priceItemQty": 25,
+            "priceQuoteQty": 17,
+            "fair": 0.6,
+            "fairOk": true,
+            "tick": 0.04,
+            "volume": 1000,
+            "stock": 400,
+            "depletedSide": false,
+            "suspect": false,
+            "windowPriced": false,
+            "windowHours": 0,
+            "windowVolume": 0,
+            "itemName": "Journey Tattoo",
+            "itemIcon": null,
+            "itemCategory": "",
+            "quoteName": "Divine Orb",
+            "quoteIcon": null,
+            "quoteCategory": "Currency"
+          }
+        ],
+        "roiPct": 0.20710059171597628,
+        "edge": 0.20710059171597628,
+        "roiPctRaw": 0.3076923076923077,
+        "roi": 22.399999999999995,
+        "investment": 108.16000000000001,
+        "turnover": 120000,
+        "tick": 0.04,
+        "depth": 1000,
+        "suspect": false,
+        "lowLiquidity": false,
+        "windowPriced": false,
+        "windowHours": 0,
+        "windowVolume": 0,
+        "hoursSeen": 6,
+        "expectedRoi": 5e-324,
+        "expectedRoiPct": 0.20497813223565725,
+        "simEntries": 23,
+        "lowCoverage": false,
+        "lastHour": "2026-08-23T07:00:00Z"
+      },
+      "display": {
+        "units": 25,
+        "basis": "posting",
+        "money": {
+          "investment": 2704.0000000000005,
+          "roi": 559.9999999999999,
+          "expectedRoi": 1.24e-322
+        },
+        "expectedPrinted": true,
+        "scale": {
+          "flips": null,
+          "gain": null,
+          "investment": null,
+          "hours": null
+        },
+        "runInvestment": null,
+        "sortKeys": {
+          "expected": 1.24e-322,
+          "roi": 559.9999999999999,
+          "fastestHours": null
+        }
+      }
+    },
+    {
+      "play": {
+        "key": "synthetic:expected-roi-1e-18",
+        "mode": "direct",
+        "legs": [
+          {
+            "action": "buy",
+            "item": "Metadata/Items/Tattoos/JourneyTattoo",
+            "quote": "Metadata/Items/Currency/CurrencyModValues",
+            "price": 0.52,
+            "priceItemQty": 25,
+            "priceQuoteQty": 13,
+            "fair": 0.6,
+            "fairOk": true,
+            "tick": 0.04,
+            "volume": 1000,
+            "stock": 600,
+            "depletedSide": false,
+            "suspect": false,
+            "windowPriced": false,
+            "windowHours": 0,
+            "windowVolume": 0,
+            "itemName": "Journey Tattoo",
+            "itemIcon": null,
+            "itemCategory": "",
+            "quoteName": "Divine Orb",
+            "quoteIcon": null,
+            "quoteCategory": "Currency"
+          },
+          {
+            "action": "sell",
+            "item": "Metadata/Items/Tattoos/JourneyTattoo",
+            "quote": "Metadata/Items/Currency/CurrencyModValues",
+            "price": 0.68,
+            "priceItemQty": 25,
+            "priceQuoteQty": 17,
+            "fair": 0.6,
+            "fairOk": true,
+            "tick": 0.04,
+            "volume": 1000,
+            "stock": 400,
+            "depletedSide": false,
+            "suspect": false,
+            "windowPriced": false,
+            "windowHours": 0,
+            "windowVolume": 0,
+            "itemName": "Journey Tattoo",
+            "itemIcon": null,
+            "itemCategory": "",
+            "quoteName": "Divine Orb",
+            "quoteIcon": null,
+            "quoteCategory": "Currency"
+          }
+        ],
+        "roiPct": 0.20710059171597628,
+        "edge": 0.20710059171597628,
+        "roiPctRaw": 0.3076923076923077,
+        "roi": 22.399999999999995,
+        "investment": 108.16000000000001,
+        "turnover": 120000,
+        "tick": 0.04,
+        "depth": 1000,
+        "suspect": false,
+        "lowLiquidity": false,
+        "windowPriced": false,
+        "windowHours": 0,
+        "windowVolume": 0,
+        "hoursSeen": 6,
+        "expectedRoi": 1e-18,
+        "expectedRoiPct": 0.20497813223565725,
+        "simEntries": 23,
+        "lowCoverage": false,
+        "lastHour": "2026-08-23T07:00:00Z"
+      },
+      "display": {
+        "units": 25,
+        "basis": "posting",
+        "money": {
+          "investment": 2704.0000000000005,
+          "roi": 559.9999999999999,
+          "expectedRoi": 2.5000000000000003e-17
+        },
+        "expectedPrinted": true,
+        "scale": {
+          "flips": 100000000000000000000,
+          "gain": 100.00000000000001,
+          "investment": 1.0816000000000002e+22,
+          "hours": 100000000000000000
+        },
+        "runInvestment": 1.0816000000000002e+22,
+        "sortKeys": {
+          "expected": 2.5000000000000003e-17,
+          "roi": 559.9999999999999,
+          "fastestHours": 100000000000000000
+        }
+      }
+    },
+    {
+      "play": {
+        "key": "synthetic:depth-tiny",
+        "mode": "direct",
+        "legs": [
+          {
+            "action": "buy",
+            "item": "Metadata/Items/Tattoos/JourneyTattoo",
+            "quote": "Metadata/Items/Currency/CurrencyModValues",
+            "price": 0.52,
+            "priceItemQty": 25,
+            "priceQuoteQty": 13,
+            "fair": 0.6,
+            "fairOk": true,
+            "tick": 0.04,
+            "volume": 1000,
+            "stock": 600,
+            "depletedSide": false,
+            "suspect": false,
+            "windowPriced": false,
+            "windowHours": 0,
+            "windowVolume": 0,
+            "itemName": "Journey Tattoo",
+            "itemIcon": null,
+            "itemCategory": "",
+            "quoteName": "Divine Orb",
+            "quoteIcon": null,
+            "quoteCategory": "Currency"
+          },
+          {
+            "action": "sell",
+            "item": "Metadata/Items/Tattoos/JourneyTattoo",
+            "quote": "Metadata/Items/Currency/CurrencyModValues",
+            "price": 0.68,
+            "priceItemQty": 25,
+            "priceQuoteQty": 17,
+            "fair": 0.6,
+            "fairOk": true,
+            "tick": 0.04,
+            "volume": 1000,
+            "stock": 400,
+            "depletedSide": false,
+            "suspect": false,
+            "windowPriced": false,
+            "windowHours": 0,
+            "windowVolume": 0,
+            "itemName": "Journey Tattoo",
+            "itemIcon": null,
+            "itemCategory": "",
+            "quoteName": "Divine Orb",
+            "quoteIcon": null,
+            "quoteCategory": "Currency"
+          }
+        ],
+        "roiPct": 0.20710059171597628,
+        "edge": 0.20710059171597628,
+        "roiPctRaw": 0.3076923076923077,
+        "roi": 22.399999999999995,
+        "investment": 108.16000000000001,
+        "turnover": 120000,
+        "tick": 0.04,
+        "depth": 5e-324,
+        "suspect": false,
+        "lowLiquidity": false,
+        "windowPriced": false,
+        "windowHours": 0,
+        "windowVolume": 0,
+        "hoursSeen": 6,
+        "expectedRoi": 22.170434782608687,
+        "expectedRoiPct": 0.20497813223565725,
+        "simEntries": 23,
+        "lowCoverage": false,
+        "lastHour": "2026-08-23T07:00:00Z"
+      },
+      "display": {
+        "units": 25,
+        "basis": "posting",
+        "money": {
+          "investment": 2704.0000000000005,
+          "roi": 559.9999999999999,
+          "expectedRoi": 554.2608695652171
+        },
+        "expectedPrinted": true,
+        "scale": {
+          "flips": 5,
+          "gain": 110.85217391304343,
+          "investment": 540.8000000000001,
+          "hours": null
+        },
+        "runInvestment": 540.8000000000001,
+        "sortKeys": {
+          "expected": 554.2608695652171,
+          "roi": 559.9999999999999,
+          "fastestHours": null
+        }
+      }
+    },
+    {
+      "play": {
         "key": "synthetic:sim-entries-zero",
         "mode": "direct",
         "legs": [
@@ -3867,17 +4158,18 @@
     {
       "name": "no filters",
       "params": {},
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 39,
-      "matched": 39,
-      "count": 39,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 42,
+      "matched": 42,
+      "count": 42,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -3899,6 +4191,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -3919,6 +4213,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -3940,6 +4235,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -3990,7 +4287,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -4002,7 +4299,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -4043,7 +4340,7 @@
           "Divination Cards"
         ]
       },
-      "total": 39,
+      "total": 42,
       "afterRules": 2,
       "afterGates": 2,
       "matched": 2,
@@ -4092,7 +4389,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -4104,7 +4401,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -4145,17 +4442,18 @@
           "Divination Cards"
         ]
       },
-      "total": 39,
-      "afterRules": 37,
-      "afterGates": 37,
-      "matched": 37,
-      "count": 37,
+      "total": 42,
+      "afterRules": 40,
+      "afterGates": 40,
+      "matched": 40,
+      "count": 40,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -4175,6 +4473,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -4195,6 +4495,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -4214,6 +4515,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -4264,7 +4567,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -4276,7 +4579,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -4320,7 +4623,7 @@
           "Metadata/Items/DivinationCards/DivinationCardApocalypse"
         ]
       },
-      "total": 39,
+      "total": 42,
       "afterRules": 2,
       "afterGates": 2,
       "matched": 2,
@@ -4369,7 +4672,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -4381,7 +4684,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -4422,17 +4725,18 @@
           ""
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 39,
-      "matched": 39,
-      "count": 39,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 42,
+      "matched": 42,
+      "count": 42,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -4454,6 +4758,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -4474,6 +4780,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -4495,6 +4802,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -4545,7 +4854,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -4557,7 +4866,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -4598,17 +4907,18 @@
           "108.16000000000001"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 23,
-      "matched": 23,
-      "count": 23,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 26,
+      "matched": 26,
+      "count": 26,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -4622,6 +4932,8 @@
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaidd",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaidd",
         "synthetic:no-quantity-pair",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
@@ -4634,6 +4946,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -4647,6 +4960,8 @@
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaidd",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaidd",
         "synthetic:no-quantity-pair",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
@@ -4689,7 +5004,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -4701,7 +5016,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -4742,17 +5057,18 @@
           "0.5408000000000001"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 33,
-      "matched": 33,
-      "count": 33,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 36,
+      "matched": 36,
+      "count": 36,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -4772,6 +5088,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -4788,6 +5106,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -4807,6 +5126,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -4853,7 +5174,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -4865,7 +5186,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -4903,22 +5224,21 @@
       "name": "gate minRoiChaos",
       "params": {
         "minRoiChaos": [
-          "19.896499999999985"
+          "22.399999999999995"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 21,
-      "matched": 21,
-      "count": 21,
-      "showConvert": true,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 22,
+      "matched": 22,
+      "count": 22,
+      "showConvert": false,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
-        "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
-        "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
+        "synthetic:depth-tiny",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
@@ -4930,6 +5250,8 @@
         "synthetic:no-quantity-pair",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "synthetic:expected-roi-negative",
         "synthetic:expected-roi-nan",
@@ -4940,8 +5262,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
-        "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
-        "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
+        "synthetic:depth-tiny",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
@@ -4953,6 +5274,8 @@
         "synthetic:no-quantity-pair",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "synthetic:expected-roi-negative",
         "synthetic:expected-roi-nan",
@@ -4993,7 +5316,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -5005,7 +5328,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -5046,17 +5369,18 @@
           "120000"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 21,
-      "matched": 21,
-      "count": 21,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 24,
+      "matched": 24,
+      "count": 24,
       "showConvert": false,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyYoungRecipe",
@@ -5066,6 +5390,8 @@
         "synthetic:no-quantity-pair",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -5080,6 +5406,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyYoungRecipe",
@@ -5089,6 +5416,8 @@
         "synthetic:no-quantity-pair",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -5133,7 +5462,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -5145,7 +5474,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -5186,17 +5515,18 @@
           "4"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 29,
-      "matched": 29,
-      "count": 29,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 32,
+      "matched": 32,
+      "count": 32,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -5214,6 +5544,8 @@
         "synthetic:no-quantity-pair",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
@@ -5228,6 +5560,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -5245,6 +5578,8 @@
         "synthetic:no-quantity-pair",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
@@ -5289,7 +5624,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -5301,7 +5636,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -5342,17 +5677,18 @@
           "5.177514792899407"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 25,
-      "matched": 25,
-      "count": 25,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 28,
+      "matched": 28,
+      "count": 28,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
@@ -5370,6 +5706,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "synthetic:expected-roi-negative",
         "synthetic:expected-roi-nan",
@@ -5380,6 +5718,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
@@ -5397,6 +5736,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "synthetic:expected-roi-negative",
         "synthetic:expected-roi-nan",
@@ -5437,7 +5778,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -5449,7 +5790,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -5490,17 +5831,18 @@
           "20.710059171597628"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 21,
-      "matched": 21,
-      "count": 21,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 24,
+      "matched": 24,
+      "count": 24,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
@@ -5514,6 +5856,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "synthetic:expected-roi-negative",
         "synthetic:expected-roi-nan",
@@ -5524,6 +5868,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
@@ -5537,6 +5882,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "synthetic:expected-roi-negative",
         "synthetic:expected-roi-nan",
@@ -5577,7 +5924,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -5589,7 +5936,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -5627,24 +5974,26 @@
       "name": "run cost bounds in chaos",
       "params": {
         "investMin": [
-          "94.5"
+          "100.49999999999999"
         ],
         "investMax": [
-          "378"
+          "401.99999999999994"
         ],
         "unit": [
           "chaos"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 39,
-      "matched": 12,
-      "count": 12,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 42,
+      "matched": 14,
+      "count": 14,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
+        "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyYoungRecipe",
+        "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyYoungRecipe",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
@@ -5659,6 +6008,8 @@
       "pageKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
+        "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyYoungRecipe",
+        "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyYoungRecipe",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
@@ -5705,7 +6056,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -5717,7 +6068,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -5755,21 +6106,23 @@
       "name": "run cost bound in divine",
       "params": {
         "investMax": [
-          "1.89"
+          "2.01"
         ],
         "unit": [
           "divine"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 39,
-      "matched": 20,
-      "count": 20,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 42,
+      "matched": 22,
+      "count": 22,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
+        "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyYoungRecipe",
+        "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyYoungRecipe",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
@@ -5792,6 +6145,8 @@
       "pageKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
+        "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyYoungRecipe",
+        "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyYoungRecipe",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
@@ -5846,7 +6201,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -5858,7 +6213,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -5899,9 +6254,9 @@
           " ApOcAlYpSe "
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 39,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 42,
       "matched": 4,
       "count": 4,
       "showConvert": false,
@@ -5952,7 +6307,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -5964,7 +6319,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -6005,17 +6360,18 @@
           "expected"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 39,
-      "matched": 39,
-      "count": 39,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 42,
+      "matched": 42,
+      "count": 42,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -6037,6 +6393,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -6057,6 +6415,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -6078,6 +6437,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -6128,7 +6489,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -6140,7 +6501,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -6181,11 +6542,11 @@
           "roi"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 39,
-      "matched": 39,
-      "count": 39,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 42,
+      "matched": 42,
+      "count": 42,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
@@ -6197,6 +6558,9 @@
         "synthetic:expected-roi-nan",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:expected-roi-tiny",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:depth-tiny",
         "synthetic:sim-entries-zero",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
@@ -6238,6 +6602,9 @@
         "synthetic:expected-roi-nan",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:expected-roi-tiny",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:depth-tiny",
         "synthetic:sim-entries-zero",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
@@ -6304,7 +6671,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -6316,7 +6683,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -6357,11 +6724,11 @@
           "fastest"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 39,
-      "matched": 39,
-      "count": 39,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 42,
+      "matched": 42,
+      "count": 42,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -6387,6 +6754,9 @@
         "synthetic:no-quantity-pair",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
+        "synthetic:depth-tiny",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
@@ -6428,6 +6798,9 @@
         "synthetic:no-quantity-pair",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
+        "synthetic:depth-tiny",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
@@ -6480,7 +6853,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -6492,7 +6865,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -6533,10 +6906,10 @@
           "25"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 39,
-      "matched": 39,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 42,
+      "matched": 42,
       "count": 25,
       "showConvert": true,
       "orderedKeys": [
@@ -6544,6 +6917,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -6565,6 +6939,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -6585,6 +6961,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -6604,8 +6981,7 @@
         "synthetic:no-quantity-pair",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
-        "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
-        "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues"
+        "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues"
       ],
       "itemUniverse": [
         {
@@ -6642,7 +7018,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -6654,7 +7030,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -6695,17 +7071,18 @@
           "all"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 39,
-      "matched": 39,
-      "count": 39,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 42,
+      "matched": 42,
+      "count": 42,
       "showConvert": true,
       "orderedKeys": [
         "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -6727,6 +7104,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -6747,6 +7126,7 @@
         "day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:depth-tiny",
         "1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
@@ -6768,6 +7148,8 @@
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+        "synthetic:expected-roi-1e-18",
+        "synthetic:expected-roi-tiny",
         "synthetic:expected-roi-zero",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
@@ -6818,7 +7200,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -6830,7 +7212,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",
@@ -6874,9 +7256,9 @@
           "chaos orb"
         ]
       },
-      "total": 39,
-      "afterRules": 39,
-      "afterGates": 39,
+      "total": 42,
+      "afterRules": 42,
+      "afterGates": 42,
       "matched": 28,
       "count": 28,
       "showConvert": true,
@@ -6975,7 +7357,7 @@
           "id": "Metadata/Items/Currency/CurrencyModValues",
           "name": "Divine Orb",
           "category": "Currency",
-          "playCount": 19
+          "playCount": 22
         },
         {
           "id": "Metadata/Items/Currency/CurrencyDivineVessel",
@@ -6987,7 +7369,7 @@
           "id": "Metadata/Items/Tattoos/JourneyTattoo",
           "name": "Journey Tattoo",
           "category": "",
-          "playCount": 11
+          "playCount": 14
         },
         {
           "id": "Metadata/Items/Tattoos/JourneyTattooTwoSided",

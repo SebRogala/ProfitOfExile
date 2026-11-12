@@ -57,11 +57,13 @@ type PlayMoney struct {
 
 // PlayScale is a play scaled to ScaleTargetChaos: the Scale column.
 type PlayScale struct {
-	Flips      int64         `json:"flips"`
+	// Flips and Hours stay floats: neither formula is bounded (a tiny positive
+	// expectation or depth gives 1e20 or ±Inf), and a non-finite count is null.
+	Flips      DisplayNumber `json:"flips"`
 	Gain       DisplayNumber `json:"gain"`
 	Investment DisplayNumber `json:"investment"`
-	// Hours is nil when the play's depth is not a positive finite number.
-	Hours *int64 `json:"hours"`
+	// Hours is null when the play's depth is not a positive finite number.
+	Hours DisplayNumber `json:"hours"`
 }
 
 // PlaySortKeys are the keys the three client sorts order by; NaN is a missing
@@ -94,9 +96,9 @@ func Decorate(play Play) Play {
 	}
 	u := float64(units)
 	money := PlayMoney{
-		Investment:  DisplayNumber(play.Investment * u),
-		Roi:         DisplayNumber(play.Roi * u),
-		ExpectedRoi: DisplayNumber(play.ExpectedRoi * u),
+		Investment:  finite(play.Investment * u),
+		Roi:         finite(play.Roi * u),
+		ExpectedRoi: finite(play.ExpectedRoi * u),
 	}
 	printed := play.SimEntries != 0
 	scale := worthwhileScale(play)
@@ -107,7 +109,7 @@ func Decorate(play Play) Play {
 		Money:           money,
 		ExpectedPrinted: printed,
 		Scale:           scale,
-		RunInvestment:   DisplayNumber(play.Investment),
+		RunInvestment:   finite(play.Investment),
 		SortKeys: PlaySortKeys{
 			Expected:     DisplayNumber(math.NaN()),
 			Roi:          money.Roi,
@@ -119,9 +121,7 @@ func Decorate(play Play) Play {
 	}
 	if scale != nil {
 		d.RunInvestment = scale.Investment
-		if scale.Hours != nil {
-			d.SortKeys.FastestHours = DisplayNumber(*scale.Hours)
-		}
+		d.SortKeys.FastestHours = scale.Hours
 	}
 	play.Display = &d
 	return play
@@ -135,13 +135,22 @@ func worthwhileScale(play Play) *PlayScale {
 	}
 	flips := math.Ceil(ScaleTargetChaos / play.ExpectedRoi)
 	scale := &PlayScale{
-		Flips:      int64(flips),
-		Gain:       DisplayNumber(play.ExpectedRoi * flips),
-		Investment: DisplayNumber(play.Investment * flips),
+		Flips:      finite(flips),
+		Gain:       finite(play.ExpectedRoi * flips),
+		Investment: finite(play.Investment * flips),
+		Hours:      DisplayNumber(math.NaN()),
 	}
 	if !math.IsNaN(play.Depth) && !math.IsInf(play.Depth, 0) && play.Depth > 0 {
-		hours := int64(math.Ceil(flips / play.Depth))
-		scale.Hours = &hours
+		scale.Hours = finite(math.Ceil(flips / play.Depth))
 	}
 	return scale
+}
+
+// finite normalizes ±Inf to NaN, so every non-finite display number is one
+// value in memory (a missing sort key) and null on the wire.
+func finite(f float64) DisplayNumber {
+	if math.IsInf(f, 0) {
+		return DisplayNumber(math.NaN())
+	}
+	return DisplayNumber(f)
 }

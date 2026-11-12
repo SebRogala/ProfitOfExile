@@ -90,11 +90,10 @@ func displayDiff(got, want PlayDisplay) []string {
 		d = append(d, "scale: got "+jsonOf(got.Scale)+", want "+jsonOf(want.Scale))
 	case got.Scale != nil:
 		g, w := *got.Scale, *want.Scale
-		add("scale.flips", g.Flips == w.Flips, g.Flips, w.Flips)
+		add("scale.flips", sameNum(g.Flips, w.Flips), g.Flips, w.Flips)
 		add("scale.gain", sameNum(g.Gain, w.Gain), g.Gain, w.Gain)
 		add("scale.investment", sameNum(g.Investment, w.Investment), g.Investment, w.Investment)
-		hoursOK := (g.Hours == nil) == (w.Hours == nil) && (g.Hours == nil || *g.Hours == *w.Hours)
-		add("scale.hours", hoursOK, g.Hours, w.Hours)
+		add("scale.hours", sameNum(g.Hours, w.Hours), g.Hours, w.Hours)
 	}
 	return d
 }
@@ -180,8 +179,52 @@ func TestPlayDisplay_NilHoursForNonPositiveDepth(t *testing.T) {
 	p := displayPlay()
 	p.Depth = 0
 	d := Decorate(p).Display
-	if d.Scale == nil || d.Scale.Hours != nil || d.Scale.Flips != 50 {
+	if d.Scale == nil || !math.IsNaN(float64(d.Scale.Hours)) || d.Scale.Flips != 50 {
 		t.Fatalf("scale = %s, want flips 50 with null hours", jsonOf(d.Scale))
+	}
+}
+
+func TestPlayDisplay_HugeFlipsStayExactBeyondInt64(t *testing.T) {
+	p := displayPlay()
+	p.ExpectedRoi = 1e-18
+	p.Depth = 1
+	d := Decorate(p).Display
+	if d.Scale == nil || float64(d.Scale.Flips) != 1e20 || float64(d.Scale.Hours) != 1e20 || float64(d.SortKeys.FastestHours) != 1e20 {
+		t.Fatalf("scale = %s, sortKeys = %s; want flips, hours and the fastest key 1e20", jsonOf(d.Scale), jsonOf(d.SortKeys))
+	}
+}
+
+func TestPlayDisplay_InfiniteFlipsFromATinyExpectationAreNull(t *testing.T) {
+	p := displayPlay()
+	p.ExpectedRoi = math.SmallestNonzeroFloat64
+	raw, err := json.Marshal(Decorate(p).Display)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back struct {
+		Scale struct {
+			Flips, Gain, Investment, Hours *float64
+		} `json:"scale"`
+		RunInvestment *float64 `json:"runInvestment"`
+		SortKeys      struct {
+			FastestHours *float64 `json:"fastestHours"`
+		} `json:"sortKeys"`
+	}
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	s := back.Scale
+	if s.Flips != nil || s.Gain != nil || s.Investment != nil || s.Hours != nil || back.RunInvestment != nil || back.SortKeys.FastestHours != nil {
+		t.Fatalf("body %s: want the infinite scale, run investment and fastest key null", raw)
+	}
+}
+
+func TestPlayDisplay_InfiniteHoursFromATinyDepthAreNull(t *testing.T) {
+	p := displayPlay()
+	p.Depth = math.SmallestNonzeroFloat64
+	d := Decorate(p).Display
+	if d.Scale == nil || d.Scale.Flips != 50 || !math.IsNaN(float64(d.Scale.Hours)) || !math.IsNaN(float64(d.SortKeys.FastestHours)) {
+		t.Fatalf("scale = %s, sortKeys = %s; want flips 50, null hours and a missing fastest key", jsonOf(d.Scale), jsonOf(d.SortKeys))
 	}
 }
 

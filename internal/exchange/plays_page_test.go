@@ -1,6 +1,7 @@
 package exchange
 
 import (
+	"math"
 	"net/url"
 	"reflect"
 	"strings"
@@ -110,5 +111,47 @@ func TestResolveSearch_MatchesDisplayNamesCaseInsensitively(t *testing.T) {
 func TestResolveSearch_BlankQueryMatchesNothing(t *testing.T) {
 	if ids := ResolveSearch("   "); len(ids) != 0 {
 		t.Fatalf("ResolveSearch(blank) = %d ids, want none", len(ids))
+	}
+}
+
+// validQuery is a query every Validate case starts from.
+func validQuery() PlaysPageQuery {
+	return PlaysPageQuery{Page: 1, PageSize: 25, Sort: SortExpected, Unit: UnitChaos}
+}
+
+func TestPlaysPageQueryValidate_AcceptsAValidQuery(t *testing.T) {
+	q := validQuery()
+	q.PageSize = PageSizeAll
+	if err := q.Validate(); err != nil {
+		t.Fatalf("Validate = %v, want nil", err)
+	}
+}
+
+func TestPlaysPageQueryValidate_RejectsEach400ClassNamingTheParam(t *testing.T) {
+	nan, inf := math.NaN(), math.Inf(1)
+	cases := []struct {
+		param string
+		edit  func(*PlaysPageQuery)
+	}{
+		{"page", func(q *PlaysPageQuery) { q.Page = 0 }},
+		{"pageSize", func(q *PlaysPageQuery) { q.PageSize = 30 }},
+		{"sort", func(q *PlaysPageQuery) { q.Sort = "pct" }},
+		{"unit", func(q *PlaysPageQuery) { q.Unit = "exalt" }},
+		{"minItemPrice", func(q *PlaysPageQuery) { q.Gates.MinItemPrice = nan }},
+		{"minItemPriceDiv", func(q *PlaysPageQuery) { q.Gates.MinItemPriceDiv = inf }},
+		{"minRoiChaos", func(q *PlaysPageQuery) { q.Gates.MinRoiChaos = math.Inf(-1) }},
+		{"minTurnover", func(q *PlaysPageQuery) { q.Gates.MinTurnover = nan }},
+		{"maxTickPct", func(q *PlaysPageQuery) { q.Gates.MaxTickPct = inf }},
+		{"minEdgeTickRatio", func(q *PlaysPageQuery) { q.Gates.MinEdgeTickRatio = nan }},
+		{"minRoiPct", func(q *PlaysPageQuery) { q.Gates.MinRoiPct = inf }},
+		{"investMin", func(q *PlaysPageQuery) { q.InvestMin = &nan }},
+		{"investMax", func(q *PlaysPageQuery) { q.InvestMax = &inf }},
+	}
+	for _, c := range cases {
+		q := validQuery()
+		c.edit(&q)
+		if err := q.Validate(); err == nil || !strings.Contains(err.Error(), c.param) {
+			t.Errorf("%s: Validate = %v, want an error naming %s", c.param, err, c.param)
+		}
 	}
 }

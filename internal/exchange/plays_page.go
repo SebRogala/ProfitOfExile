@@ -2,6 +2,7 @@ package exchange
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -76,35 +77,44 @@ func IsPagedRequest(values url.Values) bool {
 	return values.Has("pageSize")
 }
 
-// ParsePlaysPageQuery parses and validates a paged request's params. The error
-// names the offending param and is meant for a 400 body.
+// Messages shared by the parser (syntax) and Validate (constraints), so a
+// param fails with one sentence whichever step rejects it.
+const (
+	msgPageSize = "pageSize must be one of 25, 50, 100, 200, all"
+	msgPage     = "page must be an integer >= 1"
+	msgSort     = "sort must be one of expected, roi, fastest"
+	msgUnit     = "unit must be one of chaos, divine"
+)
+
+// ParsePlaysPageQuery parses a paged request's params and validates the result
+// (Validate). The error names the offending param and is meant for a 400 body.
 func ParsePlaysPageQuery(values url.Values) (PlaysPageQuery, error) {
 	q := PlaysPageQuery{Page: 1, Sort: SortExpected, Unit: UnitChaos}
 
-	switch size := values.Get("pageSize"); size {
-	case "25", "50", "100", "200":
-		q.PageSize, _ = strconv.Atoi(size)
-	case "all":
+	if size := values.Get("pageSize"); size == "all" {
 		q.PageSize = PageSizeAll
-	default:
-		return PlaysPageQuery{}, fmt.Errorf("pageSize must be one of 25, 50, 100, 200, all")
+	} else {
+		n, err := strconv.Atoi(size)
+		if err != nil {
+			return PlaysPageQuery{}, fmt.Errorf(msgPageSize)
+		}
+		// 0 is PageSizeAll's representation, not a size a client may send.
+		if n == PageSizeAll {
+			return PlaysPageQuery{}, fmt.Errorf(msgPageSize)
+		}
+		q.PageSize = n
 	}
 
 	if values.Has("page") {
 		page, err := strconv.Atoi(values.Get("page"))
-		if err != nil || page < 1 {
-			return PlaysPageQuery{}, fmt.Errorf("page must be an integer >= 1")
+		if err != nil {
+			return PlaysPageQuery{}, fmt.Errorf(msgPage)
 		}
 		q.Page = page
 	}
 
 	if values.Has("sort") {
-		switch s := PlaysSort(values.Get("sort")); s {
-		case SortExpected, SortRoi, SortFastest:
-			q.Sort = s
-		default:
-			return PlaysPageQuery{}, fmt.Errorf("sort must be one of expected, roi, fastest")
-		}
+		q.Sort = PlaysSort(values.Get("sort"))
 	}
 
 	q.OnlyCategories = values["onlyCategory"]
@@ -128,12 +138,16 @@ func ParsePlaysPageQuery(values url.Values) (PlaysPageQuery, error) {
 		if !values.Has(g.param) {
 			continue
 		}
-		v, err := finiteParam(values, g.param)
+		v, err := numberParam(values, g.param)
 		if err != nil {
 			return PlaysPageQuery{}, err
 		}
-		// A gate at or below 0 is off, as in applyGates.
-		*g.dst = math.Max(v, 0)
+		// A finite gate at or below 0 is off, as in applyGates; a non-finite one
+		// is kept for Validate to reject.
+		if v < 0 && !math.IsInf(v, -1) {
+			v = 0
+		}
+		*g.dst = v
 	}
 
 	for _, b := range []struct {
@@ -143,7 +157,7 @@ func ParsePlaysPageQuery(values url.Values) (PlaysPageQuery, error) {
 		if !values.Has(b.param) {
 			continue
 		}
-		v, err := finiteParam(values, b.param)
+		v, err := numberParam(values, b.param)
 		if err != nil {
 			return PlaysPageQuery{}, err
 		}
@@ -151,22 +165,76 @@ func ParsePlaysPageQuery(values url.Values) (PlaysPageQuery, error) {
 	}
 
 	if values.Has("unit") {
-		switch u := PlaysUnit(values.Get("unit")); u {
-		case UnitChaos, UnitDivine:
-			q.Unit = u
-		default:
-			return PlaysPageQuery{}, fmt.Errorf("unit must be one of chaos, divine")
-		}
+		q.Unit = PlaysUnit(values.Get("unit"))
 	}
 
 	q.Search = strings.TrimSpace(values.Get("search"))
 	q.SearchItemIDs = ResolveSearch(q.Search)
+	if err := q.Validate(); err != nil {
+		return PlaysPageQuery{}, err
+	}
 	return q, nil
 }
 
-func finiteParam(values url.Values, param string) (float64, error) {
+// Validate checks the typed constraints of the contract: page >= 1, pageSize in
+// its enum, sort and unit whitelisted, every gate and bound finite. Mode and
+// Horizon are the handler's (validated as on the legacy request).
+func (q PlaysPageQuery) Validate() error {
+	if q.Page < 1 {
+		return fmt.Errorf(msgPage)
+	}
+	switch q.PageSize {
+	case PageSizeAll, 25, 50, 100, 200:
+	default:
+		return fmt.Errorf(msgPageSize)
+	}
+	switch q.Sort {
+	case SortExpected, SortRoi, SortFastest:
+	default:
+		return fmt.Errorf(msgSort)
+	}
+	switch q.Unit {
+	case UnitChaos, UnitDivine:
+	default:
+		return fmt.Errorf(msgUnit)
+	}
+	numbers := []struct {
+		param string
+		v     float64
+	}{
+		{"minItemPrice", q.Gates.MinItemPrice},
+		{"minItemPriceDiv", q.Gates.MinItemPriceDiv},
+		{"minRoiChaos", q.Gates.MinRoiChaos},
+		{"minTurnover", q.Gates.MinTurnover},
+		{"maxTickPct", q.Gates.MaxTickPct},
+		{"minEdgeTickRatio", q.Gates.MinEdgeTickRatio},
+		{"minRoiPct", q.Gates.MinRoiPct},
+	}
+	if q.InvestMin != nil {
+		numbers = append(numbers, struct {
+			param string
+			v     float64
+		}{"investMin", *q.InvestMin})
+	}
+	if q.InvestMax != nil {
+		numbers = append(numbers, struct {
+			param string
+			v     float64
+		}{"investMax", *q.InvestMax})
+	}
+	for _, n := range numbers {
+		if math.IsNaN(n.v) || math.IsInf(n.v, 0) {
+			return fmt.Errorf("%s must be a finite number", n.param)
+		}
+	}
+	return nil
+}
+
+// numberParam reads a number's syntax. An out-of-range literal (1e400) comes
+// back as ±Inf and NaN as NaN, so Validate rejects them as non-finite.
+func numberParam(values url.Values, param string) (float64, error) {
 	v, err := strconv.ParseFloat(values.Get(param), 64)
-	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+	if err != nil && !errors.Is(err, strconv.ErrRange) {
 		return 0, fmt.Errorf("%s must be a finite number", param)
 	}
 	return v, nil
