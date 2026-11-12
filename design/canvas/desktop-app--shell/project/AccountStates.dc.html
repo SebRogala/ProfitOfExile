@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Account button states</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:6px;display:flex;flex-direction:column;overflow:hidden}
+.stage{height:120px;display:flex;align-items:center;justify-content:center;border-bottom:1px solid var(--border);background:var(--surface)}
+.zoom{transform:scale(2.5);transform-origin:center}
+.meta{padding:10px 12px 12px;display:flex;flex-direction:column;gap:6px;font-size:.75rem;color:var(--color-lab-text-secondary)}
+.meta .k{font-size:.6875rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted)}
+.meta .v{color:var(--text)}
+.acct.fake-hover{background:rgba(255,255,255,.06)}
+.acct.fake-hover .av{color:var(--text);border-color:var(--text)}
+.acct.registered.fake-hover .av{color:var(--surface)}
+.acct.fake-focus{outline:1px solid var(--color-lab-blue);outline-offset:1px}
+</style>
+</helmet>
+<div style="width: 1024px; background: var(--bg); padding: 24px; display: flex; flex-direction: column; gap: 20px">
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+    <sc-for list="{{cards}}" as="c" hint-placeholder-count="5">
+      <div class="card">
+        <div class="stage">
+          <span class="zoom">
+            <span class="{{c.cls}}" aria-hidden="true">
+              <span class="av">
+                <sc-if value="{{c.gInitial}}" hint-placeholder-val="{{ true }}"><span>G</span></sc-if>
+                <sc-if value="{{c.gPerson}}" hint-placeholder-val="{{ false }}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="5.5" r="2.8"></circle><path d="M2.8 14c.6-2.7 2.7-4.2 5.2-4.2s4.6 1.5 5.2 4.2"></path></svg></sc-if>
+                <sc-if value="{{c.gQ}}" hint-placeholder-val="{{ false }}"><span>?</span></sc-if>
+                <sc-if value="{{c.gDots}}" hint-placeholder-val="{{ false }}"><span style="letter-spacing: -1px">…</span></sc-if>
+              </span>
+              <sc-if value="{{c.name}}" hint-placeholder-val="{{ false }}"><span class="acct-name">Gaming PC</span></sc-if>
+            </span>
+          </span>
+        </div>
+        <div class="meta">
+          <div><span class="mono" style="color: var(--text)">{{c.id}}</span> · {{c.look}}</div>
+          <div><div class="k">Tooltip</div><div class="v">{{c.tip}}</div></div>
+          <div><div class="k">aria-label</div><div class="v">{{c.aria}}</div></div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <div class="cap">Interaction · registered and unregistered at 2.5×</div>
+    <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px">
+      <sc-for list="{{inter}}" as="i" hint-placeholder-count="6">
+        <div class="card">
+          <div class="stage" style="height: 96px"><span class="zoom"><span class="{{i.cls}}" aria-hidden="true"><span class="av"><sc-if value="{{i.reg}}" hint-placeholder-val="{{ true }}"><span>G</span></sc-if><sc-if value="{{i.anon}}" hint-placeholder-val="{{ false }}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="5.5" r="2.8"></circle><path d="M2.8 14c.6-2.7 2.7-4.2 5.2-4.2s4.6 1.5 5.2 4.2"></path></svg></sc-if></span></span></span></div>
+          <div class="meta" style="padding: 8px 10px"><div class="v">{{i.label}}</div></div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1024,"height":760}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const base = { gInitial: false, gPerson: false, gQ: false, gDots: false, name: false };
+    return {
+      cards: [
+        { ...base, id: 'registered', cls: 'acct registered', gInitial: true, look: 'filled disc, first letter of the alias', tip: 'Registered as “Gaming PC” — Role beta · click to open device identity', aria: 'Account: registered as Gaming PC' },
+        { ...base, id: 'registered', cls: 'acct registered alias', gInitial: true, name: true, look: 'option: disc + alias, 120px max', tip: 'same as left', aria: 'Account: registered as Gaming PC' },
+        { ...base, id: 'unregistered', cls: 'acct unregistered', gPerson: true, look: 'hollow ring, person glyph', tip: 'Not registered — This device has no alias on the server yet. Click to set one.', aria: 'Account: not registered' },
+        { ...base, id: 'unknown', cls: 'acct unknown', gQ: true, look: 'dashed ring, ?', tip: 'Registration unknown — Server unreachable or outdated. Click to check again.', aria: 'Account: registration unknown' },
+        { ...base, id: 'checking', cls: 'acct checking', gDots: true, look: 'dashed ring, … (no animation)', tip: 'Checking registration…', aria: 'Account: checking registration' }
+      ],
+      inter: [
+        { cls: 'acct registered', reg: true, anon: false, label: 'registered · rest' },
+        { cls: 'acct registered fake-hover', reg: true, anon: false, label: 'registered · hover' },
+        { cls: 'acct registered fake-focus', reg: true, anon: false, label: 'registered · focus' },
+        { cls: 'acct unregistered', reg: false, anon: true, label: 'unregistered · rest' },
+        { cls: 'acct unregistered fake-hover', reg: false, anon: true, label: 'unregistered · hover' },
+        { cls: 'acct unregistered fake-focus', reg: false, anon: true, label: 'unregistered · focus' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Account button · placement A</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1024px; background: var(--bg); padding: 20px 0 8px; display: flex; flex-direction: column; gap: 6px">
+  <sc-for list="{{rows}}" as="row" hint-placeholder-count="5">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <div class="cap" style="padding: 0 16px"><span class="mono" style="text-transform: none; letter-spacing: 0; color: var(--text)">{{row.state}}</span> · {{row.note}}</div>
+      <dc-import name="Bar" placement="A" state="{{row.state}}" label="{{row.label}}" tip="{{ true }}" hint-size="1024px,110px"></dc-import>
+    </div>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1024,"height":720}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { rows: [
+      { state: 'registered', label: 'initial', note: 'alias set — filled disc, first letter' },
+      { state: 'registered', label: 'alias', note: 'alias set — option: disc + alias text (max 120px, ellipsis)' },
+      { state: 'unregistered', label: 'initial', note: 'anonymous — hollow ring, person glyph' },
+      { state: 'unknown', label: 'initial', note: 'old server or request failed — dashed ring, ?' },
+      { state: 'checking', label: 'initial', note: 'waiting for /api/device/me — dashed ring, …' }
+    ] };
+  }
+}
+</script>
+</body>
+</html>

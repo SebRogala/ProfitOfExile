@@ -1,0 +1,72 @@
+/* Desktop app shell — shared styles for every board on this canvas.
+   Token values copied verbatim from desktop/src/tokens.css (the only token
+   declaration site); boards use var(--…) only. */
+:root {
+	--bg: #1a1a2e;
+	--surface: #16213e;
+	--border: #0f3460;
+	--text: #e0e0e0;
+	--text-muted: #888;
+	--accent: #e94560;
+	--success: #4ade80;
+	--warning: #fbbf24;
+	--color-lab-bg: #0f1117;
+	--color-lab-surface: #1a1d27;
+	--color-lab-border: #2a2d37;
+	--color-lab-text: #e4e4e7;
+	--color-lab-text-secondary: #9ca3af;
+	--color-lab-text-muted: #888;
+	--color-lab-green: #22c55e;
+	--color-lab-red: #ef4444;
+	--color-lab-yellow: #eab308;
+	--color-lab-blue: #3b82f6;
+	--color-lab-cyan: #22d3ee;
+	--color-lab-purple: #a855f7;
+	--color-lab-green-muted: #6b9e7a;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--text); font-size: 14px; line-height: 1.5; }
+button { font-family: inherit; }
+.mono { font-family: 'Consolas', 'Monaco', monospace; font-weight: 600; }
+.cap { font-size: .6875rem; text-transform: uppercase; letter-spacing: .5px; color: var(--color-lab-text-secondary); }
+
+/* App chrome — 1:1 with desktop/src/lib/components/TopBar.svelte (release build: no DEBUG button, no update badge).
+   Mock-only difference: overflow is visible so the tooltip (position: fixed in the app) can show under the bar. */
+.tb { height: 36px; min-height: 36px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 0 0 .75rem; user-select: none; position: relative; }
+.tb-l, .tb-c { display: flex; align-items: center; gap: .5rem; }
+.tb-logo { width: 26px; height: 26px; }
+.tb-name { font-size: 12px; font-weight: 600; color: var(--text); }
+.tb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
+.tb-dot.on { background: var(--success); }
+.tb-gear { all: unset; font-size: 1rem; opacity: .6; line-height: 1; cursor: pointer; }
+.tb-gear:hover { opacity: 1; }
+.tb-r { display: flex; align-items: center; gap: 12px; }
+.tb-win { display: flex; align-items: stretch; height: 36px; }
+.tb-win button { background: none; border: none; color: var(--text-muted); width: 46px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; }
+.tb-win button:hover { background: rgba(255,255,255,.1); color: var(--text); }
+.rate { all: unset; cursor: help; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text); padding: 2px 6px; border-radius: 4px; }
+.rate:hover { background: rgba(255,255,255,.06); }
+.rate img { width: 18px; height: 18px; object-fit: contain; }
+.rate .n { font-family: 'Consolas', 'Monaco', monospace; font-weight: 600; }
+
+/* NEW — the account button (POE-362). */
+.acct-wrap { position: relative; display: flex; align-items: center; }
+.acct { all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 1px; border-radius: 12px; }
+.acct:hover { background: rgba(255,255,255,.06); }
+.acct:focus-visible { outline: 1px solid var(--color-lab-blue); outline-offset: 1px; }
+.av { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 11px; font-weight: 700; line-height: 1; color: var(--text-muted); border: 1.5px solid var(--text-muted); }
+.av svg { width: 13px; height: 13px; }
+.acct:hover .av { color: var(--text); border-color: var(--text); }
+/* registered: a filled disc with the alias's first letter */
+.acct.registered .av { background: var(--text); color: var(--surface); border-color: var(--text); }
+/* unknown / checking: dashed ring, never filled */
+.acct.unknown .av, .acct.checking .av { border-style: dashed; }
+/* registered, alias shown */
+.acct.alias { padding-right: 8px; }
+.acct-name { font-size: 12px; color: var(--text); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Tooltip — 1:1 with components/Tooltip.svelte (position below, left-aligned, clamped 8px inside the window). */
+.tip { position: absolute; top: calc(100% + 4px); z-index: 2; background: var(--color-lab-surface); border: 1px solid var(--color-lab-border); padding: 8px 12px; max-width: 400px; font-size: .75rem; line-height: 1.5; color: var(--color-lab-text); box-shadow: 0 8px 32px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.08); white-space: normal; width: max-content; }
+.tip b { font-weight: 700; }
+.tip .l2 { color: var(--color-lab-text-secondary); }

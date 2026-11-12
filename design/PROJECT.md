@@ -54,6 +54,8 @@
 | 18 | Desktop app → Lab Farming → Font EV → Recipes section (cards) + states | in review | `Recipes.dc.html`, component `RecipeCard.dc.html` (divine-font, round 1) | POE-328/329; exceptional + Facetor's Lens 60% |
 | 19 | Handoff · build sources: FontAlerts / FontEvRecipes prototypes | handed off | `*-prototype.dc.html` (divine-font, page Handoff · build sources) | POE-328 + POE-329 handoff 1 |
 | 16 | Desktop app → Sidebar → Faustus helper icon pass: F vs native scale vs reward bag | agreed: S | `Icons-faustus.dc.html` (boss-loot, page Faustus icon pass) | scale = `Market/4K/MarketIconRatioMarket`, bag = `Market/4K/IconNPCReward` (uiimages1.txt sprites) |
+| 20 | Desktop app → Top bar → Account button, placement A (next to Settings) / B (between divine rate and window controls) | in review | `Main.dc.html`, `TopBarB.dc.html`, component `Bar.dc.html` (shell canvas, page POE-362 · round 1) | POE-362; every state with its tooltip |
+| 21 | Desktop app → Top bar → Account button states (registered, registered + alias option, unregistered, unknown, checking; hover, focus) | in review | `AccountStates.dc.html` (shell canvas, round 1) | POE-362 |
 
 ## File map
 - **Canvas `desktop-app--boss-loot`:** https://claude.ai/artifact/Wgm3i9gPEpT3dwL8HB7BPg
@@ -63,6 +65,9 @@
 - **Canvas `desktop-app--strategies--harvest-flipping`:** https://claude.ai/artifact/PTogG15PdG1WJYjbDqNHJf
   — source in `design/canvas/desktop-app--strategies--harvest-flipping/project/`.
 - **Handoffs:** `design/handoffs/poe-283--desktop-app--strategies--harvest-flipping/` (build source `Overview-prototype.dc.html`) and `design/handoffs/poe-284--desktop-app--top-bar--divine-rate/` (build source `TopBar-prototype.dc.html`); both prototypes on the canvas page "Handoff · build sources". Index: `design/handoffs/README.md`.
+
+- **Canvas `desktop-app--shell`:** https://claude.ai/artifact/DZJGz7YwMzrEKq95ZqVbm5
+  — app-wide chrome (top bar, sidebar); source in `design/canvas/desktop-app--shell/project/` (shared `theme.css`). Started for POE-362.
 
 - **Canvas `desktop-app--lab--divine-font`:** https://claude.ai/artifact/Dij6S2j91a9x2HXCVx5cxp
   — source in `design/canvas/desktop-app--lab--divine-font/project/` (shared `theme.css`, fixture `data.js`).
@@ -104,7 +109,10 @@
 - 2026-11-02 — POE-328/329 Updates 2–3 (operator via supervisor): no buy button on the Lens recipe card (cannot buy while in the lab; operator called the card "the in-lab overlay", the supervisor ruled it goes from the main-window card); cost line reads "Exceptional Support Gem lv 3+" with no sub-line; a second alert craft, direct transfigure (title "Transfigure gem", option text, "You choose the version"; TOP gems later, not drawn); several alert crafts in one Font panel stack in one column, 6 px apart, in Font panel order.
 - 2026-11-02 — Handoff 1 as two packages: POE-328 = overlay alert stack; POE-329 = Font EV Recipes section (both cards). Interim defaults handed off as open decisions: stale at 2 h, poe.ninja for exceptional prices, stack left of the font region if the right side is too narrow.
 
+- 2026-11-13 — POE-362 round 1: app-wide top-bar work moves to a new `desktop-app--shell` canvas (LOCAL.md: one canvas per surface). Account button = 22px disc in a 24px button; registered = filled `--text` disc with the alias's first letter, unregistered = hollow `--text-muted` ring with a person glyph, unknown = dashed ring "?", checking = dashed ring "…" (no animation). Lightness, not hue, separates registered from the rest. Tooltip via the existing `Tooltip` (below), copy from the dialog's status strings. Placement A/B and initial-only vs initial + alias left to the owner. Fixture alias "Gaming PC" (the dialog's own placeholder), role beta.
+
 ## Open questions / to confirm
+- POE-362: the top bar needs the registration state at launch, but `entitlements.svelte.ts` drops `alias` from `/api/device/me`; the store (or a sibling) must keep alias + answered/failed. Muted `?`/`…` glyph measures 4.48:1 on `--surface` (passes 3:1 as an aria-hidden icon, not 4.5:1 as text).
 - 2026-10-10: POE-283 got a "Lifeforce colour correction" section (Primal for essences).
 - Brief Q11 (weight updates: merge vs replace, last-updated date) — still open.
 - Price sides (input / outcome / lifeforce) under the CX convention — not pinned.
