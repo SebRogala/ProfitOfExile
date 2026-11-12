@@ -19,7 +19,7 @@ The module's work flag is `boss_loot`; its widget window is `loot`.
 
 | Trigger | Current behavior | Shipped |
 | --- | --- | --- |
-| Module enabled | Native shortcut polling runs; stopping cancels work and clears pending capture, preview and rebind. | `139a67ba`, cancellation hardened in `24e9d6a1` |
+| Module enabled | Native shortcut polling runs; stopping cancels work and clears pending capture, preview and rebind. Outside rebinding it reads only the two bound keys and Shift/Ctrl/Alt; while rebinding it reads every key, and its first rebinding read only records the keys already held; the same tick retires saved captures and preview frames past their time (desktop M3, 2026-11-12). | `139a67ba`, cancellation hardened in `24e9d6a1`, narrowed poll `870d03d6`, tick retirement `611f2327` |
 | Area observed | The native owner records area, level and seed; startup catches up from the last area line. | `c656c6a7`, `83e1e14f` |
 | Capture shortcut | Requires game foreground, a matching boss profile and resolved league; snapshots attribution, layout and counted set. | `139a67ba`, `83e1e14f` |
 | OCR completes | Raw and preprocessed crop reads are combined; profile matches become incoming picks, ambiguous bases remain unresolved, unknown lines remain visible. | `139a67ba`, `24e9d6a1` |
