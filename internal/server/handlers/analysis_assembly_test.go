@@ -130,61 +130,6 @@ func TestAssembleCollectiveRows_CalculatesTwentyTwentyGCPRecipe(t *testing.T) {
 	}
 }
 
-func collectiveLimitCache(t *testing.T) *lab.Cache {
-	t.Helper()
-	cache := warmAnalysisCache(t,
-		sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40},
-		sparklineGem{name: "Spark of Storms", variant: "20/20", roi: 30},
-		sparklineGem{name: "Flame of Cinders", variant: "20/20", roi: 50},
-	)
-	warmSparklines(t, cache, nil, nil)
-	return cache
-}
-
-func TestCollectiveAnalysis_LimitCapsRankedResults(t *testing.T) {
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, collectiveLimitCache(t), sparklineScope),
-		"/api/analysis/collective?variant=20/20&limit=1")
-	names := decodeNormalCollectiveRankedNames(t, w)
-	if len(names) != 1 || names[0] != "Flame of Cinders" {
-		t.Errorf("names = %v, want the highest-ranked row only", names)
-	}
-}
-
-func TestCollectiveAnalysis_SearchReturnsAllMatchingResults(t *testing.T) {
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, collectiveLimitCache(t), sparklineScope),
-		"/api/analysis/collective?variant=20/20&limit=1&search=Spark")
-	names := decodeNormalCollectiveRankedNames(t, w)
-	want := []string{"Spark of Nova", "Spark of Storms"}
-	if len(names) != len(want) {
-		t.Fatalf("names = %v, want both matching rows despite limit 1", names)
-	}
-	for i := range want {
-		if names[i] != want[i] {
-			t.Errorf("names[%d] = %q, want %q; full order = %v", i, names[i], want[i], names)
-		}
-	}
-}
-
-func decodeNormalCollectiveRankedNames(t *testing.T, w *httptest.ResponseRecorder) []string {
-	t.Helper()
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	var response struct {
-		Data []struct {
-			Name string `json:"transfiguredName"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	names := make([]string, 0, len(response.Data))
-	for _, row := range response.Data {
-		names = append(names, row.Name)
-	}
-	return names
-}
-
 type trendSelectionFixture struct {
 	name     string
 	signal   string
@@ -425,8 +370,8 @@ func TestCollectiveAnalysis_MandatoryCorpusErrorReturns500AndOperationLog(t *tes
 	if strings.TrimSpace(w.Body.String()) != `{"error":"query failed"}` {
 		t.Errorf("body = %q, want query failed response", w.Body.String())
 	}
-	if !strings.Contains(logs.String(), "transfigure query failed") {
-		t.Errorf("logs = %s, want transfigure operation context", logs.String())
+	if !strings.Contains(logs.String(), "collective page query failed") {
+		t.Errorf("logs = %s, want collective page operation context", logs.String())
 	}
 }
 
@@ -437,7 +382,10 @@ func TestCollectiveAnalysis_OptionalSparklineErrorReturnsRowWithEmptySparkline(t
 	})
 	req := canceledRequest("/api/analysis/collective?variant=20/20")
 	w := httptest.NewRecorder()
-	CollectiveAnalysis(canceledLabRepository(t), cache, sparklineScope).ServeHTTP(w, req)
+	ranked := rankedOverRepository{Repository: canceledLabRepository(t), page: gemPager(sparklineGem{
+		name: "Spark of Nova", variant: "20/20", roi: 40,
+	}).page}
+	collectiveAnalysis(nil, ranked, cache, sparklineScope).ServeHTTP(w, req)
 	rows := decodeSparklineRows(t, w)
 	row, ok := rows["Spark of Nova"]
 	if !ok {

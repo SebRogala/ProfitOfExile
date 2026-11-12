@@ -68,6 +68,10 @@ func collectiveSparklinePoints(now time.Time, variant string, pricesAndListings 
 	return seeds
 }
 
+func sameNameRankedOver(pool *pgxpool.Pool, fixtures ...sameNameVariantFixture) rankedOverRepository {
+	return rankedOverRepository{Repository: lab.NewRepository(pool), page: sameNamePager(fixtures...).page}
+}
+
 func TestCollectiveAnalysis_ColdDatabaseKeepsSameNameVariantSeriesSeparate(t *testing.T) {
 	pool := offeringIntegrationPool(t)
 	scope := league.Historical("POE133-Collective-Separate")
@@ -91,13 +95,14 @@ func TestCollectiveAnalysis_ColdDatabaseKeepsSameNameVariantSeriesSeparate(t *te
 			collectiveSparklinePoint{time.Hour, 11, 84},
 		)...),
 	)
-	cache := sameNameVariantRankingCacheForScope(t, scope,
+	cache := lab.NewCache(scope)
+	ranked := sameNameRankedOver(pool,
 		sameNameVariantFixture{variant: "20/20", roi: 100},
 		sameNameVariantFixture{variant: "1/20", roi: 10},
 	)
 
 	w := httptest.NewRecorder()
-	CollectiveAnalysis(lab.NewRepository(pool), cache, scope).ServeHTTP(w,
+	collectiveAnalysis(lab.NewRepository(pool), ranked, cache, scope).ServeHTTP(w,
 		httptest.NewRequest(http.MethodGet, "/api/analysis/collective", nil))
 	rows := decodeCollectiveSparklineRows(t, w)
 	if len(rows) != 2 {
@@ -123,13 +128,14 @@ func TestCollectiveAnalysis_ColdDatabaseLeavesMissingVariantSeriesEmpty(t *testi
 		collectiveSparklinePoint{2 * time.Hour, 125, 26},
 		collectiveSparklinePoint{time.Hour, 140, 22},
 	))
-	cache := sameNameVariantRankingCacheForScope(t, scope,
+	cache := lab.NewCache(scope)
+	ranked := sameNameRankedOver(pool,
 		sameNameVariantFixture{variant: "20/20", roi: 100},
 		sameNameVariantFixture{variant: "1/20", roi: 10},
 	)
 
 	w := httptest.NewRecorder()
-	CollectiveAnalysis(lab.NewRepository(pool), cache, scope).ServeHTTP(w,
+	collectiveAnalysis(lab.NewRepository(pool), ranked, cache, scope).ServeHTTP(w,
 		httptest.NewRequest(http.MethodGet, "/api/analysis/collective", nil))
 	rows := decodeCollectiveSparklineRows(t, w)
 	if len(rows) != 2 {
@@ -155,10 +161,7 @@ func TestCollectiveAnalysis_ColdDatabaseExplicitVariantUsesRequestedMarketSeries
 		collectiveSparklinePoints(now, "20/20", collectiveSparklinePoint{time.Hour, 125, 26}),
 		collectiveSparklinePoints(now, "1/20", collectiveSparklinePoint{time.Hour, 9, 90})...,
 	))
-	cache := sameNameVariantRankingCacheForScope(t, scope,
-		sameNameVariantFixture{variant: "20/20", roi: 100},
-		sameNameVariantFixture{variant: "1/20", roi: 10},
-	)
+	cache := lab.NewCache(scope)
 
 	for _, tt := range []struct {
 		variant string
@@ -169,7 +172,8 @@ func TestCollectiveAnalysis_ColdDatabaseExplicitVariantUsesRequestedMarketSeries
 	} {
 		t.Run(tt.variant, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			CollectiveAnalysis(lab.NewRepository(pool), cache, scope).ServeHTTP(w,
+			ranked := sameNameRankedOver(pool, sameNameVariantFixture{variant: tt.variant})
+			collectiveAnalysis(lab.NewRepository(pool), ranked, cache, scope).ServeHTTP(w,
 				httptest.NewRequest(http.MethodGet, "/api/analysis/collective?variant="+tt.variant, nil))
 			rows := decodeCollectiveSparklineRows(t, w)
 			if len(rows) != 1 {

@@ -314,57 +314,6 @@ func TestGemSignalsAnalysis_ColdCacheFallsBackToTheRepository(t *testing.T) {
 	}
 }
 
-// --- collective (normal mode) ----------------------------------------------
-
-// The dashboard's endpoint. Every poll used to re-run three queries against a
-// corpus the tick had already answered for.
-func TestCollectiveAnalysis_WarmButEmptyCorporaAnswerWithoutQuerying(t *testing.T) {
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, warmEmptyCorporaWithSparklines(t), corpusScope),
-		"/api/analysis/collective?variant=20/20")
-
-	if count := decodeCount(t, w); count != 0 {
-		t.Errorf("count = %d, want 0", count)
-	}
-}
-
-func TestCollectiveAnalysis_ColdCacheFallsBackToTheRepository(t *testing.T) {
-	cold := lab.NewCache(corpusScope)
-
-	if !queriedRepository(CollectiveAnalysis(nil, cold, corpusScope),
-		"/api/analysis/collective?variant=20/20") {
-		t.Fatal("cold cache did not reach the repository; the database fallback is gone")
-	}
-}
-
-// Transfigure comes from its own tick, so a warm v2 pipeline says nothing about
-// it: the rows this endpoint ranks would all be missing their ROI.
-func TestCollectiveAnalysis_WarmSignalsWithColdTransfigureFallsBackToTheRepository(t *testing.T) {
-	half := lab.NewCache(corpusScope)
-	half.For(corpusScope).SetGemSignals(nil)
-	half.For(corpusScope).SetGemFeatures(nil)
-
-	if !queriedRepository(CollectiveAnalysis(nil, half, corpusScope),
-		"/api/analysis/collective?variant=20/20") {
-		t.Fatal("a cache with no transfigure corpus answered without querying; " +
-			"the transfigure tick reports warmth on its own")
-	}
-}
-
-func TestCollectiveAnalysis_WarmCorpusUnknownVariantAnswersWithoutQuerying(t *testing.T) {
-	cache := lab.NewCache(corpusScope)
-	x := cache.For(corpusScope)
-	x.SetTransfigure([]lab.TransfigureResult{{BaseName: "Spark", TransfiguredName: "Spark of Nova", Variant: "20/20", BasePrice: 10, TransfiguredPrice: 50, ROI: 40}})
-	x.SetGemSignals([]lab.GemSignal{{Name: "Spark of Nova", Variant: "20/20"}})
-	x.SetGemFeatures([]lab.GemFeature{{Name: "Spark of Nova", Variant: "20/20"}})
-	x.SetSparklinesByName(nil, nil, time.Now())
-
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, corpusScope),
-		"/api/analysis/collective?variant=1/20")
-	if count := decodeCount(t, w); count != 0 {
-		t.Errorf("count = %d, want 0 for a variant absent from the warm corpus", count)
-	}
-}
-
 // --- compare (normal mode) -------------------------------------------------
 
 // The desktop's per-gem path: one call per gem in an in-game scan.

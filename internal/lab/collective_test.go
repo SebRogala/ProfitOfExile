@@ -1,219 +1,12 @@
 package lab
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"profitofexile/internal/league"
 )
-
-func TestRankCollective_ExcludesTRAP(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "20/20", ROI: 50, BasePrice: 10, TransfiguredPrice: 60, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Cleave of Rage", BaseName: "Cleave", Variant: "20/20", ROI: 100, BasePrice: 5, TransfiguredPrice: 105, Confidence: "OK"},
-	}
-	signals := []GemSignal{
-		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE", Sellability: 60},
-		{Name: "Cleave of Rage", Variant: "20/20", Signal: "CAUTION", Sellability: 60},
-	}
-
-	results := RankCollective(transfigure, signals, nil, 0, 50, "")
-
-	if len(results) != 1 {
-		t.Fatalf("got %d results, want 1 (TRAP excluded)", len(results))
-	}
-	if results[0].TransfiguredName != "Spark of Nova" {
-		t.Errorf("got %s, want Spark of Nova", results[0].TransfiguredName)
-	}
-}
-
-func TestRankCollective_DUMPINGPenalized(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Spark of Nova", Variant: "20/20", ROI: 50, BasePrice: 10, TransfiguredPrice: 60, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Cleave of Rage", Variant: "20/20", ROI: 100, BasePrice: 5, TransfiguredPrice: 105, Confidence: "OK"},
-	}
-	signals := []GemSignal{
-		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE", Sellability: 80},
-		{Name: "Cleave of Rage", Variant: "20/20", Signal: "DUMPING", Sellability: 80},
-	}
-
-	results := RankCollective(transfigure, signals, nil, 0, 50, "")
-
-	if len(results) != 2 {
-		t.Fatalf("got %d results, want 2", len(results))
-	}
-	// Spark: 50 * 0.8 * 1.0 = 40 (STABLE, no saturation)
-	// Cleave: 100 * 0.8 * 0.5 = 40 (DUMPING, 0.5 saturation penalty)
-	// With equal WeightedROI, order depends on input order (sort is stable).
-	// But Spark should rank >= Cleave because Spark has no saturation penalty.
-	if results[0].TransfiguredName != "Spark of Nova" && results[0].TransfiguredName != "Cleave of Rage" {
-		t.Errorf("unexpected first result = %s", results[0].TransfiguredName)
-	}
-	// Verify DUMPING penalty: liquidityScore=0.8, saturation=0.5 → 100*0.8*0.5=40
-	for _, r := range results {
-		if r.TransfiguredName == "Cleave of Rage" {
-			expected := 100.0 * 0.8 * 0.5
-			if r.WeightedROI != expected {
-				t.Errorf("Cleave weighted ROI = %f, want %f", r.WeightedROI, expected)
-			}
-		}
-	}
-}
-
-func TestRankCollective_BudgetFilter(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Cheap Gem", Variant: "20/20", ROI: 20, BasePrice: 10, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Expensive Gem", Variant: "20/20", ROI: 100, BasePrice: 60, Confidence: "OK"},
-	}
-
-	results := RankCollective(transfigure, nil, nil, 50, 50, "")
-
-	if len(results) != 1 {
-		t.Fatalf("got %d results, want 1 (budget filter)", len(results))
-	}
-	if results[0].TransfiguredName != "Cheap Gem" {
-		t.Errorf("got %s, want Cheap Gem", results[0].TransfiguredName)
-	}
-}
-
-func TestRankCollective_ExcludesNegativeROI(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Good Gem", Variant: "20/20", ROI: 50, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Negative ROI", Variant: "20/20", ROI: -10, Confidence: "OK"},
-	}
-
-	results := RankCollective(transfigure, nil, nil, 0, 50, "")
-
-	if len(results) != 1 {
-		t.Fatalf("got %d results, want 1", len(results))
-	}
-	if results[0].TransfiguredName != "Good Gem" {
-		t.Errorf("got %s, want Good Gem", results[0].TransfiguredName)
-	}
-}
-
-func TestRankCollective_ThinMarketRankedAsLowConfidence(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Thick Market", Variant: "20/20", ROI: 50, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Thin Market", Variant: "20/20", ROI: 80, Confidence: "LOW"},
-	}
-
-	results := RankCollective(transfigure, nil, nil, 0, 50, "")
-
-	if len(results) != 2 {
-		t.Fatalf("got %d results, want 2 — a thin market is flagged, not dropped", len(results))
-	}
-
-	byName := make(map[string]CollectiveResult, len(results))
-	for _, r := range results {
-		byName[r.TransfiguredName] = r
-	}
-
-	thin, ok := byName["Thin Market"]
-	if !ok {
-		t.Fatal("thin-market gem missing from the ranking")
-	}
-	if !thin.LowConfidence {
-		t.Error("thin-market gem is not flagged LowConfidence, so the UI toggle cannot hide it")
-	}
-	if thin.Confidence != "LOW" {
-		t.Errorf("thin-market gem Confidence = %q, want LOW preserved for callers that distinguish", thin.Confidence)
-	}
-
-	if thick := byName["Thick Market"]; thick.LowConfidence {
-		t.Error("liquid gem wrongly flagged LowConfidence")
-	}
-}
-
-// A LOW transfigure confidence must survive the gem-feature join, which assigns
-// LowConfidence rather than OR-ing it.
-func TestRankCollective_ThinMarketFlagSurvivesFeatureJoin(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Thin Market", Variant: "20/20", ROI: 80, Confidence: "LOW"},
-	}
-	features := []GemFeature{
-		{Name: "Thin Market", Variant: "20/20", LowConfidence: false},
-	}
-
-	results := RankCollective(transfigure, nil, features, 0, 50, "")
-
-	if len(results) != 1 {
-		t.Fatalf("got %d results, want 1", len(results))
-	}
-	if !results[0].LowConfidence {
-		t.Error("feature join cleared the thin-market flag")
-	}
-}
-
-func TestRankCollective_LiquidityScoring(t *testing.T) {
-	now := time.Now()
-	// All same ROI but different sellability — sorting by WeightedROI (liquidity-weighted).
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Low Sell Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
-		{Time: now, TransfiguredName: "High Sell Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
-	}
-	signals := []GemSignal{
-		{Name: "Low Sell Gem", Variant: "20/20", Signal: "STABLE", Sellability: 30},
-		{Name: "High Sell Gem", Variant: "20/20", Signal: "STABLE", Sellability: 80},
-	}
-
-	results := RankCollective(transfigure, signals, nil, 0, 50, "")
-
-	if len(results) != 2 {
-		t.Fatalf("got %d results, want 2", len(results))
-	}
-
-	// High Sell Gem: 100 * 0.8 = 80, Low Sell Gem: 100 * 0.3 = 30 → High first.
-	if results[0].TransfiguredName != "High Sell Gem" {
-		t.Errorf("first result = %s, want High Sell Gem (higher liquidity)", results[0].TransfiguredName)
-	}
-	if results[0].WeightedROI != 80 {
-		t.Errorf("High Sell weighted ROI = %f, want 80", results[0].WeightedROI)
-	}
-	if results[1].WeightedROI != 30 {
-		t.Errorf("Low Sell weighted ROI = %f, want 30", results[1].WeightedROI)
-	}
-}
-
-func TestRankCollective_Limit(t *testing.T) {
-	now := time.Now()
-	transfigure := make([]TransfigureResult, 10)
-	for i := range transfigure {
-		transfigure[i] = TransfigureResult{
-			Time: now, TransfiguredName: "Gem", Variant: "20/20",
-			ROI: float64(i + 1), Confidence: "OK",
-		}
-	}
-
-	results := RankCollective(transfigure, nil, nil, 0, 3, "")
-	if len(results) != 3 {
-		t.Errorf("got %d results, want 3 (limit)", len(results))
-	}
-}
-
-func TestRankCollective_NoSignalDataDefaultsStable(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Spark of Nova", Variant: "20/20", ROI: 50, Confidence: "OK"},
-	}
-
-	results := RankCollective(transfigure, nil, nil, 0, 50, "")
-
-	if len(results) != 1 {
-		t.Fatalf("got %d results, want 1", len(results))
-	}
-	if results[0].Signal != "STABLE" {
-		t.Errorf("signal = %s, want STABLE (default)", results[0].Signal)
-	}
-	// No signal data: Sellability defaults to 0 → liquidityScore=0 → WeightedROI=0.
-	if results[0].WeightedROI != 0 {
-		t.Errorf("weighted ROI = %f, want 0 (no signal data, sellability=0)", results[0].WeightedROI)
-	}
-}
 
 func TestBuildCompareResults_Recommendations(t *testing.T) {
 	transfigure := []TransfigureResult{
@@ -313,129 +106,6 @@ func TestBuildCompareResults_GemNotFoundInTransfigure(t *testing.T) {
 	}
 }
 
-func TestRankCollective_SortByPct(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Big Absolute", Variant: "20/20", ROI: 200, ROIPct: 40, BasePrice: 500, TransfiguredPrice: 700, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Big Percent", Variant: "20/20", ROI: 15, ROIPct: 1500, BasePrice: 1, TransfiguredPrice: 16, Confidence: "OK"},
-	}
-	signals := []GemSignal{
-		{Name: "Big Absolute", Variant: "20/20", Signal: "STABLE", Sellability: 60},
-		{Name: "Big Percent", Variant: "20/20", Signal: "STABLE", Sellability: 60},
-	}
-
-	// Explicit sort=pct: Big Percent first despite lower absolute ROI.
-	// Big Absolute: 40 * 0.6 = 24, Big Percent: 1500 * 0.6 = 900
-	results := RankCollective(transfigure, signals, nil, 0, 50, SortPct)
-	if len(results) != 2 {
-		t.Fatalf("got %d results, want 2", len(results))
-	}
-	if results[0].TransfiguredName != "Big Percent" {
-		t.Errorf("sort=pct: first = %s, want Big Percent", results[0].TransfiguredName)
-	}
-
-	// Explicit sort=chaos: Big Absolute first.
-	// Big Absolute: 200 * 0.6 = 120, Big Percent: 15 * 0.6 = 9
-	results = RankCollective(transfigure, signals, nil, 0, 50, SortChaos)
-	if results[0].TransfiguredName != "Big Absolute" {
-		t.Errorf("sort=chaos: first = %s, want Big Absolute", results[0].TransfiguredName)
-	}
-}
-
-func TestRankCollective_BudgetAwareDefaultSort(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Big Absolute", Variant: "20/20", ROI: 40, ROIPct: 100, BasePrice: 40, TransfiguredPrice: 80, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Big Percent", Variant: "20/20", ROI: 10, ROIPct: 1000, BasePrice: 1, TransfiguredPrice: 11, Confidence: "OK"},
-	}
-	signals := []GemSignal{
-		{Name: "Big Absolute", Variant: "20/20", Signal: "STABLE", Sellability: 60},
-		{Name: "Big Percent", Variant: "20/20", Signal: "STABLE", Sellability: 60},
-	}
-
-	// Budget <= 50, no explicit sort → defaults to pct.
-	results := RankCollective(transfigure, signals, nil, 50, 50, "")
-	if len(results) != 2 {
-		t.Fatalf("got %d results, want 2", len(results))
-	}
-	if results[0].TransfiguredName != "Big Percent" {
-		t.Errorf("budget-aware default: first = %s, want Big Percent", results[0].TransfiguredName)
-	}
-
-	// Budget > 50, no explicit sort → defaults to chaos.
-	results = RankCollective(transfigure, signals, nil, 100, 50, "")
-	if results[0].TransfiguredName != "Big Absolute" {
-		t.Errorf("budget>50 default: first = %s, want Big Absolute", results[0].TransfiguredName)
-	}
-
-	// Budget = 0 (no budget filter), no explicit sort → defaults to chaos.
-	results = RankCollective(transfigure, signals, nil, 0, 50, "")
-	if results[0].TransfiguredName != "Big Absolute" {
-		t.Errorf("budget=0 default: first = %s, want Big Absolute (chaos sort)", results[0].TransfiguredName)
-	}
-}
-
-func TestRankCollective_ROIPctPopulated(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Spark of Nova", Variant: "20/20", ROI: 50, ROIPct: 500, BasePrice: 10, TransfiguredPrice: 60, Confidence: "OK"},
-	}
-	signals := []GemSignal{
-		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE", Sellability: 100},
-	}
-
-	results := RankCollective(transfigure, signals, nil, 0, 50, "")
-	if len(results) != 1 {
-		t.Fatalf("got %d results, want 1", len(results))
-	}
-	if results[0].ROIPct != 500 {
-		t.Errorf("ROIPct = %f, want 500", results[0].ROIPct)
-	}
-	// Sellability=100, no saturation → WeightedROIPct = 500 * 1.0 = 500
-	if results[0].WeightedROIPct != 500 {
-		t.Errorf("WeightedROIPct = %f, want 500 (liquidityScore=1.0)", results[0].WeightedROIPct)
-	}
-}
-
-func TestRankCollective_DUMPINGLiquidMarketReducedPenalty(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Liquid Dump Gem", Variant: "20/20", ROI: 100, BasePrice: 5, TransfiguredPrice: 105, TransfiguredListings: 30, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Thin Dump Gem", Variant: "20/20", ROI: 100, BasePrice: 5, TransfiguredPrice: 105, TransfiguredListings: 5, Confidence: "OK"},
-	}
-	signals := []GemSignal{
-		{Name: "Liquid Dump Gem", Variant: "20/20", Signal: "DUMPING", Sellability: 80},
-		{Name: "Thin Dump Gem", Variant: "20/20", Signal: "DUMPING", Sellability: 80},
-	}
-
-	results := RankCollective(transfigure, signals, nil, 0, 50, "")
-	if len(results) != 2 {
-		t.Fatalf("got %d results, want 2", len(results))
-	}
-
-	byName := make(map[string]CollectiveResult)
-	for _, r := range results {
-		byName[r.TransfiguredName] = r
-	}
-
-	// Liquid market: 100 * 0.8 * (1 - 0.15) = 68
-	liquidExpected := 100.0 * 0.8 * 0.85
-	if byName["Liquid Dump Gem"].WeightedROI != liquidExpected {
-		t.Errorf("Liquid Dump Gem WeightedROI = %f, want %f", byName["Liquid Dump Gem"].WeightedROI, liquidExpected)
-	}
-
-	// Thin market: 100 * 0.8 * (1 - 0.5) = 40
-	thinExpected := 100.0 * 0.8 * 0.5
-	if byName["Thin Dump Gem"].WeightedROI != thinExpected {
-		t.Errorf("Thin Dump Gem WeightedROI = %f, want %f", byName["Thin Dump Gem"].WeightedROI, thinExpected)
-	}
-
-	// Liquid market should rank higher.
-	if results[0].TransfiguredName != "Liquid Dump Gem" {
-		t.Errorf("first result = %s, want Liquid Dump Gem", results[0].TransfiguredName)
-	}
-}
-
 func TestBuildCompareResults_DUMPINGLiquidNotAvoided(t *testing.T) {
 	transfigure := []TransfigureResult{
 		{TransfiguredName: "Liquid Gem", BaseName: "Liquid", Variant: "20/20", ROI: 200, Confidence: "OK"},
@@ -484,65 +154,6 @@ func TestBuildCompareResults_ColorBaseROI(t *testing.T) {
 	}
 }
 
-func TestRankCollective_TierCountsConsistentWithSignals(t *testing.T) {
-	// Acceptance criterion: tier counts in collective results must match
-	// the input signals. This verifies the v2 migration preserves tier data.
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Top Gem", Variant: "20/20", ROI: 200, Confidence: "OK"},
-		{Time: now, TransfiguredName: "High Gem", Variant: "20/20", ROI: 150, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Mid Gem", Variant: "20/20", ROI: 50, Confidence: "OK"},
-	}
-	signals := []GemSignal{
-		{Name: "Top Gem", Variant: "20/20", Signal: "STABLE", Tier: "TOP", Sellability: 80, SellConfidence: "SAFE"},
-		{Name: "High Gem", Variant: "20/20", Signal: "STABLE", Tier: "HIGH", Sellability: 70, SellConfidence: "FAIR"},
-		{Name: "Mid Gem", Variant: "20/20", Signal: "STABLE", Tier: "MID", Sellability: 60, SellConfidence: "RISKY"},
-	}
-
-	results := RankCollective(transfigure, signals, nil, 0, 50, "")
-
-	if len(results) != 3 {
-		t.Fatalf("got %d results, want 3", len(results))
-	}
-
-	tierCounts := map[string]int{}
-	for _, r := range results {
-		tierCounts[r.PriceTier]++
-	}
-
-	if tierCounts["TOP"] != 1 {
-		t.Errorf("TOP tier count = %d, want 1", tierCounts["TOP"])
-	}
-	if tierCounts["HIGH"] != 1 {
-		t.Errorf("HIGH tier count = %d, want 1", tierCounts["HIGH"])
-	}
-	if tierCounts["MID"] != 1 {
-		t.Errorf("MID tier count = %d, want 1", tierCounts["MID"])
-	}
-}
-
-func TestRankCollective_SellConfidenceFromSignal(t *testing.T) {
-	// Verify that SellConfidence in collective results comes from GemSignal (v2),
-	// not from inline derivation (the deleted deriveSellConfidence).
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Spark of Nova", Variant: "20/20", ROI: 100, Confidence: "OK"},
-	}
-	signals := []GemSignal{
-		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE", Sellability: 80,
-			SellConfidence: "FAIR", TradeConfidenceNote: "MONOPOLY: downgraded from SAFE"},
-	}
-
-	results := RankCollective(transfigure, signals, nil, 0, 50, "")
-
-	if len(results) != 1 {
-		t.Fatalf("got %d results, want 1", len(results))
-	}
-	if results[0].SellConfidence != "FAIR" {
-		t.Errorf("SellConfidence = %q, want FAIR (from GemSignal)", results[0].SellConfidence)
-	}
-}
-
 func TestBuildCompareResults_SellConfidenceFromSignal(t *testing.T) {
 	// Compare endpoint should use GemSignal.SellConfidence, not inline derivation.
 	transfigure := []TransfigureResult{
@@ -575,46 +186,6 @@ func TestBuildCompareResults_SellConfidenceFromSignal(t *testing.T) {
 	}
 }
 
-func TestRankCollective_FeaturesJoinPopulatesFields(t *testing.T) {
-	// Verify that joining GemFeature data populates velocity, CV, histPosition, etc.
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Spark of Nova", Variant: "20/20", ROI: 100, Confidence: "OK"},
-	}
-	signals := []GemSignal{
-		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE", Sellability: 80},
-	}
-	features := []GemFeature{
-		{Name: "Spark of Nova", Variant: "20/20", VelLongPrice: 5.5, VelLongListing: -2.0,
-			CV: 18.0, HistPosition: 75, MarketDepth: 1.5, Low7Days: 150, High7Days: 220},
-	}
-
-	results := RankCollective(transfigure, signals, features, 0, 50, "")
-
-	if len(results) != 1 {
-		t.Fatalf("got %d results, want 1", len(results))
-	}
-	r := results[0]
-	if r.PriceVelocity != 5.5 {
-		t.Errorf("PriceVelocity = %f, want 5.5", r.PriceVelocity)
-	}
-	if r.ListingVelocity != -2.0 {
-		t.Errorf("ListingVelocity = %f, want -2.0", r.ListingVelocity)
-	}
-	if r.CV != 18.0 {
-		t.Errorf("CV = %f, want 18.0", r.CV)
-	}
-	if r.HistPosition != 75 {
-		t.Errorf("HistPosition = %f, want 75", r.HistPosition)
-	}
-	if r.Low7Days != 150 {
-		t.Errorf("Low7Days = %f, want 150", r.Low7Days)
-	}
-	if r.High7Days != 220 {
-		t.Errorf("High7Days = %f, want 220", r.High7Days)
-	}
-}
-
 func TestSignalWeight(t *testing.T) {
 	tests := []struct {
 		signal string
@@ -633,59 +204,6 @@ func TestSignalWeight(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("signalWeight(%s) = %f, want %f", tt.signal, got, tt.want)
 		}
-	}
-}
-
-func TestRankCollective_KeepsNoBaseGemWithUnknownROI(t *testing.T) {
-	now := time.Now()
-	// The gem the Font EV analyzer can already price: transfigured price known,
-	// base unpriced. It must not be dropped by the profitability gate.
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Tornado of Elemental Turbulence", Variant: "1",
-			TransfiguredPrice: 20, Confidence: ConfidenceNoBase},
-	}
-
-	results := RankCollective(transfigure, nil, nil, 0, 50, "")
-
-	if len(results) != 1 {
-		t.Fatalf("got %d results, want 1 (NO_BASE gem must stay in the rankings)", len(results))
-	}
-	if results[0].Confidence != ConfidenceNoBase {
-		t.Errorf("Confidence = %q, want %q so the UI can mark ROI unknown",
-			results[0].Confidence, ConfidenceNoBase)
-	}
-	if results[0].TransfiguredPrice != 20 {
-		t.Errorf("TransfiguredPrice = %f, want 20", results[0].TransfiguredPrice)
-	}
-}
-
-func TestRankCollective_DropsNoBaseGemWithoutAPrice(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Unpriced Both Ways", Variant: "1", Confidence: ConfidenceNoBase},
-	}
-
-	results := RankCollective(transfigure, nil, nil, 0, 50, "")
-
-	if len(results) != 0 {
-		t.Fatalf("got %d results, want 0 — a gem with neither price is not actionable", len(results))
-	}
-}
-
-func TestRankCollective_BudgetFilterDropsNoBaseGem(t *testing.T) {
-	now := time.Now()
-	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Known Cost", Variant: "20/20", ROI: 20, BasePrice: 10, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Unknown Cost", Variant: "20/20", TransfiguredPrice: 500, Confidence: ConfidenceNoBase},
-	}
-
-	results := RankCollective(transfigure, nil, nil, 50, 50, "")
-
-	if len(results) != 1 {
-		t.Fatalf("got %d results, want 1 — an unknown cost basis cannot be shown to fit a budget", len(results))
-	}
-	if results[0].TransfiguredName != "Known Cost" {
-		t.Errorf("got %s, want Known Cost", results[0].TransfiguredName)
 	}
 }
 
@@ -887,5 +405,67 @@ func TestRankDedicationCollective_MarksRowsNoBaseWhenTheMarketHasNoInputCost(t *
 	}
 	if results[0].TransfiguredPrice != 400 {
 		t.Errorf("TransfiguredPrice = %.0f, want 400 — the listed price is still known", results[0].TransfiguredPrice)
+	}
+}
+
+type fakeCollectiveSource struct {
+	page CollectivePage
+}
+
+func (f fakeCollectiveSource) CollectivePage(context.Context, league.Scope, CollectiveQuery) (CollectivePage, error) {
+	return f.page, nil
+}
+
+func (f fakeCollectiveSource) CollectiveBasePrices(context.Context, league.Scope, []string) (map[string]float64, error) {
+	return nil, nil
+}
+
+func (f fakeCollectiveSource) SparklineData(context.Context, league.Scope, []string, string, int) (map[string][]SparklinePoint, error) {
+	return nil, nil
+}
+
+// gem_signals has no column for the trade note; the tick-computed signals in
+// the cache are its only source, keyed by gem and market.
+func TestQueryCollective_TradeConfidenceNoteComesFromTheCachedSignalOfTheSameMarket(t *testing.T) {
+	scope := league.Historical("Mirage")
+	cache := NewCache(scope)
+	cache.For(scope).SetGemSignals([]GemSignal{
+		{Name: "Spark of Nova", Variant: "20/20", TradeConfidenceNote: "MONOPOLY: downgraded from SAFE"},
+		{Name: "Spark of Nova", Variant: "1/20", TradeConfidenceNote: "other market"},
+	})
+	cache.For(scope).SetSparklinesByName(nil, nil, time.Now())
+	src := fakeCollectiveSource{page: CollectivePage{Rows: []CollectiveResult{
+		{TransfiguredName: "Spark of Nova", Variant: "20/20"},
+		{TransfiguredName: "Cleave of Rage", Variant: "20/20"},
+	}, Total: 2}}
+
+	got, err := QueryCollective(context.Background(), src, cache, scope, CollectiveQuery{Page: 1, PageSize: 10, Sort: CollectiveSortPrice})
+	if err != nil {
+		t.Fatalf("QueryCollective: %v", err)
+	}
+	if got.Results[0].TradeConfidenceNote != "MONOPOLY: downgraded from SAFE" || got.Results[1].TradeConfidenceNote != "" {
+		t.Errorf("notes = (%q, %q), want the 20/20 note on Spark of Nova and none on Cleave of Rage",
+			got.Results[0].TradeConfidenceNote, got.Results[1].TradeConfidenceNote)
+	}
+}
+
+func TestCollectiveQuery_ValidateRejectsOutOfRangeValues(t *testing.T) {
+	ok := CollectiveQuery{Page: 1, PageSize: 10, Sort: CollectiveSortPrice}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("valid query rejected: %v", err)
+	}
+	for name, q := range map[string]CollectiveQuery{
+		"page 0":            {Page: 0, PageSize: 10, Sort: CollectiveSortPrice},
+		"pageSize 0":        {Page: 1, PageSize: 0, Sort: CollectiveSortPrice},
+		"pageSize 101":      {Page: 1, PageSize: 101, Sort: CollectiveSortPrice},
+		"unknown sort":      {Page: 1, PageSize: 10, Sort: "pct"},
+		"legacy sort paged": {Page: 1, PageSize: 10, Sort: CollectiveSortLegacyWeightedChaos},
+		"negative budget":   {Page: 1, PageSize: 10, Sort: CollectiveSortPrice, Budget: -1},
+		"unknown colour":    {Page: 1, PageSize: 10, Sort: CollectiveSortPrice, Color: "PURPLE"},
+		"unknown variant":   {Page: 1, PageSize: 10, Sort: CollectiveSortPrice, Variant: "21/23c"},
+	} {
+		if err := q.Validate(); err == nil {
+			t.Errorf("%s: Validate() = nil, want an error", name)
+		}
 	}
 }

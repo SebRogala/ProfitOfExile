@@ -95,9 +95,19 @@ func cachedCorruptedSparklines(cache *lab.Cache, scope league.Scope, names []str
 }
 
 // CollectiveAnalysis returns a ranked "what to farm now" list combining
-// transfigure ROI with trend signals.
-// Query params: variant (optional), budget (optional, max base price), limit (default 20, max 100).
+// transfigure ROI with trend signals, ranked, counted and paged in SQL.
+//
+// A request carrying pageSize is paged (page, pageSize, sort, variant, color,
+// budget, hideLowConfidence, search; see parseCollectivePage). One without it
+// is a legacy request with today's params: variant, budget, limit (default 20,
+// max 100), sort=pct and search. Released desktop builds send legacy requests.
 func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
+	return collectiveAnalysis(repo, repo, cache, scope)
+}
+
+// collectiveAnalysis takes the Normal ranking source separately from the
+// repository the Dedication mode reads, so a test can serve a fixed page.
+func collectiveAnalysis(repo *lab.Repository, src lab.CollectiveSource, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Dedication mode: return corrupted 21/23 gems ranked by price.
 		if r.URL.Query().Get("mode") == "dedication" {
@@ -105,53 +115,26 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 			return
 		}
 
-		variant := normalizeVariant(r.URL.Query().Get("variant"))
-
-		var budget float64
-		if v := r.URL.Query().Get("budget"); v != "" {
-			b, err := strconv.ParseFloat(v, 64)
-			if err != nil || b < 0 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]string{"error": "budget must be a non-negative number"})
-				return
+		var input lab.CollectiveQuery
+		var msg string
+		if r.URL.Query().Has("pageSize") {
+			input, msg = parseCollectivePage(r)
+		} else {
+			input, msg = parseCollectiveLegacy(r)
+		}
+		if msg == "" {
+			if err := input.Validate(); err != nil {
+				msg = err.Error()
 			}
-			budget = b
+		}
+		if msg != "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": msg})
+			return
 		}
 
-		limit := 20
-		if v := r.URL.Query().Get("limit"); v != "" {
-			n, err := strconv.Atoi(v)
-			if err != nil || n < 1 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]string{"error": "limit must be a positive integer"})
-				return
-			}
-			if n > 100 {
-				n = 100
-			}
-			limit = n
-		}
-
-		// Parse sort mode: "pct" for ROI%, "chaos" (default) for absolute ROI.
-		var sortBy lab.SortMode
-		if s := r.URL.Query().Get("sort"); s == "pct" {
-			sortBy = lab.SortPct
-		}
-		// Empty sortBy lets RankCollective apply budget-aware default.
-
-		searchName := r.URL.Query().Get("search")
-
-		input := lab.CollectiveQuery{
-			Variant:      variant,
-			SparkVariant: r.URL.Query().Get("variant"),
-			Budget:       budget,
-			Limit:        limit,
-			SearchName:   searchName,
-			SortBy:       sortBy,
-		}
-		query, err := lab.QueryCollective(r.Context(), repo, cache, scope, input)
+		query, err := lab.QueryCollective(r.Context(), src, cache, scope, input)
 		if err != nil {
 			var queryErr *lab.QueryError
 			if errors.As(err, &queryErr) {
@@ -164,14 +147,117 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 		}
 		rows := assembleCollectiveRows(query)
 
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]any{
+		body := map[string]any{
 			"count": len(rows),
+			"total": query.Total,
 			"data":  rows,
-		}); err != nil {
+		}
+		if !input.Legacy {
+			body["page"] = input.Page
+			body["pageSize"] = input.PageSize
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(body); err != nil {
 			slog.Error("collective analysis: encode response", "error", err)
 		}
 	}
+}
+
+// parseCollectiveBudget reads budget as today: absent = 0, else a
+// non-negative number. The second return is the 400 message, or "".
+func parseCollectiveBudget(r *http.Request) (float64, string) {
+	v := r.URL.Query().Get("budget")
+	if v == "" {
+		return 0, ""
+	}
+	b, err := strconv.ParseFloat(v, 64)
+	if err != nil || b < 0 {
+		return 0, "budget must be a non-negative number"
+	}
+	return b, ""
+}
+
+// parseCollectiveLegacy reads a request without pageSize exactly as before
+// paging existed. The second return is the 400 message, or "".
+func parseCollectiveLegacy(r *http.Request) (lab.CollectiveQuery, string) {
+	params := r.URL.Query()
+	budget, msg := parseCollectiveBudget(r)
+	if msg != "" {
+		return lab.CollectiveQuery{}, msg
+	}
+	limit := 20
+	if v := params.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return lab.CollectiveQuery{}, "limit must be a positive integer"
+		}
+		limit = min(n, lab.CollectiveMaxPageSize)
+	}
+	return lab.CollectiveQuery{
+		Variant:      normalizeVariant(params.Get("variant")),
+		SparkVariant: params.Get("variant"),
+		Budget:       budget,
+		Search:       params.Get("search"),
+		Sort:         lab.LegacyCollectiveSort(params.Get("sort"), budget),
+		Page:         1,
+		PageSize:     limit,
+		Legacy:       true,
+	}, ""
+}
+
+var collectivePageSorts = map[string]lab.CollectiveSort{
+	"":            lab.CollectiveSortPrice,
+	"price":       lab.CollectiveSortPrice,
+	"roi":         lab.CollectiveSortROI,
+	"weightedRoi": lab.CollectiveSortWeightedROI,
+	"roiPct":      lab.CollectiveSortROIPct,
+}
+
+// parseCollectivePage reads a paged request. Bounds and whitelists beyond the
+// syntax are lab.CollectiveQuery.Validate's. The second return is the 400
+// message, or "".
+func parseCollectivePage(r *http.Request) (lab.CollectiveQuery, string) {
+	params := r.URL.Query()
+	q := lab.CollectiveQuery{Page: 1}
+	n, err := strconv.Atoi(params.Get("pageSize"))
+	if err != nil {
+		return q, "pageSize must be an integer from 1 to 100"
+	}
+	q.PageSize = n
+	if v := params.Get("page"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return q, "page must be a positive integer"
+		}
+		q.Page = n
+	}
+	sort, ok := collectivePageSorts[params.Get("sort")]
+	if !ok {
+		return q, "sort must be one of price, roi, weightedRoi, roiPct"
+	}
+	q.Sort = sort
+	if params.Has("pool") {
+		return q, "pool is only valid with mode=dedication"
+	}
+	q.SparkVariant = params.Get("variant")
+	q.Variant = normalizeVariant(q.SparkVariant)
+	if color := params.Get("color"); color != "ALL" {
+		q.Color = color
+	}
+	budget, msg := parseCollectiveBudget(r)
+	if msg != "" {
+		return q, msg
+	}
+	q.Budget = budget
+	switch params.Get("hideLowConfidence") {
+	case "", "false":
+	case "true":
+		q.HideLowConfidence = true
+	default:
+		return q, "hideLowConfidence must be true or false"
+	}
+	q.Search = params.Get("search")
+	return q, ""
 }
 
 // serveDedicationCollective handles ?mode=dedication on the collective endpoint.

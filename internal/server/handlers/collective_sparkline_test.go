@@ -31,7 +31,8 @@ func sparkAt(now time.Time, ago time.Duration, price float64, listings int) lab.
 }
 
 // sparklineGem is one gem's worth of ranking input: enough transfigure, signal
-// and feature data for RankCollective to emit a row for it.
+// and feature data for the cache-first compare and trend paths, and one ranked
+// collective row through gemPager.
 type sparklineGem struct {
 	name         string
 	variant      string
@@ -55,10 +56,6 @@ func sameNameVariantCache(t *testing.T, fixtures ...sameNameVariantFixture) *lab
 
 func sameNameVariantCacheForScope(t *testing.T, scope league.Scope, fixtures ...sameNameVariantFixture) *lab.Cache {
 	return sameNameVariantCacheForScopeWithSparklines(t, scope, true, fixtures...)
-}
-
-func sameNameVariantRankingCacheForScope(t *testing.T, scope league.Scope, fixtures ...sameNameVariantFixture) *lab.Cache {
-	return sameNameVariantCacheForScopeWithSparklines(t, scope, false, fixtures...)
 }
 
 func sameNameVariantCacheForScopeWithSparklines(t *testing.T, scope league.Scope, warmSparklines bool, fixtures ...sameNameVariantFixture) *lab.Cache {
@@ -176,6 +173,27 @@ func warmAnalysisCache(t *testing.T, gems ...sparklineGem) *lab.Cache {
 	return c
 }
 
+// gemPager serves gems as the ranked page, in the order given.
+func gemPager(gems ...sparklineGem) *fakeCollectivePager {
+	rows := make([]lab.CollectiveResult, 0, len(gems))
+	for _, g := range gems {
+		rows = append(rows, lab.CollectiveResult{
+			TransfiguredName: g.name, BaseName: "Spark", Variant: g.variant,
+			ROI: g.roi, BasePrice: 10, TransfiguredPrice: 10 + g.roi, WindowSignal: g.windowSignal,
+		})
+	}
+	return &fakeCollectivePager{page: lab.CollectivePage{Rows: rows, Total: len(rows)}}
+}
+
+// sameNamePager serves one Spark of Nova row per fixture variant, in order.
+func sameNamePager(fixtures ...sameNameVariantFixture) *fakeCollectivePager {
+	gems := make([]sparklineGem, 0, len(fixtures))
+	for _, f := range fixtures {
+		gems = append(gems, sparklineGem{name: "Spark of Nova", variant: f.variant, roi: f.roi})
+	}
+	return gemPager(gems...)
+}
+
 // warmSparklines installs series into the cache keyed by gem name and variant.
 func warmSparklines(t *testing.T, c *lab.Cache, series, corrupted map[string]map[string][]lab.SparklinePoint) {
 	warmSparklinesForScope(t, c, sparklineScope, series, corrupted)
@@ -281,7 +299,7 @@ func TestCollectiveAnalysis_WarmCacheServesSparklinesWithoutQuerying(t *testing.
 		"Spark of Nova": {"20/20": want},
 	}, nil)
 
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope),
+	w := serveWithoutRepository(t, collectiveAnalysis(nil, gemPager(sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40}), cache, sparklineScope),
 		"/api/analysis/collective?variant=20/20")
 
 	rows := decodeSparklineRows(t, w)
@@ -304,7 +322,7 @@ func TestCollectiveAnalysis_WarmCacheGemWithoutSeriesServesEmptySparkline(t *tes
 		"Spark of Nova": {"20/20": {sparkAt(now, time.Hour, 125, 26)}},
 	}, nil)
 
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope),
+	w := serveWithoutRepository(t, collectiveAnalysis(nil, gemPager(sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40}, sparklineGem{name: "Ice Nova of Frostbolts", variant: "20/20", roi: 30}), cache, sparklineScope),
 		"/api/analysis/collective?variant=20/20")
 
 	rows := decodeSparklineRows(t, w)
@@ -335,7 +353,7 @@ func TestCollectiveAnalysis_WarmCacheDropsPointsOlderThanTheResponseWindow(t *te
 		}},
 	}, nil)
 
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope),
+	w := serveWithoutRepository(t, collectiveAnalysis(nil, gemPager(sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40}), cache, sparklineScope),
 		"/api/analysis/collective?variant=20/20")
 
 	rows := decodeSparklineRows(t, w)
@@ -358,7 +376,7 @@ func TestCollectiveAnalysis_AllVariantsWarmCacheUsesEachGemsOwnVariant(t *testin
 		"Ice Nova of Frostbolts": {"20/20": twentyTwenty, "1/20": oneTwenty},
 	}, nil)
 
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope),
+	w := serveWithoutRepository(t, collectiveAnalysis(nil, gemPager(sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40}, sparklineGem{name: "Ice Nova of Frostbolts", variant: "1/20", roi: 30}), cache, sparklineScope),
 		"/api/analysis/collective")
 
 	rows := decodeSparklineRows(t, w)
@@ -378,7 +396,7 @@ func TestCollectiveAnalysis_AllVariantsSameNameUsesEachVariantSeries(t *testing.
 		sameNameVariantFixture{variant: "1/20", roi: 10, trans: oneTwentySeries},
 	)
 
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope),
+	w := serveWithoutRepository(t, collectiveAnalysis(nil, sameNamePager(sameNameVariantFixture{variant: "20/20", roi: 100}, sameNameVariantFixture{variant: "1/20", roi: 10}), cache, sparklineScope),
 		"/api/analysis/collective")
 	rows := decodeCollectiveSparklineRows(t, w)
 	if len(rows) != 2 {
@@ -403,7 +421,7 @@ func TestCollectiveAnalysis_AllVariantsWarmCacheLeavesMissingSeriesEmpty(t *test
 		sameNameVariantFixture{variant: "1/20", roi: 10},
 	)
 
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope),
+	w := serveWithoutRepository(t, collectiveAnalysis(nil, sameNamePager(sameNameVariantFixture{variant: "20/20", roi: 100}, sameNameVariantFixture{variant: "1/20", roi: 10}), cache, sparklineScope),
 		"/api/analysis/collective")
 	rows := decodeCollectiveSparklineRows(t, w)
 	if len(rows) != 2 {
@@ -436,7 +454,7 @@ func TestCollectiveAnalysis_SameNameVariantControlsUseRequestedMarketSeries(t *t
 	}
 	for _, tt := range tests {
 		t.Run(tt.variant, func(t *testing.T) {
-			w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope),
+			w := serveWithoutRepository(t, collectiveAnalysis(nil, sameNamePager(sameNameVariantFixture{variant: tt.variant}), cache, sparklineScope),
 				"/api/analysis/collective?variant="+tt.variant)
 			rows := decodeCollectiveSparklineRows(t, w)
 			if len(rows) != 1 {
@@ -457,7 +475,7 @@ func TestCollectiveAnalysis_ColdSparklineCacheFallsBackToRepository(t *testing.T
 	cache := warmAnalysisCache(t, sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40})
 	// Rankings warm, sparklines never populated.
 
-	if !queriedRepository(CollectiveAnalysis(nil, cache, sparklineScope),
+	if !queriedRepository(collectiveAnalysis(nil, gemPager(sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40}), cache, sparklineScope),
 		"/api/analysis/collective?variant=20/20") {
 		t.Error("cold sparkline cache served without a repository query, want the database fallback")
 	}
@@ -472,7 +490,7 @@ func TestCollectiveAnalysis_PopulationThatRetainedNoSeriesServesWithoutQuerying(
 	cache := warmAnalysisCache(t, sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40})
 	warmSparklines(t, cache, nil, nil)
 
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope),
+	w := serveWithoutRepository(t, collectiveAnalysis(nil, gemPager(sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40}), cache, sparklineScope),
 		"/api/analysis/collective?variant=20/20")
 
 	rows := decodeSparklineRows(t, w)
@@ -698,7 +716,12 @@ func TestCachedCorruptedSparklines_UnpopulatedDedicationVariantAnswersWithoutThe
 func gcpRecipeCostFor(t *testing.T, cache *lab.Cache) float64 {
 	t.Helper()
 	warmSparklines(t, cache, nil, nil)
-	w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope), "/api/analysis/collective")
+	pager := gemPager(
+		sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40},
+		sparklineGem{name: "Spark of Storms", variant: "20", roi: 30},
+	)
+	pager.basePrices = map[string]float64{"Spark": 10}
+	w := serveWithoutRepository(t, collectiveAnalysis(nil, pager, cache, sparklineScope), "/api/analysis/collective")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
 	}
