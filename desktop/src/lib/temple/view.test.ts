@@ -899,17 +899,16 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					quantityPct: [2, 4, 6],
 					rarityPct: [4, 8, 12]
 				},
 				builtTier: 2
 			})])
 		);
 
-		expect(boxes[0].ladder).toEqual({
-			quant: [2, 4, 6],
+		// Strict: a stray `quant` / `quantText` key, even an undefined one,
+		// fails — POE-369 removed the quantity ladder with 3.30's item quantity.
+		expect(boxes[0].ladder).toStrictEqual({
 			rarity: [4, 8, 12],
-			quantText: ['2', '4', '6'],
 			rarityText: ['4', '8', '12'],
 			tier: 2
 		});
@@ -921,13 +920,12 @@ describe('offerBoxes', () => {
 		expect(boxes[0].ladder).toBeNull();
 	});
 
-	it('leaves the ladder null when both line ladders are absent', () => {
+	it('leaves the ladder null when the line states no rarity', () => {
 		const boxes = offerBoxes(
 			slice([offer({
 				line: {
 					kind: 'chest',
 					content: null,
-					quantityPct: null,
 					rarityPct: null
 				}
 			})])
@@ -936,41 +934,19 @@ describe('offerBoxes', () => {
 		expect(boxes[0].ladder).toBeNull();
 	});
 
-	it('keeps the ladder when exactly one line ladder exists', () => {
-		const boxes = offerBoxes(
-			slice([offer({
-				line: {
-					kind: 'chest',
-					content: null,
-					quantityPct: [2, 4, 6],
-					rarityPct: null
-				}
-			})])
-		);
-
-		expect(boxes[0].ladder).toEqual({
-			quant: [2, 4, 6],
-			rarity: null,
-			quantText: ['2', '4', '6'],
-			rarityText: null,
-			tier: 2
-		});
-	});
-
 	it('keeps one decimal place in ladder text', () => {
 		const boxes = offerBoxes(
 			slice([offer({
 				line: {
 					kind: 'chest',
 					content: null,
-					quantityPct: [2, 4, 22.5],
-					rarityPct: null
+					rarityPct: [2, 4, 22.5]
 				}
 			})])
 		);
 
-		expect(boxes[0].ladder?.quant).toEqual([2, 4, 22.5]);
-		expect(boxes[0].ladder?.quantText).toEqual(['2', '4', '22.5']);
+		expect(boxes[0].ladder?.rarity).toEqual([2, 4, 22.5]);
+		expect(boxes[0].ladder?.rarityText).toEqual(['2', '4', '22.5']);
 	});
 
 	it('leaves the ladder null when the built tier is absent', () => {
@@ -980,8 +956,7 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					quantityPct: [2, 4, 6],
-					rarityPct: null
+					rarityPct: [4, 8, 12]
 				}
 			})])
 		);
@@ -998,7 +973,6 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'content',
 					content: 'Queen Atziri',
-					quantityPct: null,
 					rarityPct: null
 				}
 			})])
@@ -1017,7 +991,6 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: 'Double-corrupt an item',
-					quantityPct: null,
 					rarityPct: null
 				}
 			})])
@@ -1035,7 +1008,6 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'content',
 					content: null,
-					quantityPct: null,
 					rarityPct: null
 				}
 			})])
@@ -1249,15 +1221,6 @@ const secondUniqueTerm = (over: Partial<DriverView> = {}) =>
 		guessed: true,
 		...over
 	});
-const quantityTerm = (over: Partial<DriverView> = {}) =>
-	term({
-		kind: 'quantity_bonus',
-		name: 'increased Quantity of Items found in this Area',
-		count: 6,
-		unitPrice: 0.5,
-		chaos: 3,
-		...over
-	});
 const rarityTerm = (over: Partial<DriverView> = {}) =>
 	term({
 		kind: 'rarity_bonus',
@@ -1305,7 +1268,6 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			modHint: 'temple gloves',
 			modSlots: ['gloves'],
 			modWorth: 'good',
-			quantityPct: null,
 			rarityPct: null
 		} as unknown as OfferView['line'];
 		const box = only(
@@ -1334,7 +1296,6 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const plainLine = {
 			kind: 'chest' as const,
 			content: null,
-			quantityPct: null,
 			rarityPct: null
 		} as unknown as OfferView['line'];
 
@@ -1703,9 +1664,9 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 
 	it('says outright when a line drops nothing at all', () => {
 		// An empty row list is a real answer — Chamber of Iron is worth its
-		// quantity bonus and nothing else — and silence there reads as a read
+		// rarity bonus and nothing else — and silence there reads as a read
 		// that failed rather than as a room that drops nothing.
-		const box = only(offer({ value: value({ drivers: [quantityTerm()] }) }));
+		const box = only(offer({ value: value({ drivers: [rarityTerm()] }) }));
 
 		expect(box.drivers).toEqual([]);
 		expect(box.note).toBe('this line drops no unique');
@@ -1721,7 +1682,6 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				line: {
 					kind: 'content',
 					content: 'Upgrade a room',
-					quantityPct: null,
 					rarityPct: null
 				},
 				grade: 'C1',
@@ -1743,10 +1703,9 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				line: {
 					kind: 'content',
 					content: 'Armour drops',
-					quantityPct: null,
 					rarityPct: null
 				},
-				value: value({ drivers: [quantityTerm()] })
+				value: value({ drivers: [rarityTerm()] })
 			})
 		);
 
@@ -1764,7 +1723,6 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				line: {
 					kind: 'content',
 					content: 'Double-corrupt an item',
-					quantityPct: null,
 					rarityPct: null
 				},
 				value: value({ priced: 'override', total: 500, drivers: [] })
@@ -1774,12 +1732,33 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.note).toBe('your own number for this room');
 	});
 
-	it('sums the two area bonuses into one line and names both percentages', () => {
+	it('prints the rarity bonus alone on the bonus line', () => {
+		const box = only(offer({ value: value({ drivers: [rarityTerm()] }) }));
+
+		expect(box.bonus).toEqual({ label: '+12% rarity', amount: '+3c' });
+	});
+
+	it('ignores a retired quantity driver on the bonus line', () => {
+		// An older payload can still carry the `quantity_bonus` driver POE-369
+		// removed with 3.30's item quantity; the box words only the rarity.
 		const box = only(
-			offer({ value: value({ drivers: [quantityTerm(), rarityTerm()] }) })
+			offer({
+				value: value({
+					drivers: [
+						term({
+							kind: 'quantity_bonus',
+							name: 'increased Quantity of Items found in this Area',
+							count: 6,
+							unitPrice: 0.5,
+							chaos: 3
+						}),
+						rarityTerm()
+					]
+				})
+			})
 		);
 
-		expect(box.bonus).toEqual({ label: '+6% quant · +12% rarity', amount: '+6c' });
+		expect(box.bonus?.label).toBe('+12% rarity');
 	});
 
 	it('withholds the bonus amount where nothing priced the rates', () => {
@@ -1790,13 +1769,13 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			offer({
 				value: value({
 					priced: 'fallback',
-					drivers: [quantityTerm({ chaos: null }), rarityTerm({ chaos: null })]
+					drivers: [rarityTerm({ chaos: null })]
 				})
 			})
 		);
 
 		expect(box.bonus?.amount).toBeNull();
-		expect(box.bonus?.label).toBe('+6% quant · +12% rarity');
+		expect(box.bonus?.label).toBe('+12% rarity');
 	});
 
 	it('shows the headline number the advisor ranked on, never the sum of the rows', () => {
@@ -1867,12 +1846,12 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				value: value({
 					total: 676.8,
 					scaledFromTier3: 846,
-					drivers: [uniqueTerm(), quantityTerm(), rarityTerm(), fractionTerm()]
+					drivers: [uniqueTerm(), rarityTerm(), fractionTerm()]
 				})
 			})
 		);
 
-		expect(box.bonus).toEqual({ label: '+6% quant · +12% rarity', amount: null });
+		expect(box.bonus).toEqual({ label: '+12% rarity', amount: null });
 	});
 
 	it('still prints a row\'s UNIT price on a scaled box, the one amount scaling does not touch', () => {
@@ -2083,15 +2062,14 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					quantityPct: null,
 					rarityPct: null
 				},
-				value: value({ drivers: [quantityTerm()] })
+				value: value({ drivers: [rarityTerm()] })
 			})
 		);
 
 		expect(box.ladder).toBeNull();
-		expect(box.bonus).toEqual({ label: '+6% quant', amount: '+3c' });
+		expect(box.bonus).toEqual({ label: '+12% rarity', amount: '+3c' });
 	});
 
 	it('omits retired explanation fields from a scaled offer box', () => {
@@ -2307,49 +2285,30 @@ describe('offerBoxSignature', () => {
 	});
 
 	it('changes when the ladder shape changes', () => {
-		const quant = {
-			quant: [2, 4, 6] as [number, number, number],
-			rarity: null,
-			quantText: ['2', '4', '6'] as [string, string, string],
-			rarityText: null,
-			tier: 2
-		};
-		const withQuant = box({ ladder: quant });
-		const emptyLadder = box({
-			ladder: {
-				quant: null,
-				rarity: null,
-				quantText: null,
-				rarityText: null,
-				tier: 2
-			}
-		});
+		const emptyLadder = box({ ladder: { rarity: null, rarityText: null, tier: 2 } });
 		const withRarity = box({
 			ladder: {
-				...quant,
 				rarity: [4, 8, 12] as [number, number, number],
-				rarityText: ['4', '8', '12'] as [string, string, string]
+				rarityText: ['4', '8', '12'] as [string, string, string],
+				tier: 2
 			}
 		});
 
 		expect(offerBoxSignature(emptyLadder, false)).not.toBe(offerBoxSignature(box({ ladder: null }), false));
-		expect(offerBoxSignature(withQuant, false)).not.toBe(offerBoxSignature(box({ ladder: null }), false));
-		expect(offerBoxSignature(withQuant, false)).not.toBe(offerBoxSignature(emptyLadder, false));
-		expect(offerBoxSignature(withRarity, false)).not.toBe(offerBoxSignature(withQuant, false));
+		expect(offerBoxSignature(withRarity, false)).not.toBe(offerBoxSignature(box({ ladder: null }), false));
+		expect(offerBoxSignature(withRarity, false)).not.toBe(offerBoxSignature(emptyLadder, false));
 	});
 
 	it('ignores ladder text changes', () => {
-		const quant = {
-			quant: [2, 4, 6] as [number, number, number],
-			rarity: null,
-			quantText: ['2', '4', '6'] as [string, string, string],
-			rarityText: null,
+		const rarity = {
+			rarity: [4, 8, 12] as [number, number, number],
+			rarityText: ['4', '8', '12'] as [string, string, string],
 			tier: 2
 		};
-		const withQuant = box({ ladder: quant });
-		const withDifferentText = box({ ladder: { ...quant, quantText: ['20', '40', '60'] as [string, string, string] } });
+		const withRarity = box({ ladder: rarity });
+		const withDifferentText = box({ ladder: { ...rarity, rarityText: ['12', '24', '36'] as [string, string, string] } });
 
-		expect(offerBoxSignature(withDifferentText, false)).toBe(offerBoxSignature(withQuant, false));
+		expect(offerBoxSignature(withDifferentText, false)).toBe(offerBoxSignature(withRarity, false));
 	});
 
 });

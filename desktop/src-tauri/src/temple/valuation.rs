@@ -13,13 +13,13 @@
 //! ```text
 //! sale   = the feed price above the room-line floor          (market.rs)
 //! drops  = drops_weight x SUM( expected count x unit price )  (drops.rs x market.rs)
-//! bonus  = quantity% x c_per_quantity + rarity% x c_per_rarity
+//! bonus  = rarity% x c_per_rarity
 //! total  = sale + drops + bonus
 //! ```
 //!
 //! Tiers 1 and 2 are [`Knobs::tier_fraction`] (80 % by default) of their line's
 //! tier-3 total, drivers included — epic lock L2. That is deliberately not
-//! "their own quantity bonus": what a tier-1 room is worth at *building* time is
+//! "their own rarity bonus": what a tier-1 room is worth at *building* time is
 //! the line being present at all, because the 50 % double-tier node and the
 //! Timelines scarab act on the line, not on the tier.
 //!
@@ -51,7 +51,7 @@
 //! at [`RoomRank::fallback_chaos`](super::rooms::RoomRank::fallback_chaos), the cold
 //! ladder, and nothing else. Those five tier rungs ARE the preset's base-value table
 //! that L4 names. Mixing them with the one term that survives a cold market — a
-//! poedb quantity / rarity bonus — is what this module used to do: a bonus-priced room could sit below a cold
+//! poedb rarity bonus — is what this module used to do: a bonus-priced room could sit below a cold
 //! fallback. Half a formula and half a ladder is not a ranking in either unit. A Custom
 //! override still wins over the rung: the player stating a number outright is
 //! not a missing price.
@@ -89,7 +89,7 @@
 //! [`Priced::Instrumental`] rather than [`Priced::Fallback`]: no price is
 //! missing, summing is simply the wrong question for them. Their worth is the
 //! tiers they lift and the rooms they clear, which the advisor's rollout
-//! models; their own drops are a 6 c quantity bonus, which would price the
+//! models; their own drops are a rarity bonus, which would price the
 //! shrine that lifts a 846 c line below a fallback room. See
 //! [`instrumental`] for the board-7 evidence and the double-pay trade-off. A
 //! Custom override replaces the rung like any other room's value.
@@ -97,9 +97,9 @@
 //! # What is a guess, and what is measured
 //!
 //! [`RoomValue::guessed`] is true when any driver that actually contributed
-//! chaos rests on somebody's estimate. Two knobs are estimates by construction
-//! — [`Knobs::c_per_quantity`] and [`Knobs::c_per_rarity`] — so a room whose
-//! value comes from a quantity bonus is flagged even though the underlying
+//! chaos rests on somebody's estimate. The bonus rate is an estimate by
+//! construction — [`Knobs::c_per_rarity`] — so a room whose
+//! value comes from a rarity bonus is flagged even though the underlying
 //! percentage is poedb's measured number. That is the honest reading: the
 //! *percentage* is measured, the *rate* that turns it into chaos is not.
 //!
@@ -228,8 +228,6 @@ pub enum DriverKind {
     Sale,
     /// The tier-3 chest unique.
     UniqueDrop,
-    /// `increased Quantity of Items` x [`Knobs::c_per_quantity`].
-    QuantityBonus,
     /// `increased Rarity of Items` x [`Knobs::c_per_rarity`].
     RarityBonus,
     /// Tier 1 / tier 2 as a fraction of the line's tier-3 total.
@@ -243,7 +241,7 @@ pub enum DriverKind {
     /// line's is the ROOMS IT CLEARS, and both of those reach the score
     /// through the rollout (`advisor::rollout::UPGRADE_TARGETS` and
     /// `CHARGES`), not through a price. What the room itself drops — Temple
-    /// Nexus's 6 c quantity bonus — is not what a player is buying when they
+    /// Nexus's 3 c rarity bonus — is not what a player is buying when they
     /// take it, and summing it would put the shrine below a fallback room.
     /// The letter is the honest stand-in: Vertolka graded the line for what it
     /// does, not for what falls out of it.
@@ -265,7 +263,6 @@ impl DriverKind {
         match self {
             DriverKind::Sale => "sale",
             DriverKind::UniqueDrop => "unique_drop",
-            DriverKind::QuantityBonus => "quantity_bonus",
             DriverKind::RarityBonus => "rarity_bonus",
             DriverKind::TierFraction => "tier_fraction",
             DriverKind::GradeFallback => "grade_fallback",
@@ -355,7 +352,7 @@ pub struct RoomValue {
     /// Expected drop value per run, after [`Knobs::drops_weight`]. Zero on
     /// [`Priced::Fallback`].
     pub drops: f64,
-    /// The quantity / rarity bonus in chaos. Zero on [`Priced::Fallback`] by
+    /// The rarity bonus in chaos. Zero on [`Priced::Fallback`] by
     /// construction: a room that priced a bonus at anything is not on that
     /// path, because a summed term outranks the ladder.
     pub bonus: f64,
@@ -414,7 +411,7 @@ impl Valued {
         let measured_floor = lowest_summed_room_total(market, knobs);
         // The one branch the whole fallback rule turns on (epic lock L4). A
         // read that prices nothing — cold before the first poll, or stale —
-        // still has a term that would survive it: a poedb quantity / rarity
+        // still has a term that would survive it: a poedb rarity
         // bonus owes the feed nothing. Summing it and letting the ladder stand in for the rest ranks half
         // the board in one unit and half in another, which is how a grade-A
         // room ended up under a grade-C one at 6 c against 10 c.
@@ -694,7 +691,7 @@ fn instrumental_rung(rank: RoomRank, live: bool, ladder_top: Option<f64>, cap: O
 ///
 /// Temple Nexus is C1 and Shrine of Unmaking is E2: 20 and 2 cold,
 /// 21.15 and 2.115 on the committed capture. NOT what they drop. The Nexus
-/// lifts other rooms; its own 6 c area bonus does not represent that effect.
+/// lifts other rooms; its own 3 c area bonus does not represent that effect.
 /// Shrine of Unmaking drops nothing, so the ordinary fallback would take the
 /// same E-tier rung; what this
 /// path changes for the shrine is [`Priced::Instrumental`] rather than
@@ -855,15 +852,7 @@ fn value_tier3(
         );
     }
     // --- bonus ---
-    let mut bonus = 0.0;
-    bonus += push_bonus(
-        &mut drivers,
-        DriverKind::QuantityBonus,
-        "increased Quantity of Items found in this Area",
-        tier.quantity_pct(),
-        rate(knobs.c_per_quantity),
-    );
-    bonus += push_bonus(
+    let bonus = push_bonus(
         &mut drivers,
         DriverKind::RarityBonus,
         "increased Rarity of Items found in this Area",
@@ -936,7 +925,7 @@ fn value_tier3(
 /// The terms whose completeness [`Priced`] is about. The bonus terms are not
 /// among them: they are computed from a measured percentage and a knob, so they
 /// are never "missing" in the sense a price is, and letting them decide would
-/// make every room with no quantity line read as partially priced.
+/// make every room with no rarity line read as partially priced.
 fn is_sum_term(kind: DriverKind) -> bool {
     matches!(
         kind,
@@ -1215,31 +1204,32 @@ mod tests {
             .unwrap_or_else(|| panic!("no {kind:?} driver among {:?}", value.drivers))
     }
 
-    /// POE-366 (A3): 3.30 removed vials, so every line x tier total must equal
-    /// what the pre-removal table gave with the vial knob at zero. These
-    /// literals were captured from that table (`vials_per_run: 0.0`) before the
-    /// vial term was deleted; only the vial term may move a total.
-    const VIALS_PER_RUN_ZERO_TOTALS: [(&str, [f64; 3]); 25] = [
+    /// POE-369: 3.30 removed item quantity, so every line x tier total must
+    /// equal what the pre-removal table gave with the quantity knob at zero.
+    /// These literals were captured from that table (`c_per_quantity: 0.0`)
+    /// before the quantity term was deleted; only the quantity term may move a
+    /// total.
+    const QUANTITY_ZERO_TOTALS: [(&str, [f64; 3]); 25] = [
         ("apex_of_ascension", [0.00875, 0.00875, 0.0109375]),
         ("atlas_of_worlds", [0.0035, 0.0035, 0.004375]),
-        ("chamber_of_iron", [4.8, 4.8, 6.0]),
-        ("conduit_of_lightning", [42.9, 42.9, 53.625]),
+        ("chamber_of_iron", [2.4, 2.4, 3.0]),
+        ("conduit_of_lightning", [40.5, 40.5, 50.625]),
         ("corruption", [676.8, 676.8, 846.0]),
         ("court_of_sealed_death", [0.0035, 0.0035, 0.004375]),
-        ("crucible_of_flame", [5.8, 5.8, 7.25]),
-        ("defense_research_lab", [19.88, 19.88, 24.85]),
+        ("crucible_of_flame", [3.4, 3.4, 4.25]),
+        ("defense_research_lab", [17.48, 17.48, 21.85]),
         ("explosive", [1.692, 1.692, 2.115]),
-        ("factory", [28.8, 28.8, 36.0]),
+        ("factory", [2.4, 2.4, 3.0]),
         ("gem", [312.0, 312.0, 390.0]),
         ("glittering_halls", [12.0, 12.0, 15.0]),
-        ("hall_of_champions", [4.8, 4.8, 6.0]),
+        ("hall_of_champions", [2.4, 2.4, 3.0]),
         ("hall_of_legends", [0.0035, 0.0035, 0.004375]),
         ("hall_of_war", [0.00875, 0.00875, 0.0109375]),
         ("house_of_the_others", [0.0035, 0.0035, 0.004375]),
-        ("hybridisation_chamber", [6.8, 6.8, 8.5]),
+        ("hybridisation_chamber", [4.4, 4.4, 5.5]),
         ("museum_of_artefacts", [0.0035, 0.0035, 0.004375]),
         ("sadists_den", [0.00875, 0.00875, 0.0109375]),
-        ("sanctum_of_immortality", [43.8, 43.8, 54.75]),
+        ("sanctum_of_immortality", [41.4, 41.4, 51.75]),
         ("storm_of_corruption", [0.035, 0.035, 0.04375]),
         ("throne_of_atziri", [0.00875, 0.00875, 0.0109375]),
         ("toxic_grove", [1.4, 1.4, 1.75]),
@@ -1250,8 +1240,8 @@ mod tests {
     #[test]
     fn the_capture_values_every_room_tier_at_these_totals() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
-        assert_eq!(valued.lines().count(), VIALS_PER_RUN_ZERO_TOTALS.len());
-        for (key, expected) in VIALS_PER_RUN_ZERO_TOTALS {
+        assert_eq!(valued.lines().count(), QUANTITY_ZERO_TOTALS.len());
+        for (key, expected) in QUANTITY_ZERO_TOTALS {
             for (index, want) in expected.iter().enumerate() {
                 let got = value_of(&valued, key, index as u8 + 1).total;
                 assert!(close(got, *want), "{key} tier {}: {got} != {want}", index + 1);
@@ -1318,8 +1308,8 @@ mod tests {
     #[test]
     fn a_tier_three_room_sums_its_sale_its_drops_and_its_bonus() {
         // Sanctum of Immortality tier 3 on the 2026-09-06 capture: at the floor
-        // (no sale), 0.25 x Mask of the Spirit Drinker at 195 c, +6% quantity
-        // and +12% rarity.
+        // (no sale), 0.25 x Mask of the Spirit Drinker at 195 c and +12%
+        // rarity.
         let value = value_of(
             &Valued::compute(&allflame(), &Knobs::default()),
             "sanctum_of_immortality",
@@ -1328,8 +1318,8 @@ mod tests {
 
         assert_eq!(value.sale, 0.0);
         assert!(close(value.drops, 48.75), "drops was {}", value.drops);
-        assert!(close(value.bonus, 6.0), "bonus was {}", value.bonus);
-        assert!(close(value.total, 54.75), "total was {}", value.total);
+        assert!(close(value.bonus, 3.0), "bonus was {}", value.bonus);
+        assert!(close(value.total, 51.75), "total was {}", value.total);
     }
 
     #[test]
@@ -1544,8 +1534,9 @@ mod tests {
         assert!(close(priced.drops, 1.25), "drops was {}", priced.drops);
         assert_eq!(rushed.drops, 0.0);
         // And what is left is still the market's ranking: Crucible keeps its
-        // 6 c quantity bonus: summing something bypasses its A-tier fallback.
-        assert!(close(rushed.total, 6.0), "total was {}", rushed.total);
+        // 3 c rarity bonus (12 % x 0.25): summing something bypasses its
+        // A-tier fallback.
+        assert!(close(rushed.total, 3.0), "total was {}", rushed.total);
         assert_eq!(value_of(&valued, "gem", 3).total, 390.0, "Doryani's sale");
         assert_eq!(
             value_of(&valued, "corruption", 3).total,
@@ -1591,8 +1582,8 @@ mod tests {
     #[test]
     fn a_bonus_only_room_is_worth_its_bonus_not_its_letter() {
         // Factory tier 3 sells at the floor and drops nothing anybody has
-        // quantified, but poedb measures +66 % quantity and +12 % rarity on
-        // it. At the default rates that is 36 c, and the room is worth that
+        // quantified, but poedb measures +12 % rarity on it. At the default
+        // rate that is 3 c, and the room is worth that
         // rather than the 100 c its B1 rung would have stood in for: a term that
         // was summed always beats the ladder.
         let value = value_of(
@@ -1601,8 +1592,8 @@ mod tests {
             3,
         );
 
-        assert!(close(value.total, 36.0), "total was {}", value.total);
-        assert!(close(value.bonus, 36.0), "66 x 0.5 + 12 x 0.25");
+        assert!(close(value.total, 3.0), "total was {}", value.total);
+        assert!(close(value.bonus, 3.0), "12 x 0.25");
         assert_ne!(
             value.total,
             rank_of("factory").fallback_chaos_scaled(846.0),
@@ -1659,8 +1650,8 @@ mod tests {
             value
                 .drivers
                 .iter()
-                .any(|d| d.kind == DriverKind::QuantityBonus),
-            "the quantity term is still listed"
+                .any(|d| d.kind == DriverKind::RarityBonus),
+            "the rarity term is still listed"
         );
         let carried: Vec<(DriverKind, Option<f64>)> = value
             .drivers
@@ -1685,7 +1676,7 @@ mod tests {
     /// below a cold fallback. Every cold room now reads the same tier ladder.
     ///
     /// Fails the moment the bonus term is summed on a cold read again: Sanctum
-    /// reads 6 instead of 100, and Crucible reads 6 instead of 800.
+    /// reads 3 instead of 100, and Crucible reads 3 instead of 800.
     #[test]
     fn a_read_that_prices_nothing_reads_the_whole_board_off_the_cold_ladder() {
         let valued = Valued::compute(&MarketInput::none(), &Knobs::default());
@@ -1747,18 +1738,18 @@ mod tests {
         assert_eq!(
             value_of(&valued, "crucible_of_flame", 3).total,
             800.0,
-            "Crucible A3, and NOT the 6 its bonus would sum to",
+            "Crucible A3, and NOT the 3 its bonus would sum to",
         );
         assert_eq!(
             value_of(&valued, "sanctum_of_immortality", 3).total,
             100.0,
-            "Sanctum B3, and NOT the 6 its quantity bonus would sum to",
+            "Sanctum B3, and NOT the 3 its rarity bonus would sum to",
         );
         assert_eq!(value_of(&valued, "sadists_den", 3).total, 5.0, "D2");
         assert_eq!(
             value_of(&valued, "upgrade", 3).total,
             20.0,
-            "Temple Nexus C1, priced at its letter and NOT at its 6 c bonus",
+            "Temple Nexus C1, priced at its letter and NOT at its 3 c bonus",
         );
         assert!(
             value_of(&valued, "sanctum_of_immortality", 3).total
@@ -1769,8 +1760,8 @@ mod tests {
 
     /// A bonus term is not a market, and does not stand in for one.
     ///
-    /// Crucible of Flame's poedb quantity / rarity bonus owes the feed nothing,
-    /// so on a COLD read it is the only number the room could sum — and 6 c of
+    /// Crucible of Flame's poedb rarity bonus owes the feed nothing,
+    /// so on a COLD read it is the only number the room could sum — and 3 c of
     /// it would rank Crucible below rooms whose letters say it outranks them.
     /// Fails if the cold path starts summing terms again.
     #[test]
@@ -1784,7 +1775,7 @@ mod tests {
         assert_eq!(value.priced, Priced::Fallback);
         assert_eq!(value.total, 800.0, "the A3 rung alone, not the rung plus its bonus");
         assert!(
-            !value.drivers.iter().any(|d| d.kind == DriverKind::QuantityBonus),
+            !value.drivers.iter().any(|d| d.kind == DriverKind::RarityBonus),
             "and nothing was tried, so nothing is listed: {:?}",
             value.drivers,
         );
@@ -1797,11 +1788,11 @@ mod tests {
                     "crucible_of_flame",
                     3
                 ),
-                DriverKind::QuantityBonus
+                DriverKind::RarityBonus
             )
             .chaos,
             Some(3.0),
-            "6 % quantity x 0.5 c",
+            "12 % rarity x 0.25 c",
         );
     }
 
@@ -1825,9 +1816,10 @@ mod tests {
         let sadists = value_of(&valued, "sadists_den", 3);
         let war = value_of(&valued, "hall_of_war", 3);
 
-        // 8.5 since POE-366 removed its vial term.
+        // 5.5 since POE-369 removed its quantity term (8.5 after POE-366
+        // removed its vial term).
         assert!(
-            close(measured.total, 8.5),
+            close(measured.total, 5.5),
             "{}",
             measured.total
         );
@@ -1847,21 +1839,21 @@ mod tests {
         assert!(measured.total > war.total);
     }
 
-    /// Glittering Halls ranks below Factory now that 3.30 removed its vial.
+    /// Glittering Halls ranks above Factory now that 3.30 removed item quantity.
     ///
-    /// POE-262 lifted it over Factory through its derived vial rate; with the
-    /// vial gone (POE-366, decisions T6) it is its 60 % rarity bonus alone,
-    /// 60 x 0.25 = 15 c, under Factory's 36 c until POE-370 prices it again.
+    /// With the vial gone (POE-366, decisions T6) it is its 60 % rarity bonus
+    /// alone, 60 x 0.25 = 15 c. Factory's 66 % quantity was what put it ahead;
+    /// with quantity gone (POE-369) Factory is its 12 % rarity, 3 c.
     #[test]
-    fn glittering_halls_ranks_below_factory_without_its_vial() {
+    fn glittering_halls_ranks_above_factory_without_item_quantity() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
 
         let halls = value_of(&valued, "glittering_halls", 3);
         let factory = value_of(&valued, "factory", 3);
 
         assert!(close(halls.total, 15.0), "{}", halls.total);
-        assert!(close(factory.total, 36.0), "{}", factory.total);
-        assert!(halls.total < factory.total, "under Factory");
+        assert!(close(factory.total, 3.0), "{}", factory.total);
+        assert!(halls.total > factory.total, "above Factory");
     }
 
     /// `push_drop` with a price and nobody's count lists the item and adds 0.
@@ -1935,8 +1927,8 @@ mod tests {
             .map(|(_, tiers)| tiers[2].total)
             .fold(f64::INFINITY, f64::min);
         assert!(
-            close(second, 6.0),
-            "Chamber of Iron / Hall of Champions, {second}"
+            close(second, 3.0),
+            "Chamber of Iron / Hall of Champions / Factory, {second}"
         );
         assert!(ANCHOR < second);
     }

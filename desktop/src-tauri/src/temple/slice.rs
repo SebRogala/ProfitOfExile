@@ -161,7 +161,7 @@ impl TempleProfileSettings {
     /// `room_values`. That is a double payment, and it is the accepted trade,
     /// with retrospective board 7 as the evidence: while those two lines
     /// scored zero, the app recommended *upgrade to Armoury* (Chamber of Iron,
-    /// 6 c of quantity bonus) over Sebastian's *change to Sanctum of Unity*,
+    /// 3 c of rarity bonus since POE-369) over Sebastian's *change to Sanctum of Unity*,
     /// on the cold board and on the capture alike. The mechanical credit alone
     /// did not survive a noise band 39 c wide. The alternative — valuing a
     /// `change` onto an instrumental line by its own downstream effect — needs
@@ -169,8 +169,8 @@ impl TempleProfileSettings {
     /// has no shape for; it is the better model and a larger change.
     ///
     /// What the rung is NOT is the room's own drops: `valuation::instrumental`
-    /// deliberately refuses to sum Temple Nexus's 6 c quantity bonus, which is
-    /// the number that produced the board-7 miss in the first place.
+    /// deliberately refuses to sum Temple Nexus's own area bonus (3 c of
+    /// rarity since POE-369, 12 % x 0.25), which is the number that produced the board-7 miss in the first place.
     ///
     /// # `mode_rule` is not a valuation and does not become one
     ///
@@ -609,11 +609,9 @@ pub struct LineView {
     /// The draft prose for a content line, or `null` for a chest line.
     #[serde(default)]
     pub content: Option<String>,
-    /// Area quantity bonus at tiers 1, 2, 3 — poedb's `2/4/6 %` ladder.
+    /// Area rarity bonus at tiers 1, 2, 3 — poedb's `4/8/12 %` ladder.
     /// `null` when any tier has no stated number (a ladder is a ladder or it
     /// is nothing; `TierDrops` keeps `None` apart from zero).
-    pub quantity_pct: Option<[f64; 3]>,
-    /// Area rarity bonus, same shape and same rule.
     pub rarity_pct: Option<[f64; 3]>,
 }
 
@@ -703,7 +701,7 @@ pub struct RoomValueRowView {
 #[serde(rename_all = "camelCase")]
 pub struct DriverView {
     /// `"sale"`, `"unique_drop"`,
-    /// `"quantity_bonus"`, `"rarity_bonus"`, `"tier_fraction"`,
+    /// `"rarity_bonus"`, `"tier_fraction"`,
     /// `"grade_fallback"`, `"instrumental"` or `"custom_override"`
     /// ([`DriverKind`](super::valuation::DriverKind)). `snake_case`, this
     /// app's convention for enum variants on the wire.
@@ -1537,7 +1535,6 @@ fn line_view(line: &rooms::RoomLine) -> LineView {
     LineView {
         kind: row.kind(),
         content: row.content().map(str::to_string),
-        quantity_pct: ladder_values(row.tiers(), |tier| tier.quantity_pct()),
         rarity_pct: ladder_values(row.tiers(), |tier| tier.rarity_pct()),
     }
 }
@@ -3529,7 +3526,6 @@ mod tests {
         let view = offer_view(0, &input, None, &valued());
         let line = view.line.expect("a resolved offer carries line facts");
 
-        assert_eq!(line.quantity_pct, Some([2.0, 4.0, 6.0]));
         assert_eq!(line.rarity_pct, Some([4.0, 8.0, 12.0]));
     }
 
@@ -3539,15 +3535,16 @@ mod tests {
         let view = offer_view(0, &input, None, &valued());
         let line = view.line.expect("a resolved offer carries line facts");
 
-        assert_eq!(line.quantity_pct, None);
         assert_eq!(line.rarity_pct, None);
     }
 
     // POE-367: 3.30 removed the temple-mod items, so a line's wire facts name
-    // none. Crucible of Flame is the line that carried Puhuarte's mod. Fails if
-    // any mod field is put back on LineView.
+    // none; POE-369: 3.30 removed item quantity, so they carry no quantity
+    // ladder either. Crucible of Flame is the line that carried Puhuarte's mod
+    // and a quantity line. Fails if any mod or quantity field is put back on
+    // LineView.
     #[test]
-    fn a_line_view_carries_no_temple_mod_facts() {
+    fn a_line_view_carries_no_temple_mod_or_quantity_facts() {
         let input = offer("Puhuarte", "Crucible of Flame", OfferKind::Upgrade);
         let view = offer_view(0, &input, None, &valued());
         let line = view.line.expect("a resolved offer carries line facts");
@@ -3560,7 +3557,7 @@ mod tests {
             .map(String::as_str)
             .collect();
         keys.sort_unstable();
-        assert_eq!(keys, ["content", "kind", "quantityPct", "rarityPct"]);
+        assert_eq!(keys, ["content", "kind", "rarityPct"]);
     }
 
     /// A line with no tier-3 chest publishes the prose the box draws in place
@@ -3612,8 +3609,9 @@ mod tests {
     /// fields it added. It decodes as the chest-shaped box it drew: that is what
     /// `Default` for [`LineKind`] is for, and a `content` defaulting to anything
     /// but `None` would put prose on a box whose chest row is already drawn.
-    /// The literal keeps the `mod*` keys POE-367 removed, so it also guards
-    /// that an older payload carrying them still decodes.
+    /// The literal keeps the `mod*` keys POE-367 removed and the `quantityPct`
+    /// key POE-369 removed, so it also guards that an older payload carrying
+    /// the retired keys still decodes.
     #[test]
     fn a_line_json_without_kind_or_content_decodes_as_a_chest_line() {
         let line: LineView = serde_json::from_str(
@@ -5655,7 +5653,6 @@ mod tests {
                     line: Some(LineView {
                         kind: LineKind::Content,
                         content: Some("Extra monsters (dangerous)".to_string()),
-                        quantity_pct: None,
                         rarity_pct: None,
                     }),
                 }],
@@ -5780,7 +5777,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"line":{"kind":"content","content":"Extra monsters (dangerous)","quantityPct":null,"rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"line":{"kind":"content","content":"Extra monsters (dangerous)","rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///
@@ -6097,7 +6094,8 @@ mod tests {
     /// Three claims, one behaviour — every one of them breaks together if the
     /// bridge stops copying the valuation for these two lines. Temple Nexus is
     /// C1 (21.15 on the capture) and Shrine of Unmaking is E2 (2.115); what
-    /// the rooms themselves drop is a 6 c quantity bonus, which is the number
+    /// the rooms themselves drop is a 3 c rarity bonus (Temple Nexus T3:
+    /// 12 % x 0.25), which is the number
     /// that used to put the shrine under a bonus-priced room and produce the
     /// board-7 miss.
     #[test]
@@ -6346,13 +6344,13 @@ mod tests {
     ///
     /// The two instrumental lines are where "shown = ranked" was hardest to
     /// keep, and where it was briefly broken: while they scored zero in
-    /// `room_values`, the box showed a Temple Nexus offer as worth its 6 c
-    /// quantity bonus and the advisor ranked it at nothing — two numbers for
+    /// `room_values`, the box showed a Temple Nexus offer as worth its own
+    /// area bonus and the advisor ranked it at nothing — two numbers for
     /// one room. Now the valuation prices the line at its C1 rung and the
     /// bridge copies THAT, so the two agree by construction.
     ///
     /// Fails if the bridge goes back to zeroing the line, and fails if the
-    /// valuation goes back to summing the room's own bonus for it: 6 is not
+    /// valuation goes back to summing the room's own bonus for it: 3 is not
     /// 21.15.
     #[test]
     fn an_instrumental_offer_publishes_the_same_total_the_ranking_used() {
@@ -6433,8 +6431,10 @@ mod tests {
     ///
     /// With the 2026-10-17 C-tier rung, Temple Nexus takes 21.15 and
     /// leaves the top five. Since POE-367 removed Crucible of Flame's 60 c
-    /// temple-mod term it reads 7.25 and leaves too, so Sanctum of
-    /// Immortality, Conduit of Lightning and Factory follow the two sales.
+    /// temple-mod term it leaves too, and since POE-369 removed item quantity
+    /// Factory is its 3 c rarity bonus and leaves as well, so Sanctum of
+    /// Immortality, Conduit of Lightning and Defense Research Lab follow the
+    /// two sales, with Temple Nexus sixth.
     #[test]
     fn the_live_captures_five_best_rooms_are_these_in_this_order() {
         let valued = value_read(&TempleSettings::default(), &crate::temple::market::allflame());
@@ -6453,16 +6453,16 @@ mod tests {
                 "gem",
                 "sanctum_of_immortality",
                 "conduit_of_lightning",
-                "factory",
+                "defense_research_lab",
             ],
         );
         assert_eq!(ranked[0].1, LOCUS_T3, "Locus of Corruption, its sale delta");
         assert_eq!(ranked[1].1, 390.0, "Doryani's Institute, its sale delta");
-        assert!(close(ranked[2].1, 54.75), "Sanctum of Immortality");
-        assert!(close(ranked[3].1, 53.625), "Conduit of Lightning");
-        assert!(close(ranked[4].1, 36.0), "Factory is fifth");
-        assert_eq!(ranked[5].0, "defense_research_lab", "and Defense Research Lab sixth");
-        assert!(close(ranked[5].1, 24.85), "Defense Research Lab");
+        assert!(close(ranked[2].1, 51.75), "Sanctum of Immortality");
+        assert!(close(ranked[3].1, 50.625), "Conduit of Lightning");
+        assert!(close(ranked[4].1, 21.85), "Defense Research Lab is fifth");
+        assert_eq!(ranked[5].0, "upgrade", "and Temple Nexus sixth");
+        assert!(close(ranked[5].1, 21.15), "Temple Nexus");
     }
 
     /// An offer whose printed target did not resolve publishes no value —
@@ -6518,7 +6518,7 @@ mod tests {
     /// offers, the advice is to switch — and to switch onto the corruption
     /// line rather than the gem one.
     ///
-    /// The board is Pools of Restoration (the Sanctum of Immortality line at tier 1, worth 43.80
+    /// The board is Pools of Restoration (the Sanctum of Immortality line at tier 1, worth 41.40
     /// on the committed capture) against Corruption Chamber (676.80) and
     /// Gemcutter's Workshop (312.00). Under the shipped rusher fixture all
     /// three of those rooms score ZERO — it prices tiers 1 and 2 at nothing
@@ -6578,7 +6578,7 @@ mod tests {
             .total;
         let corruption = valued.get("corruption", Tier::T2).expect("valued").total;
         let gem = valued.get("gem", Tier::T2).expect("valued").total;
-        assert!(close(staying, 43.8), "the room left is worth {staying}");
+        assert!(close(staying, 41.4), "the room left is worth {staying}");
         assert!(close(corruption, LOCUS_T3 * 0.8), "the corruption switch is {corruption}");
         assert!(close(gem, 312.0), "the gem switch is {gem}");
         assert!(staying < gem && gem < corruption, "switching wins either way");

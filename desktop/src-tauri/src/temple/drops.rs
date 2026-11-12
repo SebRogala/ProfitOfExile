@@ -2,10 +2,10 @@
 //!
 //! [`rooms`](super::rooms) owns the closed name vocabulary and Vertolka's letter
 //! grade. This module owns the numbers behind that letter: the tier-3 chest
-//! unique and the quantity / rarity / pack-size percentages the room adds.
+//! unique and the rarity / pack-size percentages the room adds.
 //!
 //! Epic lock L1 (POE-124) is what this table feeds: room value = sale price +
-//! drops (expected count x LIVE price) + bonus (quant/rarity x chaos-per-%).
+//! drops (expected count x LIVE price) + bonus (rarity x chaos-per-%).
 //! **No price lives here.** Prices are always fetched; a name in this table is a
 //! join key, not a value.
 //!
@@ -22,7 +22,7 @@
 //! Three sources for the NUMBERS, and only three:
 //!
 //! - [`POEDB`] — the room's own page on poedb.tw, read 2026-09-06. This is the
-//!   game's data: the quantity / rarity / pack-size lines, the item-chance stat
+//!   game's data: the rarity / pack-size lines, the item-chance stat
 //!   and the unique listed on the room's `Unique` tab. Measured.
 //! - [`VERTOLKA_SHEET`] — Vertolka's room sheet, read 2026-09-06. Used for
 //!   Vertolka's commentary ([`LineDrops::note`]); every number it states is
@@ -42,6 +42,11 @@
 //!
 //! 3.30 removed vials from the temple, so no line carries a vial or a vial
 //! chance and no room value has a vial term.
+//!
+//! # No item quantity (POE-369)
+//!
+//! 3.30 removed item quantity, so no line carries a quantity percentage and no
+//! room value has a quantity term.
 //!
 //! [`TierDrops::uniques_per_run`] does NOT scale: no stat on any page states a
 //! per-tier chest-unique chance, so his 0.25 stays a flat tier-3 number on the
@@ -106,14 +111,6 @@ pub const VERTOLKA_SHEET: &str = "Vertolka's sheet, 2026-09-06";
 /// Vertolka's 2026-09-06 message, quoted on epic POE-124. Everything sourced
 /// here is a [`Basis::Guess`]; he offered the numbers as his own estimates.
 pub const VERTOLKA_MSG: &str = "Vertolka, 2026-09-06 message (POE-124)";
-/// Factory is the one room whose page prints the quantity stat twice: Jiquani's
-/// own `20/40/60% increased Quantity of Items found in this Area` and the
-/// shared room line's `2/4/6%`. Same stat, same scope, and `increased`
-/// modifiers of one stat add, so [`TierDrops::quantity_pct`] holds their sum
-/// (22 / 44 / 66) and this source names both halves.
-pub const FACTORY_QUANTITY: &str =
-    "poedb.tw Factory room page, 2026-09-06: the architect's 20/40/60% plus the room's 2/4/6% \
-     increased Quantity of Items found in this Area, summed";
 
 // ------------------------------------------------------------------- basis --
 
@@ -214,7 +211,6 @@ fn any_guess(estimates: &[Option<Estimate>]) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TierDrops {
     uniques_per_run: Option<Estimate>,
-    quantity_pct: Option<Estimate>,
     rarity_pct: Option<Estimate>,
     pack_size_pct: Option<Estimate>,
 }
@@ -224,7 +220,6 @@ impl TierDrops {
     /// for the lines with no chest and no area bonus.
     pub const NONE: TierDrops = TierDrops {
         uniques_per_run: None,
-        quantity_pct: None,
         rarity_pct: None,
         pack_size_pct: None,
     };
@@ -233,11 +228,6 @@ impl TierDrops {
     /// the game drops the chest unique at tier 3 only.
     pub fn uniques_per_run(self) -> Option<Estimate> {
         self.uniques_per_run
-    }
-
-    /// `increased Quantity of Items found in this Area`, in percent.
-    pub fn quantity_pct(self) -> Option<Estimate> {
-        self.quantity_pct
     }
 
     /// `increased Rarity of Items found in this Area`, in percent.
@@ -262,7 +252,6 @@ impl TierDrops {
     pub fn has_guess(self) -> bool {
         any_guess(&[
             self.uniques_per_run,
-            self.quantity_pct,
             self.rarity_pct,
             self.pack_size_pct,
         ])
@@ -431,19 +420,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
             },
@@ -457,19 +443,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
             },
@@ -494,19 +477,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
             },
@@ -520,19 +500,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
             },
@@ -557,19 +534,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(22.0, FACTORY_QUANTITY)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(44.0, FACTORY_QUANTITY)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(66.0, FACTORY_QUANTITY)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
             },
@@ -583,19 +557,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: Some(Estimate::measured(20.0, POEDB)),
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: Some(Estimate::measured(40.0, POEDB)),
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: Some(Estimate::measured(60.0, POEDB)),
                 pack_size_pct: None,
             },
@@ -609,19 +580,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
             },
@@ -646,19 +614,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: Some(Estimate::measured(10.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: Some(Estimate::measured(20.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: Some(Estimate::measured(30.0, POEDB)),
             },
@@ -688,19 +653,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
             },
@@ -719,19 +681,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
@@ -767,19 +726,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
             },
@@ -815,19 +771,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
             },
@@ -841,19 +794,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
@@ -867,19 +817,16 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
@@ -1181,30 +1128,17 @@ mod tests {
     fn crucibles_percentages_are_measured_not_guessed() {
         let crucible = drops_for("crucible_of_flame");
         let t3 = crucible.tier(Tier::T3).expect("tier 3 exists");
-        let quantity = t3.quantity_pct().expect("poedb states the percentage");
-        assert_eq!(quantity.value(), 6.0);
-        assert_eq!(quantity.basis(), Basis::Measured { source: POEDB });
-        assert!(!quantity.is_guess());
+        let rarity = t3.rarity_pct().expect("poedb states the percentage");
+        assert_eq!(rarity.value(), 12.0);
+        assert_eq!(rarity.basis(), Basis::Measured { source: POEDB });
+        assert!(!rarity.is_guess());
     }
 
-    // Factory is the only room whose page prints the quantity stat twice, and
-    // the stored figure has to be both of them. Fails if the architect's
-    // 60% is stored alone (60.0), or the room's 6% alone.
+    // Factory's rarity and pack size are the plain room lines. Fails if
+    // Factory's tier-3 rarity or its pack-size source drifts from poedb's.
     #[test]
-    fn factory_quantity_sums_both_lines_poedb_prints() {
+    fn factorys_rarity_and_pack_size_are_the_plain_room_lines() {
         let factory = drops_for("factory");
-        let expected = [22.0, 44.0, 66.0];
-        for (index, drops) in factory.tiers().iter().enumerate() {
-            let quantity = drops.quantity_pct().expect("Factory states a quantity");
-            assert_eq!(
-                quantity.value(),
-                expected[index],
-                "Factory tier {} quantity",
-                index + 1
-            );
-            assert_eq!(quantity.source(), FACTORY_QUANTITY);
-        }
-        // Its rarity and pack size are the plain room lines, unsummed.
         assert_eq!(
             factory.tiers()[2].rarity_pct().map(Estimate::value),
             Some(12.0)
@@ -1234,7 +1168,6 @@ mod tests {
             assert_eq!(row.unique(), None, "{key} names a unique");
             for drops in row.tiers() {
                 assert!(drops.is_empty(), "{key} has a non-empty tier");
-                assert_eq!(drops.quantity_pct(), None);
             }
         }
 
@@ -1267,7 +1200,6 @@ mod tests {
                 "Locus tier {} claims a unique rate",
                 index + 1
             );
-            assert_eq!(drops.quantity_pct(), None, "Locus tier {}", index + 1);
             assert_eq!(drops.rarity_pct(), None, "Locus tier {}", index + 1);
             assert_eq!(drops.pack_size_pct(), None, "Locus tier {}", index + 1);
         }
@@ -1358,15 +1290,14 @@ mod tests {
     // ---------------------------------------------------------- numbers --
 
     // Every area bonus poedb prints is one figure and its multiples: T1, twice
-    // T1, three times T1, for quantity, rarity and pack size alike (2/4/6,
-    // 4/8/12, 1/2/3, 20/40/60, 10/20/30, and Factory's summed 22/44/66). That
+    // T1, three times T1, for rarity and pack size alike (4/8/12, 1/2/3,
+    // 20/40/60, 10/20/30). That
     // shape is what makes a slipped digit visible at all — 6 for 60 reads as
     // perfectly plausible on its own. Fails on Glittering Halls tier-3 rarity
     // 60 -> 6, or on any tier-2 value transposed with its tier-3 neighbour.
     #[test]
     fn every_area_bonus_is_its_tier_one_figure_times_the_tier() {
-        let bonuses: [(&str, fn(TierDrops) -> Option<Estimate>); 3] = [
-            ("quantity", TierDrops::quantity_pct),
+        let bonuses: [(&str, fn(TierDrops) -> Option<Estimate>); 2] = [
             ("rarity", TierDrops::rarity_pct),
             ("pack size", TierDrops::pack_size_pct),
         ];

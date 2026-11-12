@@ -339,7 +339,6 @@ export interface LineView {
 	kind: LineKind;
 	/** Draft prose for a content line, or null for a chest line. */
 	content: string | null;
-	quantityPct: [number, number, number] | null;
 	rarityPct: [number, number, number] | null;
 }
 
@@ -386,7 +385,7 @@ export interface RoomValueView {
 /** One term of a `RoomValueView`'s sum. */
 export interface DriverView {
 	/** `"sale"`, `"unique_drop"`,
-	 *  `"quantity_bonus"`, `"rarity_bonus"`, `"tier_fraction"`,
+	 *  `"rarity_bonus"`, `"tier_fraction"`,
 	 *  `"grade_fallback"`, `"instrumental"` or `"custom_override"`.
 	 *  `snake_case`, this app's convention for enum variants on the wire.
 	 *

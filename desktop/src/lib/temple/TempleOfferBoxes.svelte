@@ -77,7 +77,7 @@
 	 *
 	 * The number POE-257 computes is the whole of the ranking. The box leads with
 	 * the resolved room and tier, then shows that value in chaos and what makes it
-	 * up: the items the room drops, as ICONS with prices, the quantity / rarity
+	 * up: the items the room drops, as ICONS with prices, the rarity
 	 * bonus ladder, and the architect at the end. Everything on screen comes from the offer
 	 * view — the same `Valued` row the advisor ranked on (POE-257 D6) — so no box can
 	 * justify a number the recommendation did not use.
@@ -316,7 +316,7 @@
 	 *
 	 * Tiers 1 and 2 are a single digit on every line poedb states a rate for,
 	 * and tier 3 reaches two (`+4/8/12%`). Anything past that is a line like
-	 * Factory, whose quantity stat is printed twice and summed (`+22/44/66%`).
+	 * Glittering Halls (`+20/40/60%`; `+12/24/36%` once POE-369 WI-3 lands).
 	 */
 	function ladderIsWide(text: [string, string, string] | null): boolean {
 		if (text === null) return false;
@@ -331,7 +331,7 @@
 	 * `nowrap`), because half a rung is worse than no rung, and the label names
 	 * the row — so on the one shape that can outgrow 272 px the amount is the
 	 * thing that goes. It is also the only part the box says twice: what the
-	 * two rates are worth is already inside the value at the top right.
+	 * rate is worth is already inside the value at the top right.
 	 *
 	 * The test is the RUNG WIDTH and not a measured width, because this file
 	 * has no measurement to read at render time and a box that decided its own
@@ -340,9 +340,7 @@
 	function bonusAmount(box: OfferBox): string | null {
 		const amount = box.bonus?.amount ?? null;
 		if (amount === null || box.ladder === null) return amount;
-		return ladderIsWide(box.ladder.quantText) || ladderIsWide(box.ladder.rarityText)
-			? null
-			: amount;
+		return ladderIsWide(box.ladder.rarityText) ? null : amount;
 	}
 
 	/** Whether the box prints ` · est.` after its chip. The same condition the
@@ -506,18 +504,16 @@
 			{#if hasBonus}
 				{#if hasItems}<div class="rule"></div>{/if}
 				<!-- The label INLINE on the left (owner, off the in-game look — the
-				     alignment was the ask, not the shape), then the two ladders
-				     sharing what is left of the row equally, each a value over its
-				     word. What the two rates are worth trails the rarity cell, at
+				     alignment was the ask, not the shape), then the rarity ladder
+				     in what is left of the row, a value over its word (POE-369
+				     removed the quant ladder). What the rate is worth trails it, at
 				     the row's far right: the label is at the far left now, and an
 				     amount parked beside it would sit furthest from the numbers it
 				     is about. -->
 				<div class="lad">
 					<span class="lb">Room bonuses</span>
 					{#if box.ladder}
-						{@const quant = box.ladder.quantText}
 						{@const rarity = box.ladder.rarityText}
-						{#if quant !== null}{@render bonusCell(quant, 'quant', box.ladder.tier)}{/if}
 						{#if rarity !== null}{@render bonusCell(rarity, 'rarity', box.ladder.tier)}{/if}
 					{:else}
 						<div class="lc"><span class="w">{box.bonus?.label}</span></div>
@@ -970,8 +966,8 @@
 		overflow: hidden;
 	}
 
-	/* Never shrinks, and the auto margins are what spread the two ladders evenly
-	   across the row's remainder instead. `flex: 1 1 0` would have shared that
+	/* Never shrinks, and the auto margins are what centre the ladder in the
+	   row's remainder instead. `flex: 1 1 0` would have shared that
 	   remainder too, but it also lets a cell be squeezed BELOW its content, and
 	   a clipped `+4/8/1…` is worse than no amount beside it — which is why the
 	   amount is the part that goes when the row runs out of room

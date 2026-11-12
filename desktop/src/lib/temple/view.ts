@@ -646,7 +646,7 @@ export interface OfferBox {
 	driverCount: number;
 	/** `"+1 more item · 34c"` for the rows past the cap, or null. */
 	fold: string | null;
-	/** The quantity / rarity bonus, or null on a line poedb prints no
+	/** The rarity bonus, or null on a line poedb prints no
 	 *  percentage for (Toxic Grove, Storm of Corruption). */
 	bonus: OfferBonus | null;
 	/** The one line that says something the rows cannot — an instrumental
@@ -667,9 +667,7 @@ export interface OfferBox {
 
 /** The three-tier bonus ladder and the text pieces the box prints. */
 export interface OfferLadder {
-	quant: [number, number, number] | null;
 	rarity: [number, number, number] | null;
-	quantText: [string, string, string] | null;
 	rarityText: [string, string, string] | null;
 	tier: number;
 }
@@ -713,9 +711,9 @@ export interface OfferDriver {
 	marks: DriverMark[];
 }
 
-/** The quant / rarity line. */
+/** The rarity line. */
 export interface OfferBonus {
-	/** `"+6% quant · +12% rarity"`. */
+	/** `"+12% rarity"`. */
 	label: string;
 	/** `"+15c"`, or null where neither rate priced anything. */
 	amount: string | null;
@@ -978,12 +976,11 @@ function offerFold(value: RoomValueView, terms: DriverTerm[]): string | null {
 
 /** The game's own wording for the two area bonuses, shortened to fit one line. */
 const BONUS_WORDS: Record<string, string> = {
-	quantity_bonus: 'quant',
 	rarity_bonus: 'rarity'
 };
 
 /**
- * The quant / rarity line, or null on a line poedb prints no percentage for.
+ * The rarity line, or null on a line poedb prints no percentage for.
  *
  * The percentages are the room's at every tier and always show. The chaos is
  * withheld on a scaled box for the same reason the fold's is
@@ -1126,11 +1123,10 @@ function offerStripPrices(terms: DriverTerm[]): string | null {
  * about the geometry only re-measures the pair for a change the eye already
  * has. `compact` is present because it is the whole form.
  *
- * `ladder.quant` and `ladder.rarity` are each present as a PRESENCE and not as
- * a value, and what they buy is the bonus cells' two-line shape: a line that
- * states one rate draws one cell where a line stating both draws two, and a
- * cell is a value over a word. Their numbers are not here and must not be —
- * `+2/4/6%` becoming `+22/44/66%` is text, and text moves nothing.
+ * `ladder.rarity` is present as a PRESENCE and not as a value, and what it
+ * buys is the bonus cell's two-line shape: a cell is a value over a word. Its
+ * numbers are not here and must not be — `+4/8/12%` becoming `+12/24/36%` is
+ * text, and text moves nothing.
  *
  * `content` is present when the content cell draws, and the `uniqueDrop`
  * caption presence is present because the rare-caption threshold is a
@@ -1151,7 +1147,6 @@ export function offerBoxSignature(box: OfferBox, compact: boolean): string {
 		box.note ? 'note' : '-',
 		box.content !== null ? 'content' : '-',
 		box.ladder ? 'ladder' : '-',
-		box.ladder?.quant ? 'q' : '-',
 		box.ladder?.rarity ? 'r' : '-',
 		box.uniqueDrop ? 'unique' : '-',
 		box.uniqueDrop?.caption ? 'caption' : '-',
@@ -1169,28 +1164,17 @@ function offerLadder(offer: OfferView): OfferBox['ladder'] {
 	if (
 		line === null ||
 		offer.builtTier === null ||
-		(line.quantityPct === null && line.rarityPct === null)
+		line.rarityPct === null
 	) {
 		return null;
 	}
-	const quantText = line.quantityPct === null
-		? null
-		: [
-				formatPercentage(line.quantityPct[0]),
-				formatPercentage(line.quantityPct[1]),
-				formatPercentage(line.quantityPct[2])
-			] as [string, string, string];
-	const rarityText = line.rarityPct === null
-		? null
-		: [
-				formatPercentage(line.rarityPct[0]),
-				formatPercentage(line.rarityPct[1]),
-				formatPercentage(line.rarityPct[2])
-			] as [string, string, string];
+	const rarityText = [
+		formatPercentage(line.rarityPct[0]),
+		formatPercentage(line.rarityPct[1]),
+		formatPercentage(line.rarityPct[2])
+	] as [string, string, string];
 	return {
-		quant: line.quantityPct,
 		rarity: line.rarityPct,
-		quantText,
 		rarityText,
 		tier: offer.builtTier
 	};
