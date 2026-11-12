@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"sort"
 	"time"
 
 	"profitofexile/internal/exchange"
@@ -113,25 +115,8 @@ func CurrencyExchangePlays(cache *exchange.Cache) http.HandlerFunc {
 	unknown := &exchange.UnknownItems{}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		mode := r.URL.Query().Get("mode")
-		if mode == "" {
-			mode = modeAll
-		}
-		switch mode {
-		case modeAll, string(exchange.ModeDirect), string(exchange.ModeOneHop):
-		default:
-			jsonError(w, http.StatusBadRequest, "mode must be one of all, direct, 1-hop")
-			return
-		}
-
-		horizon := exchange.Horizon(r.URL.Query().Get("horizon"))
-		if horizon == "" {
-			horizon = exchange.DefaultHorizon
-		}
-		switch horizon {
-		case exchange.HorizonRecent, exchange.HorizonDay:
-		default:
-			jsonError(w, http.StatusBadRequest, "horizon must be one of recent, day")
+		mode, horizon, ok := exchangeModeHorizon(w, r)
+		if !ok {
 			return
 		}
 
@@ -162,6 +147,142 @@ func CurrencyExchangePlays(cache *exchange.Cache) http.HandlerFunc {
 			body.LastUpdated = &last
 			from, to := result.From.UTC(), result.To.UTC()
 			body.From, body.To = &from, &to
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(body)
+	}
+}
+
+// exchangeModeHorizon reads the mode and horizon params with their defaults,
+// answering 400 and reporting false on a value outside the served set.
+func exchangeModeHorizon(w http.ResponseWriter, r *http.Request) (string, exchange.Horizon, bool) {
+	mode := r.URL.Query().Get("mode")
+	if mode == "" {
+		mode = modeAll
+	}
+	switch mode {
+	case modeAll, string(exchange.ModeDirect), string(exchange.ModeOneHop):
+	default:
+		jsonError(w, http.StatusBadRequest, "mode must be one of all, direct, 1-hop")
+		return "", "", false
+	}
+
+	horizon := exchange.Horizon(r.URL.Query().Get("horizon"))
+	if horizon == "" {
+		horizon = exchange.DefaultHorizon
+	}
+	switch horizon {
+	case exchange.HorizonRecent, exchange.HorizonDay:
+	default:
+		jsonError(w, http.StatusBadRequest, "horizon must be one of recent, day")
+		return "", "", false
+	}
+	return mode, horizon, true
+}
+
+// pagedPlaysResponse is the paged GET /api/currency-exchange/plays body
+// (ADR-030): the legacy fields, with Count the page's size, plus the stage
+// counts, the convert flag and the item universe. Every play carries display.
+type pagedPlaysResponse struct {
+	playsResponse
+	Total        int                    `json:"total"`
+	AfterRules   int                    `json:"afterRules"`
+	AfterGates   int                    `json:"afterGates"`
+	Matched      int                    `json:"matched"`
+	ShowConvert  bool                   `json:"showConvert"`
+	ItemUniverse []universeItemResponse `json:"itemUniverse"`
+}
+
+// universeItemResponse is one item filter entry, decorated like a leg's side.
+type universeItemResponse struct {
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Icon      *string `json:"icon"`
+	Category  string  `json:"category"`
+	PlayCount int     `json:"playCount"`
+}
+
+// CurrencyExchangePlaysPaged serves GET /api/currency-exchange/plays under the
+// ADR-030 contract. A request without pageSize is the legacy request and gets
+// CurrencyExchangePlays(cache)'s body unchanged. A paged request is parsed into
+// an exchange.PlaysPageQuery and answered from store; a nil store answers cold
+// (200, warm:false, an empty page), as a nil cache does on the legacy path.
+func CurrencyExchangePlaysPaged(cache *exchange.Cache, store exchange.PlaysPager) http.HandlerFunc {
+	legacy := CurrencyExchangePlays(cache)
+	unknown := &exchange.UnknownItems{}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !exchange.IsPagedRequest(r.URL.Query()) {
+			legacy(w, r)
+			return
+		}
+		mode, horizon, ok := exchangeModeHorizon(w, r)
+		if !ok {
+			return
+		}
+		q, err := exchange.ParsePlaysPageQuery(r.URL.Query())
+		if err != nil {
+			jsonError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		q.Mode, q.Horizon = mode, horizon
+
+		page := exchange.PlaysPage{Horizon: horizon}
+		if store != nil {
+			page, err = store.PlaysPage(r.Context(), q)
+			if err != nil {
+				slog.Error("currency exchange plays page", "error", err)
+				jsonError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+		}
+
+		plays := make([]playResponse, 0, len(page.Plays))
+		for _, play := range page.Plays {
+			plays = append(plays, playResponse{Play: play, Legs: decorateLegs(play.Legs, unknown)})
+		}
+		universe := make([]universeItemResponse, 0, len(page.ItemUniverse))
+		for _, item := range page.ItemUniverse {
+			universe = append(universe, universeItemResponse{
+				ID:        item.ID,
+				Name:      itemName(item.ID, unknown),
+				Icon:      itemIcon(item.ID),
+				Category:  itemCategory(item.ID),
+				PlayCount: item.PlayCount,
+			})
+		}
+		// The desktop's itemUniverse order: by name, then id.
+		sort.SliceStable(universe, func(i, j int) bool {
+			if universe[i].Name != universe[j].Name {
+				return universe[i].Name < universe[j].Name
+			}
+			return universe[i].ID < universe[j].ID
+		})
+
+		body := pagedPlaysResponse{
+			playsResponse: playsResponse{
+				League:          page.League,
+				Hours:           page.Hours,
+				Warm:            page.Warm,
+				Mode:            mode,
+				Horizon:         string(horizon),
+				DivineChaosRate: page.DivineChaosRate,
+				Count:           len(plays),
+				Plays:           plays,
+				Categories:      exchange.Categories(),
+			},
+			Total:        page.Total,
+			AfterRules:   page.AfterRules,
+			AfterGates:   page.AfterGates,
+			Matched:      page.Matched,
+			ShowConvert:  page.ShowConvert,
+			ItemUniverse: universe,
+		}
+		if !page.LastUpdated.IsZero() {
+			last, from, to := page.LastUpdated.UTC(), page.From.UTC(), page.To.UTC()
+			body.LastUpdated, body.From, body.To = &last, &from, &to
 		}
 
 		w.Header().Set("Content-Type", "application/json")

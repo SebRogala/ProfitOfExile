@@ -2,11 +2,14 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -1240,5 +1243,154 @@ func TestCurrencyExchangeDivineRate_isNeverCached(t *testing.T) {
 
 	if got := w.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
+	}
+}
+
+// ---------------------------------------------- the paged transport (ADR-030) --
+
+// fakePlaysPager records the query it was asked and answers a fixed page.
+type fakePlaysPager struct {
+	got   *exchange.PlaysPageQuery
+	page  exchange.PlaysPage
+	err   error
+	calls int
+}
+
+func (f *fakePlaysPager) PlaysPage(_ context.Context, q exchange.PlaysPageQuery) (exchange.PlaysPage, error) {
+	f.calls++
+	f.got = &q
+	return f.page, f.err
+}
+
+func getPagedPlays(t *testing.T, cache *exchange.Cache, store exchange.PlaysPager, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	router := chi.NewRouter()
+	router.Get("/api/currency-exchange/plays", CurrencyExchangePlaysPaged(cache, store))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+	return w
+}
+
+func TestCurrencyExchangePlaysPaged_LegacyRequestMatchesTheCacheBody(t *testing.T) {
+	for _, target := range []string{
+		"/api/currency-exchange/plays",
+		"/api/currency-exchange/plays?mode=direct",
+		"/api/currency-exchange/plays?mode=1-hop&horizon=recent&sort=roi&page=2",
+		"/api/currency-exchange/plays?mode=bogus",
+	} {
+		pager := &fakePlaysPager{}
+		want := getPlays(t, warmExchangeCache(t), target)
+		got := getPagedPlays(t, warmExchangeCache(t), pager, target)
+		if got.Code != want.Code || got.Body.String() != want.Body.String() {
+			t.Errorf("%s:\n got %d %s\nwant %d %s", target, got.Code, got.Body, want.Code, want.Body)
+		}
+		if pager.calls != 0 {
+			t.Errorf("%s: legacy request reached the pager", target)
+		}
+	}
+}
+
+func TestCurrencyExchangePlaysPaged_PagedRequestPassesTheParsedQuery(t *testing.T) {
+	pager := &fakePlaysPager{page: exchange.PlaysPage{Warm: true}}
+	params := "pageSize=50&page=2&sort=roi&onlyCategory=Currency&hideItem=x&minRoiChaos=2&unit=divine&investMax=3&search=Divine+Orb"
+	w := getPagedPlays(t, warmExchangeCache(t), pager, "/api/currency-exchange/plays?mode=direct&horizon=day&"+params)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body)
+	}
+	values, _ := url.ParseQuery(params)
+	want, err := exchange.ParsePlaysPageQuery(values)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want.Mode, want.Horizon = "direct", exchange.HorizonDay
+	if pager.got == nil || !reflect.DeepEqual(*pager.got, want) {
+		t.Fatalf("pager got %+v\nwant       %+v", pager.got, want)
+	}
+	if len(want.SearchItemIDs) == 0 {
+		t.Fatal("the search was not resolved to item ids")
+	}
+}
+
+func TestCurrencyExchangePlaysPaged_PagedRequestRendersThePage(t *testing.T) {
+	play := exchange.Decorate(directDivinePlay())
+	pager := &fakePlaysPager{page: exchange.PlaysPage{
+		Warm: true, League: "Mirage", Horizon: exchange.HorizonRecent, Hours: 6, DivineChaosRate: divineChaosRate,
+		From: fixtureFrom, To: fixtureTo, LastUpdated: fixtureLastHour,
+		Plays: []exchange.Play{play}, Total: 9, AfterRules: 8, AfterGates: 7, Matched: 5, ShowConvert: true,
+		ItemUniverse: []exchange.UniverseItem{{ID: scarabID, PlayCount: 2}, {ID: exchange.DivineID, PlayCount: 4}},
+	}}
+	w := getPagedPlays(t, nil, pager, "/api/currency-exchange/plays?pageSize=25")
+	var body struct {
+		Warm        bool    `json:"warm"`
+		League      string  `json:"league"`
+		LastUpdated *string `json:"lastUpdated"`
+		Count       int     `json:"count"`
+		Total       int     `json:"total"`
+		AfterRules  int     `json:"afterRules"`
+		AfterGates  int     `json:"afterGates"`
+		Matched     int     `json:"matched"`
+		ShowConvert bool    `json:"showConvert"`
+		Plays       []struct {
+			Key     string                `json:"key"`
+			Display *exchange.PlayDisplay `json:"display"`
+			Legs    []struct {
+				ItemName string `json:"itemName"`
+			} `json:"legs"`
+		} `json:"plays"`
+		ItemUniverse []struct {
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			Category  string `json:"category"`
+			PlayCount int    `json:"playCount"`
+		} `json:"itemUniverse"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("status %d, decode %v: %s", w.Code, err, w.Body)
+	}
+	if !body.Warm || body.League != "Mirage" || body.LastUpdated == nil || *body.LastUpdated != "2026-08-19T06:00:00Z" {
+		t.Errorf("header = warm %v league %q lastUpdated %v", body.Warm, body.League, body.LastUpdated)
+	}
+	if body.Count != 1 || body.Total != 9 || body.AfterRules != 8 || body.AfterGates != 7 || body.Matched != 5 || !body.ShowConvert {
+		t.Errorf("counts = %+v", body)
+	}
+	if len(body.Plays) != 1 || body.Plays[0].Key != play.Key || body.Plays[0].Display == nil ||
+		body.Plays[0].Display.Units != play.Display.Units || body.Plays[0].Legs[0].ItemName != "Divine Orb" {
+		t.Errorf("plays = %+v", body.Plays)
+	}
+	if len(body.ItemUniverse) != 2 || body.ItemUniverse[0].Name != "Breach Thread" || body.ItemUniverse[1].Name != "Divine Orb" ||
+		body.ItemUniverse[1].Category != "Currency" || body.ItemUniverse[1].PlayCount != 4 {
+		t.Errorf("itemUniverse = %+v, want Breach Thread then Divine Orb (by name) with their categories and counts", body.ItemUniverse)
+	}
+}
+
+func TestCurrencyExchangePlaysPaged_NilStoreAnswersColdNotError(t *testing.T) {
+	w := getPagedPlays(t, warmExchangeCache(t), nil, "/api/currency-exchange/plays?pageSize=25")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for key, want := range map[string]string{"warm": "false", "plays": "[]", "count": "0", "total": "0", "itemUniverse": "[]"} {
+		if string(body[key]) != want {
+			t.Errorf("%s = %s, want %s", key, body[key], want)
+		}
+	}
+}
+
+func TestCurrencyExchangePlaysPaged_BadParamIsRejectedNamingIt(t *testing.T) {
+	pager := &fakePlaysPager{}
+	w := getPagedPlays(t, nil, pager, "/api/currency-exchange/plays?pageSize=30")
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "pageSize") || pager.calls != 0 {
+		t.Fatalf("status %d body %s calls %d; want 400 naming pageSize, pager not called", w.Code, w.Body, pager.calls)
+	}
+}
+
+func TestCurrencyExchangePlaysPaged_PagerFailureIsAServerError(t *testing.T) {
+	pager := &fakePlaysPager{err: errors.New("db down")}
+	w := getPagedPlays(t, nil, pager, "/api/currency-exchange/plays?pageSize=25")
+	if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "db down") {
+		t.Fatalf("status %d body %s; want 500 without the internal error text", w.Code, w.Body)
 	}
 }

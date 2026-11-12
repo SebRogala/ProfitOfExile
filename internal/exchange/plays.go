@@ -402,6 +402,10 @@ type Play struct {
 	// carried by WindowHours beside the mark, never by this field. HoursSeen, not
 	// this field, is what says how long the recipe has been holding up.
 	LastHour time.Time `json:"lastHour"`
+
+	// Display is the row's display object (ADR-030), filled by Decorate only on
+	// the paged path. Nil is omitted, so the legacy body carries no "display".
+	Display *PlayDisplay `json:"display,omitempty"`
 }
 
 // Result is one BestPlays answer, shaped for JSON.
