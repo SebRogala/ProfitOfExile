@@ -119,7 +119,7 @@ func TransfigureAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sc
 		// none).
 		if cache != nil {
 			if cached, warm := cache.For(scope).Transfigure(); warm {
-				results = filterTransfigure(cached, variant, limit)
+				results = lab.FilterTransfigure(cached, variant, limit)
 				cacheHit = true
 			}
 		}
@@ -176,27 +176,6 @@ func TransfigureAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sc
 			slog.Error("transfigure analysis: encode response", "error", err)
 		}
 	}
-}
-
-// filterTransfigure filters and limits cached transfigure results.
-// Results are sorted by ROI descending (matching the DB query order).
-func filterTransfigure(all []lab.TransfigureResult, variant string, limit int) []lab.TransfigureResult {
-	var filtered []lab.TransfigureResult
-	for _, r := range all {
-		if variant != "" && r.Variant != variant {
-			continue
-		}
-		filtered = append(filtered, r)
-	}
-
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].ROI > filtered[j].ROI
-	})
-
-	if len(filtered) > limit {
-		filtered = filtered[:limit]
-	}
-	return filtered
 }
 
 // DoubleCorruptAnalysis returns the latest double-corruption (Doryani's
@@ -1058,7 +1037,7 @@ func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 		// size of the corpus or of the variant/tier slice taken out of it.
 		if cache != nil {
 			if cached, warm := cache.For(scope).GemSignals(); warm {
-				results = filterGemSignals(cached, variant, tier, limit)
+				results = lab.FilterGemSignals(cached, variant, tier, limit)
 				cacheHit = true
 			}
 		}
@@ -1263,31 +1242,4 @@ func MarketOverview(cache *lab.Cache, repo *lab.Repository, scope league.Scope) 
 			slog.Error("market overview: encode response", "error", err)
 		}
 	}
-}
-
-// filterGemSignals filters and limits cached gem signals.
-// Results are sorted by Confidence descending, then Sellability descending (matching the DB query order).
-func filterGemSignals(all []lab.GemSignal, variant, tier string, limit int) []lab.GemSignal {
-	var filtered []lab.GemSignal
-	for _, s := range all {
-		if variant != "" && s.Variant != variant {
-			continue
-		}
-		if tier != "" && s.Tier != tier {
-			continue
-		}
-		filtered = append(filtered, s)
-	}
-
-	sort.Slice(filtered, func(i, j int) bool {
-		if filtered[i].Confidence != filtered[j].Confidence {
-			return filtered[i].Confidence > filtered[j].Confidence
-		}
-		return filtered[i].Sellability > filtered[j].Sellability
-	})
-
-	if len(filtered) > limit {
-		filtered = filtered[:limit]
-	}
-	return filtered
 }

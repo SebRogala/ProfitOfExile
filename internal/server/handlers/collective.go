@@ -150,7 +150,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 
 		searchName := r.URL.Query().Get("search")
 
-		input := collectiveQueryInput{
+		input := lab.CollectiveQuery{
 			Variant:      variant,
 			SparkVariant: r.URL.Query().Get("variant"),
 			Budget:       budget,
@@ -158,11 +158,11 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 			SearchName:   searchName,
 			SortBy:       sortBy,
 		}
-		query, err := queryCollective(r.Context(), repo, cache, scope, input)
+		query, err := lab.QueryCollective(r.Context(), repo, cache, scope, input)
 		if err != nil {
-			var queryErr *collectiveQueryError
+			var queryErr *lab.QueryError
 			if errors.As(err, &queryErr) {
-				slog.Error("collective analysis: "+queryErr.operation+" query failed", "error", queryErr.err)
+				slog.Error("collective analysis: "+queryErr.Operation+" query failed", "error", queryErr.Err)
 			} else {
 				slog.Error("collective analysis: query failed", "error", err)
 			}
@@ -370,8 +370,8 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 			cs, signalsWarm := cache.For(scope).GemSignals()
 			cf, featuresWarm := cache.For(scope).GemFeatures()
 			if transfigureWarm && signalsWarm && featuresWarm {
-				transfigure = filterTransfigure(ct, variant, 1000)
-				signals = filterGemSignals(cs, variant, "", 5000)
+				transfigure = lab.FilterTransfigure(ct, variant, 1000)
+				signals = lab.FilterGemSignals(cs, variant, "", 5000)
 				features = cf
 				usedCache = true
 			}

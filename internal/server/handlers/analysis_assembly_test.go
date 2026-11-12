@@ -87,8 +87,8 @@ func TestAssembleTrendRows_EnrichesSignalWithMatchingFeatureAndTrend(t *testing.
 }
 
 func TestAssembleCollectiveRows_CalculatesTwentyTwentyGCPRecipe(t *testing.T) {
-	query := collectiveQueryResult{
-		results: []lab.CollectiveResult{{
+	query := lab.CollectiveQueryResult{
+		Results: []lab.CollectiveResult{{
 			TransfiguredName:  "Spark of Nova",
 			BaseName:          "Spark",
 			Variant:           "20/20",
@@ -102,13 +102,13 @@ func TestAssembleCollectiveRows_CalculatesTwentyTwentyGCPRecipe(t *testing.T) {
 			Sellability:       75,
 			SellabilityLabel:  "FAIR",
 		}},
-		sparklines: map[collectiveSparklineKey][]lab.SparklinePoint{
-			{name: "Spark of Nova", variant: "20/20"}: {{Time: "2026-09-24T12:00:00Z", Price: 180, Listings: 7}},
+		Sparklines: map[lab.CollectiveSparklineKey][]lab.SparklinePoint{
+			{Name: "Spark of Nova", Variant: "20/20"}: {{Time: "2026-09-24T12:00:00Z", Price: 180, Listings: 7}},
 		},
-		basePriceIndex: map[collectiveBaseKey]float64{
-			{name: "Spark", variant: "20"}: 10,
+		BasePriceIndex: map[lab.CollectiveBaseKey]float64{
+			{Name: "Spark", Variant: "20"}: 10,
 		},
-		gcpPrice: 2.5,
+		GCPPrice: 2.5,
 	}
 
 	rows := assembleCollectiveRows(query)

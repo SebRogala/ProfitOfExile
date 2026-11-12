@@ -691,3 +691,73 @@ func TestCachedCorruptedSparklines_UnpopulatedDedicationVariantAnswersWithoutThe
 		t.Errorf("series = %+v, want none — the 21/23c series must not answer for 21/20c", got)
 	}
 }
+
+// gcpRecipeCostFor serves the all-variants collective ranking for a cache that
+// holds a 20/20 result plus its 20-variant base (BasePrice 10) and returns the
+// 20/20 row's gcpRecipeCost.
+func gcpRecipeCostFor(t *testing.T, cache *lab.Cache) float64 {
+	t.Helper()
+	warmSparklines(t, cache, nil, nil)
+	w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope), "/api/analysis/collective")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data []struct {
+			TransfiguredName string  `json:"transfiguredName"`
+			Variant          string  `json:"variant"`
+			GCPRecipeCost    float64 `json:"gcpRecipeCost"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	for _, row := range resp.Data {
+		if row.TransfiguredName == "Spark of Nova" && row.Variant == "20/20" {
+			return row.GCPRecipeCost
+		}
+	}
+	t.Fatalf("response has no 20/20 Spark of Nova row: %+v", resp.Data)
+	return 0
+}
+
+func gcpRecipeCache(t *testing.T) *lab.Cache {
+	t.Helper()
+	return warmAnalysisCache(t,
+		sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40},
+		sparklineGem{name: "Spark of Storms", variant: "20", roi: 30},
+	)
+}
+
+func TestCollectiveAnalysis_UncachedGCPPriceFallsBackToFourChaos(t *testing.T) {
+	if got := gcpRecipeCostFor(t, gcpRecipeCache(t)); got != 90 {
+		t.Errorf("gcpRecipeCost = %v, want 90 (base 10 + 20 x fallback 4)", got)
+	}
+}
+
+func TestCollectiveAnalysis_CachedGCPPriceIsUsedForTheRecipe(t *testing.T) {
+	cache := gcpRecipeCache(t)
+	cache.For(sparklineScope).SetGCPPrice(2.5)
+	if got := gcpRecipeCostFor(t, cache); got != 60 {
+		t.Errorf("gcpRecipeCost = %v, want 60 (base 10 + 20 x 2.5)", got)
+	}
+}
+
+func TestCollectiveAnalysis_CorpusQueryFailureReturnsQueryFailed(t *testing.T) {
+	w := httptest.NewRecorder()
+	CollectiveAnalysis(nil, nil, league.Scope{}).ServeHTTP(w,
+		httptest.NewRequest(http.MethodGet, "/api/analysis/collective", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+	if got := w.Body.String(); got != "{\"error\":\"query failed\"}\n" {
+		t.Errorf("body = %q, want the query-failed error", got)
+	}
+	if got := w.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want text/plain; charset=utf-8", got)
+	}
+	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+}
