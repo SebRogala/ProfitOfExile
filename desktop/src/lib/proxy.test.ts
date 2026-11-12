@@ -28,4 +28,10 @@ describe('proxyRestartNeeded', () => {
 		expect(proxyRestartNeeded({ ...inEffect, savedTrade: false })).toBe(true);
 		expect(proxyRestartNeeded({ ...inEffect, savedTrade: true, tradeInEffect: false })).toBe(true);
 	});
+
+	it('is false when the trade flags differ but no proxy is saved or in effect', () => {
+		const noProxy = { ...inEffect, saved: '', inEffect: '' };
+		expect(proxyRestartNeeded({ ...noProxy, savedTrade: false, tradeInEffect: true })).toBe(false);
+		expect(proxyRestartNeeded({ ...noProxy, savedTrade: true, tradeInEffect: false })).toBe(false);
+	});
 });

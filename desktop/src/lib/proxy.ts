@@ -13,7 +13,8 @@ export interface ProxySettings {
 
 /** Saved settings differ from the ones this run started with. */
 export function proxyRestartNeeded(p: ProxySettings): boolean {
-	return p.saved !== p.inEffect || p.savedTrade !== p.tradeInEffect;
+	if (p.saved !== p.inEffect) return true;
+	return p.saved !== '' && p.savedTrade !== p.tradeInEffect;
 }
 
 export function getProxySettings(): Promise<ProxySettings> {
