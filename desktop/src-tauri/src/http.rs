@@ -3,12 +3,19 @@
 //! Every `reqwest::Client` in production comes from [`client_builder`], so the
 //! user's proxy setting reaches every request without per-call wiring. The
 //! source-scan test at the bottom fails when a client is built anywhere else.
+//! A Blocked config yields clients whose every request fails before a
+//! connection opens.
 
 /// Hosts that never go through the proxy: the local dev server
 /// (`*.localhost`) and loopback. Two spellings of the same set, one per
 /// transport's syntax.
 const REQWEST_NO_PROXY: &str = "localhost,127.0.0.1,::1,.localhost";
 const WEBVIEW2_BYPASS_LIST: &str = "localhost;127.0.0.1;[::1];*.localhost";
+
+/// WebView2 flags for a blocked proxy: a loopback port nothing listens on
+/// (refused at once) plus a resolver that finds no host, local hosts kept.
+const BLOCKED_PROXY_SERVER: &str = "http://127.0.0.1:1";
+const BLOCKED_HOST_RESOLVER_RULES: &str = "MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE *.localhost";
 
 const ACCEPTED_SCHEMES: [&str; 3] = ["http", "https", "socks5"];
 
@@ -76,25 +83,57 @@ pub enum Transport {
     Other,
 }
 
+/// The end of every blocked reason: what the user does about it.
+pub const BLOCKED_SUFFIX: &str = "Nothing is sent until you fix or clear the proxy in Settings and restart the app.";
+
+/// How the app reaches the network this run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProxyMode {
+    /// No proxy saved: requests go out directly.
+    Direct,
+    /// A usable saved proxy.
+    Via(ProxyUrl),
+    /// A proxy may be saved but cannot be used; the reason is shown to the user.
+    Blocked(String),
+}
+
+impl ProxyMode {
+    /// `Blocked` with `detail` followed by [`BLOCKED_SUFFIX`].
+    pub fn blocked(detail: &str) -> ProxyMode {
+        ProxyMode::Blocked(format!("{}. {}", detail.trim_end_matches('.'), BLOCKED_SUFFIX))
+    }
+}
+
 /// The proxy settings `run()` read at startup, in effect until the next launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProxyConfig {
-    pub url: Option<ProxyUrl>,
-    /// Whether the trade client uses `url` too (Settings `proxy_trade`).
+    pub mode: ProxyMode,
+    /// Whether the trade client uses a `Via` proxy too (Settings `proxy_trade`).
     pub trade: bool,
 }
 
 impl ProxyConfig {
     /// No proxy for any transport: today's behaviour.
     pub fn none() -> Self {
-        ProxyConfig { url: None, trade: true }
+        ProxyConfig { mode: ProxyMode::Direct, trade: true }
     }
 
-    /// The proxy `transport` goes through, if any.
-    pub fn for_transport(&self, transport: Transport) -> Option<&ProxyUrl> {
-        match transport {
-            Transport::Trade if !self.trade => None,
-            _ => self.url.as_ref(),
+    /// The proxy `transport` goes through, if any; `Err` with the reason when
+    /// every transport is blocked, whatever `trade` says.
+    pub fn for_transport(&self, transport: Transport) -> Result<Option<&ProxyUrl>, &str> {
+        match (&self.mode, transport) {
+            (ProxyMode::Blocked(reason), _) => Err(reason),
+            (ProxyMode::Via(_), Transport::Trade) if !self.trade => Ok(None),
+            (ProxyMode::Via(proxy), _) => Ok(Some(proxy)),
+            (ProxyMode::Direct, _) => Ok(None),
+        }
+    }
+
+    /// Why every request is blocked this run, if it is.
+    pub fn blocked_reason(&self) -> Option<&str> {
+        match &self.mode {
+            ProxyMode::Blocked(reason) => Some(reason),
+            _ => None,
         }
     }
 }
@@ -105,8 +144,9 @@ impl ProxyConfig {
 pub fn client_builder(proxy: &ProxyConfig, transport: Transport) -> reqwest::ClientBuilder {
     let builder = reqwest::Client::builder();
     match proxy.for_transport(transport) {
-        None => builder,
-        Some(proxy) => builder.proxy(
+        Err(reason) => builder.no_proxy().connector_layer(RefuseConnections(reason.into())),
+        Ok(None) => builder,
+        Ok(Some(proxy)) => builder.proxy(
             reqwest::Proxy::all(proxy.for_http_clients())
                 .expect("validated by ProxyUrl::parse")
                 .no_proxy(reqwest::NoProxy::from_string(REQWEST_NO_PROXY)),
@@ -114,13 +154,56 @@ pub fn client_builder(proxy: &ProxyConfig, transport: Transport) -> reqwest::Cli
     }
 }
 
-/// The WebView2 flags that route every webview through `proxy`.
-pub fn webview2_proxy_args(proxy: &ProxyUrl) -> String {
-    format!(
-        "--proxy-server={} --proxy-bypass-list={}",
-        proxy.server_for_webview2(),
-        WEBVIEW2_BYPASS_LIST
-    )
+/// A connector layer that never calls the connector it wraps: every
+/// connection fails with the blocked reason before a socket opens.
+#[derive(Clone)]
+struct RefuseConnections(std::sync::Arc<str>);
+
+impl<S> tower_layer::Layer<S> for RefuseConnections {
+    type Service = Refused<S>;
+
+    fn layer(&self, inner: S) -> Refused<S> {
+        Refused { _inner: inner, reason: self.0.clone() }
+    }
+}
+
+/// Generic over the wrapped service because reqwest's connector is unnameable.
+#[derive(Clone)]
+struct Refused<S> {
+    _inner: S,
+    reason: std::sync::Arc<str>,
+}
+
+impl<S: tower_service::Service<R>, R> tower_service::Service<R> for Refused<S> {
+    type Response = S::Response;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Future = std::future::Ready<Result<S::Response, Self::Error>>;
+
+    fn poll_ready(&mut self, _cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, _request: R) -> Self::Future {
+        std::future::ready(Err(self.reason.to_string().into()))
+    }
+}
+
+/// The WebView2 flags for `mode`: none when direct, the proxy and its local
+/// bypass list for a usable proxy, a dead proxy and no host resolution when
+/// blocked.
+pub fn webview2_proxy_args(mode: &ProxyMode) -> Option<String> {
+    match mode {
+        ProxyMode::Direct => None,
+        ProxyMode::Blocked(_) => Some(format!(
+            "--proxy-server={} --proxy-bypass-list={} --host-resolver-rules=\"{}\"",
+            BLOCKED_PROXY_SERVER, WEBVIEW2_BYPASS_LIST, BLOCKED_HOST_RESOLVER_RULES
+        )),
+        ProxyMode::Via(proxy) => Some(format!(
+            "--proxy-server={} --proxy-bypass-list={}",
+            proxy.server_for_webview2(),
+            WEBVIEW2_BYPASS_LIST
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -136,7 +219,7 @@ mod tests {
     }
 
     fn config(raw: &str) -> ProxyConfig {
-        ProxyConfig { url: Some(proxy(raw)), trade: true }
+        ProxyConfig { mode: ProxyMode::Via(proxy(raw)), trade: true }
     }
 
     #[test]
@@ -184,12 +267,12 @@ mod tests {
     #[test]
     fn webview2_proxy_args_name_the_server_and_bypass_local_hosts() {
         assert_eq!(
-            webview2_proxy_args(&proxy("http://proxy.example:3128")),
-            "--proxy-server=http://proxy.example:3128 --proxy-bypass-list=localhost;127.0.0.1;[::1];*.localhost"
+            webview2_proxy_args(&ProxyMode::Via(proxy("http://proxy.example:3128"))),
+            Some("--proxy-server=http://proxy.example:3128 --proxy-bypass-list=localhost;127.0.0.1;[::1];*.localhost".to_string())
         );
         assert_eq!(
-            webview2_proxy_args(&proxy("socks5://127.0.0.1:1080")),
-            "--proxy-server=socks5://127.0.0.1:1080 --proxy-bypass-list=localhost;127.0.0.1;[::1];*.localhost"
+            webview2_proxy_args(&ProxyMode::Via(proxy("socks5://127.0.0.1:1080"))),
+            Some("--proxy-server=socks5://127.0.0.1:1080 --proxy-bypass-list=localhost;127.0.0.1;[::1];*.localhost".to_string())
         );
     }
 
@@ -291,13 +374,13 @@ mod tests {
 
     #[test]
     fn trade_transport_skips_the_proxy_only_when_trade_is_off() {
-        let url = Some(proxy("http://proxy.example:3128"));
-        let on = ProxyConfig { url: url.clone(), trade: true };
-        let off = ProxyConfig { url: url.clone(), trade: false };
-        assert_eq!(on.for_transport(Transport::Trade), url.as_ref());
-        assert_eq!(off.for_transport(Transport::Trade), None);
-        assert_eq!(off.for_transport(Transport::Other), url.as_ref());
-        assert_eq!(ProxyConfig::none().for_transport(Transport::Other), None);
+        let url = proxy("http://proxy.example:3128");
+        let on = ProxyConfig { mode: ProxyMode::Via(url.clone()), trade: true };
+        let off = ProxyConfig { mode: ProxyMode::Via(url.clone()), trade: false };
+        assert_eq!(on.for_transport(Transport::Trade), Ok(Some(&url)));
+        assert_eq!(off.for_transport(Transport::Trade), Ok(None));
+        assert_eq!(off.for_transport(Transport::Other), Ok(Some(&url)));
+        assert_eq!(ProxyConfig::none().for_transport(Transport::Other), Ok(None));
     }
 
     /// Trade off: a trade client sends nothing to the proxy (the direct
@@ -315,6 +398,59 @@ mod tests {
         let proxied = client_builder(&cfg, Transport::Trade).build().unwrap();
         let _ = proxied.get("http://profitofexile.top/").send().await;
         assert!(seen.recv_timeout(Duration::from_secs(2)).is_ok());
+    }
+
+    fn blocked_client() -> reqwest::Client {
+        client_builder(&ProxyConfig { mode: ProxyMode::blocked("Proxy test reason"), trade: true }, Transport::Other)
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn blocked_proxy_client_opens_no_connection() {
+        let (origin_port, seen) = recording_listener();
+        let result = blocked_client().get(format!("http://127.0.0.1:{origin_port}/")).send().await;
+        assert!(result.is_err(), "a blocked client got a response");
+        assert!(seen.recv_timeout(Duration::from_millis(500)).is_err(), "a blocked client reached the origin");
+    }
+
+    #[tokio::test]
+    async fn blocked_proxy_request_error_names_the_reason() {
+        let (origin_port, _seen) = recording_listener();
+        let err = blocked_client().get(format!("http://127.0.0.1:{origin_port}/")).send().await.unwrap_err();
+        let mut chain = err.to_string();
+        let mut source = std::error::Error::source(&err);
+        while let Some(e) = source {
+            chain.push_str(" | ");
+            chain.push_str(&e.to_string());
+            source = e.source();
+        }
+        assert!(
+            chain.contains("Proxy test reason. Nothing is sent until you fix or clear the proxy in Settings and restart the app."),
+            "{chain}"
+        );
+    }
+
+    #[test]
+    fn blocked_proxy_blocks_trade_even_with_trade_off() {
+        assert_eq!(
+            ProxyConfig { mode: ProxyMode::blocked("R"), trade: false }.for_transport(Transport::Trade),
+            Err("R. Nothing is sent until you fix or clear the proxy in Settings and restart the app.")
+        );
+    }
+
+    #[test]
+    fn webview2_proxy_args_for_a_blocked_proxy_name_a_dead_proxy_and_resolve_no_host() {
+        assert_eq!(
+            webview2_proxy_args(&ProxyMode::blocked("R")),
+            Some("--proxy-server=http://127.0.0.1:1 --proxy-bypass-list=localhost;127.0.0.1;[::1];*.localhost --host-resolver-rules=\"MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE *.localhost\"".to_string())
+        );
+    }
+
+    #[test]
+    fn webview2_proxy_args_without_a_proxy_are_none() {
+        assert_eq!(webview2_proxy_args(&ProxyMode::Direct), None);
     }
 
     // --- Guard: no client construction outside this module ---

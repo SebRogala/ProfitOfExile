@@ -3813,6 +3813,8 @@ dependencies = [
  "tauri-plugin-updater",
  "time",
  "tokio",
+ "tower-layer",
+ "tower-service",
  "uuid",
  "windows 0.58.0",
  "winreg",

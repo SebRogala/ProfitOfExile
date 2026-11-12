@@ -279,12 +279,12 @@ pub struct Settings {
     pub webview_gpu_disabled: bool,
     /// Proxy for every outbound request (POE-360): `http://`, `https://` or
     /// `socks5://`, no credentials; empty = none. Validated by
-    /// `http::ProxyUrl::parse` on write and read once by [`proxy_url_in`] at
+    /// `http::ProxyUrl::parse` on write and read once by [`proxy_config_at`] at
     /// startup, so a change applies on the next launch. File-owned like
     /// `webview_gpu_disabled`: [`persist_overlay_settings`] carries it.
     pub proxy_url: String,
     /// Whether the trade client (pathofexile.com) uses `proxy_url` too
-    /// (POE-360); default on. Read once by [`proxy_trade_in`] at startup;
+    /// (POE-360); default on. Read once by [`proxy_config_at`] at startup;
     /// file-owned like `proxy_url`.
     #[serde(default = "default_proxy_trade")]
     pub proxy_trade: bool,
@@ -797,6 +797,8 @@ pub enum SaveError {
     Serialize(serde_json::Error),
     Write(PathBuf, std::io::Error),
     Rename(PathBuf, std::io::Error),
+    /// The existing file cannot be read or is not JSON, so it is left as is.
+    Unreadable(PathBuf),
 }
 
 impl std::fmt::Display for SaveError {
@@ -807,7 +809,27 @@ impl std::fmt::Display for SaveError {
             SaveError::Rename(path, e) => {
                 write!(f, "Failed to move settings into place at {:?}: {}", path, e)
             }
+            SaveError::Unreadable(path) => write!(
+                f,
+                "Settings not saved: the settings file at {:?} cannot be read, so it is left untouched",
+                path
+            ),
         }
+    }
+}
+
+/// Why the settings file's contents cannot be known.
+enum UnknownSettings {
+    Unreadable,
+    NotJson,
+}
+
+/// The settings file at `path` as JSON; `Ok(None)` when there is none.
+fn settings_json_at(path: &Path) -> Result<Option<serde_json::Value>, UnknownSettings> {
+    match fs::read_to_string(path) {
+        Ok(contents) => serde_json::from_str(&contents).map(Some).map_err(|_| UnknownSettings::NotJson),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(UnknownSettings::Unreadable),
     }
 }
 
@@ -845,13 +867,18 @@ fn save_to(path: &Path, settings: &Settings) -> Result<(), SaveError> {
 }
 
 /// Locked read-modify-write: `resolve` turns the load result into the current
-/// settings, `f` returns the settings to store.
+/// settings, `f` returns the settings to store. A file that exists but cannot
+/// be read or is not JSON is left untouched: overwriting it with defaults
+/// would drop a saved proxy nobody can see and unblock the next launch.
 fn update_at(
     path: &Path,
     resolve: impl FnOnce(Result<Settings, LoadError>) -> Settings,
     f: impl FnOnce(&Settings) -> Settings,
 ) -> Result<(), SaveError> {
     let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if settings_json_at(path).is_err() {
+        return Err(SaveError::Unreadable(path.to_path_buf()));
+    }
     let existing = resolve(load_from(path));
     save_to(path, &f(&existing))
 }
@@ -1285,24 +1312,34 @@ pub fn persist_overlay_settings(existing: &Settings, target: &mut Settings) {
     target.proxy_trade = existing.proxy_trade;
 }
 
-/// The `proxy_trade` flag in the settings file at `path`; on (the default)
-/// when unset or when the file is missing or invalid.
-pub fn proxy_trade_in(path: &std::path::Path) -> bool {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|contents| serde_json::from_str::<Settings>(&contents).ok())
-        .map_or_else(default_proxy_trade, |s| s.proxy_trade)
-}
-
-/// The raw `proxy_url` in the settings file at `path`; empty when unset or
-/// when the file is missing or invalid (the same silence as
-/// [`webview_gpu_disabled_in`]).
-pub fn proxy_url_in(path: &std::path::Path) -> String {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|contents| serde_json::from_str::<Settings>(&contents).ok())
-        .map(|s| s.proxy_url)
-        .unwrap_or_default()
+/// The proxy the settings file at `path` asks for, read narrowly so an
+/// unrelated bad field does not matter. No file (or no path) is a fresh
+/// install: direct. A file whose proxy cannot be known, or a saved proxy that
+/// cannot be used, blocks every transport.
+pub fn proxy_config_at(path: Option<&Path>) -> crate::http::ProxyConfig {
+    use crate::http::{ProxyConfig, ProxyMode, ProxyUrl};
+    let Some(path) = path else { return ProxyConfig::none() };
+    let json = match settings_json_at(path) {
+        Ok(Some(json)) => json,
+        Ok(None) => return ProxyConfig::none(),
+        Err(UnknownSettings::Unreadable) => {
+            return ProxyConfig { mode: ProxyMode::blocked("The settings file could not be read, so the saved proxy is unknown"), trade: true }
+        }
+        Err(UnknownSettings::NotJson) => {
+            return ProxyConfig { mode: ProxyMode::blocked("The settings file is not valid JSON, so the saved proxy is unknown"), trade: true }
+        }
+    };
+    let mode = match json.get("proxy_url") {
+        None => ProxyMode::Direct,
+        Some(serde_json::Value::String(raw)) => match ProxyUrl::parse(raw) {
+            Ok(None) => ProxyMode::Direct,
+            Ok(Some(proxy)) => ProxyMode::Via(proxy),
+            Err(e) => ProxyMode::blocked(&format!("The saved proxy is unusable: {e}")),
+        },
+        Some(_) => ProxyMode::blocked("The saved proxy is not text"),
+    };
+    let trade = json.get("proxy_trade").and_then(serde_json::Value::as_bool).unwrap_or_else(default_proxy_trade);
+    ProxyConfig { mode, trade }
 }
 
 /// Whether the settings file at `path` asks for GPU-free webview rendering.
@@ -1514,7 +1551,7 @@ pub(crate) mod tests {
         persist_overlay_settings(&existing, &mut target);
         let path = std::env::temp_dir().join("poe_test_proxy_url_saved.json");
         fs::write(&path, serde_json::to_string(&target).unwrap()).unwrap();
-        assert_eq!(proxy_url_in(&path), "socks5://127.0.0.1:1080");
+        assert_eq!(proxy_config_at(Some(&path)).mode, via("socks5://127.0.0.1:1080"));
         let _ = fs::remove_file(&path);
     }
 
@@ -1527,36 +1564,156 @@ pub(crate) mod tests {
         persist_overlay_settings(&existing, &mut target);
         let path = std::env::temp_dir().join("poe_test_proxy_trade_saved.json");
         fs::write(&path, serde_json::to_string(&target).unwrap()).unwrap();
-        assert!(!proxy_trade_in(&path));
+        assert!(!proxy_config_at(Some(&path)).trade);
         let _ = fs::remove_file(&path);
     }
 
-    #[test]
-    fn proxy_trade_in_reads_on_for_an_older_broken_or_missing_file() {
-        let dir = std::env::temp_dir().join("poe_test_proxy_trade_in");
-        fs::create_dir_all(&dir).unwrap();
-        let older = dir.join("older.json");
-        fs::write(&older, r#"{"proxy_url": "http://p:1"}"#).unwrap();
-        let broken = dir.join("broken.json");
-        fs::write(&broken, r#"{"proxy_trade": false"#).unwrap();
-        assert!(proxy_trade_in(&older));
-        assert!(proxy_trade_in(&broken));
-        assert!(proxy_trade_in(&dir.join("missing.json")));
+    /// A settings file holding `contents` in a fresh per-test directory.
+    fn proxy_settings_file(name: &str, contents: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("poe_test_proxy_cfg_{name}"));
         let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(SETTINGS_FILENAME);
+        fs::write(&path, contents).unwrap();
+        (dir, path)
+    }
+
+    fn proxy_mode_for(name: &str, contents: &str) -> crate::http::ProxyMode {
+        let (dir, path) = proxy_settings_file(name, contents);
+        let mode = proxy_config_at(Some(&path)).mode;
+        let _ = fs::remove_dir_all(&dir);
+        mode
+    }
+
+    fn via(raw: &str) -> crate::http::ProxyMode {
+        crate::http::ProxyMode::Via(crate::http::ProxyUrl::parse(raw).unwrap().unwrap())
     }
 
     #[test]
-    fn proxy_url_in_reads_empty_for_an_older_broken_or_missing_file() {
-        let dir = std::env::temp_dir().join("poe_test_proxy_url_in");
-        fs::create_dir_all(&dir).unwrap();
-        let older = dir.join("older.json");
-        fs::write(&older, r#"{"sidebar_open": false}"#).unwrap();
-        let broken = dir.join("broken.json");
-        fs::write(&broken, r#"{"proxy_url": "http://p:1""#).unwrap();
-        assert_eq!(proxy_url_in(&older), "");
-        assert_eq!(proxy_url_in(&broken), "");
-        assert_eq!(proxy_url_in(&dir.join("missing.json")), "");
+    fn proxy_config_for_a_missing_settings_file_is_direct() {
+        let dir = std::env::temp_dir().join("poe_test_proxy_cfg_missing");
         let _ = fs::remove_dir_all(&dir);
+        assert_eq!(proxy_config_at(Some(&dir.join(SETTINGS_FILENAME))), crate::http::ProxyConfig::none());
+    }
+
+    #[test]
+    fn proxy_config_without_a_settings_path_is_direct() {
+        assert_eq!(proxy_config_at(None), crate::http::ProxyConfig::none());
+    }
+
+    #[test]
+    fn proxy_config_for_a_settings_file_that_is_not_json_is_blocked() {
+        assert_eq!(
+            proxy_mode_for("not_json", r#"{"proxy_url": "http://p:1""#),
+            crate::http::ProxyMode::Blocked("The settings file is not valid JSON, so the saved proxy is unknown. Nothing is sent until you fix or clear the proxy in Settings and restart the app.".to_string())
+        );
+    }
+
+    /// A directory where the file should be: the read fails with an error
+    /// other than NotFound.
+    #[test]
+    fn proxy_config_for_an_unreadable_settings_file_is_blocked() {
+        let dir = std::env::temp_dir().join("poe_test_proxy_cfg_unreadable");
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join(SETTINGS_FILENAME);
+        fs::create_dir_all(&path).unwrap();
+        let mode = proxy_config_at(Some(&path)).mode;
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            mode,
+            crate::http::ProxyMode::Blocked("The settings file could not be read, so the saved proxy is unknown. Nothing is sent until you fix or clear the proxy in Settings and restart the app.".to_string())
+        );
+    }
+
+    #[test]
+    fn proxy_config_for_a_saved_proxy_with_another_scheme_is_blocked() {
+        assert_eq!(
+            proxy_mode_for("other_scheme", r#"{"proxy_url":"ftp://p:21"}"#),
+            crate::http::ProxyMode::Blocked("The saved proxy is unusable: Proxy must start with http://, https:// or socks5://. Nothing is sent until you fix or clear the proxy in Settings and restart the app.".to_string())
+        );
+    }
+
+    #[test]
+    fn proxy_config_for_a_saved_proxy_with_credentials_is_blocked() {
+        assert_eq!(
+            proxy_mode_for("credentials", r#"{"proxy_url":"http://user:pass@p:3128"}"#),
+            crate::http::ProxyMode::Blocked("The saved proxy is unusable: Proxy credentials are not supported: the app window (WebView2) cannot use them. Use socks5://host:port or http://host:port. Nothing is sent until you fix or clear the proxy in Settings and restart the app.".to_string())
+        );
+    }
+
+    #[test]
+    fn proxy_config_for_a_proxy_url_that_is_not_text_is_blocked() {
+        assert_eq!(
+            proxy_mode_for("not_text", r#"{"proxy_url":5}"#),
+            crate::http::ProxyMode::Blocked("The saved proxy is not text. Nothing is sent until you fix or clear the proxy in Settings and restart the app.".to_string())
+        );
+    }
+
+    #[test]
+    fn proxy_config_ignores_an_unrelated_bad_field() {
+        assert_eq!(
+            proxy_mode_for("unrelated_bad", r#"{"proxy_url":"http://p:3128","sidebar_open":"yes"}"#),
+            via("http://p:3128")
+        );
+    }
+
+    #[test]
+    fn proxy_config_without_a_proxy_url_is_direct() {
+        assert_eq!(proxy_mode_for("no_key", r#"{"sidebar_open":false}"#), crate::http::ProxyMode::Direct);
+    }
+
+    #[test]
+    fn proxy_config_for_a_blank_proxy_url_is_direct() {
+        assert_eq!(proxy_mode_for("blank", r#"{"proxy_url":"  "}"#), crate::http::ProxyMode::Direct);
+    }
+
+    #[test]
+    fn proxy_config_for_a_valid_saved_proxy_routes_through_it() {
+        assert_eq!(
+            proxy_mode_for("valid", r#"{"proxy_url":"socks5://127.0.0.1:1080"}"#),
+            via("socks5://127.0.0.1:1080")
+        );
+    }
+
+    #[test]
+    fn proxy_config_reads_trade_off() {
+        let (dir, path) = proxy_settings_file("trade_off", r#"{"proxy_url":"http://p:3128","proxy_trade":false}"#);
+        let trade = proxy_config_at(Some(&path)).trade;
+        let _ = fs::remove_dir_all(&dir);
+        assert!(!trade);
+    }
+
+    #[test]
+    fn proxy_config_trade_defaults_on_when_absent() {
+        let (dir, path) = proxy_settings_file("trade_absent", r#"{"proxy_url":"http://p:3128"}"#);
+        let trade = proxy_config_at(Some(&path)).trade;
+        let _ = fs::remove_dir_all(&dir);
+        assert!(trade);
+    }
+
+    /// A save over a file whose proxy is unknown would reset it to defaults
+    /// and unblock the next launch.
+    #[test]
+    fn an_update_leaves_a_settings_file_that_is_not_json_untouched() {
+        let (dir, path) = proxy_settings_file("update_not_json", r#"{"proxy_url": "http://p:1""#);
+        let result = update_at(&path, |loaded| loaded.unwrap_or_default(), |s| s.clone());
+        let bytes = fs::read_to_string(&path).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        assert!(matches!(result, Err(SaveError::Unreadable(_))), "got {:?}", result);
+        assert_eq!(bytes, r#"{"proxy_url": "http://p:1""#);
+    }
+
+    #[test]
+    fn an_update_leaves_an_unreadable_settings_file_untouched() {
+        let dir = std::env::temp_dir().join("poe_test_proxy_cfg_update_unreadable");
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join(SETTINGS_FILENAME);
+        fs::create_dir_all(&path).unwrap();
+        let result = update_at(&path, |loaded| loaded.unwrap_or_default(), |s| s.clone());
+        let still_dir = path.is_dir();
+        let _ = fs::remove_dir_all(&dir);
+        assert!(matches!(result, Err(SaveError::Unreadable(_))), "got {:?}", result);
+        assert!(still_dir);
     }
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};

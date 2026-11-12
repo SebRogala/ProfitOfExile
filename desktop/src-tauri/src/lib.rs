@@ -2016,11 +2016,16 @@ fn get_proxy_settings(app: AppHandle) -> ProxySettings {
     let saved = settings::load(&app);
     ProxySettings {
         saved: saved.proxy_url,
-        in_effect: in_effect.url.as_ref().map(|p| p.as_str().to_string()).unwrap_or_default(),
+        in_effect: match &in_effect.mode {
+            http::ProxyMode::Via(p) => p.as_str().to_string(),
+            _ => String::new(),
+        },
         saved_trade: saved.proxy_trade,
         trade_in_effect: in_effect.trade,
         updater_proxy: in_effect
             .for_transport(http::Transport::Other)
+            .ok()
+            .flatten()
             .map(http::ProxyUrl::for_http_clients)
             .unwrap_or_default(),
     }
@@ -3307,22 +3312,14 @@ pub fn run() {
         .is_some_and(settings::webview_gpu_disabled_in);
     // Also before the builder: the proxy goes into the WebView2 args and into
     // both reqwest clients below.
-    let (proxy_url, proxy_rejection) =
-        match http::ProxyUrl::parse(&settings_path.as_deref().map(settings::proxy_url_in).unwrap_or_default()) {
-            Ok(proxy) => (proxy, None),
-            Err(e) => (None, Some(e)),
-        };
-    let proxy_in_effect = http::ProxyConfig {
-        url: proxy_url,
-        trade: settings_path.as_deref().is_none_or(settings::proxy_trade_in),
-    };
+    let proxy_in_effect = settings::proxy_config_at(settings_path.as_deref());
     let prior = std::env::var(WEBVIEW2_ARGS_ENV).unwrap_or_default();
     if !prior.is_empty() {
         log::warn!("{} already set ({:?}); appending our flags", WEBVIEW2_ARGS_ENV, prior);
     }
     std::env::set_var(
         WEBVIEW2_ARGS_ENV,
-        webview2_browser_args(&prior, webview_gpu_disabled, proxy_in_effect.url.as_ref()),
+        webview2_browser_args(&prior, webview_gpu_disabled, &proxy_in_effect.mode),
     );
 
     let pair_code = generate_pair_code();
@@ -3543,12 +3540,12 @@ pub fn run() {
             if webview_gpu_disabled {
                 app_log(&handle, "WebView2 started with --disable-gpu (GPU-free rendering setting)".into());
             }
-            if let Some(proxy) = &proxy_in_effect.url {
+            if let http::ProxyMode::Via(proxy) = &proxy_in_effect.mode {
                 let trade = if proxy_in_effect.trade { "" } else { " (trade requests direct)" };
                 app_log(&handle, format!("Proxy in effect: {}{trade}", proxy.as_str()));
             }
-            if let Some(rejection) = &proxy_rejection {
-                app_log(&handle, format!("Saved proxy ignored, connecting directly: {rejection}"));
+            if let Some(reason) = proxy_in_effect.blocked_reason() {
+                app_log(&handle, format!("Proxy blocked, every connection refused: {reason}"));
             }
 
             // If saved Client.txt path doesn't exist, re-detect
@@ -3739,10 +3736,11 @@ const WEBVIEW2_ARGS_ENV: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
 /// alt-tab steals focus and Chromium's default backgrounding pauses timers and
 /// drops the SSE socket. `gpu_disabled` adds `--disable-gpu`
 /// (`Settings::webview_gpu_disabled`); `proxy` adds the proxy server and its
-/// local bypass list (`Settings::proxy_url`). A value the outer shell already set is
+/// local bypass list (`Settings::proxy_url`) or, when the saved proxy is
+/// unusable, a dead proxy that blocks every webview request. A value the outer shell already set is
 /// kept first: the variable is additive, and operators may set their own flags
 /// for debugging or workarounds.
-fn webview2_browser_args(prior: &str, gpu_disabled: bool, proxy: Option<&http::ProxyUrl>) -> String {
+fn webview2_browser_args(prior: &str, gpu_disabled: bool, proxy: &http::ProxyMode) -> String {
     let mut args = String::from(prior.trim());
     let mut push = |flag: &str| {
         if !args.is_empty() {
@@ -3754,8 +3752,8 @@ fn webview2_browser_args(prior: &str, gpu_disabled: bool, proxy: Option<&http::P
     if gpu_disabled {
         push("--disable-gpu");
     }
-    if let Some(proxy) = proxy {
-        push(&http::webview2_proxy_args(proxy));
+    if let Some(flags) = http::webview2_proxy_args(proxy) {
+        push(&flags);
     }
     args
 }
@@ -3777,14 +3775,14 @@ mod tests {
     #[test]
     fn webview2_browser_args_keeps_prior_flags_and_adds_gpu_flag_only_when_set() {
         let keepalive = "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows";
-        assert_eq!(webview2_browser_args("", false, None), keepalive);
-        assert_eq!(webview2_browser_args("", true, None), format!("{} --disable-gpu", keepalive));
+        assert_eq!(webview2_browser_args("", false, &crate::http::ProxyMode::Direct), keepalive);
+        assert_eq!(webview2_browser_args("", true, &crate::http::ProxyMode::Direct), format!("{} --disable-gpu", keepalive));
         assert_eq!(
-            webview2_browser_args("--remote-debugging-port=9222 ", true, None),
+            webview2_browser_args("--remote-debugging-port=9222 ", true, &crate::http::ProxyMode::Direct),
             format!("--remote-debugging-port=9222 {} --disable-gpu", keepalive)
         );
         assert_eq!(
-            webview2_browser_args("--remote-debugging-port=9222", false, None),
+            webview2_browser_args("--remote-debugging-port=9222", false, &crate::http::ProxyMode::Direct),
             format!("--remote-debugging-port=9222 {}", keepalive)
         );
     }
@@ -3796,13 +3794,22 @@ mod tests {
         let keepalive = "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows";
         let proxy = crate::http::ProxyUrl::parse("socks5://127.0.0.1:1080").unwrap().unwrap();
         assert_eq!(
-            webview2_browser_args("", true, Some(&proxy)),
+            webview2_browser_args("", true, &crate::http::ProxyMode::Via(proxy)),
             format!(
                 "{} --disable-gpu --proxy-server=socks5://127.0.0.1:1080 --proxy-bypass-list=localhost;127.0.0.1;[::1];*.localhost",
                 keepalive
             )
         );
-        assert!(!webview2_browser_args("", true, None).contains("--proxy"));
+        assert!(!webview2_browser_args("", true, &crate::http::ProxyMode::Direct).contains("--proxy"));
+    }
+
+    #[test]
+    fn webview2_browser_args_appends_the_blocked_flags_when_blocked() {
+        let keepalive = "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows";
+        assert_eq!(
+            webview2_browser_args("", false, &crate::http::ProxyMode::blocked("R")),
+            format!("{keepalive} --proxy-server=http://127.0.0.1:1 --proxy-bypass-list=localhost;127.0.0.1;[::1];*.localhost --host-resolver-rules=\"MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE *.localhost\"")
+        );
     }
 
     /// The bug the `on` argument exists for. The command was an

@@ -41,12 +41,14 @@ pub struct UpdateMetadata {
     raw_json: serde_json::Value,
 }
 
-/// The updater for one manifest, routed through `proxy` when one is in effect.
+/// The updater for one manifest, routed through `proxy` when one is in
+/// effect; `Err` (a blocked proxy) refuses before any builder exists.
 fn endpoint_updater<R: Runtime, M: Manager<R>>(
     manager: &M,
     endpoint: reqwest::Url,
-    proxy: Option<&crate::http::ProxyUrl>,
+    proxy: Result<Option<&crate::http::ProxyUrl>, &str>,
 ) -> Result<tauri_plugin_updater::Updater, String> {
+    let proxy = proxy.map_err(str::to_string)?;
     let mut builder = manager.updater_builder();
     if let Some(proxy) = proxy {
         builder = builder.proxy(reqwest::Url::parse(&proxy.for_http_clients()).map_err(|e| format!("bad proxy: {e}"))?);
@@ -158,7 +160,7 @@ mod tests {
         let (proxy_port, seen) = recording_listener();
         let proxy = ProxyUrl::parse(&format!("http://127.0.0.1:{proxy_port}")).unwrap().unwrap();
         let endpoint = reqwest::Url::parse("http://beta.invalid/latest.json").unwrap();
-        let updater = endpoint_updater(app.handle(), endpoint, Some(&proxy)).unwrap();
+        let updater = endpoint_updater(app.handle(), endpoint, Ok(Some(&proxy))).unwrap();
         let _ = updater.check().await;
         assert_eq!(
             seen.recv_timeout(Duration::from_secs(5)).unwrap(),
@@ -189,8 +191,15 @@ mod tests {
         });
         let proxy = ProxyUrl::parse(&format!("socks5://127.0.0.1:{port}")).unwrap().unwrap();
         let endpoint = reqwest::Url::parse("http://beta.invalid/latest.json").unwrap();
-        let updater = endpoint_updater(app.handle(), endpoint, Some(&proxy)).unwrap();
+        let updater = endpoint_updater(app.handle(), endpoint, Ok(Some(&proxy))).unwrap();
         let _ = tokio::time::timeout(Duration::from_secs(3), updater.check()).await;
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), 0x03, "address type must be a domain name");
+    }
+
+    #[tokio::test]
+    async fn endpoint_updater_refuses_a_blocked_proxy() {
+        let app = app();
+        let endpoint = reqwest::Url::parse("http://beta.invalid/latest.json").unwrap();
+        assert_eq!(endpoint_updater(app.handle(), endpoint, Err("R")).err(), Some("R".to_string()));
     }
 }
