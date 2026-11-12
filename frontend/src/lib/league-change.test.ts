@@ -88,27 +88,73 @@ describe('connectMercure league hint on stream open', () => {
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
 	});
 
-	it('asks for no league check on the first open', async () => {
-		const onLeagueActive = vi.fn();
-		const connection = connectMercure(vi.fn(), undefined, onLeagueActive);
+	async function open(handlers: Parameters<typeof connectMercure>[0]) {
+		const connection = connectMercure(handlers);
 		await vi.advanceTimersByTimeAsync(0);
+		return connection;
+	}
+
+	it('calls onOpen once on the first open without a league payload', async () => {
+		const onOpen = vi.fn();
+		const onLeagueActive = vi.fn();
+		const connection = await open({ onUpdate: vi.fn(), onOpen, onLeagueActive });
 		opened[0].onopen!();
+		expect(onOpen).toHaveBeenCalledTimes(1);
 		expect(onLeagueActive).not.toHaveBeenCalled();
 		connection.close();
 	});
 
-	it('asks for a league check without a league when the stream reopens', async () => {
+	it('calls onOpen once per open across a reopen, and nothing else', async () => {
 		const onUpdate = vi.fn();
+		const onOpen = vi.fn();
 		const onLeagueActive = vi.fn();
-		const connection = connectMercure(onUpdate, undefined, onLeagueActive);
-		await vi.advanceTimersByTimeAsync(0);
+		const connection = await open({ onUpdate, onOpen, onLeagueActive });
 		opened[0].onopen!();
 		opened[0].onerror!();
 		await vi.advanceTimersByTimeAsync(2000);
 		expect(opened).toHaveLength(2);
 		opened[1].onopen!();
-		expect(onLeagueActive.mock.calls).toEqual([[]]);
+		expect(onOpen).toHaveBeenCalledTimes(2);
+		expect(onLeagueActive).not.toHaveBeenCalled();
 		expect(onUpdate).not.toHaveBeenCalled();
+		connection.close();
+	});
+
+	it('calls onOpen after reporting the connection up', async () => {
+		const events: string[] = [];
+		let connectedAtOpen: boolean | undefined;
+		const connection = await open({
+			onUpdate: vi.fn(),
+			onConnectionChange: (connected) => events.push(`connected:${connected}`),
+			onOpen: () => {
+				events.push('open');
+				connectedAtOpen = connection.connected;
+			},
+		});
+		opened[0].onopen!();
+		expect(events).toEqual(['connected:true', 'open']);
+		expect(connectedAtOpen).toBe(true);
+		connection.close();
+	});
+
+	it('does not call onOpen before the stream opens', async () => {
+		const onOpen = vi.fn();
+		const connection = await open({ onUpdate: vi.fn(), onOpen });
+		expect(opened).toHaveLength(1);
+		expect(onOpen).not.toHaveBeenCalled();
+		connection.close();
+	});
+
+	it('routes a league-active message to onLeagueActive only', async () => {
+		const onUpdate = vi.fn();
+		const onOpen = vi.fn();
+		const onLeagueActive = vi.fn();
+		const connection = await open({ onUpdate, onOpen, onLeagueActive });
+		const payload = { topic: 'poe/league/active', league: 'Keepers', leagueRevision: 4 };
+		opened[0].onmessage!({ data: JSON.stringify(payload) } as MessageEvent);
+		expect(onLeagueActive.mock.calls).toEqual([[payload]]);
+		expect(onUpdate).not.toHaveBeenCalled();
+		expect(onOpen).not.toHaveBeenCalled();
 		connection.close();
 	});
 });

@@ -218,30 +218,35 @@
 
 		// Connect to Mercure SSE for live updates — reloads all data on event,
 		// debounced and jittered so clients do not reload in lockstep.
-		mercure = connectMercure(() => {
-			console.log('[Dashboard] Mercure event — scheduling reload');
-			debouncedMercureUpdate();
-		}, (connected) => {
-			if (status) {
-				status = { ...status, connected };
-			}
-		}, (data) => {
-			// No status yet means the first loadAll() is still in flight and will
-			// read the current league itself.
-			if (!status) return;
-			const held = status.league;
-			if (data === undefined) {
-				// Stream reopened: the league is unknown until the status is re-read.
-				serverLeagueDiffers(held).then((differs) => {
+		mercure = connectMercure({
+			onUpdate: () => {
+				console.log('[Dashboard] Mercure event — scheduling reload');
+				debouncedMercureUpdate();
+			},
+			onConnectionChange: (connected) => {
+				if (status) {
+					status = { ...status, connected };
+				}
+			},
+			onOpen: () => {
+				// No status yet means the first loadAll() is still in flight and will
+				// read the current league itself.
+				if (!status) return;
+				// The league is unknown until the status is re-read.
+				serverLeagueDiffers(status.league).then((differs) => {
 					if (differs) {
 						console.log('[Dashboard] active league changed while disconnected — scheduling reload');
 						debouncedMercureUpdate();
 					}
 				});
-			} else if (isLeagueChange(data, held)) {
-				console.log('[Dashboard] active league changed — scheduling reload');
-				debouncedMercureUpdate();
-			}
+			},
+			onLeagueActive: (data) => {
+				if (!status) return;
+				if (isLeagueChange(data, status.league)) {
+					console.log('[Dashboard] active league changed — scheduling reload');
+					debouncedMercureUpdate();
+				}
+			},
 		});
 
 		return () => {

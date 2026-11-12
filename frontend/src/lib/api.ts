@@ -649,7 +649,7 @@ export function isLeagueChange(data: unknown, heldLeague: string): boolean {
 	return typeof league === 'string' && league !== heldLeague;
 }
 
-// Re-reads the served league after a stream reopen, when the boot event may have
+// Re-reads the served league after a stream open, when the boot event may have
 // been published while this client was disconnected. fetchStatus() reports a
 // failed read as league '', which is no evidence of a change.
 export async function serverLeagueDiffers(heldLeague: string): Promise<boolean> {
@@ -657,7 +657,32 @@ export async function serverLeagueDiffers(heldLeague: string): Promise<boolean> 
 	return league !== '' && league !== heldLeague;
 }
 
-export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLeagueActive?: (data?: any) => void): MercureConnection {
+/** Callbacks for {@link connectMercure}; see its doc for the routing. */
+export interface MercureHandlers {
+	/** Every topic without a dedicated handler. */
+	onUpdate: () => void;
+	/** Every stream open. */
+	onOpen?: () => void;
+	/** Connection state, debounced by 5s on the way down. */
+	onConnectionChange?: (connected: boolean) => void;
+	onLeagueActive?: (data: any) => void;
+}
+
+/**
+ * Open the Mercure SSE stream and keep it open (token refresh, backoff,
+ * visibility-aware reconnect).
+ *
+ * `poe/league/active` reaches `onLeagueActive` only; trade events go to the
+ * trade dispatcher; everything else calls `onUpdate`.
+ *
+ * `handlers.onOpen` fires on every stream open, after `onConnectionChange(true)`:
+ * the server publishes `poe/league/active` once at boot, which a client still
+ * reconnecting to the restarted server misses, so an open is itself a league
+ * hint whose league is unknown. `onLeagueActive` receives only that topic's
+ * payloads. Handlers left out drop their topic's events.
+ */
+export function connectMercure(handlers: MercureHandlers): MercureConnection {
+	const { onUpdate, onOpen, onConnectionChange, onLeagueActive } = handlers;
 	const state: MercureConnection = { close: () => {}, connected: false };
 	let eventSource: EventSource | null = null;
 	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -668,11 +693,6 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	// connection — see the guard after the token fetch in connect(), and
 	// frontend/src/lib/desktopBridge.ts, which carries the same flag.
 	let closed = false;
-	// A reopen calls onLeagueActive() without a payload: the server publishes
-	// LEAGUE_ACTIVE_TOPIC once at boot, which a client still reconnecting to the
-	// restarted server misses. The first open needs no check — the page has just
-	// read the league itself.
-	let hasOpened = false;
 
 	// Attempts spent in the fast lane before the delay escalates. 2s/4s/8s/10s/10s
 	// recovers quickly from a deploy; a longer outage should not keep costing a
@@ -767,8 +787,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				// successful token fetch, which pinned a stream that opens and then fails
 				// at a permanent 4s retry — the backoff never escalated.
 				retries = 0;
-				if (hasOpened) onLeagueActive?.();
-				hasOpened = true;
+				onOpen?.();
 			};
 
 			eventSource.onmessage = (msg) => {

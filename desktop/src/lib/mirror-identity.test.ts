@@ -52,7 +52,7 @@ const ROOTS: MirrorRoot[] = [
 		identical: ['trade-utils.ts', 'trade-utils.test.ts', 'price.svelte.ts', 'session-queue.ts', 'comparator/league-fence.ts', 'comparator/league-fence.test.ts'],
 		divergent: {
 			'api.ts':
-				'transport halves: desktop Tauri base/headers + 5 topics; web same-origin + 2 topics + trade dispatch; web connectMercure keeps positional callbacks and a reopen-only league hint until POE-345 WI-3',
+				'shared open contract (MercureHandlers names, onOpen on every open after onConnectionChange(true)); bodies differ by topic set (desktop 5, web 2), web trade dispatch, and token base/headers (desktop Tauri, web same-origin)',
 			'tradeApi.ts': 'desktop native trade queue vs web HTTP lookup + listener/poll',
 			'icons.ts': 'desktop configured server base vs web same-origin /api',
 			'tooltips.ts': 'desktop also carries the Currency Exchange EXCHANGE_TOOLTIPS table; the web has no exchange page',
