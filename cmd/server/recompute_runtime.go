@@ -78,6 +78,7 @@ type recomputeRuntime struct {
 	tradeTick             func(context.Context, []byte)
 	updateRate            func(context.Context)
 	refreshOfferingTiming func(context.Context)
+	latestSnapshotTimes   func(context.Context, league.Scope) (time.Time, time.Time, error)
 
 	subscriberFactory runtimeSubscriberFactory
 	timerFactory      runtimeTimerFactory
@@ -291,28 +292,33 @@ func (r *recomputeRuntime) seedCaches() {
 	qCtx, cancel := context.WithTimeout(r.ctx, 5*time.Second)
 	defer cancel()
 
-	// Estimate next fetch from the interval between last two gem snapshots.
-	var lastSnap, prevSnap time.Time
-	if err := r.pool.QueryRow(qCtx,
-		`SELECT time FROM gem_snapshots WHERE league = $1 ORDER BY time DESC LIMIT 1`, r.scope.ID(),
-	).Scan(&lastSnap); err == nil && !lastSnap.IsZero() {
-		// Find the previous distinct snapshot time.
-		_ = r.pool.QueryRow(qCtx,
-			`SELECT time FROM gem_snapshots WHERE league = $1 AND time < $2 ORDER BY time DESC LIMIT 1`, r.scope.ID(), lastSnap,
-		).Scan(&prevSnap)
+	r.seedNextFetch(qCtx)
+	r.seedDivineRate(qCtx)
+}
 
-		var interval time.Duration
-		if !prevSnap.IsZero() {
-			interval = lastSnap.Sub(prevSnap)
-		}
-		if interval < 10*time.Minute || interval > 2*time.Hour {
-			interval = 30 * time.Minute // sane fallback
-		}
-		nextFetch := lastSnap.Add(interval)
-		r.labCache.For(r.scope).SetNextFetch(nextFetch)
-		slog.Info("startup: seeded nextFetch", "lastSnap", lastSnap, "interval", interval, "nextFetch", nextFetch)
+// seedNextFetch estimates the next fetch from the interval between the last
+// two gem snapshots.
+func (r *recomputeRuntime) seedNextFetch(ctx context.Context) {
+	if r.latestSnapshotTimes == nil {
+		return
 	}
+	lastSnap, prevSnap, err := r.latestSnapshotTimes(ctx, r.scope)
+	if err != nil || lastSnap.IsZero() {
+		return
+	}
+	var interval time.Duration
+	if !prevSnap.IsZero() {
+		interval = lastSnap.Sub(prevSnap)
+	}
+	if interval < 10*time.Minute || interval > 2*time.Hour {
+		interval = 30 * time.Minute // sane fallback
+	}
+	nextFetch := lastSnap.Add(interval)
+	r.labCache.For(r.scope).SetNextFetch(nextFetch)
+	slog.Info("startup: seeded nextFetch", "lastSnap", lastSnap, "interval", interval, "nextFetch", nextFetch)
+}
 
+func (r *recomputeRuntime) seedDivineRate(qCtx context.Context) {
 	// Seed divine rate.
 	var divRate float64
 	if err := r.pool.QueryRow(qCtx,

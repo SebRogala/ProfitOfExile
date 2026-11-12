@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"profitofexile/internal/exchange"
+	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 	"profitofexile/internal/server"
 )
@@ -768,5 +769,50 @@ func TestAdaptDelayedLockResult_preservesNilSkip(t *testing.T) {
 	}
 	if skip != "league changed" || err != nil {
 		t.Fatalf("adapted skip = (%v, %q, %v), want (nil, %q, nil)", lock, skip, err, "league changed")
+	}
+}
+
+var seedNextFetchLast = time.Date(2099, 4, 1, 12, 0, 0, 0, time.UTC)
+
+// seedNextFetchWith runs seedNextFetch against a fake snapshot pair whose
+// previous time sits interval before seedNextFetchLast, and returns NextFetch.
+func seedNextFetchWith(interval time.Duration, err error) time.Time {
+	scope := league.Historical("seed-next-fetch")
+	labCache := lab.NewCache(scope)
+	r := &recomputeRuntime{scope: scope, labCache: labCache,
+		latestSnapshotTimes: func(context.Context, league.Scope) (time.Time, time.Time, error) {
+			return seedNextFetchLast, seedNextFetchLast.Add(-interval), err
+		}}
+	r.seedNextFetch(context.Background())
+	return labCache.For(scope).NextFetch()
+}
+
+func assertNextFetchInterval(t *testing.T, got time.Time, want time.Duration) {
+	t.Helper()
+	if wantAt := seedNextFetchLast.Add(want); !got.Equal(wantAt) {
+		t.Fatalf("NextFetch = %v, want last snapshot + %v = %v", got, want, wantAt)
+	}
+}
+
+func TestSeedNextFetch_IntervalBelowTenMinutesFallsBackToThirty(t *testing.T) {
+	assertNextFetchInterval(t, seedNextFetchWith(9*time.Minute, nil), 30*time.Minute)
+}
+
+func TestSeedNextFetch_IntervalOfExactlyTenMinutesIsKept(t *testing.T) {
+	assertNextFetchInterval(t, seedNextFetchWith(10*time.Minute, nil), 10*time.Minute)
+}
+
+func TestSeedNextFetch_IntervalOfExactlyTwoHoursIsKept(t *testing.T) {
+	assertNextFetchInterval(t, seedNextFetchWith(2*time.Hour, nil), 2*time.Hour)
+}
+
+func TestSeedNextFetch_IntervalAboveTwoHoursFallsBackToThirty(t *testing.T) {
+	assertNextFetchInterval(t, seedNextFetchWith(2*time.Hour+time.Minute, nil), 30*time.Minute)
+}
+
+func TestSeedNextFetch_FirstQueryErrorSeedsNothing(t *testing.T) {
+	got := seedNextFetchWith(45*time.Minute, errors.New("query failed"))
+	if !got.IsZero() {
+		t.Fatalf("NextFetch = %v, want zero time when the snapshot query fails", got)
 	}
 }

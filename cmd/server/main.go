@@ -339,6 +339,7 @@ func main() {
 		labCache.For(scope).SetDivineRate(rate)
 		slog.Info("currency event: divine rate updated", "rate", rate)
 	}
+	runtime.latestSnapshotTimes = labRepo.LatestTwoSnapshotTimes
 	runtime.refreshOfferingTiming = func(_ context.Context) {
 		qCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
