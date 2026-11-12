@@ -2,15 +2,11 @@
 	import { untrack } from 'svelte';
 	import {
 		fetchStatus,
-		fetchBestPlays,
 		fetchMarketOverview,
 		connectMercure,
 		isLeagueChange,
 		serverLeagueDiffers,
-		VARIANTS,
-		DEDICATION_VARIANTS,
 		type StatusData,
-		type GemPlay,
 		type MarketOverviewData,
 		type MercureConnection,
 	} from '$lib/api';
@@ -38,7 +34,7 @@
 	let selectedLab = $state(restoreLabMode());
 
 	let status = $state<StatusData | null>(null);
-	let bestPlays = $state<GemPlay[]>([]);
+	let rankingsRefresh = $state(0);
 	let marketOverview = $state<MarketOverviewData | null>(null);
 	let loading = $state(true);
 	let error = $state('');
@@ -49,7 +45,7 @@
 	// --- Mercure debounce + jitter ---
 	// The 2s debounce mirrors the desktop dashboard (MERCURE_DEBOUNCE_MS in
 	// desktop/src/lib/pages/LabPage.svelte): a burst of publishes collapses into a
-	// single reload instead of one six-request loadAll() per event.
+	// single reload instead of one loadAll() per event.
 	//
 	// The jitter is the part the debounce alone does not solve. A fixed per-client
 	// delay does not spread a herd, it aligns one — every client receives the same
@@ -159,33 +155,13 @@
 	async function loadAll() {
 		try {
 			error = '';
-			// Fetch per variant rather than one global top-100. The server ranks
-			// across all variants, so a single capped list let the best-ranking
-			// variants crowd the others out — By Variant then showed 23 of 88
-			// available rows for 1/0 while 1/20 took 60 slots (POE-132). Merging
-			// four per-variant lists is a superset of the old global list, so the
-			// Best Plays section is unaffected beyond seeing more candidates.
-			//
-			// Four requests, not one per tab: this replaces the global fetch rather
-			// than adding to it, so page load goes from 3 concurrent requests to 6.
-			// Commit 3e2f28d removed a 10+ request fan-out that caused
-			// ERR_INSUFFICIENT_RESOURCES; six stays well under that.
-			// Dedication ranks its own two corrupted markets and pools them by
-			// skill/transfigured, so that mode fetches those instead of the four
-			// normal variants — the normal rows would price gems against a market
-			// the Dedication view never shows.
-			const rankingRequests = isDedication
-				? DEDICATION_VARIANTS.map((v) => fetchBestPlays(v, undefined, undefined, 100, undefined, 'dedication'))
-				: VARIANTS.map((v) => fetchBestPlays(v, undefined, undefined, 100));
-			const [s, mo, ...perVariant] = await Promise.all([
-				fetchStatus(),
-				fetchMarketOverview(),
-				...rankingRequests,
-			]);
+			// The rankings table fetches its own page (ByVariant); a bump here makes
+			// it refetch, so a Mercure update still refreshes it.
+			rankingsRefresh++;
+			const [s, mo] = await Promise.all([fetchStatus(), fetchMarketOverview()]);
 			status = s;
 			// One rate for every price on screen — see $lib/price.svelte.
 			setDivineRate(s?.divinePrice ?? 0);
-			bestPlays = perVariant.flat();
 			marketOverview = mo;
 
 			// Update connection status from Mercure
@@ -213,7 +189,7 @@
 		// untracked: loadAll reads selectedLab (through isDedication) to choose
 		// which markets to rank, and a tracked read would make every lab-mode
 		// toggle re-run this effect — closing and reopening the SSE stream and
-		// firing the six-request fan-out a second time.
+		// firing the reload a second time.
 		untrack(() => loadAll());
 
 		// Connect to Mercure SSE for live updates — reloads all data on event,
@@ -305,7 +281,7 @@
 			onRefresh={handleRefreshQueue}
 		/>
 
-		<ByVariant allPlays={bestPlays} league={status?.league || ''} labMode="dedication" />
+		<ByVariant {rankingsRefresh} league={status?.league || ''} labMode="dedication" />
 	{:else if !loading}
 		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} />
 
@@ -316,7 +292,7 @@
 			onRefresh={handleRefreshQueue}
 		/>
 
-		<ByVariant allPlays={bestPlays} league={status?.league || ''} />
+		<ByVariant {rankingsRefresh} league={status?.league || ''} />
 
 		<FontEVCompare {refreshKey} league={status?.league || ''} />
 

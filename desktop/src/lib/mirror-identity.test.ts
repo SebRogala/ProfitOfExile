@@ -53,6 +53,7 @@ const ROOTS: MirrorRoot[] = [
 		divergent: {
 			'api.ts':
 				'shared open contract (MercureHandlers names, onOpen on every open after onConnectionChange(true)); bodies differ by topic set (desktop 5, web 2), web trade dispatch, and token base/headers (desktop Tauri, web same-origin)',
+			'api.test.ts': 'desktop mocks Tauri invoke/proxy; web stubs fetch; the shared collectiveParams cases are identical',
 			'tradeApi.ts': 'desktop native trade queue vs web HTTP lookup + listener/poll',
 			'icons.ts': 'desktop configured server base vs web same-origin /api',
 			'tooltips.ts': 'desktop also carries the Currency Exchange EXCHANGE_TOOLTIPS table; the web has no exchange page',

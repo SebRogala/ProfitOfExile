@@ -411,6 +411,61 @@ export async function fetchBestPlays(
 	return (resp.data || []).map(mapCollectiveRow);
 }
 
+export type RankingsSort = 'price' | 'roi' | 'riskAdjusted' | 'roiPercent';
+
+/** The rankings controls, as one paged `/analysis/collective` request. */
+export interface RankingsQuery {
+	mode: 'normal' | 'dedication';
+	/** Normal: 'ALL' or a variant. Dedication: the tab's market. */
+	tab: string;
+	/** Dedication tab pool; Normal leaves it unset. */
+	pool?: DedicationPool;
+	color: string;
+	budget: number;
+	pageSize: number;
+	sort: RankingsSort;
+	showLowConf: boolean;
+	search?: string;
+}
+
+const RANKINGS_SORT_PARAM: Record<RankingsSort, string> = {
+	price: 'price',
+	roi: 'roi',
+	riskAdjusted: 'weightedRoi',
+	roiPercent: 'roiPct',
+};
+
+/**
+ * Request params for one rankings page. A search names its gem explicitly, so
+ * it carries no colour, budget, low-confidence or pool filter, and the server
+ * ignores its pageSize (which still selects paged mode).
+ */
+export function collectiveParams(q: RankingsQuery): Record<string, string> {
+	const params: Record<string, string> = {};
+	if (q.mode === 'dedication') {
+		params.mode = 'dedication';
+		params.variant = q.tab;
+	}
+	if (q.search) {
+		params.search = q.search;
+	} else {
+		if (q.mode === 'normal' && q.tab !== 'ALL') params.variant = q.tab;
+		if (q.mode === 'dedication' && q.pool) params.pool = q.pool;
+		if (q.color && q.color !== 'ALL') params.color = q.color;
+		if (q.budget > 0) params.budget = String(q.budget);
+		if (!q.showLowConf) params.hideLowConfidence = 'true';
+	}
+	params.pageSize = String(q.pageSize);
+	params.sort = RANKINGS_SORT_PARAM[q.sort];
+	return params;
+}
+
+export async function fetchRankingsPage(q: RankingsQuery): Promise<{ rows: GemPlay[]; total: number }> {
+	const resp = await get<{ total?: number; data: any[] }>('/analysis/collective', collectiveParams(q));
+	const rows = (resp.data || []).map(mapCollectiveRow);
+	return { rows, total: resp.total ?? rows.length };
+}
+
 export async function fetchVariantPlays(variant: string): Promise<GemPlay[]> {
 	return fetchBestPlays(variant);
 }
