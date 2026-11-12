@@ -1244,20 +1244,33 @@ pub trait TextRecognizer {
 /// pixel this rounds outward for: at 2×, `x = 1, w = 2` covers source columns
 /// 0 and 1, and a size-only ceiling gives `w = 1`, dropping column 1.
 ///
-/// `upscale` is [`crate::capture::OCR_UPSCALE`] at every production call site;
-/// it is a parameter so the arithmetic can be checked against a factor the
-/// test states rather than against the constant the function already uses.
-pub fn descaled(line: OcrLineBox, upscale: i32) -> OcrLineBox {
-    let far = |v: i32| v.div_euclid(upscale) + i32::from(v.rem_euclid(upscale) != 0);
-    let x = line.x.div_euclid(upscale);
-    let y = line.y.div_euclid(upscale);
+/// `upscale` is the factor actually applied on each axis, as [`applied_upscale`]
+/// measures it: 2 on every crop that fits the OCR engine's size limit, and a
+/// fractional factor on one that was clamped (POE-361). The outward rounding
+/// holds for both.
+pub fn descaled(line: OcrLineBox, upscale: (f64, f64)) -> OcrLineBox {
+    let (sx, sy) = upscale;
+    let near = |v: i32, s: f64| (v as f64 / s).floor() as i32;
+    let far = |v: i32, s: f64| (v as f64 / s).ceil() as i32;
+    let x = near(line.x, sx);
+    let y = near(line.y, sy);
     OcrLineBox {
         x,
         y,
-        w: (far(line.x + line.w) - x).max(1),
-        h: (far(line.y + line.h) - y).max(1),
+        w: (far(line.x + line.w, sx) - x).max(1),
+        h: (far(line.y + line.h, sy) - y).max(1),
         text: line.text,
     }
+}
+
+/// The upscale [`crate::capture::preprocess_for_ocr`] applied, per axis, read
+/// off the processed image's dimensions against the crop's. Measured rather
+/// than assumed because the factor is clamped on a crop that would exceed the
+/// OCR engine's size limit, and a floored side makes the two axes differ by a
+/// hair.
+pub fn applied_upscale(crop: (u32, u32), prepared: (u32, u32)) -> (f64, f64) {
+    let ratio = |p: u32, c: u32| if c == 0 { 1.0 } else { p as f64 / c as f64 };
+    (ratio(prepared.0, crop.0), ratio(prepared.1, crop.1))
 }
 
 /// Move an OCR box out of a crop's pixels and into the capture's, given where
@@ -1285,7 +1298,7 @@ pub fn translated(line: OcrLineBox, origin: (i32, i32)) -> OcrLineBox {
 /// has a non-Windows arm that returns `Err(UNAVAILABLE)`, so duplicating the
 /// gate would only add a second place for the two arms to diverge.
 ///
-/// The 2× descale is HERE and nowhere else, because this is the only place
+/// The descale is HERE and nowhere else, because this is the only place
 /// that knows the engine was handed a preprocessed image rather than the crop
 /// itself. Its boxes are therefore in the CROP's pixels; [`crop_lines`] is
 /// what takes them the last step, into the capture's.
@@ -1294,9 +1307,10 @@ pub struct SystemOcr;
 impl TextRecognizer for SystemOcr {
     fn recognize(&self, img: &DynamicImage) -> Result<Vec<OcrLineBox>, String> {
         let prepared = crate::capture::preprocess_for_ocr(img);
+        let upscale = applied_upscale((img.width(), img.height()), (prepared.width(), prepared.height()));
         Ok(crate::ocr::recognize_lines(&prepared)?
             .into_iter()
-            .map(|line| descaled(line, crate::capture::OCR_UPSCALE as i32))
+            .map(|line| descaled(line, upscale))
             .collect())
     }
 }
@@ -2358,7 +2372,7 @@ mod tests {
     fn an_ocr_box_is_halved_out_of_the_2x_preprocessed_space() {
         let got = descaled(
             OcrLineBox { text: "Tombs".to_string(), x: 240, y: 500, w: 160, h: 40 },
-            2,
+            (2.0, 2.0),
         );
 
         assert_eq!((got.x, got.y, got.w, got.h), (120, 250, 80, 20));
@@ -2377,7 +2391,7 @@ mod tests {
     fn an_odd_ocr_box_rounds_outward_rather_than_truncating() {
         let got = descaled(
             OcrLineBox { text: "Tombs".to_string(), x: 241, y: 501, w: 161, h: 41 },
-            2,
+            (2.0, 2.0),
         );
 
         assert_eq!((got.x, got.y), (120, 250), "the origin rounds down");
@@ -2396,7 +2410,7 @@ mod tests {
     fn an_odd_origin_with_an_even_size_keeps_its_far_edge() {
         let got = descaled(
             OcrLineBox { text: "I".to_string(), x: 1, y: 3, w: 2, h: 2 },
-            2,
+            (2.0, 2.0),
         );
 
         assert_eq!((got.x, got.y), (0, 1));
@@ -2405,6 +2419,37 @@ mod tests {
             (2, 2),
             "the box must still reach the source pixel its far edge covered",
         );
+    }
+
+    // A clamped crop (POE-361) is descaled by a FRACTIONAL factor, still
+    // outward: at 1.5×, a box spanning x 3..9 (w 6) of the processed image
+    // covers source columns 2..6, so x = 2 and the far edge ceil(9 / 1.5) = 6.
+    // y 4..7 at 1.5 covers source rows floor(2.67) = 2 to ceil(4.67) = 5.
+    //
+    // Fails if the factor is rounded to an integer (1 or 2 give other boxes),
+    // or if the near edge rounds to nearest instead of down.
+    #[test]
+    fn a_box_from_a_clamped_crop_is_descaled_outward_by_the_fractional_factor() {
+        let got = descaled(
+            OcrLineBox { text: "Tombs".to_string(), x: 3, y: 4, w: 6, h: 3 },
+            (1.5, 1.5),
+        );
+
+        assert_eq!((got.x, got.y, got.w, got.h), (2, 2, 4, 3));
+    }
+
+    // The factor is measured per axis off the dimensions, so a 2× crop
+    // reports exactly 2 and a clamped 6880×96 band reports the clamp it got.
+    //
+    // Fails if the measure returns the constant 2 (the pre-POE-361 descale),
+    // or swaps the axes.
+    #[test]
+    fn the_applied_upscale_is_measured_off_the_prepared_dimensions() {
+        assert_eq!(applied_upscale((683, 641), (1366, 1282)), (2.0, 2.0));
+
+        let (sx, sy) = applied_upscale((6880, 96), (10000, 139));
+        assert!((sx - 10000.0 / 6880.0).abs() < 1e-12, "x factor {sx}");
+        assert!((sy - 139.0 / 96.0).abs() < 1e-12, "y factor {sy}");
     }
 
     // The second step: a crop's own pixels are not the capture's. The origin

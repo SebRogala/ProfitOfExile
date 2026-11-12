@@ -254,6 +254,23 @@ mod platform {
         get_or_create_engine().map(|_| ())
     }
 
+    /// `OcrEngine::MaxImageDimension()`: the largest width or height the engine
+    /// accepts (POE-361). Read once per process. An image over it fails with
+    /// "Image dimensions are too large!", which is what a 6880-wide gem band
+    /// upscaled 2x hit. `None` when the read itself fails; the caller then
+    /// leaves the upscale unclamped, and an oversize image fails at
+    /// `RecognizeAsync` with the engine's own error rather than silently.
+    pub fn max_image_dimension() -> Option<u32> {
+        static LIMIT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+        *LIMIT.get_or_init(|| match OcrEngine::MaxImageDimension() {
+            Ok(limit) => Some(limit),
+            Err(e) => {
+                log::warn!("OCR: MaxImageDimension read failed: {e}");
+                None
+            }
+        })
+    }
+
     /// Recognize text as LINES WITH RECTS (POE-165 D2).
     ///
     /// `recognize_text` returns strings only, which is enough for the gem and
@@ -372,6 +389,11 @@ mod platform {
 
     pub fn engine_ready() -> Result<(), String> {
         Err(UNAVAILABLE.to_string())
+    }
+
+    /// No engine, so no limit; the upscale stays unclamped.
+    pub fn max_image_dimension() -> Option<u32> {
+        None
     }
 
     pub fn engine_report() -> String {

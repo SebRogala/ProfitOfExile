@@ -389,27 +389,58 @@ mod platform {
 pub use platform::*;
 
 /// The factor [`preprocess_for_ocr`] and [`preprocess_for_ocr_fast`] upscale
-/// every crop by, on both axes.
+/// a crop by, on both axes, whenever the result fits the OCR engine's
+/// `MaxImageDimension`; [`ocr_upscale_factor`] lowers it for a crop that would
+/// not (POE-361).
 ///
-/// A constant rather than the two literals it replaced because a *caller* now
-/// has to undo it: `crate::ocr::recognize_lines` reports each line's box in the
-/// pixels of the image it was handed, so a caller that preprocesses first gets
-/// boxes at twice the crop's coordinates and has to divide them back
-/// (`temple::panel::descaled`, POE-243). One place multiplying and another
-/// dividing by independently-written 2s is one edit away from boxes at half or
-/// double the truth, which draws in the wrong place rather than failing.
-///
-/// The merc hover tick undoes the same upscale a DIFFERENT way — it measures
-/// the ratio off the processed image's own dimensions
-/// (`mercenary::run::tooltip_lines`) — and is deliberately left alone: it is
-/// already independent of this constant, so pointing it here would trade a
-/// working measurement for a shared assumption.
+/// The factor actually applied can therefore differ from this constant, so a
+/// caller that undoes the upscale measures it off the processed image's own
+/// dimensions against the crop's: `temple::panel::SystemOcr` and
+/// `mercenary::run::tooltip_lines` both do. `crate::ocr::recognize_lines`
+/// reports each line's box in the pixels of the image it was handed, so a
+/// caller that divided by this constant instead would draw at the wrong place
+/// on a clamped crop rather than fail.
 pub const OCR_UPSCALE: u32 = 2;
+
+/// The upscale factor for a `w`×`h` crop when the OCR engine accepts at most
+/// `limit` px on either axis.
+///
+/// [`OCR_UPSCALE`] while `max(w, h) · OCR_UPSCALE` fits; otherwise the factor
+/// that puts the longer side exactly at `limit`, which is fractional, 1, or
+/// below 1 only when the native crop already exceeds the limit. `None` means
+/// no limit is known, and the crop gets the full factor.
+pub fn ocr_upscale_factor(w: u32, h: u32, limit: Option<u32>) -> f32 {
+    let longest = w.max(h);
+    match limit {
+        Some(limit) if longest > 0 && longest.saturating_mul(OCR_UPSCALE) > limit => {
+            limit as f32 / longest as f32
+        }
+        _ => OCR_UPSCALE as f32,
+    }
+}
+
+/// The output size of a `w`×`h` crop upscaled under [`ocr_upscale_factor`].
+///
+/// The unclamped case is the exact integer `w · 2`, `h · 2` it always was. A
+/// clamped side is floored, so the longer side lands at `limit` and never one
+/// past it, and kept at least 1 px.
+pub fn ocr_upscaled_size(w: u32, h: u32, limit: Option<u32>) -> (u32, u32) {
+    let factor = ocr_upscale_factor(w, h, limit);
+    if factor == OCR_UPSCALE as f32 {
+        return (w * OCR_UPSCALE, h * OCR_UPSCALE);
+    }
+    // Clamped only when a limit is known. Integer arithmetic, `v · limit /
+    // longest`: the f32 factor times 6880 lands at 9999.99 and floors a pixel
+    // short of the limit.
+    let (limit, longest) = (u64::from(limit.unwrap_or(0)), u64::from(w.max(h)));
+    let side = |v: u32| ((u64::from(v) * limit / longest) as u32).max(1);
+    (side(w), side(h))
+}
 
 /// Pre-process a captured image for better OCR accuracy:
 /// - Convert to grayscale
 /// - Increase contrast
-/// - Scale up 2x for small text
+/// - Scale up 2x for small text, clamped to the OCR engine's size limit
 ///
 /// Lanczos3 on the upscale — the sharpest of the resamplers `image` offers,
 /// and the right trade for its callers, which all read small UI text on a
@@ -476,23 +507,21 @@ fn preprocess_with(
     // the aspect ratio is preserved and OCR line rects stay proportional to the
     // source.
     //
-    // Nothing hard-caps the input size: the live capture paths crop from one
-    // monitor (the game's since POE-237), so dimensions stay bounded. (The
-    // test_ocr_on_image debug
-    // command can feed an arbitrary image — a 2× buffer of it is the accepted
-    // cost of not special-casing a debug path.)
-    let upscaled = image::imageops::resize(
-        &contrasted,
-        w * OCR_UPSCALE,
-        h * OCR_UPSCALE,
-        filter,
-    );
+    // The OCR engine rejects an image over `MaxImageDimension` on either axis
+    // (POE-361): a gem band spans the full client width, and a 6880-wide client
+    // at 2× is 13760 px. The factor is clamped to the limit instead
+    // (`ocr_upscale_factor`); a client that wide renders its UI at ~2.67×, so
+    // its glyphs are already past the size the 2× exists for. The other large
+    // crops (font panel, temple panel, merc header and detect) are sub-regions
+    // of the same frame and take the same clamp here.
+    let (out_w, out_h) = ocr_upscaled_size(w, h, crate::ocr::max_image_dimension());
+    let upscaled = image::imageops::resize(&contrasted, out_w, out_h, filter);
     image::DynamicImage::ImageLuma8(upscaled)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{preprocess_for_ocr, preprocess_for_ocr_fast};
+    use super::{ocr_upscale_factor, ocr_upscaled_size, preprocess_for_ocr, preprocess_for_ocr_fast};
     use image::{DynamicImage, ImageBuffer, Luma};
 
     /// A vertical step edge: the left half `dark`, the right half `light`.
@@ -590,5 +619,69 @@ mod tests {
 
         assert_eq!(fast.dimensions(), quality.dimensions(), "same crop, same size");
         assert_ne!(fast.into_raw(), quality.into_raw());
+    }
+
+    // POE-361: the 6880-wide gem band at 2× is 13760 px, past the engine's
+    // limit. The limit is a parameter here; 10000 is the value the report
+    // names, not one production reads. The clamped band's longer side lands AT
+    // the limit, never past it, and its height scales by the same factor.
+    //
+    // Fails if the clamp is dropped (13760 wide) or overshoots by a rounding
+    // pixel (10001).
+    #[test]
+    fn a_6880_wide_gem_band_is_clamped_to_the_ocr_limit() {
+        let (w, h) = ocr_upscaled_size(6880, 96, Some(10_000));
+
+        assert_eq!(w, 10_000);
+        assert_eq!(h, 96 * 10_000 / 6880);
+    }
+
+    // At 1080p, 1440p and 4K every production crop keeps the exact 2× it
+    // always had: gem bands of 1920/2560/3840 and font, temple and merc header
+    // sized crops, under the same 10000 limit.
+    //
+    // Fails if the clamp engages below the limit (e.g. a `>=` gate or a
+    // limit compared against the native size times something other than 2).
+    #[test]
+    fn crops_at_1080p_1440p_and_4k_keep_the_exact_2x() {
+        for (w, h) in [(1920, 96), (2560, 128), (3840, 192), (683, 641), (1100, 900), (1600, 300)] {
+            assert_eq!(ocr_upscale_factor(w, h, Some(10_000)), 2.0, "{w}x{h}");
+            assert_eq!(ocr_upscaled_size(w, h, Some(10_000)), (w * 2, h * 2), "{w}x{h}");
+        }
+    }
+
+    // The boundary: exactly `limit` at 2× still fits; one px more clamps.
+    #[test]
+    fn a_crop_whose_2x_lands_exactly_on_the_limit_is_not_clamped() {
+        assert_eq!(ocr_upscaled_size(5000, 50, Some(10_000)), (10_000, 100));
+        assert!(ocr_upscale_factor(5001, 50, Some(10_000)) < 2.0);
+    }
+
+    // Native size fits but 2× does not: the factor sits between 1 and 2, so
+    // the crop is never shrunk below the size it was captured at.
+    #[test]
+    fn a_crop_between_half_the_limit_and_the_limit_is_never_downscaled() {
+        let factor = ocr_upscale_factor(9000, 100, Some(10_000));
+        assert!(factor >= 1.0 && factor < 2.0, "factor {factor}");
+    }
+
+    // Only a crop already over the limit natively is downscaled, to fit.
+    #[test]
+    fn a_crop_over_the_limit_natively_is_downscaled_to_fit() {
+        let (w, h) = ocr_upscaled_size(12_000, 200, Some(10_000));
+        assert_eq!(w, 10_000);
+        assert!(h < 200, "height {h}");
+    }
+
+    // The tall axis counts too: the limit applies to max(w, h).
+    #[test]
+    fn the_longer_side_drives_the_clamp_on_a_tall_crop() {
+        assert_eq!(ocr_upscaled_size(100, 6000, Some(10_000)).1, 10_000);
+    }
+
+    // No known limit (the non-Windows arm, or a failed read) leaves the 2×.
+    #[test]
+    fn an_unknown_limit_leaves_the_full_2x() {
+        assert_eq!(ocr_upscaled_size(6880, 96, None), (13_760, 192));
     }
 }
