@@ -3010,10 +3010,15 @@ fn spawn_log_watcher(app: AppHandle) {
 
         app_log(&app, "Log watcher active".to_string());
 
+        // One read of the catch-up tail, shared by the lab replay, the temple
+        // seed and the loot attribution below.
+        let catch_up_tail = client_log::recent_log_tail(std::path::Path::new(&client_txt));
+
         // --- Catchup: replay recent Client.txt history to reconstruct lab state ---
         {
-            let (replay_events, was_in_lab) = lab_navigation::replay_recent_log(
+            let (replay_events, was_in_lab) = lab_navigation::replay_recent_tail(
                 std::path::Path::new(&client_txt),
+                catch_up_tail.as_deref(),
             );
             if !replay_events.is_empty() {
                 app_log(&app, format!("Catchup: replaying {} events from Client.txt history", replay_events.len()));
@@ -3030,13 +3035,12 @@ fn spawn_log_watcher(app: AppHandle) {
         }
 
         // The temple trigger's own catch-up (POE-242), over the SAME 32 KB tail
-        // the lab replay's first step reads. `replay_recent_log` answers the
+        // the lab replay's first step reads. `replay_recent_tail` answers the
         // lab's question and returns nav events, so an app started INSIDE the
         // temple would otherwise sit disarmed for the whole run — no further
         // Alva line, no further area change.
-        temple::trigger::catch_up(&app, std::path::Path::new(&client_txt));
-        let loot_tail = client_log::recent_log_tail(std::path::Path::new(&client_txt));
-        app.state::<AppState>().boss_loot.lock().unwrap_or_else(|e| e.into_inner()).catch_up(loot_tail.as_deref());
+        temple::trigger::catch_up(&app, catch_up_tail.as_deref());
+        app.state::<AppState>().boss_loot.lock().unwrap_or_else(|e| e.into_inner()).catch_up(catch_up_tail.as_deref());
 
         emit_status(&app);
 
@@ -4409,5 +4413,54 @@ mod tests {
             assert_eq!(view.rect, None);
             assert_eq!(view.source, "unlocated");
         }
+    }
+
+    /// What every watcher-start catch-up pass does when the shared tail is
+    /// `None`: the lab replays nothing and is not in lab, a temple arm the app
+    /// already holds stays armed, and loot has no attribution to capture under.
+    fn assert_no_tail_leaves_each_catch_up_without_an_answer(path: &std::path::Path) {
+        let shared_tail = crate::client_log::recent_log_tail(path);
+        assert_eq!(shared_tail, None);
+
+        let (events, in_lab) = crate::lab_navigation::replay_recent_tail(path, shared_tail.as_deref());
+        assert!(events.is_empty(), "no lab events: {events:?}");
+        assert!(!in_lab);
+
+        let armed = crate::temple::trigger::ArmState {
+            arm: crate::temple::trigger::TempleArm::Armed {
+                until_ms: None,
+                reason: crate::temple::trigger::ArmReason::TempleArea,
+            },
+            stood_down: crate::temple::trigger::StandDown::CycleComplete,
+        };
+        let mut temple = armed;
+        assert_eq!(crate::temple::trigger::apply_catch_up_tail(&mut temple, shared_tail.as_deref()), None);
+        assert_eq!(temple, armed, "no log is no answer, so the arm stands");
+
+        let settings = crate::loot_capture::LootSettings::default();
+        let mut loot = crate::loot_capture::LootOwner::default();
+        loot.catch_up(shared_tail.as_deref());
+        assert!(loot.begin("test".into(), [0; 4], &settings, 1).is_err());
+        assert_eq!(loot.frame.as_ref().unwrap().phase, "refused");
+    }
+
+    #[test]
+    fn a_missing_client_txt_gives_every_catch_up_no_answer() {
+        let path = std::env::temp_dir().join("poe_test_catch_up_missing").join("Client.txt");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+
+        assert_no_tail_leaves_each_catch_up_without_an_answer(&path);
+    }
+
+    #[test]
+    fn an_empty_client_txt_gives_every_catch_up_no_answer() {
+        let dir = std::env::temp_dir().join("poe_test_catch_up_empty");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("Client.txt");
+        std::fs::File::create(&path).unwrap();
+
+        assert_no_tail_leaves_each_catch_up_without_an_answer(&path);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

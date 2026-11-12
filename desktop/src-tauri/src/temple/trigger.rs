@@ -227,8 +227,6 @@
 //! wrong — and gating it would make the diagnostic unavailable in exactly the
 //! state that needs diagnosing.
 
-use std::path::Path;
-
 use tauri::{AppHandle, Manager};
 
 use crate::lab_navigation;
@@ -983,6 +981,13 @@ pub fn apply_catch_up(state: &mut ArmState, tail: &str) -> TempleArm {
     state.arm
 }
 
+/// [`apply_catch_up`] over the watcher start's shared tail, which is `None`
+/// when there is no log to read. `None` is no answer, not an empty history:
+/// it leaves `state` as it was and reports nothing seeded.
+pub fn apply_catch_up_tail(state: &mut ArmState, tail: Option<&str>) -> Option<TempleArm> {
+    tail.map(|tail| apply_catch_up(state, tail))
+}
+
 // ---------------------------------------------------------------------------
 // Glue — the same operations against `AppState`
 // ---------------------------------------------------------------------------
@@ -1147,15 +1152,16 @@ pub fn complete_cycle(app: &AppHandle, key: (u64, u64)) {
 /// Seed the arm state from the log the watcher is about to tail.
 ///
 /// Called once per watcher start, beside the lab catch-up and over the same
-/// 32 KB tail. See [`catch_up_state`] for why this exists at all.
-pub fn catch_up(app: &AppHandle, client_txt: &Path) {
-    let Some(tail) = crate::client_log::recent_log_tail(client_txt) else {
-        return;
-    };
-    let seeded = {
+/// 32 KB tail, which the caller reads once ([`crate::client_log::recent_log_tail`])
+/// and hands to every catch-up pass. `None` leaves the arm state alone. See
+/// [`catch_up_state`] for why this exists at all.
+pub fn catch_up(app: &AppHandle, tail: Option<&str>) {
+    let Some(seeded) = ({
         let state = app.state::<AppState>();
         let mut arm = state.temple_arm.lock().unwrap_or_else(|e| e.into_inner());
-        apply_catch_up(&mut arm, &tail)
+        apply_catch_up_tail(&mut arm, tail)
+    }) else {
+        return;
     };
     // The WRITE is unconditional (see [`apply_catch_up`]); only the line is
     // conditional, because "the newest area is not the temple" is the ordinary
@@ -1965,6 +1971,33 @@ mod tests {
         );
 
         assert_eq!(catch_up_state(&tail), TempleArm::Disarmed);
+    }
+
+    /// The watcher start reads one tail for every catch-up pass. A temple
+    /// entry 8 KB from the end of a 50 KB log is inside that tail, so the
+    /// seed arms on it. Fails if the shared tail shrinks below the catch-up
+    /// window — the temple line would fall outside it and the app would start
+    /// disarmed inside the temple.
+    #[test]
+    fn a_temple_entry_inside_the_shared_tail_arms_the_catch_up() {
+        let temple = temple_line(NOW - 300_000);
+        let path = crate::client_log::write_catch_up_fixture("temple", &[&map_line(NOW - 600_000), &temple]);
+        let shared_tail = crate::client_log::recent_log_tail(&path);
+
+        let mut state = ArmState::default();
+        let seeded = apply_catch_up_tail(&mut state, shared_tail.as_deref());
+
+        let expected = TempleArm::Armed {
+            until_ms: None,
+            reason: ArmReason::TempleArea,
+        };
+        assert_eq!(seeded, Some(expected));
+        assert_eq!(state.arm, expected);
+        let mut from_path = ArmState::default();
+        let tail = crate::client_log::recent_log_tail(&path).expect("a tail for a non-empty file");
+        assert_eq!(state.arm, apply_catch_up(&mut from_path, &tail));
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     // ----------------------------------------------- what ends the advice --

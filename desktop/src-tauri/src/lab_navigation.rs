@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::path::Path;
 
-use crate::client_log::{parse_entered_area, read_tail, CATCH_UP_TAIL_BYTES};
+use crate::client_log::{parse_entered_area, read_tail, recent_log_tail};
 
 /// Navigation events emitted during lab runs.
 /// Parsed from Client.txt independently of the font/OCR state machine.
@@ -190,21 +190,17 @@ pub fn newest_entered_area(tail: &str) -> Option<&str> {
 ///
 /// Returns `(events_to_replay, in_lab)`. Events start from PlazaEntered.
 pub fn replay_recent_log(path: &Path) -> (Vec<NavEvent>, bool) {
-    let file_len = match std::fs::metadata(path) {
-        Ok(m) => m.len(),
-        Err(e) => {
-            log::warn!("replay_recent_log: metadata failed: {}", e);
-            return (vec![], false);
-        }
-    };
-    if file_len == 0 {
-        return (vec![], false);
-    }
+    replay_recent_tail(path, recent_log_tail(path).as_deref())
+}
 
-    // Step 1: read to check in_lab — see `CATCH_UP_TAIL_BYTES`
-    let probe = match read_tail(path, file_len, CATCH_UP_TAIL_BYTES) {
-        Some(s) => s,
-        None => return (vec![], false),
+/// [`replay_recent_log`] with step 1 answered from a catch-up tail the caller
+/// already read ([`recent_log_tail`]), so the watcher start reads that tail
+/// once for every catch-up pass. `None` (missing, unreadable or empty log) is
+/// "not in lab". Step 2 still reads its own 128KB from `path`.
+pub fn replay_recent_tail(path: &Path, tail: Option<&str>) -> (Vec<NavEvent>, bool) {
+    // Step 1: check in_lab over the shared tail — see `CATCH_UP_TAIL_BYTES`
+    let Some(probe) = tail else {
+        return (vec![], false);
     };
     let mut in_lab = false;
     for line in probe.lines().rev() {
@@ -215,7 +211,6 @@ pub fn replay_recent_log(path: &Path) -> (Vec<NavEvent>, bool) {
             break;
         }
     }
-    drop(probe); // release 4KB
 
     if !in_lab {
         log::info!("replay_recent_log: not in lab, skipping replay");
@@ -224,6 +219,13 @@ pub fn replay_recent_log(path: &Path) -> (Vec<NavEvent>, bool) {
     log::info!("replay_recent_log: in_lab=true, loading replay data");
 
     // Step 2: larger read to find PlazaEntered and replay events (128KB)
+    let file_len = match std::fs::metadata(path) {
+        Ok(m) => m.len(),
+        Err(e) => {
+            log::warn!("replay_recent_log: metadata failed: {}", e);
+            return (vec![], true);
+        }
+    };
     let content = match read_tail(path, file_len, 131_072) {
         Some(s) => s,
         None => return (vec![], true),
@@ -416,6 +418,55 @@ mod tests {
             "should find PlazaEntered despite mid-file seek");
         assert!(events.iter().any(|e| matches!(e, NavEvent::RoomChanged { name } if name == "Estate Walkways")),
             "should find RoomChanged despite mid-file seek");
+    }
+
+    /// The watcher start hands the lab replay the shared catch-up tail. A lab
+    /// run whose newest area sits 8 KB from the end of a 50 KB log is inside
+    /// that tail, so the replay reports the run. Fails if the shared tail
+    /// shrinks below the catch-up window: the newest area line falls outside
+    /// it and the overlays start empty mid-lab.
+    #[test]
+    fn test_replay_recent_tail_finds_a_lab_run_inside_the_shared_tail() {
+        let path = crate::client_log::write_catch_up_fixture("lab_in", &[
+            "2026/04/01 20:00:00 1234 [INFO Client 1] : You have entered Highgate.",
+            "2026/04/01 20:01:00 1234 [INFO Client 1] : You have entered Aspirants' Plaza.",
+            "2026/04/01 20:01:30 1234 [INFO Client 1] Izaro: Ascend with precision.",
+            "2026/04/01 20:02:00 1234 [INFO Client 1] : You have entered Estate Walkways.",
+        ]);
+        let shared_tail = recent_log_tail(&path);
+
+        let (events, in_lab) = replay_recent_tail(&path, shared_tail.as_deref());
+
+        assert!(in_lab, "the newest area is a lab room");
+        assert_eq!(
+            format!("{events:?}"),
+            r#"[PlazaEntered, LabStarted, RoomChanged { name: "Estate Walkways" }]"#,
+        );
+        assert_eq!(format!("{:?}", (events, in_lab)), format!("{:?}", replay_recent_log(&path)));
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// In-lab is decided by the NEWEST area in the shared tail. An older lab
+    /// room followed by Highgate, both inside the tail, is a finished run.
+    /// Fails if the check takes any other area line than the newest — the
+    /// older lab room would then replay a run the player already left.
+    #[test]
+    fn test_replay_recent_tail_ignores_a_lab_run_the_player_left() {
+        let path = crate::client_log::write_catch_up_fixture("lab_left", &[
+            "2026/04/01 20:01:00 1234 [INFO Client 1] : You have entered Aspirants' Plaza.",
+            "2026/04/01 20:02:00 1234 [INFO Client 1] : You have entered Estate Walkways.",
+            "2026/04/01 20:10:00 1234 [INFO Client 1] : You have entered Highgate.",
+        ]);
+        let shared_tail = recent_log_tail(&path);
+
+        let (events, in_lab) = replay_recent_tail(&path, shared_tail.as_deref());
+
+        assert!(!in_lab, "the newest area is Highgate");
+        assert!(events.is_empty(), "nothing to replay outside the lab: {events:?}");
+        assert_eq!(format!("{:?}", (events, in_lab)), format!("{:?}", replay_recent_log(&path)));
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

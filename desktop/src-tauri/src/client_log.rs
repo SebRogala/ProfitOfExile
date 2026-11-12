@@ -166,13 +166,11 @@ pub const CATCH_UP_TAIL_BYTES: u64 = 32_768;
 /// The last [`CATCH_UP_TAIL_BYTES`] of the log as text, first partial line
 /// dropped. `None` for a missing, unreadable or empty file.
 ///
-/// The size every catch-up pass shares. `temple::trigger::catch_up` takes its
-/// whole answer from this function (POE-242);
-/// [`crate::lab_navigation::replay_recent_log`] calls
-/// [`read_tail`] directly for its first step, because it needs `file_len` again
-/// for its second, larger read and would otherwise stat the file twice. Both go
-/// through [`CATCH_UP_TAIL_BYTES`], so the two passes cannot disagree about how
-/// far back "recent" reaches — but they are two reads, not one.
+/// The size every catch-up pass shares. The watcher start reads it once and
+/// hands the same text to the lab replay
+/// ([`crate::lab_navigation::replay_recent_tail`]), the temple seed
+/// (`temple::trigger::catch_up`, POE-242) and the loot attribution, so the
+/// three cannot disagree about how far back "recent" reaches.
 pub fn recent_log_tail(path: &Path) -> Option<String> {
     let file_len = std::fs::metadata(path)
         .map_err(|e| log::warn!("recent_log_tail: metadata failed: {}", e))
@@ -242,6 +240,31 @@ pub fn parse_area_change(line: &str) -> Option<AreaChange<'_>> {
         AreaKind::Combat
     };
     Some(AreaChange { level, area, seed, kind })
+}
+
+/// A Client.txt larger than [`CATCH_UP_TAIL_BYTES`] for the catch-up tests:
+/// 40 KB of older `[WINDOW]` focus lines, then `decisive`, then 8 KB of newer
+/// focus lines. Every `decisive` line therefore sits INSIDE the catch-up
+/// window but OUTSIDE the last 4 KB, so a pass that reads a smaller tail than
+/// the shared one misses it.
+#[cfg(test)]
+pub(crate) fn write_catch_up_fixture(name: &str, decisive: &[&str]) -> std::path::PathBuf {
+    use std::io::Write;
+    let dir = std::env::temp_dir().join(format!("poe_test_catch_up_{name}"));
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("Client.txt");
+    let mut f = std::fs::File::create(&path).unwrap();
+    let focus = "2026/04/01 19:00:00 1234 [INFO Client 1] [WINDOW] Gained focus";
+    for _ in 0..(40_960 / (focus.len() + 1)) {
+        writeln!(f, "{focus}").unwrap();
+    }
+    for line in decisive {
+        writeln!(f, "{line}").unwrap();
+    }
+    for _ in 0..(8_192 / (focus.len() + 1)) {
+        writeln!(f, "{focus}").unwrap();
+    }
+    path
 }
 
 #[cfg(test)]
