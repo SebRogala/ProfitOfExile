@@ -961,7 +961,7 @@ pub struct AdviceView {
 ///
 /// The slice carries TWO of these and they answer different questions —
 /// [`TempleSlice::market`] is the read on screen, [`TempleSlice::poll`] is the
-/// latest poll. Both survive [`force_off`] the way [`TempleSlice::config`]
+/// latest poll. Both survive [`TempleSlice::force_off`] the way [`TempleSlice::config`]
 /// does: a switched-off module still has prices, or still has none.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1071,7 +1071,7 @@ pub struct TempleSlice {
     /// cleared by [`end_cycle`] on any other Alva line or a zone change
     /// (`super::trigger`), by [`project`] when a read completes, by
     /// `super::run::apply_status` when the loop anchors or stops looking, and
-    /// by [`force_off`]. The overlay's own gate is
+    /// by [`TempleSlice::force_off`]. The overlay's own gate is
     /// `view.ts::overlayShowsWaiting`, which also refuses to draw the notice
     /// over a board — a START heard with the sheet already open must not blink
     /// it.
@@ -1090,7 +1090,7 @@ pub struct TempleSlice {
     /// (`LoopState::same_board`), so a first read, a Re-arm and a new board —
     /// another epoch, another rearm count, another frame — all publish it
     /// false. It is reset to false by `super::run::apply_status` for every
-    /// other outcome, [`project`] when the round lands, [`force_off`], and the
+    /// other outcome, [`project`] when the round lands, [`TempleSlice::force_off`], and the
     /// default. [`clear_advice`] leaves it: a retry whose advice was cleared
     /// draws nothing, which is what an ended incursion should show. A stale
     /// `true` must not survive into the next first read, where it would hide
@@ -1125,7 +1125,7 @@ pub struct TempleSlice {
     /// second command to render its own controls — the page renders the
     /// controls it owns from ONE source, and there is no getter command to ask
     /// a second time. Settings, not a reading: unlike [`Self::advice`] it
-    /// survives [`force_off`], because a switched-off module's settings are
+    /// survives [`TempleSlice::force_off`], because a switched-off module's settings are
     /// still the settings the next read will use.
     pub config: TempleConfig,
     /// The four tunable profile fields in force. Same ownership and same
@@ -1962,39 +1962,41 @@ pub fn end_cycle(slice: &mut TempleSlice) {
     slice.waiting_for_panel = false;
 }
 
-/// Force a disabled module's slice to [`TempleStatus::Off`] and drop what it
-/// was advising.
-///
-/// The SSOT composer owns this one precedence step, the loop owns the rest —
-/// the same split `ssot::compose_snapshot` uses for the merc slice, and the
-/// reason the page never has to read `ssot.modules` to know whether the toggle
-/// is on (ADR-014: the page reads slices, not module state).
-///
-/// The advice goes with the status, unlike the merc slice's capture: a stale
-/// recommendation under an "off" badge is a move the player could still act on,
-/// whereas a retired capture is only a record of what was on screen.
-///
-/// `last_error` goes with it for the same reason: the message describes a read
-/// the disabled module is no longer attempting, and a red line under an "off"
-/// badge reads as "this module is broken" rather than "you switched it off".
-/// [`TempleSlice::read_notice`] goes with them on the same argument — it is a
-/// warning about an attempt nobody is making any more.
-///
-/// What does NOT go is the settings echo (`config`, `profile`). Those
-/// are not something the module read — they are what the user set, and the page
-/// renders its own controls from them while the module is off (ADR-014: the
-/// page reads the slice, never `ssot.modules`).
-pub fn force_off(slice: &mut TempleSlice) {
-    slice.status = TempleStatus::Off;
-    // Nothing is being read under an "off" badge, retry or not (POE-276).
-    slice.read_retry = false;
-    // A notice that says the module is looking for the sheet, over a module
-    // that is switched off, is the same lie the advice would be.
-    end_cycle(slice);
-    slice.advice = None;
-    slice.mode = None;
-    slice.read_notice = None;
-    slice.last_error = None;
+impl TempleSlice {
+    /// Force a disabled module's slice to [`TempleStatus::Off`] and drop what it
+    /// was advising.
+    ///
+    /// The SSOT composer owns this one precedence step, the loop owns the rest —
+    /// the same split `ssot::compose_snapshot` uses for the merc slice, and the
+    /// reason the page never has to read `ssot.modules` to know whether the toggle
+    /// is on (ADR-014: the page reads slices, not module state).
+    ///
+    /// The advice goes with the status, unlike the merc slice's capture: a stale
+    /// recommendation under an "off" badge is a move the player could still act on,
+    /// whereas a retired capture is only a record of what was on screen.
+    ///
+    /// `last_error` goes with it for the same reason: the message describes a read
+    /// the disabled module is no longer attempting, and a red line under an "off"
+    /// badge reads as "this module is broken" rather than "you switched it off".
+    /// [`TempleSlice::read_notice`] goes with them on the same argument — it is a
+    /// warning about an attempt nobody is making any more.
+    ///
+    /// What does NOT go is the settings echo (`config`, `profile`). Those
+    /// are not something the module read — they are what the user set, and the page
+    /// renders its own controls from them while the module is off (ADR-014: the
+    /// page reads the slice, never `ssot.modules`).
+    pub fn force_off(&mut self) {
+        self.status = TempleStatus::Off;
+        // Nothing is being read under an "off" badge, retry or not (POE-276).
+        self.read_retry = false;
+        // A notice that says the module is looking for the sheet, over a module
+        // that is switched off, is the same lie the advice would be.
+        end_cycle(self);
+        self.advice = None;
+        self.mode = None;
+        self.read_notice = None;
+        self.last_error = None;
+    }
 }
 
 // ----------------------------------------------- one board, read and kept --
@@ -4999,7 +5001,7 @@ mod tests {
             ..TempleSlice::default()
         };
 
-        force_off(&mut s);
+        s.force_off();
 
         assert_eq!(s.status, TempleStatus::Off);
         assert_eq!(s.advice, None);
@@ -5031,7 +5033,7 @@ mod tests {
             ..TempleSlice::default()
         };
 
-        force_off(&mut s);
+        s.force_off();
 
         assert_eq!(s.config, config);
         assert_eq!(s.profile, profile);
@@ -5111,7 +5113,7 @@ mod tests {
             ..TempleSlice::default()
         };
 
-        force_off(&mut s);
+        s.force_off();
 
         assert!(!s.waiting_for_panel);
     }
@@ -5143,7 +5145,7 @@ mod tests {
             ..TempleSlice::default()
         };
 
-        force_off(&mut s);
+        s.force_off();
 
         assert!(!s.read_retry);
     }

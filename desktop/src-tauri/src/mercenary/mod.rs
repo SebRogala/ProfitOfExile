@@ -90,6 +90,28 @@ impl ScaleSource {
     }
 }
 
+/// The [`crate::ssot::ScreenScaleSource`] label a merc-side [`ScaleSource`]
+/// publishes under.
+///
+/// `Held` maps to [`crate::ssot::ScreenScaleSource::MercFrame`], not to a label of its own:
+/// `Held` is a FRAME measurement carried onto a tick that could not see the
+/// frame (`cellfit::apply_held` is what carries it), so the cue behind the
+/// number is the gold frame either way and a reader asking "is this registered
+/// on the art?" gets yes for both. Only a session whose fit has never landed —
+/// [`ScaleSource::Ocr`] — reports the line-pitch estimate that
+/// drifts 6-12 px.
+///
+/// Lives here, next to the enum it maps, so the mapping is one testable
+/// decision instead of a `match` buried in the detect tick's struct literal.
+pub fn screen_scale_source(s: ScaleSource) -> crate::ssot::ScreenScaleSource {
+    match s {
+        ScaleSource::Frame | ScaleSource::Held => {
+            crate::ssot::ScreenScaleSource::MercFrame
+        }
+        ScaleSource::Ocr => crate::ssot::ScreenScaleSource::MercOcr,
+    }
+}
+
 /// Module status, in precedence order **off > unavailable > live > done >
 /// scanning > idle**.
 ///
@@ -461,6 +483,27 @@ pub struct MercenarySlice {
     /// `AppState.merc_tier_floor`, composed like [`Self::trade_auto`].
     #[serde(default)]
     pub tier_floor: u8,
+}
+
+impl MercenarySlice {
+    /// Force a disabled module's slice to [`MercStatus::Off`] — the SSOT
+    /// composer's one precedence step over the loop (`ssot::compose_snapshot`).
+    pub fn force_off(&mut self) {
+        self.status = MercStatus::Off;
+        // The speaker belongs to `scanning` and to nothing else: it is what the
+        // strip prints beside "scanning for the recruit window", so leaving it
+        // on a forced-`off` slice would hand the windows a name attached to a
+        // scan that is not running. The loop clears it on every other exit from
+        // `scanning`; the force-off is the one path the loop never gets to run.
+        self.burst_speaker = None;
+        // The trade state's own force-off, for the reason the status has one:
+        // `off` tells the page the module is not running (badge only) — a
+        // module that is not running is not going to search anything. Only the
+        // STATUS is forced — the link and the listings stay, so switching the
+        // module back on does not lose an answer that is still young enough to
+        // be true.
+        self.trade.status = MercTradeStatus::Off;
+    }
 }
 
 impl Default for MercenarySlice {
@@ -1129,6 +1172,105 @@ mod tests {
         assert!(
             err.contains(GEOMETRY_OVERRIDE_FILE),
             "the error must name the file to edit, got {err:?}",
+        );
+    }
+
+    /// `Frame` is the plain case: this tick measured the gold frame, so the
+    /// slice says the frame measured it.
+    #[test]
+    fn a_frame_fit_publishes_under_the_frame_label() {
+        assert_eq!(
+            screen_scale_source(ScaleSource::Frame),
+            crate::ssot::ScreenScaleSource::MercFrame
+        );
+    }
+
+    /// The arm with the argument behind it. `Held` is a FRAME measurement
+    /// carried onto a tick that could not see the frame, so it publishes the
+    /// frame label — folding it into `MercOcr` would tell a consumer the number
+    /// came from the 6-12 px line-pitch estimate it never came from.
+    #[test]
+    fn a_held_frame_scale_publishes_under_the_frame_label() {
+        assert_eq!(
+            screen_scale_source(ScaleSource::Held),
+            crate::ssot::ScreenScaleSource::MercFrame
+        );
+    }
+
+    /// The one arm that must not report the frame: a session whose fit has
+    /// never landed is running on the line-pitch estimate, and the label is the
+    /// only way a consumer judging how exact its rects are can tell.
+    #[test]
+    fn an_ocr_only_scale_publishes_under_the_ocr_label() {
+        assert_eq!(
+            screen_scale_source(ScaleSource::Ocr),
+            crate::ssot::ScreenScaleSource::MercOcr
+        );
+    }
+    fn a_scanning_slice() -> MercenarySlice {
+        MercenarySlice {
+            status: MercStatus::Scanning,
+            burst_speaker: Some("Fennik, of Unshakeable Faith".to_string()),
+            capture: Some(MercCapture::default()),
+            trade: MercTradeState {
+                status: MercTradeStatus::Done,
+                url: Some("https://www.pathofexile.com/trade/search/x".to_string()),
+                error: None,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    /// `off` beats every other status (precedence off > unavailable > live >
+    /// done > scanning > idle): a module switched off mid-capture must publish
+    /// `off`, or the page keeps rendering a live verdict for a stopped loop.
+    #[test]
+    fn forcing_a_slice_off_publishes_off() {
+        let mut slice = a_scanning_slice();
+        slice.force_off();
+        assert_eq!(slice.status, MercStatus::Off);
+    }
+
+    /// A name beside a scan that is not running is a claim about a loop that
+    /// no longer exists.
+    #[test]
+    fn forcing_a_slice_off_clears_the_burst_speaker() {
+        let mut slice = a_scanning_slice();
+        slice.force_off();
+        assert_eq!(
+            slice.burst_speaker, None,
+            "the speaker belongs to a scan that is no longer running",
+        );
+    }
+
+    #[test]
+    fn forcing_a_slice_off_keeps_the_last_capture() {
+        let mut slice = a_scanning_slice();
+        slice.force_off();
+        assert!(
+            slice.capture.is_some(),
+            "only the status is forced — the last capture stays readable",
+        );
+    }
+
+    /// A module that is not running is not going to search anything.
+    #[test]
+    fn forcing_a_slice_off_turns_the_trade_status_off() {
+        let mut slice = a_scanning_slice();
+        slice.force_off();
+        assert_eq!(slice.trade.status, MercTradeStatus::Off);
+    }
+
+    /// Switching the module back on must not lose an answer that is still
+    /// young enough to be true.
+    #[test]
+    fn forcing_a_slice_off_keeps_the_trade_link() {
+        let mut slice = a_scanning_slice();
+        slice.force_off();
+        assert_eq!(
+            slice.trade.url,
+            Some("https://www.pathofexile.com/trade/search/x".to_string())
         );
     }
 }

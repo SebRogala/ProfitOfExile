@@ -1,4 +1,5 @@
 mod capture;
+mod clock;
 mod fingerprint;
 mod font_ledger;
 mod font_parser;

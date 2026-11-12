@@ -156,7 +156,7 @@ pub enum ScreenScaleSource {
     /// Measured off the merc support grid's gold frame
     /// (`mercenary::cellfit::refine`) — either on this capture, or carried onto
     /// it from an earlier capture of the same session
-    /// ([`crate::mercenary::ScaleSource::Held`], which is the same frame
+    /// (`mercenary::ScaleSource::Held`, which is the same frame
     /// measurement, one or more ticks old).
     MercFrame,
     /// Derived from the merc OCR line pitch — the pre-POE-214 cue. Kept as its
@@ -620,20 +620,7 @@ fn compose_snapshot(
     screen: Option<ScreenSlice>,
 ) -> AppSsotSnapshot {
     if modules.get(MERCENARY_MODULE_ID) != Some(&true) {
-        mercenary.status = crate::mercenary::MercStatus::Off;
-        // The speaker belongs to `scanning` and to nothing else: it is what the
-        // strip prints beside "scanning for the recruit window", so leaving it
-        // on a forced-`off` slice would hand the windows a name attached to a
-        // scan that is not running. The loop clears it on every other exit from
-        // `scanning`; the force-off is the one path the loop never gets to run.
-        mercenary.burst_speaker = None;
-        // The trade state's own force-off, for the reason the status has one:
-        // `off` tells the page the module is not running (badge only) — a
-        // module that is not running is not going to search anything. Only the
-        // STATUS is forced — the link and the listings stay, so switching the
-        // module back on does not lose an answer that is still young enough to
-        // be true.
-        mercenary.trade.status = crate::mercenary::MercTradeStatus::Off;
+        mercenary.force_off();
     }
     // The settings echo, written AFTER the force-off for the reason the temple
     // slice keeps its own echo through `force_off`: what the user set is not
@@ -652,7 +639,7 @@ fn compose_snapshot(
     mercenary.trade_auto = merc_trade_auto;
     mercenary.tier_floor = merc_tier_floor;
     if modules.get(TEMPLE_MODULE_ID) != Some(&true) {
-        crate::temple::slice::force_off(&mut temple);
+        temple.force_off();
     }
     let placements = placements_for(screen.as_ref());
     AppSsotSnapshot {
@@ -702,9 +689,9 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    // Its own lone acquisition too — `sync::status` takes and drops the
+    // Its own lone acquisition too — `MercSyncStatus::current` takes and drops the
     // `merc_sync` guard inside one statement.
-    let merc_sync = crate::mercenary::sync::status(state);
+    let merc_sync = crate::mercenary::sync::MercSyncStatus::current(state);
     // Lone acquisitions again, each ending with its own statement.
     let merc_trade_auto = *state.merc_trade_auto.lock().unwrap_or_else(|e| e.into_inner());
     let merc_tier_floor = *state.merc_tier_floor.lock().unwrap_or_else(|e| e.into_inner());
@@ -1262,7 +1249,7 @@ pub fn screen_from_capture(capture: &crate::capture::Capture) -> ScreenSlice {
         capture.monitor_id,
         capture.origin,
         capture.client,
-        crate::mercenary::run::now_ms(),
+        crate::clock::unix_ms(),
     )
 }
 
@@ -1420,28 +1407,6 @@ pub fn geometry_recalibrate(app: AppHandle) {
             measured.width, measured.height, measured.monitor_id, measured.ui_scale
         ),
     );
-}
-
-/// The [`ScreenScaleSource`] label a merc-side [`crate::mercenary::ScaleSource`]
-/// publishes under.
-///
-/// `Held` maps to [`ScreenScaleSource::MercFrame`], not to a label of its own:
-/// `Held` is a FRAME measurement carried onto a tick that could not see the
-/// frame (`cellfit::apply_held` is what carries it), so the cue behind the
-/// number is the gold frame either way and a reader asking "is this registered
-/// on the art?" gets yes for both. Only a session whose fit has never landed —
-/// [`crate::mercenary::ScaleSource::Ocr`] — reports the line-pitch estimate that
-/// drifts 6-12 px.
-///
-/// Lives here, next to the enum it produces, so the mapping is one testable
-/// decision instead of a `match` buried in the detect tick's struct literal.
-pub fn screen_scale_source(s: crate::mercenary::ScaleSource) -> ScreenScaleSource {
-    match s {
-        crate::mercenary::ScaleSource::Frame | crate::mercenary::ScaleSource::Held => {
-            ScreenScaleSource::MercFrame
-        }
-        crate::mercenary::ScaleSource::Ocr => ScreenScaleSource::MercOcr,
-    }
 }
 
 /// Emit `ssot-changed` with the current snapshot.
@@ -2631,8 +2596,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             crate::temple::slice::TempleSlice::default(),
             None,
         );
@@ -2659,8 +2624,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             crate::temple::slice::TempleSlice::default(),
             None,
         );
@@ -2678,7 +2643,7 @@ mod tests {
         let modules: std::collections::HashMap<String, bool> =
             [("mercenary".to_string(), true)].into_iter().collect();
         let slice = crate::mercenary::MercenarySlice {
-            status: crate::mercenary::MercStatus::Live,
+            burst_speaker: Some("Fennik, of Unshakeable Faith".to_string()),
             learned_families: vec!["Chain--2".to_string()],
             geometry_source: "file".to_string(),
             ..Default::default()
@@ -2693,30 +2658,30 @@ mod tests {
             slice,
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             crate::temple::slice::TempleSlice::default(),
             None,
         );
 
-        assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Live);
+        assert_eq!(
+            out.mercenary.burst_speaker,
+            Some("Fennik, of Unshakeable Faith".to_string())
+        );
         assert_eq!(out.mercenary.learned_families, vec!["Chain--2".to_string()]);
         assert_eq!(out.mercenary.geometry_source, "file");
     }
 
-    /// `off` beats every other status (precedence off > unavailable > live >
-    /// done > scanning > idle). A module switched off mid-capture must publish
-    /// `off`, or the page keeps rendering a live verdict for a loop that has
-    /// stopped — and the burst speaker goes with it, because a name beside a
-    /// scan that is not running is a claim about a loop that no longer exists.
+    /// A module switched off mid-capture is forced off by the composer, or
+    /// the page keeps rendering a live verdict for a loop that has stopped.
+    /// What the force-off clears is `MercenarySlice::force_off`'s own tests;
+    /// this one pins that the composer applies it.
     #[test]
-    fn a_disabled_module_forces_the_mercenary_status_to_off() {
+    fn a_disabled_mercenary_module_is_forced_off() {
         let modules: std::collections::HashMap<String, bool> =
             [("mercenary".to_string(), false)].into_iter().collect();
         let slice = crate::mercenary::MercenarySlice {
-            status: crate::mercenary::MercStatus::Scanning,
             burst_speaker: Some("Fennik, of Unshakeable Faith".to_string()),
-            capture: Some(crate::mercenary::MercCapture::default()),
             ..Default::default()
         };
 
@@ -2729,20 +2694,15 @@ mod tests {
             slice,
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             crate::temple::slice::TempleSlice::default(),
             None,
         );
 
-        assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Off);
         assert_eq!(
             out.mercenary.burst_speaker, None,
             "the speaker belongs to a scan that is no longer running",
-        );
-        assert!(
-            out.mercenary.capture.is_some(),
-            "only the status is forced — the last capture stays readable",
         );
     }
 
@@ -2763,8 +2723,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             vec!["guide-a".to_string()],
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             crate::temple::slice::TempleSlice::default(),
             None,
         );
@@ -2790,13 +2750,12 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             vec!["guide-b".to_string()],
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             crate::temple::slice::TempleSlice::default(),
             None,
         );
 
-        assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Off);
         assert_eq!(out.mercenary.sources_off, vec!["guide-b".to_string()]);
     }
 
@@ -2804,9 +2763,9 @@ mod tests {
     /// the owner map) reads as OFF, not as on. Fail-closed: claiming a module
     /// is running when its enablement is unknown is the worse lie.
     #[test]
-    fn an_unknown_module_flag_forces_the_mercenary_status_to_off() {
+    fn an_unknown_mercenary_module_flag_is_forced_off() {
         let slice = crate::mercenary::MercenarySlice {
-            status: crate::mercenary::MercStatus::Idle,
+            burst_speaker: Some("Fennik, of Unshakeable Faith".to_string()),
             ..Default::default()
         };
 
@@ -2819,13 +2778,13 @@ mod tests {
             slice,
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             crate::temple::slice::TempleSlice::default(),
             None,
         );
 
-        assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Off);
+        assert_eq!(out.mercenary.burst_speaker, None);
     }
 
     /// The temple slice is projected through composition while the module is
@@ -2837,7 +2796,6 @@ mod tests {
         let modules: std::collections::HashMap<String, bool> =
             [("temple".to_string(), true)].into_iter().collect();
         let slice = crate::temple::slice::TempleSlice {
-            status: crate::temple::slice::TempleStatus::Read,
             unknown_rooms: vec!["A0".to_string()],
             mode: Some("chase".to_string()),
             ..Default::default()
@@ -2852,36 +2810,25 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             slice,
             None,
         );
 
-        assert_eq!(out.temple.status, crate::temple::slice::TempleStatus::Read);
         assert_eq!(out.temple.unknown_rooms, vec!["A0".to_string()]);
         assert_eq!(out.temple.mode, Some("chase".to_string()));
     }
 
-    /// A disabled temple module publishes `off` AND drops its advice, so the
-    /// page cannot render a stale recommendation under an off badge. The
-    /// layout is left readable — same split as the merc slice's capture.
+    /// A disabled temple module is forced off by the composer, so the page
+    /// cannot render a stale recommendation under an off badge. What the
+    /// force-off clears is `TempleSlice::force_off`'s own tests; this one pins
+    /// that the composer applies it.
     #[test]
-    fn a_disabled_module_forces_the_temple_status_off_and_drops_its_advice() {
+    fn a_disabled_temple_module_is_forced_off() {
         let modules: std::collections::HashMap<String, bool> =
             [("temple".to_string(), false)].into_iter().collect();
         let slice = crate::temple::slice::TempleSlice {
-            status: crate::temple::slice::TempleStatus::Read,
-            advice: Some(crate::temple::slice::AdviceView {
-                recommendations: Vec::new(),
-                gambles: Vec::new(),
-                secondary_door: None,
-                convenience: None,
-                recommended_exit: None,
-                map_action: "leaveMap".to_string(),
-                warnings: Vec::new(),
-                forced_kill: false,
-            }),
             mode: Some("chase".to_string()),
             unknown_rooms: vec!["A0".to_string()],
             ..Default::default()
@@ -2896,26 +2843,19 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             slice,
             None,
         );
 
-        assert_eq!(out.temple.status, crate::temple::slice::TempleStatus::Off);
-        assert_eq!(out.temple.advice, None);
         assert_eq!(out.temple.mode, None);
-        assert_eq!(
-            out.temple.unknown_rooms,
-            vec!["A0".to_string()],
-            "only the acting half is forced — the read stays readable",
-        );
     }
 
     /// A module map that does not mention the temple module yet reads as OFF,
     /// not as on. Fail-closed, same as the merc slice.
     #[test]
-    fn an_unknown_module_flag_forces_the_temple_status_to_off() {
+    fn an_unknown_temple_module_flag_is_forced_off() {
         let out = compose_snapshot(
             AppSsotSnapshot::default(),
             "20/20".to_string(),
@@ -2925,16 +2865,16 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             crate::temple::slice::TempleSlice {
-                status: crate::temple::slice::TempleStatus::Read,
+                mode: Some("chase".to_string()),
                 ..Default::default()
             },
             None,
         );
 
-        assert_eq!(out.temple.status, crate::temple::slice::TempleStatus::Off);
+        assert_eq!(out.temple.mode, None);
     }
 
     /// The snapshot's own key for the temple slice, which the TS store reads.
@@ -2980,8 +2920,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             crate::temple::slice::TempleSlice::default(),
             None,
         );
@@ -3005,8 +2945,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             crate::temple::slice::TempleSlice::default(),
             None,
         );
@@ -3131,8 +3071,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
-            crate::mercenary::DEFAULT_TRADE_AUTO,
-            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::mercenary::MercenarySlice::default().trade_auto,
+            crate::mercenary::MercenarySlice::default().tier_floor,
             crate::temple::slice::TempleSlice::default(),
             Some(ScreenSlice { ui_scale: 0.9, ..reference_screen() }),
         );
@@ -4232,38 +4172,6 @@ mod tests {
         ));
     }
 
-    /// `Frame` is the plain case: this tick measured the gold frame, so the
-    /// slice says the frame measured it.
-    #[test]
-    fn a_frame_fit_publishes_under_the_frame_label() {
-        assert_eq!(
-            screen_scale_source(crate::mercenary::ScaleSource::Frame),
-            ScreenScaleSource::MercFrame
-        );
-    }
-
-    /// The arm with the argument behind it. `Held` is a FRAME measurement
-    /// carried onto a tick that could not see the frame, so it publishes the
-    /// frame label — folding it into `MercOcr` would tell a consumer the number
-    /// came from the 6-12 px line-pitch estimate it never came from.
-    #[test]
-    fn a_held_frame_scale_publishes_under_the_frame_label() {
-        assert_eq!(
-            screen_scale_source(crate::mercenary::ScaleSource::Held),
-            ScreenScaleSource::MercFrame
-        );
-    }
-
-    /// The one arm that must not report the frame: a session whose fit has
-    /// never landed is running on the line-pitch estimate, and the label is the
-    /// only way a consumer judging how exact its rects are can tell.
-    #[test]
-    fn an_ocr_only_scale_publishes_under_the_ocr_label() {
-        assert_eq!(
-            screen_scale_source(crate::mercenary::ScaleSource::Ocr),
-            ScreenScaleSource::MercOcr
-        );
-    }
     // ----------------------------------- the temple market poll (POE-258) --
 
     /// The cadence, stated as the two constraints that chose it rather than as

@@ -325,6 +325,18 @@ pub struct MercSyncStatus {
     pub last_error: Option<String>,
 }
 
+impl MercSyncStatus {
+    /// The status the SSOT composes onto the mercenary slice.
+    pub fn current(state: &AppState) -> Self {
+        state
+            .merc_sync
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .status
+            .clone()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Persisted sync state
 // ---------------------------------------------------------------------------
@@ -540,16 +552,6 @@ fn with_state<T>(app: &AppHandle, f: impl FnOnce(&mut SyncState) -> T) -> T {
     let state = app.state::<AppState>();
     let mut guard = state.merc_sync.lock().unwrap_or_else(|e| e.into_inner());
     f(&mut guard)
-}
-
-/// The status the SSOT composes onto the mercenary slice.
-pub fn status(state: &AppState) -> MercSyncStatus {
-    state
-        .merc_sync
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .status
-        .clone()
 }
 
 /// Re-arm the once-per-session log gate. Called from the capture loop's start,

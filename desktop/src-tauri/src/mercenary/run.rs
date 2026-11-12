@@ -3476,7 +3476,7 @@ fn published_screen(
     measured_at_ms: u64,
     grabbed_on: (u32, (i32, i32), [i32; 4]),
 ) -> crate::ssot::ScreenSlice {
-    let source = crate::ssot::screen_scale_source(cue);
+    let source = super::screen_scale_source(cue);
     let (monitor_id, origin, client) = grabbed_on;
     crate::ssot::ScreenSlice {
         width: screen[0],

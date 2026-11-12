@@ -1414,7 +1414,7 @@ pub fn apply_status(slice: &mut TempleSlice, outcome: TickOutcome) {
 /// anything is LOOKING at the screen, and the incursion is not over because the
 /// module stopped looking. What ends the advice is a fact about the game:
 /// [`super::trigger::advice_end`]'s zone change or next Alva line, a read that
-/// replaces it, or the module being switched off ([`slice::force_off`]).
+/// replaces it, or the module being switched off ([`TempleSlice::force_off`]).
 pub fn apply_gate(slice: &mut TempleSlice, outcome: TickOutcome) {
     apply_status(slice, outcome);
 }
@@ -3596,7 +3596,7 @@ fn cold_sweep(
 ///
 /// What ends the advice is not here and was never here: `trigger::advice_end`
 /// decides — an Alva line stamped after the read, or a zone change away from the
-/// temple — and `slice::clear_advice` / `slice::force_off` write. Since POE-248
+/// temple — and `slice::clear_advice` / `TempleSlice::force_off` write. Since POE-248
 /// the STAND-DOWN does not end it either ([`apply_gate`] is the status alone),
 /// because the live session that reported the bug stood the loop down
 /// mid-incursion with the player still in the room the widget described.
