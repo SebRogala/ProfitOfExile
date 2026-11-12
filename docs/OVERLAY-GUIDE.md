@@ -613,9 +613,10 @@ the timer, compass, path-strip and comparator widgets.
 
 Config mode is IN-WINDOW, and the order the three steps happen in is what makes
 it recoverable. Settings asks for it — it emits
-`widget-config-start {module}` and nothing else — and `routes/(app)/+layout.svelte`
-does the steps, because that is the file that owns every overlay window's
-creation. In this order:
+`widget-config-start {module}` and nothing else — and
+`$lib/overlay/widgets/widget-config-orchestrator.ts` does the steps, with its
+ports built in `routes/(app)/+layout.svelte`, the file that owns every overlay
+window's creation and keeps the listeners. In this order:
 
 1. Ensure the module's window EXISTS and is SHOWN — creating it force-shown if
    the module is off or the game is not focused, the `set_debug_mode` path for
@@ -727,12 +728,12 @@ means the window cannot be recovered from the inside and the way back is
 Configure in Settings. The decision is `configExitDecision` in
 `$lib/overlay/widgets/widget-config-exit.ts`.
 
-**The layout puts a floor under a session that never ends.** Because the host
+**The widget-config orchestrator puts a floor under a session that never ends.** Because the host
 can now decline to leave config mode, `widget-config-end` may never arrive —
 and everyone outside the window is waiting on it: Settings on `Configuring…`,
 the window force-shown, and a window that only the session is holding up. So
-`routes/(app)/+layout.svelte` arms a deadline where Settings' opening deadline
-stands down (on `widget-config-open`) and clears it in `endWidgetConfig`; if it
+`widget-config-orchestrator.ts` arms a deadline where Settings' opening deadline
+stands down (on `widget-config-open`) and clears it in its `end`; if it
 fires, it logs and runs `abandonWidgetConfig`. Ten minutes: far above real
 arranging (the session ends when the user presses Save or Cancel, however long
 they take) and far below "for the rest of the process", which is what a
