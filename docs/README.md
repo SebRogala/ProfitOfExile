@@ -67,6 +67,7 @@ rollover in [ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-a
 - [ADR-027: Trade is the primary gem price; poe.ninja is the fallback](adr/027-trade-is-the-primary-gem-price-poe-ninja-is-the-fallback.md)
 - [ADR-028: Boss loot capture and ownership](adr/028-boss-loot-capture-and-ownership.md)
 - [ADR-029: Overlay widget action boundary](adr/029-overlay-widget-action-boundary.md)
+- [ADR-030: Paginated lists page, sort and filter in the backend](adr/030-paginated-lists-page-sort-and-filter-in-the-backend.md)
 
 Superseded:
 
