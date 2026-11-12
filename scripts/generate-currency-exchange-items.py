@@ -79,7 +79,7 @@ METADATA_PREFIX = "Metadata/Items/"
 CATEGORIES = [
     "Currency",
     "DivinationCards",
-    "Scarabs",
+    "Threads",
     "MapFragments",
     "Deepwater",
     "AtlasExiles",
@@ -96,7 +96,9 @@ GAME_CATEGORIES = [
     "Currency",
     "Essences",
     "Delve",
-    "Scarabs",
+    # 3.30: "Scarabs have been removed from the game. A new item type, Threads,
+    # have been added in their place." The sidebar slot is inferred, unverified.
+    "Threads",
     "Divination Cards",
     "Delirium",
     "Legion",
@@ -117,7 +119,7 @@ GAME_CATEGORIES = [
 # three "MapFragments/" splits precede theirs, so appending a rule at the end
 # rather than above its catch-all makes it dead.
 CATEGORY_RULES = [
-    ("Scarabs/", None, "Scarabs"),
+    ("Threads/", None, "Threads"),
     ("DivinationCards/", None, "Divination Cards"),
     ("Delve/", None, "Delve"),
     ("AtlasExiles/", None, "Currency"),
@@ -129,7 +131,10 @@ CATEGORY_RULES = [
     ("Deepwater/", None, "Allflame"),
     ("Currency/CurrencyDeepwater", None, "Allflame"),  # Dead Man's Sulphur
     ("MapFragments/AtlasMemory/", None, "Fragments"),  # "Echo of ..."
-    ("MapFragments/", "AllflamePack", "Allflame"),  # "Allflame Ember of ..."
+    # 3.30: "Divine Vessels are now Currency items"; "Allflame Embers are no
+    # longer fragments ... Instead, these are now Currency items".
+    ("MapFragments/", "PantheonFlask", "Currency"),  # Divine Vessel
+    ("MapFragments/", "AllflamePack", "Currency"),  # "Allflame Ember of ..."
     ("MapFragments/", "Legion", "Legion"),  # emblems and legion splinters
     ("MapFragments/", None, "Fragments"),  # incl. breach splinters and stones
     ("Currency/CurrencyEssence", None, "Essences"),
@@ -147,6 +152,24 @@ CATEGORY_RULES = [
     # Catch-all: astrolabes, memories, Kalguuran, Sanctum, Incubation, Sentinel,
     # Bestiary, scouting reports, Eldritch.
     ("Currency/", None, "Currency"),
+]
+
+# Ids hand-added before the 3.30 feed was observed (03 Endgame: "Below are the
+# new Thread items available", "Added a new Currency Item, Frayed Thread").
+# The ids are inferred from the old Metadata/Items/Scarabs/ shape; replace them
+# from the 3.30 feed.
+PROVISIONAL_IDS = [
+    "Metadata/Items/Threads/AbyssThread",
+    "Metadata/Items/Threads/BestiaryThread",
+    "Metadata/Items/Threads/BetrayalThread",
+    "Metadata/Items/Threads/BlightThread",
+    "Metadata/Items/Threads/BreachThread",
+    "Metadata/Items/Threads/ExpeditionThread",
+    "Metadata/Items/Threads/IncursionThread",
+    "Metadata/Items/Threads/LegionThread",
+    "Metadata/Items/Threads/RitualThread",
+    "Metadata/Items/Threads/UltimatumThread",
+    "Metadata/Items/Threads/FrayedThread",
 ]
 
 # A polite, identifying User-Agent. poewiki asks for one and answers a generic

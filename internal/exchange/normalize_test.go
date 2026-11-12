@@ -14,7 +14,7 @@ const (
 	chaosID  = "Metadata/Items/Currency/CurrencyRerollRare"
 	divineID = "Metadata/Items/Currency/CurrencyModValues"
 	cardID   = "Metadata/Items/DivinationCards/DivinationCardThunderousSkies"
-	scarabID = "Metadata/Items/Scarabs/ScarabDomination3"
+	scarabID = "Metadata/Items/Threads/BreachThread"
 	omenID   = "Metadata/Items/Currency/AncestralOmenOnJewellersMakeFullSockets"
 	hellID   = "Metadata/Items/Currency/CurrencyHellscapeUpgradeToUnique"
 

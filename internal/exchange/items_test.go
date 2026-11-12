@@ -45,7 +45,7 @@ var sidebarCategories = []string{
 	"Currency",
 	"Essences",
 	"Delve",
-	"Scarabs",
+	"Threads",
 	"Divination Cards",
 	"Delirium",
 	"Legion",
@@ -520,6 +520,60 @@ func TestLookupItem_returnsTheSidebarCategoryTheGameFilesTheItemUnder(t *testing
 			}
 			if item.Name != tc.wantItemName {
 				t.Fatalf("name = %q, want %q — the pinned id is not the item this case is about", item.Name, tc.wantItemName)
+			}
+			if item.Category != tc.wantCategory {
+				t.Errorf("category = %q, want %q", item.Category, tc.wantCategory)
+			}
+		})
+	}
+}
+
+func TestItemAsset_followsThe330PatchNotes(t *testing.T) {
+	// The 3.30 notes remove Scarabs for Threads, move Divine Vessels and
+	// Allflame Embers to Currency, retire the Mirage coins and incubators, Orb of
+	// Binding and the Fragmented Delirium Orb, and rename the Skittering one.
+	_, entries := assetEntries(t)
+
+	for id := range entries {
+		if strings.HasPrefix(id, "Metadata/Items/Scarabs/") {
+			t.Errorf("asset still carries Scarab id %q", id)
+		}
+	}
+	for _, id := range []string{
+		"Metadata/Items/Currency/CurrencyWishConvertUnique",
+		"Metadata/Items/Currency/CurrencyWishConvertUniqueCorrupt",
+		"Metadata/Items/Currency/CurrencyIncubationFaridunHighStackable",
+		"Metadata/Items/Currency/CurrencyIncubationFaridunLowStackable",
+		"Metadata/Items/Currency/CurrencyIncubationFaridunMapStackable",
+		"Metadata/Items/Currency/CurrencyUpgradeToRareAndSetSockets",
+		"Metadata/Items/Currency/CurrencyAfflictionOrbFragments",
+	} {
+		if _, ok := LookupItem(id); ok {
+			t.Errorf("LookupItem(%q) found an item the 3.30 notes remove", id)
+		}
+	}
+
+	tests := []struct {
+		name         string
+		id           string
+		wantItemName string
+		wantCategory string
+	}{
+		{"divine vessel is currency", "Metadata/Items/MapFragments/CurrencyFragmentPantheonFlask", "Divine Vessel", "Currency"},
+		{"allflame ember is currency", "Metadata/Items/MapFragments/GoldAllflamePack", "Allflame Ember of the Gilded", "Currency"},
+		{"thread is threads", "Metadata/Items/Threads/BreachThread", "Breach Thread", "Threads"},
+		{"frayed thread is threads", "Metadata/Items/Threads/FrayedThread", "Frayed Thread", "Threads"},
+		{"skittering orb is renamed threaded", "Metadata/Items/Currency/CurrencyAfflictionOrbScarabs", "Threaded Delirium Orb", "Delirium"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			item, ok := LookupItem(tc.id)
+
+			if !ok {
+				t.Fatalf("LookupItem(%q) reported a miss, want the asset entry", tc.id)
+			}
+			if item.Name != tc.wantItemName {
+				t.Errorf("name = %q, want %q", item.Name, tc.wantItemName)
 			}
 			if item.Category != tc.wantCategory {
 				t.Errorf("category = %q, want %q", item.Category, tc.wantCategory)

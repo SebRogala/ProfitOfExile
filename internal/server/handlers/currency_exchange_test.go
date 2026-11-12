@@ -18,10 +18,9 @@ import (
 )
 
 // scarabID is a third feed id, so the fixture's plays are not all quoted in the
-// same two currencies. It is also a real id the item asset resolves
-// ("Domination Scarab of Evolution"), which its humanized form — "Domination 3"
-// — would not have produced.
-const scarabID = "Metadata/Items/Scarabs/ScarabDomination3"
+// same two currencies. It is also an id the item asset resolves ("Breach
+// Thread", a provisional 3.30 id with no icon).
+const scarabID = "Metadata/Items/Threads/BreachThread"
 
 // The window the fixture result covers: six hours ending on the 06:00 feed hour,
 // so To is 07:00 and the newest feed hour (lastUpdated) is 06:00.
@@ -497,7 +496,7 @@ func TestCurrencyExchangePlays_legsCarryDisplayDataBesideTheRawFeedIDs(t *testin
 	// sides of the trade, so the item AND the quote carry all three.
 	//
 	// The scarab legs are what make the categories readable as a per-side answer:
-	// a leg that buys a Scarabs item quoted in a Currency one cannot be satisfied
+	// a leg that buys a Threads item quoted in a Currency one cannot be satisfied
 	// by a decorator that resolves one side and copies it to the other.
 	body := decodePlays(t, getPlays(t, warmExchangeCache(t), "/api/currency-exchange/plays?mode=1-hop"))
 
@@ -507,14 +506,14 @@ func TestCurrencyExchangePlays_legsCarryDisplayDataBesideTheRawFeedIDs(t *testin
 			Action: "buy", Item: scarabID, Quote: exchange.DivineID,
 			Price: 0.0625, PriceItemQty: 16, PriceQuoteQty: 1,
 			Fair: 0.07, FairOK: true, Tick: 0.0625, Volume: 300, Stock: 60,
-			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID), ItemCategory: "Scarabs",
+			ItemName: "Breach Thread", ItemIcon: nil, ItemCategory: "Threads",
 			QuoteName: "Divine Orb", QuoteIcon: iconPath(exchange.DivineID), QuoteCategory: "Currency",
 		},
 		{
 			Action: "sell", Item: scarabID, Quote: exchange.ChaosID,
 			Price: 24.5, PriceItemQty: 2, PriceQuoteQty: 49,
 			Fair: 15, FairOK: true, Tick: 0.02040816326530612, Volume: 250, Stock: 25, DepletedSide: true, Suspect: true,
-			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID), ItemCategory: "Scarabs",
+			ItemName: "Breach Thread", ItemIcon: nil, ItemCategory: "Threads",
 			QuoteName: "Chaos Orb", QuoteIcon: iconPath(exchange.ChaosID), QuoteCategory: "Currency",
 		},
 		{
@@ -652,7 +651,7 @@ func TestCurrencyExchangePlays_itemTheAssetDoesNotCover_sendsAnEmptyCategoryRath
 // the production helper what to expect agrees with it however the list is
 // reordered or truncated.
 var sidebarCategories = []string{
-	"Currency", "Essences", "Delve", "Scarabs", "Divination Cards", "Delirium",
+	"Currency", "Essences", "Delve", "Threads", "Divination Cards", "Delirium",
 	"Legion", "Fragments", "Oils", "Catalysts", "Omens", "Tattoos", "Expedition",
 	"Harvest", "Runegrafts", "Allflame",
 }

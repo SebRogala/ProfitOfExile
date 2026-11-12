@@ -68,12 +68,14 @@ type assetEntry struct {
 // and a list derived from the asset would drop it, so the filter would grow a
 // row on its own the first league an expedition item appears. The order is the
 // sidebar's, not alphabetical: clients render it verbatim so the filter matches
-// what the player sees in game.
+// what the player sees in game. Threads took the Scarabs slot in 3.30 ("Scarabs
+// have been removed from the game"); its position is inferred, not yet seen
+// in game.
 var categories = [...]string{
 	"Currency",
 	"Essences",
 	"Delve",
-	"Scarabs",
+	"Threads",
 	"Divination Cards",
 	"Delirium",
 	"Legion",

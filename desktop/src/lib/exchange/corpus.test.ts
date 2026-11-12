@@ -173,7 +173,7 @@ const CATEGORIES = [
 	'Currency',
 	'Essences',
 	'Delve',
-	'Scarabs',
+	'Threads',
 	'Divination Cards',
 	'Delirium',
 	'Legion',
@@ -298,10 +298,10 @@ const MAWR_JUNK_KEY = `direct:${CHAOS}|Metadata/Items/Maps/MapMawrBlaiddJunkNewe
 const VESSEL_KEY = `direct:${CHAOS}|Metadata/Items/Currency/CurrencyDivineVessel`;
 const CLEAN_FLIP_KEY = `direct:${CHAOS}|Metadata/Items/Currency/CurrencyCleanFlip`;
 const YOUNG_KEY = `direct:${CHAOS}|Metadata/Items/Currency/CurrencyYoungRecipe`;
-const SCARAB_HOP_KEY = `1-hop:Metadata/Items/Scarabs/ScarabDomination3|${CHAOS}|${DIVINE}`;
-const SCARAB_DIVINE_KEY = `direct:${DIVINE}|Metadata/Items/Scarabs/ScarabDomination3`;
-const SCARAB_CHAOS_KEY = `direct:${CHAOS}|Metadata/Items/Scarabs/ScarabDomination3`;
-const SCARAB_HOP_DIVINE_KEY = `1-hop:Metadata/Items/Scarabs/ScarabDomination3|${DIVINE}|${CHAOS}`;
+const SCARAB_HOP_KEY = `1-hop:Metadata/Items/Threads/BreachThread|${CHAOS}|${DIVINE}`;
+const SCARAB_DIVINE_KEY = `direct:${DIVINE}|Metadata/Items/Threads/BreachThread`;
+const SCARAB_CHAOS_KEY = `direct:${CHAOS}|Metadata/Items/Threads/BreachThread`;
+const SCARAB_HOP_DIVINE_KEY = `1-hop:Metadata/Items/Threads/BreachThread|${DIVINE}|${CHAOS}`;
 const DIVINE_ANCHOR_KEY = `direct:${CHAOS}|${DIVINE}`;
 
 /**

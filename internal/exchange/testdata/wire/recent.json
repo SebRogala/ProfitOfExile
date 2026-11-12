@@ -391,12 +391,12 @@
       "lastHour": "2026-08-23T07:00:00Z"
     },
     {
-      "key": "1-hop:Metadata/Items/Scarabs/ScarabDomination3|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+      "key": "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
       "mode": "1-hop",
       "legs": [
         {
           "action": "buy",
-          "item": "Metadata/Items/Scarabs/ScarabDomination3",
+          "item": "Metadata/Items/Threads/BreachThread",
           "quote": "Metadata/Items/Currency/CurrencyRerollRare",
           "price": 10,
           "priceItemQty": 1,
@@ -414,7 +414,7 @@
         },
         {
           "action": "sell",
-          "item": "Metadata/Items/Scarabs/ScarabDomination3",
+          "item": "Metadata/Items/Threads/BreachThread",
           "quote": "Metadata/Items/Currency/CurrencyModValues",
           "price": 0.1,
           "priceItemQty": 10,
@@ -470,12 +470,12 @@
       "lastHour": "2026-08-23T07:00:00Z"
     },
     {
-      "key": "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Scarabs/ScarabDomination3",
+      "key": "direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
       "mode": "direct",
       "legs": [
         {
           "action": "buy",
-          "item": "Metadata/Items/Scarabs/ScarabDomination3",
+          "item": "Metadata/Items/Threads/BreachThread",
           "quote": "Metadata/Items/Currency/CurrencyModValues",
           "price": 0.05,
           "priceItemQty": 20,
@@ -493,7 +493,7 @@
         },
         {
           "action": "sell",
-          "item": "Metadata/Items/Scarabs/ScarabDomination3",
+          "item": "Metadata/Items/Threads/BreachThread",
           "quote": "Metadata/Items/Currency/CurrencyModValues",
           "price": 0.1,
           "priceItemQty": 10,
@@ -592,12 +592,12 @@
       "lastHour": "2026-08-23T07:00:00Z"
     },
     {
-      "key": "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Scarabs/ScarabDomination3",
+      "key": "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
       "mode": "direct",
       "legs": [
         {
           "action": "buy",
-          "item": "Metadata/Items/Scarabs/ScarabDomination3",
+          "item": "Metadata/Items/Threads/BreachThread",
           "quote": "Metadata/Items/Currency/CurrencyRerollRare",
           "price": 10,
           "priceItemQty": 1,
@@ -615,7 +615,7 @@
         },
         {
           "action": "sell",
-          "item": "Metadata/Items/Scarabs/ScarabDomination3",
+          "item": "Metadata/Items/Threads/BreachThread",
           "quote": "Metadata/Items/Currency/CurrencyRerollRare",
           "price": 12,
           "priceItemQty": 1,
@@ -653,12 +653,12 @@
       "lastHour": "2026-08-23T07:00:00Z"
     },
     {
-      "key": "1-hop:Metadata/Items/Scarabs/ScarabDomination3|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
+      "key": "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
       "mode": "1-hop",
       "legs": [
         {
           "action": "buy",
-          "item": "Metadata/Items/Scarabs/ScarabDomination3",
+          "item": "Metadata/Items/Threads/BreachThread",
           "quote": "Metadata/Items/Currency/CurrencyModValues",
           "price": 0.05,
           "priceItemQty": 20,
@@ -676,7 +676,7 @@
         },
         {
           "action": "sell",
-          "item": "Metadata/Items/Scarabs/ScarabDomination3",
+          "item": "Metadata/Items/Threads/BreachThread",
           "quote": "Metadata/Items/Currency/CurrencyRerollRare",
           "price": 12,
           "priceItemQty": 1,

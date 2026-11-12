@@ -829,11 +829,6 @@
     "icon": "https://www.poewiki.net/images/9/95/Fossilised_Delirium_Orb_inventory_icon.png",
     "name": "Fossilised Delirium Orb"
   },
-  "Metadata/Items/Currency/CurrencyAfflictionOrbFragments": {
-    "category": "Delirium",
-    "icon": "https://www.poewiki.net/images/4/4e/Fragmented_Delirium_Orb_inventory_icon.png",
-    "name": "Fragmented Delirium Orb"
-  },
   "Metadata/Items/Currency/CurrencyAfflictionOrbGems": {
     "category": "Delirium",
     "icon": "https://www.poewiki.net/images/a/ad/Thaumaturge%27s_Delirium_Orb_inventory_icon.png",
@@ -887,7 +882,7 @@
   "Metadata/Items/Currency/CurrencyAfflictionOrbScarabs": {
     "category": "Delirium",
     "icon": "https://www.poewiki.net/images/9/94/Skittering_Delirium_Orb_inventory_icon.png",
-    "name": "Skittering Delirium Orb"
+    "name": "Threaded Delirium Orb"
   },
   "Metadata/Items/Currency/CurrencyAfflictionOrbTalismans": {
     "category": "Delirium",
@@ -2024,21 +2019,6 @@
     "icon": "https://www.poewiki.net/images/0/01/Whispering_Incubator_inventory_icon.png",
     "name": "Whispering Incubator"
   },
-  "Metadata/Items/Currency/CurrencyIncubationFaridunHighStackable": {
-    "category": "Currency",
-    "icon": "https://www.poewiki.net/images/a/a7/Sacred_Incubator_inventory_icon.png",
-    "name": "Sacred Incubator"
-  },
-  "Metadata/Items/Currency/CurrencyIncubationFaridunLowStackable": {
-    "category": "Currency",
-    "icon": "https://www.poewiki.net/images/7/7e/Honoured_Incubator_inventory_icon.png",
-    "name": "Honoured Incubator"
-  },
-  "Metadata/Items/Currency/CurrencyIncubationFaridunMapStackable": {
-    "category": "Currency",
-    "icon": "https://www.poewiki.net/images/c/c2/Miraged_Incubator_inventory_icon.png",
-    "name": "Miraged Incubator"
-  },
   "Metadata/Items/Currency/CurrencyIncubationFossils": {
     "category": "Currency",
     "icon": null,
@@ -2734,11 +2714,6 @@
     "icon": "https://www.poewiki.net/images/9/9f/Orb_of_Alchemy_inventory_icon.png",
     "name": "Orb of Alchemy"
   },
-  "Metadata/Items/Currency/CurrencyUpgradeToRareAndSetSockets": {
-    "category": "Currency",
-    "icon": "https://www.poewiki.net/images/9/94/Orb_of_Binding_inventory_icon.png",
-    "name": "Orb of Binding"
-  },
   "Metadata/Items/Currency/CurrencyUpgradeToRareAndSetSocketsShard": {
     "category": "Currency",
     "icon": "https://www.poewiki.net/images/a/ab/Binding_Shard_inventory_icon.png",
@@ -2758,16 +2733,6 @@
     "category": "Currency",
     "icon": "https://www.poewiki.net/images/1/1c/Blacksmith%27s_Whetstone_inventory_icon.png",
     "name": "Blacksmith's Whetstone"
-  },
-  "Metadata/Items/Currency/CurrencyWishConvertUnique": {
-    "category": "Currency",
-    "icon": "https://www.poewiki.net/images/b/b1/Coin_of_Restoration_inventory_icon.png",
-    "name": "Coin of Restoration"
-  },
-  "Metadata/Items/Currency/CurrencyWishConvertUniqueCorrupt": {
-    "category": "Currency",
-    "icon": "https://www.poewiki.net/images/1/19/Coin_of_Desecration_inventory_icon.png",
-    "name": "Coin of Desecration"
   },
   "Metadata/Items/Currency/CurrencyWishSupportGemBlue": {
     "category": "Currency",
@@ -7000,7 +6965,7 @@
     "name": "Echo of Loneliness"
   },
   "Metadata/Items/MapFragments/BetrayalAllflamePack": {
-    "category": "Allflame",
+    "category": "Currency",
     "icon": "https://www.poewiki.net/images/a/a4/Allflame_Ember_of_Kulemak_inventory_icon.png",
     "name": "Allflame Ember of Kulemak"
   },
@@ -7035,7 +7000,7 @@
     "name": "Ancient Reliquary Key"
   },
   "Metadata/Items/MapFragments/CleansedAllflamePack": {
-    "category": "Allflame",
+    "category": "Currency",
     "icon": "https://www.poewiki.net/images/1/11/Allflame_Ember_of_the_Ethereal_inventory_icon.png",
     "name": "Allflame Ember of the Ethereal"
   },
@@ -7215,7 +7180,7 @@
     "name": "The Black Barya"
   },
   "Metadata/Items/MapFragments/CurrencyFragmentPantheonFlask": {
-    "category": "Fragments",
+    "category": "Currency",
     "icon": "https://www.poewiki.net/images/7/74/Divine_Vessel_inventory_icon.png",
     "name": "Divine Vessel"
   },
@@ -7510,12 +7475,12 @@
     "name": "Mortal Set"
   },
   "Metadata/Items/MapFragments/FragmentPantheonFlask": {
-    "category": "Fragments",
+    "category": "Currency",
     "icon": null,
     "name": "Divine Vessel"
   },
   "Metadata/Items/MapFragments/GoldAllflamePack": {
-    "category": "Allflame",
+    "category": "Currency",
     "icon": "https://www.poewiki.net/images/3/3c/Allflame_Ember_of_the_Gilded_inventory_icon.png",
     "name": "Allflame Ember of the Gilded"
   },
@@ -7810,7 +7775,7 @@
     "name": "Maven's Invitation: The Elderslayers"
   },
   "Metadata/Items/MapFragments/MeatSackAllflamePack": {
-    "category": "Allflame",
+    "category": "Currency",
     "icon": "https://www.poewiki.net/images/8/8d/Allflame_Ember_of_Flesh_inventory_icon.png",
     "name": "Allflame Ember of Flesh"
   },
@@ -7860,7 +7825,7 @@
     "name": "Writhing Invitation"
   },
   "Metadata/Items/MapFragments/PropagationAllflamePack": {
-    "category": "Allflame",
+    "category": "Currency",
     "icon": "https://www.poewiki.net/images/3/3c/Allflame_Ember_of_Propagation_inventory_icon.png",
     "name": "Allflame Ember of Propagation"
   },
@@ -7885,12 +7850,12 @@
     "name": "Volkuur's Key"
   },
   "Metadata/Items/MapFragments/RatsAllflamePack": {
-    "category": "Allflame",
+    "category": "Currency",
     "icon": null,
     "name": "[DNT - UNUSED] Allflame Ember of Rats"
   },
   "Metadata/Items/MapFragments/ResplendenceAllflamePack": {
-    "category": "Allflame",
+    "category": "Currency",
     "icon": "https://www.poewiki.net/images/1/17/Allflame_Ember_of_Resplendence_inventory_icon.png",
     "name": "Allflame Ember of Resplendence"
   },
@@ -7930,7 +7895,7 @@
     "name": "Voidborn Reliquary Key"
   },
   "Metadata/Items/MapFragments/ToadAllflamePack": {
-    "category": "Allflame",
+    "category": "Currency",
     "icon": "https://www.poewiki.net/images/3/3b/Allflame_Ember_of_Toads_inventory_icon.png",
     "name": "Allflame Ember of Toads"
   },
@@ -8035,998 +8000,63 @@
     "name": "Voidborn Reliquary Key"
   },
   "Metadata/Items/MapFragments/WildwoodAllflamePack": {
-    "category": "Allflame",
+    "category": "Currency",
     "icon": "https://www.poewiki.net/images/4/47/Allflame_Ember_of_the_Wildwood_inventory_icon.png",
     "name": "Allflame Ember of the Wildwood"
   },
-  "Metadata/Items/Scarabs/ScarabAbyss1": {
-    "category": "Scarabs",
+  "Metadata/Items/Threads/AbyssThread": {
+    "category": "Threads",
     "icon": null,
-    "name": "Rusted Abyss Scarab"
+    "name": "Abyss Thread"
   },
-  "Metadata/Items/Scarabs/ScarabAbyss2": {
-    "category": "Scarabs",
+  "Metadata/Items/Threads/BestiaryThread": {
+    "category": "Threads",
     "icon": null,
-    "name": "Polished Abyss Scarab"
+    "name": "Bestiary Thread"
   },
-  "Metadata/Items/Scarabs/ScarabAbyss3": {
-    "category": "Scarabs",
+  "Metadata/Items/Threads/BetrayalThread": {
+    "category": "Threads",
     "icon": null,
-    "name": "Gilded Abyss Scarab"
+    "name": "Betrayal Thread"
   },
-  "Metadata/Items/Scarabs/ScarabAbyss4": {
-    "category": "Scarabs",
+  "Metadata/Items/Threads/BlightThread": {
+    "category": "Threads",
     "icon": null,
-    "name": "Winged Abyss Scarab"
+    "name": "Blight Thread"
   },
-  "Metadata/Items/Scarabs/ScarabAbyssNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/d/d9/Abyss_Scarab_inventory_icon.png",
-    "name": "Abyss Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabAbyssNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/1e/Abyss_Scarab_of_Multitudes_inventory_icon.png",
-    "name": "Abyss Scarab of Multitudes"
-  },
-  "Metadata/Items/Scarabs/ScarabAbyssNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/f/f3/Abyss_Scarab_of_Descending_inventory_icon.png",
-    "name": "Abyss Scarab of Descending"
-  },
-  "Metadata/Items/Scarabs/ScarabAbyssNew4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/1a/Abyss_Scarab_of_Crystals_inventory_icon.png",
-    "name": "Abyss Scarab of Crystals"
-  },
-  "Metadata/Items/Scarabs/ScarabAbyssNew5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/2/21/Abyss_Scarab_of_the_Consort_inventory_icon.png",
-    "name": "Abyss Scarab of the Consort"
-  },
-  "Metadata/Items/Scarabs/ScarabAnarchy1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/2/2c/Anarchy_Scarab_inventory_icon.png",
-    "name": "Anarchy Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabAnarchy2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/c/c4/Anarchy_Scarab_of_Gigantification_inventory_icon.png",
-    "name": "Anarchy Scarab of Gigantification"
-  },
-  "Metadata/Items/Scarabs/ScarabAnarchy3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/f/f8/Anarchy_Scarab_of_Partnership_inventory_icon.png",
-    "name": "Anarchy Scarab of Partnership"
-  },
-  "Metadata/Items/Scarabs/ScarabAnarchy4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/2/25/Anarchy_Scarab_of_the_Exceptional_inventory_icon.png",
-    "name": "Anarchy Scarab of the Exceptional"
-  },
-  "Metadata/Items/Scarabs/ScarabBeasts1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Bestiary Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBeasts2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Bestiary Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBeasts3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Bestiary Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBeasts4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Bestiary Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBeasts4a": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/13/Farric_Lure_inventory_icon.png",
-    "name": "Farric Lure"
-  },
-  "Metadata/Items/Scarabs/ScarabBeasts4b": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/9/9d/Saqawine_Lure_inventory_icon.png",
-    "name": "Saqawine Lure"
-  },
-  "Metadata/Items/Scarabs/ScarabBeasts4c": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/c/c9/Fenumal_Lure_inventory_icon.png",
-    "name": "Fenumal Lure"
-  },
-  "Metadata/Items/Scarabs/ScarabBeasts4d": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/4/42/Craicic_Lure_inventory_icon.png",
-    "name": "Craicic Lure"
-  },
-  "Metadata/Items/Scarabs/ScarabBeastsNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/7/79/Bestiary_Scarab_inventory_icon.png",
-    "name": "Bestiary Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBeastsNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/8/88/Bestiary_Scarab_of_the_Herd_inventory_icon.png",
-    "name": "Bestiary Scarab of the Herd"
-  },
-  "Metadata/Items/Scarabs/ScarabBeastsNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/d/df/Bestiary_Scarab_of_Duplicating_inventory_icon.png",
-    "name": "Bestiary Scarab of Duplicating"
-  },
-  "Metadata/Items/Scarabs/ScarabBeastsNew4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/17/Bestiary_Scarab_of_the_Shadowed_Crow_inventory_icon.png",
-    "name": "Bestiary Scarab of the Shadowed Crow"
-  },
-  "Metadata/Items/Scarabs/ScarabBetrayal1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/8/8f/Betrayal_Scarab_inventory_icon.png",
-    "name": "Betrayal Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBetrayal2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/6/6a/Betrayal_Scarab_of_the_Allflame_inventory_icon.png",
-    "name": "Betrayal Scarab of the Allflame"
-  },
-  "Metadata/Items/Scarabs/ScarabBetrayal3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/b/b9/Betrayal_Scarab_of_Reinforcements_inventory_icon.png",
-    "name": "Betrayal Scarab of Reinforcements"
-  },
-  "Metadata/Items/Scarabs/ScarabBetrayal4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/a/a2/Betrayal_Scarab_of_Unbreaking_inventory_icon.png",
-    "name": "Betrayal Scarab of Unbreaking"
-  },
-  "Metadata/Items/Scarabs/ScarabBeyond1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/11/Beyond_Scarab_inventory_icon.png",
-    "name": "Beyond Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBeyond2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/1e/Beyond_Scarab_of_Corruption_inventory_icon.png",
-    "name": "Beyond Scarab of Corruption"
-  },
-  "Metadata/Items/Scarabs/ScarabBeyond3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/8/89/Beyond_Scarab_of_Haemophilia_inventory_icon.png",
-    "name": "Beyond Scarab of Haemophilia"
-  },
-  "Metadata/Items/Scarabs/ScarabBeyond4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/f/f4/Beyond_Scarab_of_Resurgence_inventory_icon.png",
-    "name": "Beyond Scarab of Resurgence"
-  },
-  "Metadata/Items/Scarabs/ScarabBeyond5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/2/26/Beyond_Scarab_of_the_Invasion_inventory_icon.png",
-    "name": "Beyond Scarab of the Invasion"
-  },
-  "Metadata/Items/Scarabs/ScarabBlight1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Blight Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBlight2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Blight Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBlight3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Blight Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBlight4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Blight Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBlightNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/d/d7/Blight_Scarab_inventory_icon.png",
-    "name": "Blight Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBlightNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/a/a4/Blight_Scarab_of_Bounty_inventory_icon.png",
-    "name": "Blight Scarab of Bounty"
-  },
-  "Metadata/Items/Scarabs/ScarabBlightNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/a/a4/Blight_Scarab_of_the_Blightheart_inventory_icon.png",
-    "name": "Blight Scarab of the Blightheart"
-  },
-  "Metadata/Items/Scarabs/ScarabBlightNew4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/a/ae/Blight_Scarab_of_Blooming_inventory_icon.png",
-    "name": "Blight Scarab of Blooming"
-  },
-  "Metadata/Items/Scarabs/ScarabBlightNew5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/3/3c/Blight_Scarab_of_Invigoration_inventory_icon.png",
-    "name": "Blight Scarab of Invigoration"
-  },
-  "Metadata/Items/Scarabs/ScarabBreach1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Breach Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBreach2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Breach Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBreach3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Breach Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBreach4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Breach Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabBreachNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/5/5c/Breach_Scarab_of_the_Hive_inventory_icon.png",
-    "name": "Breach Scarab of the Hive"
-  },
-  "Metadata/Items/Scarabs/ScarabBreachNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/b/b4/Breach_Scarab_of_the_Dreamer_inventory_icon.png",
-    "name": "Breach Scarab of the Dreamer"
-  },
-  "Metadata/Items/Scarabs/ScarabBreachNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/5/57/Breach_Scarab_of_Instability_inventory_icon.png",
-    "name": "Breach Scarab of Instability"
-  },
-  "Metadata/Items/Scarabs/ScarabBreachNew4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/3/33/Breach_Scarab_of_the_Marshal_inventory_icon.png",
-    "name": "Breach Scarab of the Marshal"
-  },
-  "Metadata/Items/Scarabs/ScarabBreachNew5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/9/92/Breach_Scarab_of_the_Incensed_Swarm_inventory_icon.png",
-    "name": "Breach Scarab of the Incensed Swarm"
-  },
-  "Metadata/Items/Scarabs/ScarabBreachNew6": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/d/dd/Breach_Scarab_of_Resonant_Cascade_inventory_icon.png",
-    "name": "Breach Scarab of Resonant Cascade"
-  },
-  "Metadata/Items/Scarabs/ScarabDelirium1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/2/24/Delirium_Scarab_inventory_icon.png",
-    "name": "Delirium Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabDelirium2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/6/61/Delirium_Scarab_of_Mania_inventory_icon.png",
-    "name": "Delirium Scarab of Mania"
-  },
-  "Metadata/Items/Scarabs/ScarabDelirium3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/a/ac/Delirium_Scarab_of_Paranoia_inventory_icon.png",
-    "name": "Delirium Scarab of Paranoia"
-  },
-  "Metadata/Items/Scarabs/ScarabDelirium4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/4/44/Delirium_Scarab_of_Neuroses_inventory_icon.png",
-    "name": "Delirium Scarab of Neuroses"
-  },
-  "Metadata/Items/Scarabs/ScarabDelirium5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/d/d1/Delirium_Scarab_of_Delusions_inventory_icon.png",
-    "name": "Delirium Scarab of Delusions"
-  },
-  "Metadata/Items/Scarabs/ScarabDivinationCards1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Divination Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabDivinationCards2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Divination Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabDivinationCards3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Divination Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabDivinationCards4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Divination Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabDivinationCardsNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/3/3e/Divination_Scarab_of_The_Cloister_inventory_icon.png",
-    "name": "Divination Scarab of The Cloister"
-  },
-  "Metadata/Items/Scarabs/ScarabDivinationCardsNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/4/45/Polished_Divination_Scarab_inventory_icon.png",
-    "name": "Divination Scarab of Plenty"
-  },
-  "Metadata/Items/Scarabs/ScarabDivinationCardsNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/2/2b/Divination_Scarab_of_Pilfering_inventory_icon.png",
-    "name": "Divination Scarab of Pilfering"
-  },
-  "Metadata/Items/Scarabs/ScarabDomination1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/e/e7/Domination_Scarab_inventory_icon.png",
-    "name": "Domination Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabDomination2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/0/00/Domination_Scarab_of_Apparitions_inventory_icon.png",
-    "name": "Domination Scarab of Apparitions"
-  },
-  "Metadata/Items/Scarabs/ScarabDomination3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/9/9d/Domination_Scarab_of_Evolution_inventory_icon.png",
-    "name": "Domination Scarab of Evolution"
-  },
-  "Metadata/Items/Scarabs/ScarabDomination4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/8/8a/Domination_Scarab_of_Terrors_inventory_icon.png",
-    "name": "Domination Scarab of Terrors"
-  },
-  "Metadata/Items/Scarabs/ScarabElderRares1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Elder Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabElderRares2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Elder Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabElderRares3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Elder Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabElderRares4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Elder Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabEssence1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/1e/Essence_Scarab_inventory_icon.png",
-    "name": "Essence Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabEssence2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/e/e9/Essence_Scarab_of_Ascent_inventory_icon.png",
-    "name": "Essence Scarab of Ascent"
-  },
-  "Metadata/Items/Scarabs/ScarabEssence3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/7/71/Essence_Scarab_of_Stability_inventory_icon.png",
-    "name": "Essence Scarab of Stability"
-  },
-  "Metadata/Items/Scarabs/ScarabEssence4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/a/a5/Essence_Scarab_of_Calcification_inventory_icon.png",
-    "name": "Essence Scarab of Calcification"
-  },
-  "Metadata/Items/Scarabs/ScarabEssence5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/2/2d/Essence_Scarab_of_Adaptation_inventory_icon.png",
-    "name": "Essence Scarab of Adaptation"
-  },
-  "Metadata/Items/Scarabs/ScarabExpedition1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/8/8b/Expedition_Scarab_inventory_icon.png",
-    "name": "Expedition Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabExpedition2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/a/a7/Expedition_Scarab_of_Runefinding_inventory_icon.png",
-    "name": "Expedition Scarab of Runefinding"
-  },
-  "Metadata/Items/Scarabs/ScarabExpedition3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/2/2c/Expedition_Scarab_of_Verisium_Powder_inventory_icon.png",
-    "name": "Expedition Scarab of Verisium Powder"
-  },
-  "Metadata/Items/Scarabs/ScarabExpedition4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/d/d1/Expedition_Scarab_of_Infusion_inventory_icon.png",
-    "name": "Expedition Scarab of Infusion"
-  },
-  "Metadata/Items/Scarabs/ScarabExpedition5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/2/23/Expedition_Scarab_of_Archaeology_inventory_icon.png",
-    "name": "Expedition Scarab of Archaeology"
-  },
-  "Metadata/Items/Scarabs/ScarabHarbinger1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Harbinger Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabHarbinger2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Harbinger Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabHarbinger3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Harbinger Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabHarbinger4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Harbinger Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabHarbingerNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/b/bd/Harbinger_Scarab_inventory_icon.png",
-    "name": "Harbinger Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabHarbingerNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/1d/Harbinger_Scarab_of_Obelisks_inventory_icon.png",
-    "name": "Harbinger Scarab of Obelisks"
-  },
-  "Metadata/Items/Scarabs/ScarabHarbingerNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/f/ff/Harbinger_Scarab_of_Regency_inventory_icon.png",
-    "name": "Harbinger Scarab of Regency"
-  },
-  "Metadata/Items/Scarabs/ScarabHarbingerNew4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/c/c4/Harbinger_Scarab_of_Warhoards_inventory_icon.png",
-    "name": "Harbinger Scarab of Warhoards"
-  },
-  "Metadata/Items/Scarabs/ScarabHarvest1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/0/04/Harvest_Scarab_inventory_icon.png",
-    "name": "Harvest Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabHarvest2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/17/Harvest_Scarab_of_Doubling_inventory_icon.png",
-    "name": "Harvest Scarab of Doubling"
-  },
-  "Metadata/Items/Scarabs/ScarabHarvest3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/3/3e/Harvest_Scarab_of_Cornucopia_inventory_icon.png",
-    "name": "Harvest Scarab of Cornucopia"
-  },
-  "Metadata/Items/Scarabs/ScarabIncursion1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/3/33/Incursion_Scarab_inventory_icon.png",
-    "name": "Incursion Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabIncursion2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/4/4a/Incursion_Scarab_of_Invasion_inventory_icon.png",
-    "name": "Incursion Scarab of Invasion"
-  },
-  "Metadata/Items/Scarabs/ScarabIncursion3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/f/fd/Incursion_Scarab_of_Champions_inventory_icon.png",
-    "name": "Incursion Scarab of Champions"
-  },
-  "Metadata/Items/Scarabs/ScarabIncursion4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/5/54/Incursion_Scarab_of_Timelines_inventory_icon.png",
-    "name": "Incursion Scarab of Timelines"
-  },
-  "Metadata/Items/Scarabs/ScarabInfluenceNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/d/d2/Influencing_Scarab_of_the_Shaper_inventory_icon.png",
-    "name": "Influencing Scarab of the Shaper"
-  },
-  "Metadata/Items/Scarabs/ScarabInfluenceNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/4/44/Influencing_Scarab_of_the_Elder_inventory_icon.png",
-    "name": "Influencing Scarab of the Elder"
-  },
-  "Metadata/Items/Scarabs/ScarabInfluenceNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/5/5c/Influencing_Scarab_of_Hordes_inventory_icon.png",
-    "name": "Influencing Scarab of Hordes"
-  },
-  "Metadata/Items/Scarabs/ScarabInfluenceNew4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/4/48/Influencing_Scarab_of_Interference_inventory_icon.png",
-    "name": "Influencing Scarab of Interference"
-  },
-  "Metadata/Items/Scarabs/ScarabLegion1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Legion Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabLegion2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Legion Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabLegion3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Legion Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabLegion4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Legion Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabLegionNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/4/46/Legion_Scarab_inventory_icon.png",
-    "name": "Legion Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabLegionNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/8/8c/Legion_Scarab_of_Officers_inventory_icon.png",
-    "name": "Legion Scarab of Officers"
-  },
-  "Metadata/Items/Scarabs/ScarabLegionNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/8/89/Legion_Scarab_of_Treasures_inventory_icon.png",
-    "name": "Legion Scarab of Treasures"
-  },
-  "Metadata/Items/Scarabs/ScarabLegionNew4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/13/Legion_Scarab_of_The_Sekhema_inventory_icon.png",
-    "name": "Legion Scarab of The Sekhema"
-  },
-  "Metadata/Items/Scarabs/ScarabLegionNew5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/9/90/Legion_Scarab_of_Eternal_Conflict_inventory_icon.png",
-    "name": "Legion Scarab of Eternal Conflict"
-  },
-  "Metadata/Items/Scarabs/ScarabMaps1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Cartography Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabMaps2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Cartography Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabMaps3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Cartography Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabMaps4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Cartography Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabMapsNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/b/b2/Cartography_Scarab_of_Escalation_inventory_icon.png",
-    "name": "Cartography Scarab of Escalation"
-  },
-  "Metadata/Items/Scarabs/ScarabMapsNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/5/5f/Cartography_Scarab_of_Risk_inventory_icon.png",
-    "name": "Cartography Scarab of Risk"
-  },
-  "Metadata/Items/Scarabs/ScarabMapsNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/6/62/Cartography_Scarab_of_Singularity_inventory_icon.png",
-    "name": "Cartography Scarab of Singularity"
-  },
-  "Metadata/Items/Scarabs/ScarabMapsNew4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/a/af/Cartography_Scarab_of_Corruption_inventory_icon.png",
-    "name": "Cartography Scarab of Corruption"
-  },
-  "Metadata/Items/Scarabs/ScarabMapsNew5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/6/62/Cartography_Scarab_of_Singularity_inventory_icon.png",
-    "name": "Cartography Scarab of the Multitude"
-  },
-  "Metadata/Items/Scarabs/ScarabMercenaries1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/5/5a/Trarthan_Scarab_inventory_icon.png",
-    "name": "Trarthan Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabMercenaries2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/c/c6/Trarthan_Scarab_of_Infamy_inventory_icon.png",
-    "name": "Trarthan Scarab of Infamy"
-  },
-  "Metadata/Items/Scarabs/ScarabMercenaries3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/4/4a/Trarthan_Scarab_of_Renown_inventory_icon.png",
-    "name": "Trarthan Scarab of Renown"
-  },
-  "Metadata/Items/Scarabs/ScarabMercenaries4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/d/d3/Trarthan_Scarab_of_Surprising_Alliances_inventory_icon.png",
-    "name": "Trarthan Scarab of Surprising Alliances"
-  },
-  "Metadata/Items/Scarabs/ScarabMetamorph1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Ultimatum Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabMetamorph2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Ultimatum Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabMetamorph3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Ultimatum Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabMetamorph4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Ultimatum Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabMisc1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/8/86/Scarab_of_Monstrous_Lineage_inventory_icon.png",
-    "name": "Scarab of Monstrous Lineage"
-  },
-  "Metadata/Items/Scarabs/ScarabMisc10": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/7/73/Scarab_of_the_Dextral_inventory_icon.png",
-    "name": "Scarab of the Dextral"
-  },
-  "Metadata/Items/Scarabs/ScarabMisc11": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/c/cb/Scarab_of_Radiant_Storms_inventory_icon.png",
-    "name": "Scarab of Radiant Storms"
-  },
-  "Metadata/Items/Scarabs/ScarabMisc2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/e/e7/Scarab_of_Adversaries_inventory_icon.png",
-    "name": "Scarab of Adversaries"
-  },
-  "Metadata/Items/Scarabs/ScarabMisc3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/a/af/Scarab_of_Divinity_inventory_icon.png",
-    "name": "Scarab of Divinity"
-  },
-  "Metadata/Items/Scarabs/ScarabMisc4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/a/ab/Scarab_of_Hunted_Traitors_inventory_icon.png",
-    "name": "Scarab of Hunted Traitors"
-  },
-  "Metadata/Items/Scarabs/ScarabMisc5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/e/e5/Scarab_of_Stability_inventory_icon.png",
-    "name": "Scarab of Stability"
-  },
-  "Metadata/Items/Scarabs/ScarabMisc6": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Scarab of the Commander"
-  },
-  "Metadata/Items/Scarabs/ScarabMisc7": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Scarab of Evolution"
-  },
-  "Metadata/Items/Scarabs/ScarabMisc8": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/c/cf/Scarab_of_Wisps_inventory_icon.png",
-    "name": "Scarab of Wisps"
-  },
-  "Metadata/Items/Scarabs/ScarabMisc9": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/f/fb/Scarab_of_the_Sinistral_inventory_icon.png",
-    "name": "Scarab of the Sinistral"
-  },
-  "Metadata/Items/Scarabs/ScarabPerandus1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Expedition Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabPerandus2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Expedition Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabPerandus3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Expedition Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabPerandus4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Expedition Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabRitual1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/d/d2/Ritual_Scarab_of_Selectiveness_inventory_icon.png",
-    "name": "Ritual Scarab of Selectiveness"
-  },
-  "Metadata/Items/Scarabs/ScarabRitual2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/f/f3/Ritual_Scarab_of_Wisps_inventory_icon.png",
-    "name": "Ritual Scarab of Wisps"
-  },
-  "Metadata/Items/Scarabs/ScarabRitual3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/2/22/Ritual_Scarab_of_Abundance_inventory_icon.png",
-    "name": "Ritual Scarab of Abundance"
-  },
-  "Metadata/Items/Scarabs/ScarabRitual4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/b/b0/Ritual_Scarab_of_Corpses_inventory_icon.png",
-    "name": "Ritual Scarab of Corpses"
-  },
-  "Metadata/Items/Scarabs/ScarabSettlers1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/b/b0/Kalguuran_Scarab_inventory_icon.png",
-    "name": "Kalguuran Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabSettlers2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/f/f6/Kalguuran_Scarab_of_Guarded_Riches_inventory_icon.png",
-    "name": "Kalguuran Scarab of Guarded Riches"
-  },
-  "Metadata/Items/Scarabs/ScarabSettlers3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/7/7f/Kalguuran_Scarab_of_Refinement_inventory_icon.png",
-    "name": "Kalguuran Scarab of Refinement"
-  },
-  "Metadata/Items/Scarabs/ScarabSettlers4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/18/Kalguuran_Scarab_of_Enriching_inventory_icon.png",
-    "name": "Kalguuran Scarab of Enriching"
-  },
-  "Metadata/Items/Scarabs/ScarabShaperRares1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Shaper Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabShaperRares2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Shaper Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabShaperRares3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Shaper Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabShaperRares4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Shaper Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabStrongbox1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Ambush Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabStrongbox2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Ambush Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabStrongbox3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Ambush Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabStrongbox4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Ambush Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabStrongboxNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/1d/Ambush_Scarab_inventory_icon.png",
-    "name": "Ambush Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabStrongboxNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/1c/Ambush_Scarab_of_Hidden_Compartments_inventory_icon.png",
-    "name": "Ambush Scarab of Hidden Compartments"
-  },
-  "Metadata/Items/Scarabs/ScarabStrongboxNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/17/Ambush_Scarab_of_Potency_inventory_icon.png",
-    "name": "Ambush Scarab of Potency"
-  },
-  "Metadata/Items/Scarabs/ScarabStrongboxNew4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/8/85/Ambush_Scarab_of_Containment_inventory_icon.png",
-    "name": "Ambush Scarab of Containment"
-  },
-  "Metadata/Items/Scarabs/ScarabStrongboxNew5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/6/63/Ambush_Scarab_of_Discernment_inventory_icon.png",
-    "name": "Ambush Scarab of Discernment"
-  },
-  "Metadata/Items/Scarabs/ScarabSulphite1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Sulphite Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabSulphite2": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Polished Sulphite Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabSulphite3": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Gilded Sulphite Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabSulphite4": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Winged Sulphite Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabSulphiteNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/e/e9/Sulphite_Scarab_inventory_icon.png",
-    "name": "Sulphite Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabSulphiteNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/d/da/Sulphite_Scarab_of_Greed_inventory_icon.png",
-    "name": "Sulphite Scarab of Greed"
-  },
-  "Metadata/Items/Scarabs/ScarabSulphiteNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/6/6c/Sulphite_Scarab_of_Fumes_inventory_icon.png",
-    "name": "Sulphite Scarab of Fumes"
-  },
-  "Metadata/Items/Scarabs/ScarabTorment1": {
-    "category": "Scarabs",
-    "icon": null,
-    "name": "Rusted Torment Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabTorment2": {
-    "category": "Scarabs",
+  "Metadata/Items/Threads/BreachThread": {
+    "category": "Threads",
     "icon": null,
-    "name": "Polished Torment Scarab"
+    "name": "Breach Thread"
   },
-  "Metadata/Items/Scarabs/ScarabTorment3": {
-    "category": "Scarabs",
+  "Metadata/Items/Threads/ExpeditionThread": {
+    "category": "Threads",
     "icon": null,
-    "name": "Gilded Torment Scarab"
+    "name": "Expedition Thread"
   },
-  "Metadata/Items/Scarabs/ScarabTorment4": {
-    "category": "Scarabs",
+  "Metadata/Items/Threads/FrayedThread": {
+    "category": "Threads",
     "icon": null,
-    "name": "Winged Torment Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabTormentNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/e/e4/Torment_Scarab_inventory_icon.png",
-    "name": "Torment Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabTormentNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/c/c9/Torment_Scarab_of_Peculiarity_inventory_icon.png",
-    "name": "Torment Scarab of Peculiarity"
-  },
-  "Metadata/Items/Scarabs/ScarabTormentNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/0/05/Torment_Scarab_of_Release_inventory_icon.png",
-    "name": "Torment Scarab of Release"
+    "name": "Frayed Thread"
   },
-  "Metadata/Items/Scarabs/ScarabTormentNew4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/1f/Torment_Scarab_of_Possession_inventory_icon.png",
-    "name": "Torment Scarab of Possession"
-  },
-  "Metadata/Items/Scarabs/ScarabUber1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/e/e5/Horned_Scarab_of_Bloodlines_inventory_icon.png",
-    "name": "Horned Scarab of Bloodlines"
-  },
-  "Metadata/Items/Scarabs/ScarabUber2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/f/f5/Horned_Scarab_of_Nemeses_inventory_icon.png",
-    "name": "Horned Scarab of Nemeses"
-  },
-  "Metadata/Items/Scarabs/ScarabUber3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/a/af/Horned_Scarab_of_Preservation_inventory_icon.png",
-    "name": "Horned Scarab of Preservation"
-  },
-  "Metadata/Items/Scarabs/ScarabUber4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/6/68/Horned_Scarab_of_Awakening_inventory_icon.png",
-    "name": "Horned Scarab of Awakening"
-  },
-  "Metadata/Items/Scarabs/ScarabUber5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/f/fc/Horned_Scarab_of_Tradition_inventory_icon.png",
-    "name": "Horned Scarab of Tradition"
-  },
-  "Metadata/Items/Scarabs/ScarabUber6": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/7/70/Horned_Scarab_of_Glittering_inventory_icon.png",
-    "name": "Horned Scarab of Glittering"
-  },
-  "Metadata/Items/Scarabs/ScarabUber7": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/1/18/Horned_Scarab_of_Pandemonium_inventory_icon.png",
-    "name": "Horned Scarab of Pandemonium"
-  },
-  "Metadata/Items/Scarabs/ScarabUltimatum1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/f/f1/Ultimatum_Scarab_inventory_icon.png",
-    "name": "Ultimatum Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabUltimatum2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/8/89/Ultimatum_Scarab_of_Bribing_inventory_icon.png",
-    "name": "Ultimatum Scarab of Bribing"
-  },
-  "Metadata/Items/Scarabs/ScarabUltimatum3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/0/06/Ultimatum_Scarab_of_Dueling_inventory_icon.png",
-    "name": "Ultimatum Scarab of Dueling"
-  },
-  "Metadata/Items/Scarabs/ScarabUltimatum4": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/c/c3/Ultimatum_Scarab_of_Catalysing_inventory_icon.png",
-    "name": "Ultimatum Scarab of Catalysing"
-  },
-  "Metadata/Items/Scarabs/ScarabUltimatum5": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/4/45/Ultimatum_Scarab_of_Inscription_inventory_icon.png",
-    "name": "Ultimatum Scarab of Inscription"
-  },
-  "Metadata/Items/Scarabs/ScarabUniques1": {
-    "category": "Scarabs",
+  "Metadata/Items/Threads/IncursionThread": {
+    "category": "Threads",
     "icon": null,
-    "name": "Rusted Reliquary Scarab"
+    "name": "Incursion Thread"
   },
-  "Metadata/Items/Scarabs/ScarabUniques2": {
-    "category": "Scarabs",
+  "Metadata/Items/Threads/LegionThread": {
+    "category": "Threads",
     "icon": null,
-    "name": "Polished Reliquary Scarab"
+    "name": "Legion Thread"
   },
-  "Metadata/Items/Scarabs/ScarabUniques3": {
-    "category": "Scarabs",
+  "Metadata/Items/Threads/RitualThread": {
+    "category": "Threads",
     "icon": null,
-    "name": "Gilded Reliquary Scarab"
+    "name": "Ritual Thread"
   },
-  "Metadata/Items/Scarabs/ScarabUniques4": {
-    "category": "Scarabs",
+  "Metadata/Items/Threads/UltimatumThread": {
+    "category": "Threads",
     "icon": null,
-    "name": "Winged Reliquary Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabUniquesNew1": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/d/d7/Titanic_Scarab_inventory_icon.png",
-    "name": "Titanic Scarab"
-  },
-  "Metadata/Items/Scarabs/ScarabUniquesNew2": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/7/7d/Titanic_Scarab_of_Treasures_inventory_icon.png",
-    "name": "Titanic Scarab of Treasures"
-  },
-  "Metadata/Items/Scarabs/ScarabUniquesNew3": {
-    "category": "Scarabs",
-    "icon": "https://www.poewiki.net/images/b/b0/Titanic_Scarab_of_Legend_inventory_icon.png",
-    "name": "Titanic Scarab of Legend"
+    "name": "Ultimatum Thread"
   }
 }

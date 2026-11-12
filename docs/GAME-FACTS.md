@@ -287,6 +287,12 @@ Cards, Delirium, Legion, Fragments, Oils, Catalysts, Omens, Tattoos,
 Expedition, Harvest, Runegrafts, Allflame, plus Favourites and All. Categories
 carry sub-headers inside (Eldritch Currency under Currency).
 
+3.30 (patch notes, inferred, unverified in game): Scarabs are removed and
+Threads take their sidebar slot ("A new Threads section has been added to the
+Fragment Stash Tab"); Divine Vessels and Allflame Embers are now Currency
+items. The served list carries Threads in the Scarabs position until a 3.30
+screenshot confirms the order.
+
 No upstream feed exposes this taxonomy. RePoE's `item_class` does not match it
 (oils, catalysts, essences and fossils are all StackableCurrency), and neither
 does the metadata path (oils, catalysts, omens, tattoos and runegrafts all sit
@@ -344,6 +350,16 @@ shapes.
 ## Not validated
 
 Recorded so the status is explicit, not so they can be built on.
+
+- **3.30 Currency Exchange ids.** Hand-added before the 3.30 feed was
+  observed: `Metadata/Items/Threads/{Abyss,Bestiary,Betrayal,Blight,Breach,
+  Expedition,Incursion,Legion,Ritual,Ultimatum}Thread` and
+  `Metadata/Items/Threads/FrayedThread` (Frayed Thread filed under Threads is
+  inferred), listed as `PROVISIONAL_IDS` in
+  `scripts/generate-currency-exchange-items.py`. The Threaded Delirium Orb keeps
+  the Skittering id `Metadata/Items/Currency/CurrencyAfflictionOrbScarabs`;
+  whether the rename changed the id is unverified. Regenerate from the 3.30
+  feed.
 
 - **League start and the weekly cycle.** Owner's account: leagues start Friday
   evening CET; the first hours are a dump as veterans clear their first lab;

@@ -153,7 +153,7 @@ function keys(plays: CurrencyExchangePlay[]): string[] {
 
 describe('parseCategoryRules', () => {
 	it('reads back the rules it stored', () => {
-		const rules: CategoryRules = { Currency: 'hide', Scarabs: 'only' };
+		const rules: CategoryRules = { Currency: 'hide', Threads: 'only' };
 
 		expect(parseCategoryRules(serializeCategoryRules(rules))).toEqual(rules);
 	});
@@ -165,8 +165,8 @@ describe('parseCategoryRules', () => {
 	});
 
 	it('drops a category whose stored state is not a rule', () => {
-		expect(parseCategoryRules('{"Currency":"maybe","Scarabs":"hide"}')).toEqual({
-			Scarabs: 'hide'
+		expect(parseCategoryRules('{"Currency":"maybe","Threads":"hide"}')).toEqual({
+			Threads: 'hide'
 		});
 	});
 
@@ -312,7 +312,7 @@ describe('effectiveRule', () => {
 	});
 
 	it('leaves a side unruled when neither layer names it', () => {
-		expect(effectiveRule(undefined, 'Scarabs', { Currency: 'only' })).toBeUndefined();
+		expect(effectiveRule(undefined, 'Threads', { Currency: 'only' })).toBeUndefined();
 	});
 });
 
@@ -380,7 +380,7 @@ describe('applyRules', () => {
 	});
 	const scarabPlay = play({
 		key: 'scarab',
-		legs: [leg({ item: 'scarab-gilded', itemName: 'Gilded Scarab', itemCategory: 'Scarabs' })]
+		legs: [leg({ item: 'scarab-gilded', itemName: 'Gilded Scarab', itemCategory: 'Threads' })]
 	});
 
 	it('keeps every play when no rule is set', () => {
@@ -408,7 +408,7 @@ describe('applyRules', () => {
 	});
 
 	it('requires an Only match once a category is ruled Only', () => {
-		expect(keys(applyRules([divinePlay, scarabPlay], { Scarabs: 'only' }, []))).toEqual(['scarab']);
+		expect(keys(applyRules([divinePlay, scarabPlay], { Threads: 'only' }, []))).toEqual(['scarab']);
 	});
 
 	it('requires an Only match once a single item is ruled Only', () => {
@@ -1330,7 +1330,7 @@ describe('matchesSearch', () => {
 					action: 'sell',
 					item: 'scarab-gilded',
 					itemName: 'Gilded Scarab',
-					itemCategory: 'Scarabs'
+					itemCategory: 'Threads'
 				})
 			]
 		});
@@ -1390,7 +1390,7 @@ describe('itemUniverse', () => {
 		const second = play({
 			key: 'second',
 			legs: [
-				leg({ item: 'scarab-gilded', itemName: 'Gilded Scarab', itemCategory: 'Scarabs' }),
+				leg({ item: 'scarab-gilded', itemName: 'Gilded Scarab', itemCategory: 'Threads' }),
 				leg({ action: 'sell', item: 'chaos', itemName: 'Chaos Orb', quote: 'divine', quoteName: 'Divine Orb' })
 			]
 		});

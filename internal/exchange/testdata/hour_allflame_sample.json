@@ -143,29 +143,29 @@
     },
     {
       "league": "Allflame",
-      "market_id": "Metadata/Items/Scarabs/ScarabTormentNew4|Metadata/Items/Currency/CurrencyRerollRare",
+      "market_id": "Metadata/Items/Threads/LegionThread|Metadata/Items/Currency/CurrencyRerollRare",
       "market_pair": [
-        "Metadata/Items/Scarabs/ScarabTormentNew4",
+        "Metadata/Items/Threads/LegionThread",
         "Metadata/Items/Currency/CurrencyRerollRare"
       ],
       "volume_traded": {
-        "Metadata/Items/Scarabs/ScarabTormentNew4": 4063,
+        "Metadata/Items/Threads/LegionThread": 4063,
         "Metadata/Items/Currency/CurrencyRerollRare": 4748
       },
       "lowest_stock": {
-        "Metadata/Items/Scarabs/ScarabTormentNew4": 133,
+        "Metadata/Items/Threads/LegionThread": 133,
         "Metadata/Items/Currency/CurrencyRerollRare": 1019
       },
       "highest_stock": {
-        "Metadata/Items/Scarabs/ScarabTormentNew4": 1688,
+        "Metadata/Items/Threads/LegionThread": 1688,
         "Metadata/Items/Currency/CurrencyRerollRare": 4109
       },
       "lowest_ratio": {
-        "Metadata/Items/Scarabs/ScarabTormentNew4": 1,
+        "Metadata/Items/Threads/LegionThread": 1,
         "Metadata/Items/Currency/CurrencyRerollRare": 2
       },
       "highest_ratio": {
-        "Metadata/Items/Scarabs/ScarabTormentNew4": 1,
+        "Metadata/Items/Threads/LegionThread": 1,
         "Metadata/Items/Currency/CurrencyRerollRare": 1
       }
     },
@@ -227,29 +227,29 @@
     },
     {
       "league": "Allflame",
-      "market_id": "Metadata/Items/Scarabs/ScarabDomination3|Metadata/Items/Currency/CurrencyRerollRare",
+      "market_id": "Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare",
       "market_pair": [
-        "Metadata/Items/Scarabs/ScarabDomination3",
+        "Metadata/Items/Threads/BreachThread",
         "Metadata/Items/Currency/CurrencyRerollRare"
       ],
       "volume_traded": {
-        "Metadata/Items/Scarabs/ScarabDomination3": 3321,
+        "Metadata/Items/Threads/BreachThread": 3321,
         "Metadata/Items/Currency/CurrencyRerollRare": 3764
       },
       "lowest_stock": {
-        "Metadata/Items/Scarabs/ScarabDomination3": 4868,
+        "Metadata/Items/Threads/BreachThread": 4868,
         "Metadata/Items/Currency/CurrencyRerollRare": 8969
       },
       "highest_stock": {
-        "Metadata/Items/Scarabs/ScarabDomination3": 5844,
+        "Metadata/Items/Threads/BreachThread": 5844,
         "Metadata/Items/Currency/CurrencyRerollRare": 14731
       },
       "lowest_ratio": {
-        "Metadata/Items/Scarabs/ScarabDomination3": 2,
+        "Metadata/Items/Threads/BreachThread": 2,
         "Metadata/Items/Currency/CurrencyRerollRare": 3
       },
       "highest_ratio": {
-        "Metadata/Items/Scarabs/ScarabDomination3": 1,
+        "Metadata/Items/Threads/BreachThread": 1,
         "Metadata/Items/Currency/CurrencyRerollRare": 1
       }
     },
