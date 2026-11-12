@@ -63,7 +63,9 @@ and the documentation index before acting on them.
 - When a change edits a file that has a same-named copy across `frontend/src/lib/` ↔ `desktop/src/lib/`
   or `frontend/src/routes/lab/components/` ↔ `desktop/src/routes/(app)/components/`, make each edit to
   code both copies share in that copy too, in the same change: the copies are hand-maintained, so a
-  one-sided fix ships the bug.
+  one-sided fix ships the bug. `desktop/src/lib/mirror-identity.test.ts` is the mechanical half of
+  this rule: a change that makes a pair identical or divergent updates that file's lists in the same
+  change.
 - When a code comment cross-references another function or file, name the symbol (`mirrors
   BuildCompareResults in collective.go`), not a line (`collective.go:311` rots on the next edit).
   Keep the why and its evidence, including a past behaviour that explains a current constraint.
