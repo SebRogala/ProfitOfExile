@@ -427,21 +427,26 @@ pub fn boss_loot_rebind(app: tauri::AppHandle, binding: Option<Rebind>) {
     app.state::<crate::AppState>().boss_loot.lock().unwrap_or_else(|e| e.into_inner()).rebind = binding;
     crate::ssot::emit_ssot(&app);
 }
+fn keys_to_poll(rebinding: bool, settings: &LootSettings) -> Vec<u16> {
+    if rebinding { return (1..=254).collect(); }
+    let mut keys = vec![settings.capture_shortcut.key, settings.preview_shortcut.key, 16, 17, 18];
+    keys.sort_unstable(); keys.dedup(); keys
+}
 #[derive(Default)]
-struct ShortcutPoll { capture_down: bool, preview_down: bool, previous: std::collections::BTreeSet<u16> }
+struct ShortcutPoll { capture_down: bool, preview_down: bool, previous: std::collections::BTreeSet<u16>, previous_full: bool }
 enum PollAction { Capture, Preview, Bind(Rebind, Shortcut), CancelBind }
 impl ShortcutPoll {
     fn poll(&mut self, down: &std::collections::BTreeSet<u16>, foreground: bool, binding: Option<Rebind>, settings: &LootSettings) -> Option<PollAction> {
         let matches = |s: &Shortcut| down.contains(&s.key) && down.contains(&16) == s.shift && down.contains(&17) == s.ctrl && down.contains(&18) == s.alt;
         let capture = matches(&settings.capture_shortcut); let preview = matches(&settings.preview_shortcut);
         let action = if let Some(binding) = binding {
-            if down.contains(&27) { Some(PollAction::CancelBind) } else {
+            if down.contains(&27) { Some(PollAction::CancelBind) } else if !self.previous_full { None } else {
                 down.difference(&self.previous).find(|k| !matches!(**k, 16..=18 | 160..=165)).map(|key|
                     PollAction::Bind(binding, Shortcut { key: *key, shift: down.contains(&16), ctrl: down.contains(&17), alt: down.contains(&18) }))
             }
         } else if foreground && capture && !self.capture_down { Some(PollAction::Capture) }
         else if foreground && preview && !self.preview_down { Some(PollAction::Preview) } else { None };
-        self.capture_down = capture; self.preview_down = preview; self.previous = down.clone(); action
+        self.capture_down = capture; self.preview_down = preview; self.previous = down.clone(); self.previous_full = binding.is_some(); action
     }
 }
 pub fn spawn_hotkey_poller(app: tauri::AppHandle, cancel: tokio::sync::watch::Receiver<bool>) -> crate::modules::ModuleJoin {
@@ -462,8 +467,8 @@ pub fn spawn_hotkey_poller(app: tauri::AppHandle, cancel: tokio::sync::watch::Re
             let state = app.state::<crate::AppState>();
             #[cfg(windows)] {
                 let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                let down = (1..=254).filter(|key| (unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(*key as i32) } as u16 & 0x8000) != 0).collect();
                 let binding = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).rebind;
+                let down = keys_to_poll(binding.is_some(), &settings).into_iter().filter(|key| (unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(*key as i32) } as u16 & 0x8000) != 0).collect();
                 let foreground = state.game_in_foreground.load(std::sync::atomic::Ordering::SeqCst);
                 match poll.poll(&down, foreground, binding, &settings) {
                     Some(PollAction::Capture) => platform::capture_once(&app, &cancel),
@@ -1053,11 +1058,13 @@ mod shortcut_tests {
     fn loot_rebind_accepts_keyboard_and_mouse_with_modifiers() {
         let s = LootSettings::default();
         let mut poll = ShortcutPoll::default();
+        poll.poll(&down(&[]), false, Some(Rebind::Capture), &s);
         match poll.poll(&down(&[17, 65]), false, Some(Rebind::Capture), &s) {
             Some(PollAction::Bind(Rebind::Capture, key)) => assert_eq!(key, Shortcut { key: 65, ctrl: true, shift: false, alt: false }),
             _ => panic!("keyboard binding was not captured"),
         }
         poll.poll(&down(&[]), false, None, &s);
+        poll.poll(&down(&[]), false, Some(Rebind::Preview), &s);
         match poll.poll(&down(&[18, 5]), false, Some(Rebind::Preview), &s) {
             Some(PollAction::Bind(Rebind::Preview, key)) => assert_eq!(key, Shortcut { key: 5, ctrl: false, shift: false, alt: true }),
             _ => panic!("mouse binding was not captured"),
@@ -1076,6 +1083,37 @@ mod shortcut_tests {
         let mut poll = ShortcutPoll::default();
         assert!(poll.poll(&down(&[16, 2]), true, None, &s).is_none());
         assert!(matches!(poll.poll(&down(&[17, 65]), true, None, &s), Some(PollAction::Capture)));
+    }
+    #[test]
+    fn narrowed_poll_reads_only_the_bound_keys_and_modifiers() {
+        let s = LootSettings {
+            capture_shortcut: Shortcut { key: 65, shift: false, ctrl: false, alt: false },
+            preview_shortcut: Shortcut { key: 122, shift: false, ctrl: false, alt: false },
+            ..Default::default()
+        };
+        assert_eq!(keys_to_poll(false, &s), vec![16, 17, 18, 65, 122]);
+    }
+    #[test]
+    fn rebinding_poll_reads_every_virtual_key() {
+        assert_eq!(keys_to_poll(true, &LootSettings::default()), (1..=254).collect::<Vec<u16>>());
+    }
+    #[test]
+    fn key_held_when_rebinding_starts_does_not_bind() {
+        let s = LootSettings::default();
+        let mut poll = ShortcutPoll::default();
+        poll.poll(&down(&[]), false, None, &s);
+        assert!(poll.poll(&down(&[1]), false, Some(Rebind::Capture), &s).is_none());
+    }
+    #[test]
+    fn key_pressed_after_the_rebinding_baseline_binds() {
+        let s = LootSettings::default();
+        let mut poll = ShortcutPoll::default();
+        poll.poll(&down(&[]), false, None, &s);
+        poll.poll(&down(&[1]), false, Some(Rebind::Capture), &s);
+        match poll.poll(&down(&[1, 65]), false, Some(Rebind::Capture), &s) {
+            Some(PollAction::Bind(Rebind::Capture, key)) => assert_eq!(key, Shortcut { key: 65, shift: false, ctrl: false, alt: false }),
+            _ => panic!("fresh press after the baseline was not bound"),
+        }
     }
     #[test]
     fn loot_geometry_preserves_poc_dimensions_and_clamping() {
