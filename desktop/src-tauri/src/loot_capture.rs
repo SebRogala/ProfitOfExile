@@ -172,7 +172,7 @@ impl LootOwner {
     }
     pub fn catch_up(&mut self, tail: Option<&str>) {
         self.area = None;
-        if let Some(area) = tail.and_then(|tail| tail.lines().rev().find_map(crate::lab_state::parse_area_change)) {
+        if let Some(area) = tail.and_then(|tail| tail.lines().rev().find_map(crate::client_log::parse_area_change)) {
             self.observe_area(&area);
         }
     }
@@ -182,7 +182,7 @@ impl LootOwner {
     fn stop_polling(&mut self, generation: u64) {
         if generation == self.poll_generation { self.stop(); }
     }
-    pub fn observe_area(&mut self, area: &crate::lab_state::AreaChange<'_>) {
+    pub fn observe_area(&mut self, area: &crate::client_log::AreaChange<'_>) {
         self.area = Some(Attribution { area: area.area.into(), level: area.level, seed: area.seed.map(|s| s.to_string()),
             profile: crate::loot_profiles::profile_for_area(Some(area)).map(ProfileRef::from) });
     }
@@ -670,7 +670,7 @@ mod owner_tests {
     }
     fn pending_with_ocr(settings: &LootSettings, lines: &[&str]) -> (Mutex<LootOwner>, u64) {
         let mut owner = LootOwner::default();
-        owner.observe_area(&crate::lab_state::parse_area_change(r#"Generating level 83 area "BetrayalMastermindFight" with seed 42"#).unwrap());
+        owner.observe_area(&crate::client_log::parse_area_change(r#"Generating level 83 area "BetrayalMastermindFight" with seed 42"#).unwrap());
         let id = owner.begin("test".into(), [0, 0, 900, 750], settings, 0).unwrap();
         owner.finish_ocr(id, lines.iter().map(|line| (*line).into()).collect(), settings, 0);
         owner.ready(id, None, 1, settings, 0);
@@ -826,10 +826,10 @@ mod owner_tests {
         let s = LootSettings::default();
         let (owner, old) = pending(&s);
         let mut o = owner.lock().unwrap();
-        o.observe_area(&crate::lab_state::parse_area_change(r#"Generating level 83 area "MapWorldsStrand" with seed 7"#).unwrap());
+        o.observe_area(&crate::client_log::parse_area_change(r#"Generating level 83 area "MapWorldsStrand" with seed 7"#).unwrap());
         assert_eq!(o.pending.as_ref().unwrap().attribution.seed.as_deref(), Some("42"));
         assert!(o.begin("test".into(), [0; 4], &s, 1).is_err());
-        o.observe_area(&crate::lab_state::parse_area_change(r#"Generating level 83 area "BetrayalMastermindFight" with seed 8"#).unwrap());
+        o.observe_area(&crate::client_log::parse_area_change(r#"Generating level 83 area "BetrayalMastermindFight" with seed 8"#).unwrap());
         let new = o.begin("test".into(), [0; 4], &s, 2).unwrap();
         o.complete(old, Err(ApiError::Unreachable), 3);
         o.finish_ocr(old, vec!["Silver Flask".into()], &s, 3);

@@ -17,7 +17,7 @@
 //! persist the delta and publish — the next tick picks the change up on its
 //! own. The one exception is [`temple_rearm`], which has nothing to write: it
 //! bumps an atomic the loop's read gate watches, and (POE-242) arms the capture
-//! itself for `super::trigger::MANUAL_ARM_GRACE_MS`.
+//! itself for `crate::client_log::MANUAL_ARM_GRACE_MS`.
 //!
 //! [`temple_debug_capture`] is NOT behind that arm gate. It is an explicit user
 //! action — the command a user runs *because* something else went wrong — and a
@@ -300,7 +300,7 @@ pub fn temple_rearm(app: AppHandle) -> Result<(), String> {
     rearm(&app);
     // POE-242: the button now has two jobs, because the loop it used to poke
     // may not be looking at all. Besides forcing the read gate open, it arms
-    // the CAPTURE for `trigger::MANUAL_ARM_GRACE_MS` — the fallback for every
+    // the CAPTURE for `client_log::MANUAL_ARM_GRACE_MS` — the fallback for every
     // panel Client.txt does not announce (Alva in the hideout, a non-English
     // client). Only the command does this, not the shared `rearm` helper: a
     // settings change must not start a capture nobody asked for.

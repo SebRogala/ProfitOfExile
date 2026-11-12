@@ -66,9 +66,9 @@ pub fn built_in_profiles() -> &'static [LootProfile] {
     PROFILES.get_or_init(|| vec![catarina()])
 }
 
-pub fn profile_for_area(area: Option<&crate::lab_state::AreaChange<'_>>) -> Option<&'static LootProfile> {
+pub fn profile_for_area(area: Option<&crate::client_log::AreaChange<'_>>) -> Option<&'static LootProfile> {
     let area = area?;
-    if area.kind != crate::lab_state::AreaKind::Combat {
+    if area.kind != crate::client_log::AreaKind::Combat {
         return None;
     }
     built_in_profiles().iter().find(|profile| profile.area == area.area && profile.level == area.level)
@@ -116,7 +116,7 @@ impl LootProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lab_state::parse_area_change;
+    use crate::client_log::parse_area_change;
     use serde_json::Value;
 
     fn fixture() -> Value {

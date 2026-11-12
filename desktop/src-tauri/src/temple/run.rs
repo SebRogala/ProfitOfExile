@@ -1185,7 +1185,7 @@ pub fn gate_announcement(
 /// it log too put two lines in `app.log` for one event whenever the module was
 /// on. This one is the fact a smoke run is checking — the capture loop saying it
 /// has started (or stopped) looking — and it covers the three transitions no
-/// Client.txt line announces at all: [`super::trigger::MANUAL_ARM_GRACE_MS`]
+/// Client.txt line announces at all: [`crate::client_log::MANUAL_ARM_GRACE_MS`]
 /// running out, (POE-246) the layout panel going off screen, and (WI-1) the
 /// cycle completing.
 ///

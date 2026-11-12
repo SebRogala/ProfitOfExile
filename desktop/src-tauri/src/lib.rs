@@ -8,6 +8,7 @@ mod http;
 mod lab_detection;
 mod lab_scan;
 mod lab_navigation;
+mod client_log;
 mod lab_state;
 mod log_watcher;
 mod loot_capture;
@@ -3034,7 +3035,7 @@ fn spawn_log_watcher(app: AppHandle) {
         // temple would otherwise sit disarmed for the whole run — no further
         // Alva line, no further area change.
         temple::trigger::catch_up(&app, std::path::Path::new(&client_txt));
-        let loot_tail = lab_navigation::recent_log_tail(std::path::Path::new(&client_txt));
+        let loot_tail = client_log::recent_log_tail(std::path::Path::new(&client_txt));
         app.state::<AppState>().boss_loot.lock().unwrap_or_else(|e| e.into_inner()).catch_up(loot_tail.as_deref());
 
         emit_status(&app);
@@ -3280,7 +3281,7 @@ fn spawn_log_watcher(app: AppHandle) {
                     }
                     // Upload the previous zone's font session before observing
                     // the new area. Area detection also runs while OCR is idle.
-                    if let Some(change) = lab_state::parse_area_change(&line) {
+                    if let Some(change) = client_log::parse_area_change(&line) {
                         let state = app.state::<AppState>();
                         state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).observe_area(&change);
                         let update = record_lab_detection(&state, |detection| detection.observe_area(change.level, change.area));

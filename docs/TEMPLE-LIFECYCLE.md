@@ -437,7 +437,7 @@ Facts that shape the rules (PC mining):
   found-but-withheld rule rides on top of that cadence (a second one ends the key's null sweeps),
   and the sweep runs off the loop — see the bullets above.
 - Tails: **there are none since 2026-09-07 (WI-1)**. `ALVA_TAIL_MS` and `PANEL_TAIL_MS` (both
-  120 s) are retired; `MANUAL_ARM_GRACE_MS` 60 s (`trigger.rs`) is the only deadline left in the
+  120 s) are retired; `MANUAL_ARM_GRACE_MS` 60 s (`client_log.rs`) is the only deadline left in the
   module, and it is what a `Re-arm's grace is over` stand-down reports. What replaced the two
   tails is not a shorter clock but a state: the START arm is indefinite until row 3 or row 4, and
   a sheet on screen holds the gate through `LoopState::live` — one 650 ms tick, re-earned by

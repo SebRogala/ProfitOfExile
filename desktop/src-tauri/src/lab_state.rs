@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::client_log::parse_area_change;
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum LabState {
     /// Not in lab, or no font interaction detected
@@ -90,96 +92,9 @@ impl LabStateMachine {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AreaKind {
-    Combat,
-    Town,
-    Hideout,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct AreaChange<'a> {
-    pub level: u32,
-    pub area: &'a str,
-    pub seed: Option<u32>,
-    pub kind: AreaKind,
-}
-
-pub fn parse_area_change(line: &str) -> Option<AreaChange<'_>> {
-    // A missing/malformed seed must not suppress the zone change that stops lab OCR.
-    let marker = "Generating level ";
-    let idx = line.find(marker)?;
-    let rest = &line[idx + marker.len()..];
-    let (level, area) = rest.split_once(" area \"")?;
-    let level = level.parse().ok()?;
-    let area_end = area.find('"')?;
-    let seed = area[area_end + 1..].strip_prefix(" with seed ")
-        .and_then(|suffix| suffix.split_whitespace().next())
-        .and_then(|seed| seed.parse().ok());
-    let area = &area[..area_end];
-    let kind = if area.starts_with("Hideout") {
-        AreaKind::Hideout
-    } else if area.ends_with("_town") {
-        AreaKind::Town
-    } else {
-        AreaKind::Combat
-    };
-    Some(AreaChange { level, area, seed, kind })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn boss_area_retains_seed_attribution() {
-        let parsed = parse_area_change(r#"Generating level 83 area "BetrayalMastermindFight" with seed 2667568808"#);
-        assert_eq!(serde_json::to_value(parsed).unwrap(), serde_json::json!({
-            "level": 83, "area": "BetrayalMastermindFight", "seed": 2667568808_u64,
-            "kind": "combat"
-        }));
-    }
-
-    #[test]
-    fn seedless_area_preserves_zone_attribution() {
-        assert_eq!(serde_json::to_value(parse_area_change(r#"Generating level 75 area "EndGame_Labyrinth_boss_1""#)).unwrap(),
-            serde_json::json!({"level": 75, "area": "EndGame_Labyrinth_boss_1", "seed": null, "kind": "combat"}));
-    }
-
-    #[test]
-    fn towns_are_classified_at_parse_boundary() {
-        let parsed = parse_area_change(r#"Generating level 69 area "2_10_town" with seed 1"#);
-        assert_eq!(serde_json::to_value(parsed).unwrap(), serde_json::json!({
-            "level": 69, "area": "2_10_town", "seed": 1, "kind": "town"
-        }));
-    }
-
-    #[test]
-    fn hideouts_are_classified_at_parse_boundary() {
-        let parsed = parse_area_change(r#"Generating level 60 area "HideoutLuxurious" with seed 0"#);
-        assert_eq!(serde_json::to_value(parsed).unwrap(), serde_json::json!({
-            "level": 60, "area": "HideoutLuxurious", "seed": 0, "kind": "hideout"
-        }));
-    }
-
-    #[test]
-    fn malformed_seed_preserves_area_without_inventing_seed() {
-        assert_eq!(parse_area_change(r#"Generating level 83 area "BetrayalMastermindFight" with seed nope"#),
-            Some(AreaChange { level: 83, area: "BetrayalMastermindFight", seed: None, kind: AreaKind::Combat }));
-    }
-
-    #[test]
-    fn overflowing_seed_preserves_area_without_inventing_seed() {
-        assert_eq!(parse_area_change(r#"Generating level 83 area "BetrayalMastermindFight" with seed 4294967296"#),
-            Some(AreaChange { level: 83, area: "BetrayalMastermindFight", seed: None, kind: AreaKind::Combat }));
-    }
-
-    #[test]
-    fn maximum_seed_is_retained() {
-        assert_eq!(parse_area_change(r#"Generating level 83 area "BetrayalMastermindFight" with seed 4294967295"#),
-            Some(AreaChange { level: 83, area: "BetrayalMastermindFight", seed: Some(u32::MAX), kind: AreaKind::Combat }));
-    }
 
     #[test]
     fn seedless_zone_change_still_stops_lab_reading() {
@@ -244,27 +159,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_area_change_extracts_name() {
-        let line = r#"[DEBUG Client 39848] Generating level 69 area "2_10_town" with seed 1"#;
-        assert_eq!(parse_area_change(line), Some(AreaChange {
-            level: 69, area: "2_10_town", seed: Some(1), kind: AreaKind::Town,
-        }));
-    }
-
-    #[test]
-    fn parse_area_change_rejects_invalid_level() {
-        assert_eq!(parse_area_change(r#"Generating level nope area "Labyrinth""#), None);
-    }
-
-    #[test]
-    fn parse_area_change_retains_offering_level() {
-        assert_eq!(
-            parse_area_change(r#"Generating level 83 area "EndGame_Labyrinth_boss_3" with seed 1"#),
-            Some(AreaChange { level: 83, area: "EndGame_Labyrinth_boss_3", seed: Some(1), kind: AreaKind::Combat }),
-        );
-    }
-
-    #[test]
     fn done_auto_transitions_to_idle() {
         let mut sm = LabStateMachine::new();
         // Get to Done state
@@ -321,15 +215,5 @@ mod tests {
         let event = sm.process_line("[DEBUG Client] [WINDOW] Lost focus");
         assert!(matches!(event, Some(LabEvent::GameBlurred)));
         assert_eq!(*sm.state(), LabState::PickingGems);
-    }
-
-    #[test]
-    fn parse_area_change_handles_malformed_input() {
-        // No quotes
-        assert_eq!(parse_area_change("Generating level 75 area no_quotes"), None);
-        // Only one quote
-        assert_eq!(parse_area_change(r#"Generating level 75 area "unclosed"#), None);
-        // No Generating level marker
-        assert_eq!(parse_area_change(r#"some other line "with quotes""#), None);
     }
 }

@@ -1,6 +1,7 @@
 use serde::Serialize;
-use std::io::{Read as _, Seek, SeekFrom};
 use std::path::Path;
+
+use crate::client_log::{parse_entered_area, read_tail, CATCH_UP_TAIL_BYTES};
 
 /// Navigation events emitted during lab runs.
 /// Parsed from Client.txt independently of the font/OCR state machine.
@@ -98,19 +99,6 @@ pub fn is_lab_room(name: &str) -> bool {
     LAB_ROOM_PREFIXES.contains(&parts[0]) && LAB_ROOM_SUFFIXES.contains(&parts[1])
 }
 
-/// Extract the area name from a "You have entered X." log line.
-/// Returns None if the line doesn't match the pattern.
-pub fn parse_entered_area(line: &str) -> Option<&str> {
-    let marker = "You have entered ";
-    let start = line.find(marker)? + marker.len();
-    let rest = &line[start..];
-    let end = rest.find('.')?;
-    if end == 0 {
-        return None;
-    }
-    Some(&rest[..end])
-}
-
 /// Check if a log line contains an Izaro voiceline and return the corresponding event.
 fn parse_izaro_line(line: &str) -> Option<NavEvent> {
     for quote in LAB_START_LINES {
@@ -178,32 +166,6 @@ pub fn parse_nav_event(line: &str, in_lab: bool) -> Option<NavEvent> {
     }
 
     None
-}
-
-/// How much of the log's tail a catch-up pass reads.
-///
-/// 32KB covers hundreds of `[WINDOW]` focus lines, which are what push area
-/// entries far back in a file that is otherwise quiet.
-pub const CATCH_UP_TAIL_BYTES: u64 = 32_768;
-
-/// The last [`CATCH_UP_TAIL_BYTES`] of the log as text, first partial line
-/// dropped. `None` for a missing, unreadable or empty file.
-///
-/// The size every catch-up pass shares. `temple::trigger::catch_up` takes its
-/// whole answer from this function (POE-242); [`replay_recent_log`] calls
-/// [`read_tail`] directly for its first step, because it needs `file_len` again
-/// for its second, larger read and would otherwise stat the file twice. Both go
-/// through [`CATCH_UP_TAIL_BYTES`], so the two passes cannot disagree about how
-/// far back "recent" reaches — but they are two reads, not one.
-pub fn recent_log_tail(path: &Path) -> Option<String> {
-    let file_len = std::fs::metadata(path)
-        .map_err(|e| log::warn!("recent_log_tail: metadata failed: {}", e))
-        .ok()?
-        .len();
-    if file_len == 0 {
-        return None;
-    }
-    read_tail(path, file_len, CATCH_UP_TAIL_BYTES)
 }
 
 /// The newest `You have entered X.` area in `tail`, or `None` when it holds no
@@ -297,28 +259,6 @@ pub fn replay_recent_log(path: &Path) -> (Vec<NavEvent>, bool) {
     (events, true)
 }
 
-/// Read the last `max_bytes` of a file as a String, skipping the first
-/// partial line when seeking mid-file.
-fn read_tail(path: &Path, file_len: u64, max_bytes: u64) -> Option<String> {
-    let mut file = std::fs::File::open(path).map_err(|e| {
-        log::warn!("read_tail: open failed: {}", e);
-    }).ok()?;
-    let start = if file_len > max_bytes { file_len - max_bytes } else { 0 };
-    file.seek(SeekFrom::Start(start)).map_err(|e| {
-        log::warn!("read_tail: seek failed: {}", e);
-    }).ok()?;
-    let mut buf = String::new();
-    file.read_to_string(&mut buf).map_err(|e| {
-        log::warn!("read_tail: read failed: {}", e);
-    }).ok()?;
-    if start > 0 {
-        if let Some(idx) = buf.find('\n') {
-            buf = buf[idx + 1..].to_string();
-        }
-    }
-    Some(buf)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,17 +276,6 @@ mod tests {
         assert!(!is_lab_room("Aspirants' Plaza"));
         assert!(!is_lab_room("The Blood Aqueduct"));
         assert!(!is_lab_room("Estate")); // prefix only
-    }
-
-    #[test]
-    fn test_parse_entered_area() {
-        let line = "2026/04/01 20:00:00 12345678 [INFO Client 1234] : You have entered Estate Walkways.";
-        assert_eq!(parse_entered_area(line), Some("Estate Walkways"));
-
-        let line2 = "2026/04/01 20:00:00 12345678 [INFO Client 1234] : You have entered Aspirants' Plaza.";
-        assert_eq!(parse_entered_area(line2), Some("Aspirants' Plaza"));
-
-        assert_eq!(parse_entered_area("some random log line"), None);
     }
 
     #[test]
@@ -495,54 +424,6 @@ mod tests {
         let (events, in_lab) = replay_recent_log(path);
         assert!(events.is_empty());
         assert!(!in_lab);
-    }
-
-    /// A freshly rotated Client.txt: the file is there and holds nothing. The
-    /// callers treat `None` as "no answer" and leave their state alone, so
-    /// handing them `Some("")` would read as "the log says you are nowhere".
-    #[test]
-    fn test_recent_log_tail_is_none_for_an_empty_file() {
-        let dir = std::env::temp_dir().join("poe_test_tail_empty");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("Client_empty.txt");
-        std::fs::File::create(&path).unwrap();
-
-        assert_eq!(recent_log_tail(&path), None);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The seek lands mid-line in any log worth reading, and half a line is not
-    /// a line: `temple::trigger::catch_up` reads the FIRST line of this buffer
-    /// as an area candidate like any other, and a fragment of `: You have
-    /// entered The Temple of Atzoatl.` would still parse.
-    ///
-    /// Every line here is exactly 100 bytes and the file is 34 000, so the
-    /// `CATCH_UP_TAIL_BYTES` boundary falls 32 bytes into a line — the whole
-    /// point of the arithmetic. A dropped truncation step leaves a 67-byte
-    /// first line.
-    #[test]
-    fn test_recent_log_tail_drops_the_truncated_first_line() {
-        use std::io::Write;
-        let dir = std::env::temp_dir().join("poe_test_tail_truncated");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("Client_truncated.txt");
-        let mut f = std::fs::File::create(&path).unwrap();
-        for i in 0..340u32 {
-            let line = format!("{i:04} 2026/04/01 19:00:00 1234 [INFO Client 1] padding");
-            writeln!(f, "{line:<99}").unwrap();
-        }
-        drop(f);
-
-        let tail = recent_log_tail(&path).expect("a tail for a non-empty file");
-
-        assert_eq!(
-            tail.lines().next().map(str::len),
-            Some(99),
-            "the first line must be a whole one, not the tail of one",
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Where the player is standing is the LAST area the log names, not the

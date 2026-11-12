@@ -232,7 +232,9 @@ use std::path::Path;
 use tauri::{AppHandle, Manager};
 
 use crate::lab_navigation;
-use crate::mercenary::trigger::{arm_at, line_timestamp_ms, speaker_of, LINE_STALE_MS};
+use crate::client_log::{
+    arm_at, line_timestamp_ms, speaker_of, LINE_STALE_MS, MANUAL_ARM_GRACE_MS,
+};
 use crate::AppState;
 
 /// Alva's speaker string, exactly as Client.txt writes it.
@@ -240,19 +242,6 @@ pub const ALVA_SPEAKER: &str = "Alva, Master Explorer";
 
 /// The area name the temple itself enters under.
 pub const TEMPLE_AREA: &str = "The Temple of Atzoatl";
-
-/// How long a manual **Re-arm** keeps the loop armed.
-///
-/// The merc module's own value, and for the same reason: it is a promise to the
-/// PERSON who pressed it rather than a deadline measured from an event, so it
-/// has to outlive an alt-tab back into the game.
-///
-/// **The only deadline left in this module** since WI-1 retired `ALVA_TAIL_MS`
-/// and `PANEL_TAIL_MS` (2026-09-07). It is what a manual stand-down reports
-/// ([`StandDown::GraceOver`]), and it is not the only way a manual arm ends: a
-/// Re-arm whose sheet is read and then closed ends by the cycle rule like any
-/// other arm.
-pub const MANUAL_ARM_GRACE_MS: u64 = crate::mercenary::trigger::MANUAL_ARM_GRACE_MS;
 
 // ---------------------------------------------------------------------------
 // Pure — the state machine
@@ -701,13 +690,13 @@ pub fn ends_epoch(event: LineEvent) -> bool {
 /// first is what makes "the first `You have entered` after the tail always
 /// wins" true by construction rather than by ordering luck.
 ///
-/// Area changes are read with [`lab_navigation::parse_entered_area`], the app's
+/// Area changes are read with [`crate::client_log::parse_entered_area`], the app's
 /// one owner of that parse — blind spot included: a player's chat line quoting
 /// the sentence reads as an area change here. The cost is bounded (a wrong arm
 /// captures a screen with no panel on it; a wrong disarm is undone by the next
 /// real area line, or by Re-arm).
 fn line_kind(line: &str) -> Option<LineKind> {
-    if let Some(area) = lab_navigation::parse_entered_area(line) {
+    if let Some(area) = crate::client_log::parse_entered_area(line) {
         return Some(LineKind::Area {
             temple: area == TEMPLE_AREA,
         });
@@ -1149,7 +1138,7 @@ pub fn complete_cycle(app: &AppHandle, key: (u64, u64)) {
 /// Called once per watcher start, beside the lab catch-up and over the same
 /// 32 KB tail. See [`catch_up_state`] for why this exists at all.
 pub fn catch_up(app: &AppHandle, client_txt: &Path) {
-    let Some(tail) = lab_navigation::recent_log_tail(client_txt) else {
+    let Some(tail) = crate::client_log::recent_log_tail(client_txt) else {
         return;
     };
     let seeded = {
