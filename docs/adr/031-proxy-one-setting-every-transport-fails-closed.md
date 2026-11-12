@@ -97,7 +97,9 @@ tooltip is the reason. `run()` also writes it to `app.log`.
   - whether the WebView2 flags stop every request in all windows;
   - whether the quoted `--host-resolver-rules` value survives
     `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` parsing;
-  - whether the loopback bypass still loads the dev server.
+  - whether the loopback bypass still loads the dev server;
+  - the real updater behavior: the beta check through
+    `check_update_from_endpoint` is exercised only against the mock app.
   Linux tests pin the argument strings only. The stable update check is
-  refused in JavaScript only; the updater plugin has no proxy or refusal
-  option of its own.
+  refused in JavaScript only; the updater plugin's initialization `Builder`
+  has no proxy or refusal option (a proxy can be set only per check).
