@@ -411,7 +411,7 @@ wipe dry runs only preview counts, mode, and SQL, executing no TRUNCATE/DELETE.
 13. Clients need no manual step in the normal case. The desktop app follows the
     restarted server's `poe/league/active` boot event, re-checks the server's
     league on every Mercure stream open, and rearms its league when trade submit
-    returns 409 `league_mismatch` (`desktop/src-tauri/src/ssot.rs`);
+    returns 409 `league_mismatch` (`desktop/src-tauri/src/trade/submit.rs`);
     **Settings → Refresh** or an app restart remains the manual fallback. The
     public web lab page reloads when the server announces a different active
     league and re-checks it when its Mercure stream reopens.

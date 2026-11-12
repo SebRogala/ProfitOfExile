@@ -1353,7 +1353,7 @@ async fn trade_lookup(
         let app_clone = app.clone();
         tauri::async_runtime::spawn(async move {
             let url = format!("{}/api/trade/submit", server_url);
-            ssot::submit_trade_result(&http, &url, &submit_result, app_clone.clone(),
+            trade::submit::submit_trade_result(&http, &url, &submit_result, app_clone.clone(),
                 |line| app_log(&app_clone, line),
             ).await;
         });
