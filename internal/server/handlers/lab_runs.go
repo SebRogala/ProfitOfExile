@@ -2,15 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"profitofexile/internal/lab"
 	"profitofexile/internal/server/middleware"
 )
 
@@ -37,7 +36,7 @@ var allowedDifficulties = map[string]bool{
 
 // StoreLabRun handles POST /api/lab/runs. Stores a completed lab run with
 // room-by-room timing data from the desktop app timer overlay.
-func StoreLabRun(pool *pgxpool.Pool) http.HandlerFunc {
+func StoreLabRun(repo *lab.LabRunRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 32768)
 
@@ -82,54 +81,28 @@ func StoreLabRun(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 		deviceID := dev.Fingerprint
 
-		ctx := r.Context()
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			slog.Error("lab run: begin tx", "error", err)
-			jsonError(w, http.StatusInternalServerError, "failed to store run")
-			return
+		run := lab.LabRun{
+			Difficulty:     body.Difficulty,
+			Strategy:       body.Strategy,
+			StartedAt:      body.StartedAt,
+			ElapsedSeconds: body.ElapsedSeconds,
+			KillSeconds:    body.KillSeconds,
+			RoomCount:      body.RoomCount,
+			HasGoldenDoor:  body.HasGoldenDoor,
+			Rooms:          make([]lab.LabRunRoom, len(body.Rooms)),
 		}
-		defer tx.Rollback(ctx)
-
-		var runID int64
-		err = tx.QueryRow(ctx,
-			`INSERT INTO lab_runs (device_id, difficulty, strategy, started_at, elapsed_seconds, kill_seconds, room_count, has_golden_door)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			 RETURNING id`,
-			deviceID,
-			body.Difficulty,
-			body.Strategy,
-			body.StartedAt,
-			body.ElapsedSeconds,
-			body.KillSeconds,
-			body.RoomCount,
-			body.HasGoldenDoor,
-		).Scan(&runID)
-		if err != nil {
-			slog.Error("lab run: insert run", "error", err)
-			jsonError(w, http.StatusInternalServerError, "failed to store run")
-			return
-		}
-
 		for i, room := range body.Rooms {
-			_, err = tx.Exec(ctx,
-				`INSERT INTO lab_run_rooms (run_id, room_number, room_name, entered_at)
-				 VALUES ($1, $2, $3, $4)`,
-				runID,
-				room.RoomNumber,
-				room.RoomName,
-				room.EnteredAt,
-			)
-			if err != nil {
-				slog.Error("lab run: insert room", "error", err, "room", i, "run", runID)
-				jsonError(w, http.StatusInternalServerError, "failed to store room")
-				return
-			}
+			run.Rooms[i] = lab.LabRunRoom{RoomNumber: room.RoomNumber, RoomName: room.RoomName, EnteredAt: room.EnteredAt}
 		}
 
-		if err := tx.Commit(ctx); err != nil {
-			slog.Error("lab run: commit", "error", err)
-			jsonError(w, http.StatusInternalServerError, "failed to commit run")
+		runID, err := repo.Store(r.Context(), deviceID, run)
+		if err != nil {
+			var storeErr *lab.LabRunStoreError
+			if !errors.As(err, &storeErr) {
+				storeErr = &lab.LabRunStoreError{Stage: lab.LabRunStageInsertRun, Err: err}
+			}
+			logLabRunStoreError(storeErr)
+			jsonError(w, http.StatusInternalServerError, labRunStoreErrorMessage(storeErr.Stage))
 			return
 		}
 
@@ -176,7 +149,7 @@ type labRunStats struct {
 
 // ListLabRuns handles GET /api/lab/runs. Returns run history and aggregate
 // stats for the current device, optionally filtered by difficulty.
-func ListLabRuns(pool *pgxpool.Pool) http.HandlerFunc {
+func ListLabRuns(repo *lab.LabRunRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dev := middleware.DeviceFromContext(r.Context())
 		if dev == nil {
@@ -192,74 +165,41 @@ func ListLabRuns(pool *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
-		ctx := r.Context()
-
-		// Query runs
-		query := `SELECT id, difficulty, strategy, started_at, elapsed_seconds, kill_seconds, room_count, has_golden_door
-			FROM lab_runs WHERE device_id = $1`
-		args := []any{dev.Fingerprint}
-
-		nextParam := 2
-		if difficulty != "" && allowedDifficulties[difficulty] {
-			query += fmt.Sprintf(` AND difficulty = $%d`, nextParam)
-			args = append(args, difficulty)
-			nextParam++
+		if !allowedDifficulties[difficulty] {
+			difficulty = ""
 		}
-		query += fmt.Sprintf(` ORDER BY started_at DESC LIMIT $%d`, nextParam)
-		args = append(args, limit)
 
-		rows, err := pool.Query(ctx, query, args...)
+		summaries, rawStats, err := repo.List(r.Context(), dev.Fingerprint, difficulty, limit)
 		if err != nil {
-			slog.Error("lab runs: query", "error", err)
-			jsonError(w, http.StatusInternalServerError, "failed to query runs")
-			return
-		}
-		defer rows.Close()
-
-		var runs []labRunResponse
-		for rows.Next() {
-			var run labRunResponse
-			if err := rows.Scan(&run.ID, &run.Difficulty, &run.Strategy, &run.StartedAt, &run.ElapsedSeconds, &run.KillSeconds, &run.RoomCount, &run.HasGoldenDoor); err != nil {
-				slog.Error("lab runs: scan", "error", err)
-				jsonError(w, http.StatusInternalServerError, "failed to read runs")
-				return
+			var listErr *lab.LabRunListError
+			if !errors.As(err, &listErr) {
+				listErr = &lab.LabRunListError{Stage: lab.LabRunListStageQuery, Err: err}
 			}
-			runs = append(runs, run)
-		}
-		if err := rows.Err(); err != nil {
-			slog.Error("lab runs: rows iteration", "error", err)
-			jsonError(w, http.StatusInternalServerError, "failed to read runs")
+			slog.Error("lab runs: "+string(listErr.Stage), "error", listErr.Err)
+			jsonError(w, http.StatusInternalServerError, labRunListErrorMessage(listErr.Stage))
 			return
 		}
-		if runs == nil {
-			runs = []labRunResponse{}
-		}
 
-		// Compute stats — kill_seconds is the competitive metric (Izaro death),
-		// elapsed_seconds is total time (including looting). Use COALESCE for
-		// backwards compat with runs that don't have kill_seconds.
-		statsQuery := `SELECT
-				COALESCE(AVG(elapsed_seconds), 0),
-				COALESCE(MIN(elapsed_seconds), 0),
-				COALESCE(AVG(kill_seconds), 0),
-				COALESCE(MIN(kill_seconds), 0),
-				COUNT(*)
-			FROM lab_runs WHERE device_id = $1`
-		statsArgs := []any{dev.Fingerprint}
-		if difficulty != "" && allowedDifficulties[difficulty] {
-			statsQuery += ` AND difficulty = $2`
-			statsArgs = append(statsArgs, difficulty)
+		runs := make([]labRunResponse, len(summaries))
+		for i, s := range summaries {
+			runs[i] = labRunResponse{
+				ID:             s.ID,
+				Difficulty:     s.Difficulty,
+				Strategy:       s.Strategy,
+				StartedAt:      s.StartedAt,
+				ElapsedSeconds: s.ElapsedSeconds,
+				KillSeconds:    s.KillSeconds,
+				RoomCount:      s.RoomCount,
+				HasGoldenDoor:  s.HasGoldenDoor,
+			}
 		}
-
-		var stats labRunStats
-		var avgRaw, avgKillRaw float64
-		if err := pool.QueryRow(ctx, statsQuery, statsArgs...).Scan(&avgRaw, &stats.BestSeconds, &avgKillRaw, &stats.BestKillSecs, &stats.TotalRuns); err != nil {
-			slog.Error("lab runs: stats", "error", err)
-			jsonError(w, http.StatusInternalServerError, "failed to compute stats")
-			return
+		stats := labRunStats{
+			AvgSeconds:     math.Round(rawStats.AvgSeconds*10) / 10,
+			BestSeconds:    rawStats.BestSeconds,
+			AvgKillSeconds: math.Round(rawStats.AvgKillSeconds*10) / 10,
+			BestKillSecs:   rawStats.BestKillSeconds,
+			TotalRuns:      rawStats.TotalRuns,
 		}
-		stats.AvgSeconds = math.Round(avgRaw*10) / 10
-		stats.AvgKillSeconds = math.Round(avgKillRaw*10) / 10
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
@@ -268,5 +208,44 @@ func ListLabRuns(pool *pgxpool.Pool) http.HandlerFunc {
 		}); err != nil {
 			slog.Warn("lab runs: encode response", "error", err)
 		}
+	}
+}
+
+// logLabRunStoreError keeps the per-stage log texts the handler used before the
+// transaction moved into lab.LabRunRepository.
+func logLabRunStoreError(e *lab.LabRunStoreError) {
+	switch e.Stage {
+	case lab.LabRunStageBegin:
+		slog.Error("lab run: begin tx", "error", e.Err)
+	case lab.LabRunStageInsertRoom:
+		slog.Error("lab run: insert room", "error", e.Err, "room", e.RoomIndex, "run", e.RunID)
+	case lab.LabRunStageCommit:
+		slog.Error("lab run: commit", "error", e.Err)
+	default:
+		slog.Error("lab run: insert run", "error", e.Err)
+	}
+}
+
+// labRunStoreErrorMessage is the 500 body text for a failed store stage.
+func labRunStoreErrorMessage(stage lab.LabRunStage) string {
+	switch stage {
+	case lab.LabRunStageInsertRoom:
+		return "failed to store room"
+	case lab.LabRunStageCommit:
+		return "failed to commit run"
+	default:
+		return "failed to store run"
+	}
+}
+
+// labRunListErrorMessage is the 500 body text for a failed list stage.
+func labRunListErrorMessage(stage lab.LabRunListStage) string {
+	switch stage {
+	case lab.LabRunListStageScan, lab.LabRunListStageRows:
+		return "failed to read runs"
+	case lab.LabRunListStageStats:
+		return "failed to compute stats"
+	default:
+		return "failed to query runs"
 	}
 }

@@ -272,6 +272,7 @@ func main() {
 		Pool:                 pool,
 		LabRepo:              labRepo,
 		LayoutRepo:           layoutRepo,
+		LabRunRepo:           lab.NewLabRunRepository(pool),
 		LabCache:             labCache,
 		ExchangeCache:        exchangeCache,
 		HarvestCache:         harvestCache,

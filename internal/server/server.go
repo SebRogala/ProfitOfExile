@@ -69,6 +69,9 @@ type RouterConfig struct {
 	Analyzer *lab.Analyzer
 	// LayoutRepo is the repository for daily lab layout data.
 	LayoutRepo *lab.LayoutRepository
+	// LabRunRepo stores and lists desktop lab-run timings; nil leaves
+	// /api/lab/runs unregistered.
+	LabRunRepo *lab.LabRunRepository
 	// ExchangeCache holds the newest currency-exchange ranking, refreshed by
 	// exchange.Service in cmd/server. May be nil — the handler then reads as
 	// COLD and answers 200 with no plays rather than failing.
@@ -285,8 +288,11 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Post("/api/boss-loot/runs/{id}/delete", bossLoot.Delete)
 		r.Get("/api/boss-loot/stats", bossLoot.Stats)
 		r.Post("/api/desktop/font-session", handlers.FontSession(cfg.Pool))
-		r.Post("/api/lab/runs", handlers.StoreLabRun(cfg.Pool))
-		r.Get("/api/lab/runs", handlers.ListLabRuns(cfg.Pool))
+	}
+
+	if cfg.LabRunRepo != nil {
+		r.Post("/api/lab/runs", handlers.StoreLabRun(cfg.LabRunRepo))
+		r.Get("/api/lab/runs", handlers.ListLabRuns(cfg.LabRunRepo))
 	}
 
 	if cfg.LayoutRepo != nil {

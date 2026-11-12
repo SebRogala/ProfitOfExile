@@ -29,7 +29,6 @@ var importBaseline = map[string]string{
 	"boss_loot.go":    "POE-344: NewBossLoot builds its repository from the pool",
 	"debug.go":        "server audit L1: debug endpoints read collector state",
 	"font_session.go": "POE-344: font-session insert transaction",
-	"lab_runs.go":     "POE-344: lab-run insert, list and stats SQL",
 }
 
 // guardFiles must be among the parsed files so the walk cannot pass vacuously.
