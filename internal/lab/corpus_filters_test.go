@@ -21,12 +21,36 @@ func gemSignalNames(ss []GemSignal) []string {
 	return out
 }
 
-func TestFilterTransfigure_SortsByROIDescendingThenCapsAtLimit(t *testing.T) {
+func TestFilterTransfigure_KeepsOnlyTheRequestedVariant(t *testing.T) {
+	all := []TransfigureResult{
+		{TransfiguredName: "A", Variant: "20/20", ROI: 10},
+		{TransfiguredName: "C", Variant: "1/20", ROI: 10},
+	}
+	got := transfigureNames(FilterTransfigure(all, "20/20", 10))
+	want := []string{"A@20/20"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("FilterTransfigure = %v, want %v", got, want)
+	}
+}
+
+func TestFilterTransfigure_OrdersByROIDescending(t *testing.T) {
 	all := []TransfigureResult{
 		{TransfiguredName: "A", Variant: "20/20", ROI: 10},
 		{TransfiguredName: "B", Variant: "20/20", ROI: 40},
-		{TransfiguredName: "C", Variant: "1/20", ROI: 99},
 		{TransfiguredName: "D", Variant: "20/20", ROI: 25},
+	}
+	got := transfigureNames(FilterTransfigure(all, "20/20", 10))
+	want := []string{"B@20/20", "D@20/20", "A@20/20"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("FilterTransfigure = %v, want %v", got, want)
+	}
+}
+
+func TestFilterTransfigure_CapsResultsAtLimit(t *testing.T) {
+	all := []TransfigureResult{
+		{TransfiguredName: "B", Variant: "20/20", ROI: 40},
+		{TransfiguredName: "D", Variant: "20/20", ROI: 25},
+		{TransfiguredName: "A", Variant: "20/20", ROI: 10},
 	}
 	got := transfigureNames(FilterTransfigure(all, "20/20", 2))
 	want := []string{"B@20/20", "D@20/20"}

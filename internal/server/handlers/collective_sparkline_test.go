@@ -589,7 +589,7 @@ func TestCachedCorruptedSparklines_DedicationVariantReadsTheCorruptedCache(t *te
 		"Vaal Grace": {"21/23c": want},
 	})
 
-	got, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/23c", sparklineWindowHours)
+	got, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/23c", lab.SparklineWindowHours)
 	if !cached {
 		t.Fatal("cached = false, want the warm corrupted cache to serve the request")
 	}
@@ -606,7 +606,7 @@ func TestCachedCorruptedSparklines_NonDedicationVariantDefersToTheQuery(t *testi
 	// The cache populates corrupted series for the Dedication variant only, so
 	// any other variant must reach the database rather than read an empty
 	// series out of a warm cache.
-	if _, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "20/20", sparklineWindowHours); cached {
+	if _, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "20/20", lab.SparklineWindowHours); cached {
 		t.Error("cached = true for variant 20/20, want the query")
 	}
 }
@@ -622,7 +622,7 @@ func TestCachedCorruptedSparklines_PopulationWithNoCorruptedSeriesAnswersWithout
 		"Spark of Nova": {"20/20": {sparkAt(now, time.Hour, 125, 26)}},
 	}, nil)
 
-	got, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/23c", sparklineWindowHours)
+	got, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/23c", lab.SparklineWindowHours)
 	if !cached {
 		t.Fatal("cached = false after a population that retained no corrupted series, want the cache to answer")
 	}
@@ -634,13 +634,13 @@ func TestCachedCorruptedSparklines_PopulationWithNoCorruptedSeriesAnswersWithout
 func TestCachedCorruptedSparklines_ColdCacheDefersToTheQuery(t *testing.T) {
 	cache := lab.NewCache(sparklineScope)
 
-	if _, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/23c", sparklineWindowHours); cached {
+	if _, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/23c", lab.SparklineWindowHours); cached {
 		t.Error("cached = true on a cold cache, want the query")
 	}
 }
 
 func TestCachedCorruptedSparklines_NilCacheDefersToTheQuery(t *testing.T) {
-	if _, cached := cachedCorruptedSparklines(nil, sparklineScope, []string{"Vaal Grace"}, "21/23c", sparklineWindowHours); cached {
+	if _, cached := cachedCorruptedSparklines(nil, sparklineScope, []string{"Vaal Grace"}, "21/23c", lab.SparklineWindowHours); cached {
 		t.Error("cached = true with no cache, want the query")
 	}
 }
@@ -683,7 +683,7 @@ func TestCachedCorruptedSparklines_UnpopulatedDedicationVariantAnswersWithoutThe
 		"Vaal Grace": {"21/23c": {sparkAt(now, time.Hour, 900, 5)}},
 	})
 
-	got, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/20c", sparklineWindowHours)
+	got, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/20c", lab.SparklineWindowHours)
 	if !cached {
 		t.Fatal("cached = false for 21/20c against a populated corpus, want the cache to answer")
 	}
