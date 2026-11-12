@@ -413,7 +413,6 @@ describe('connection state through an outage', () => {
 		await vi.advanceTimersByTimeAsync(0);
 		opened[0].onopen!();
 		onConnectionChange.mockClear();
-		vi.spyOn(console, 'warn').mockImplementation(() => {});
 		return { connection, onConnectionChange };
 	}
 
