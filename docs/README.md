@@ -68,6 +68,7 @@ rollover in [ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-a
 - [ADR-028: Boss loot capture and ownership](adr/028-boss-loot-capture-and-ownership.md)
 - [ADR-029: Overlay widget action boundary](adr/029-overlay-widget-action-boundary.md)
 - [ADR-030: Paginated lists page, sort and filter in the backend](adr/030-paginated-lists-page-sort-and-filter-in-the-backend.md)
+- [ADR-031: Proxy: one setting for every transport, and it fails closed](adr/031-proxy-one-setting-every-transport-fails-closed.md)
 
 Superseded:
 
