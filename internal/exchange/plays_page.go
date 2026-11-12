@@ -91,18 +91,14 @@ const (
 func ParsePlaysPageQuery(values url.Values) (PlaysPageQuery, error) {
 	q := PlaysPageQuery{Page: 1, Sort: SortExpected, Unit: UnitChaos}
 
-	if size := values.Get("pageSize"); size == "all" {
+	// The transport enum is the exact spelling: 025 or +25 is not a page size.
+	switch size := values.Get("pageSize"); size {
+	case "25", "50", "100", "200":
+		q.PageSize, _ = strconv.Atoi(size)
+	case "all":
 		q.PageSize = PageSizeAll
-	} else {
-		n, err := strconv.Atoi(size)
-		if err != nil {
-			return PlaysPageQuery{}, fmt.Errorf(msgPageSize)
-		}
-		// 0 is PageSizeAll's representation, not a size a client may send.
-		if n == PageSizeAll {
-			return PlaysPageQuery{}, fmt.Errorf(msgPageSize)
-		}
-		q.PageSize = n
+	default:
+		return PlaysPageQuery{}, fmt.Errorf(msgPageSize)
 	}
 
 	if values.Has("page") {

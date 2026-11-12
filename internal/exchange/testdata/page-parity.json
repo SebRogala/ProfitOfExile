@@ -6755,8 +6755,6 @@
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
         "synthetic:expected-roi-1e-18",
-        "synthetic:expected-roi-tiny",
-        "synthetic:depth-tiny",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
@@ -6772,6 +6770,8 @@
         "synthetic:expected-roi-nan",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:expected-roi-tiny",
+        "synthetic:depth-tiny",
         "synthetic:sim-entries-zero"
       ],
       "pageKeys": [
@@ -6799,8 +6799,6 @@
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
         "day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
         "synthetic:expected-roi-1e-18",
-        "synthetic:expected-roi-tiny",
-        "synthetic:depth-tiny",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
         "direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
         "1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
@@ -6816,6 +6814,8 @@
         "synthetic:expected-roi-nan",
         "synthetic:depth-zero",
         "synthetic:depth-negative",
+        "synthetic:expected-roi-tiny",
+        "synthetic:depth-tiny",
         "synthetic:sim-entries-zero"
       ],
       "itemUniverse": [

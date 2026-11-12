@@ -155,3 +155,12 @@ func TestPlaysPageQueryValidate_RejectsEach400ClassNamingTheParam(t *testing.T) 
 		}
 	}
 }
+
+func TestPlaysPageQuery_RejectsNoncanonicalPageSize(t *testing.T) {
+	for _, size := range []string{"025", "+25"} {
+		_, err := ParsePlaysPageQuery(url.Values{"pageSize": {size}})
+		if err == nil || !strings.Contains(err.Error(), "pageSize") {
+			t.Errorf("pageSize=%q: err = %v, want an error naming pageSize", size, err)
+		}
+	}
+}

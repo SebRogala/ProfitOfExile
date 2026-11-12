@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"math"
 	"os"
+	"reflect"
+	"sort"
 	"strconv"
 	"testing"
 )
@@ -267,5 +269,71 @@ func TestPlay_WithoutDisplayOmitsTheKey(t *testing.T) {
 	_ = json.Unmarshal(raw, &fields)
 	if _, ok := fields["display"]; ok {
 		t.Fatalf("undecorated play carries a display key: %s", raw)
+	}
+}
+
+// TestPageParity_CaseOrderMatchesNormalizedKeys checks the fixture against the
+// API contract's sort rule: the recorded display sort key (non-finite already
+// null), descending for expected/roi and ascending for fastest, null keys last,
+// ties in served (fixture) order. WI-7's SQL parity test reads these orders.
+func TestPageParity_CaseOrderMatchesNormalizedKeys(t *testing.T) {
+	raw, err := os.ReadFile("testdata/page-parity.json")
+	if err != nil {
+		t.Fatalf("read parity fixture: %v", err)
+	}
+	var f struct {
+		Plays []struct {
+			Play struct {
+				Key string `json:"key"`
+			} `json:"play"`
+			Display PlayDisplay `json:"display"`
+		} `json:"plays"`
+		Cases []struct {
+			Name        string              `json:"name"`
+			Params      map[string][]string `json:"params"`
+			OrderedKeys []string            `json:"orderedKeys"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatalf("decode parity fixture: %v", err)
+	}
+	rank := map[string]int{}
+	keys := map[string]PlaySortKeys{}
+	for i, p := range f.Plays {
+		rank[p.Play.Key] = i
+		keys[p.Play.Key] = p.Display.SortKeys
+	}
+	for _, c := range f.Cases {
+		sortBy := SortExpected
+		if s := c.Params["sort"]; len(s) > 0 {
+			sortBy = PlaysSort(s[0])
+		}
+		key := func(k string) float64 {
+			switch sortBy {
+			case SortRoi:
+				return float64(keys[k].Roi)
+			case SortFastest:
+				return float64(keys[k].FastestHours)
+			}
+			return float64(keys[k].Expected)
+		}
+		want := append([]string(nil), c.OrderedKeys...)
+		sort.SliceStable(want, func(i, j int) bool {
+			a, b := key(want[i]), key(want[j])
+			an, bn := math.IsNaN(a), math.IsNaN(b)
+			switch {
+			case an != bn:
+				return bn
+			case !an && a != b:
+				if sortBy == SortFastest {
+					return a < b
+				}
+				return a > b
+			}
+			return rank[want[i]] < rank[want[j]]
+		})
+		if !reflect.DeepEqual(want, c.OrderedKeys) {
+			t.Errorf("case %q: orderedKeys\n got %v\nwant %v", c.Name, c.OrderedKeys, want)
+		}
 	}
 }
