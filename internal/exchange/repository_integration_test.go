@@ -1162,3 +1162,31 @@ func TestPlaysPage_StatementCountIsIndependentOfPageSize(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaysPage_OverflowingPageIsEmptyWithUnchangedCounts(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newPlaysRepository(t, pool)
+	f := storeParity(t, repo)
+	ctx := context.Background()
+
+	for _, tc := range []struct{ page, size string }{
+		{"2305843009213693953", "200"}, // (page-1)*size wraps to 0
+		{"9223372036854775807", "50"},  // (page-1)*size wraps negative
+	} {
+		t.Run(tc.page+"x"+tc.size, func(t *testing.T) {
+			q := parityQuery(t, map[string][]string{"page": {tc.page}}, tc.size)
+
+			page, err := repo.PlaysPage(ctx, integrationScope, q)
+
+			if err != nil {
+				t.Fatalf("PlaysPage: %v", err)
+			}
+			if len(page.Plays) != 0 {
+				t.Errorf("served %d plays, want an empty page", len(page.Plays))
+			}
+			if page.Total != len(f.Plays) || page.Matched != len(f.Plays) {
+				t.Errorf("total/matched = %d/%d, want %d/%d", page.Total, page.Matched, len(f.Plays), len(f.Plays))
+			}
+		})
+	}
+}

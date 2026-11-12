@@ -571,7 +571,11 @@ func (r *Repository) PlaysPage(ctx context.Context, scope league.Scope, q PlaysP
 	if q.Search == "" && q.PageSize != PageSizeAll {
 		size := q.PageSize
 		limit = &size
-		offset = (q.Page - 1) * q.PageSize
+		// A page whose offset overflows lies past any representable row count.
+		offset = math.MaxInt64
+		if q.Page-1 <= math.MaxInt64/q.PageSize {
+			offset = (q.Page - 1) * q.PageSize
+		}
 	}
 	pageSQL := playsStagedSQL + `
 SELECT play FROM staged WHERE rules_ok AND gates_ok AND match_ok
