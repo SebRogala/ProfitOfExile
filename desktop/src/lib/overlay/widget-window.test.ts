@@ -468,6 +468,64 @@ describe('post-build monitor reconcile', () => {
 		expect(first.destroy).not.toHaveBeenCalled();
 	});
 
+	it('keeps the re-armed id when that monitor later reports a new corner', async () => {
+		const movedA: GameMonitorInfo = { ...GAME_A, x: GAME_B.x, y: GAME_B.y };
+		gameAnswers = [GAME_A, GAME_A, movedA];
+		const first = await startBuild();
+		ww.onGameMonitorChanged(GAME_B);
+		await fire(first, 'tauri://created');
+		await vi.advanceTimersByTimeAsync(0);
+		ww.onGameMonitorChanged(movedA);
+		await vi.advanceTimersByTimeAsync(1000);
+		expect(h.instances).toHaveLength(1);
+		expect(first.destroy).not.toHaveBeenCalled();
+	});
+
+	/**
+	 * A creation that times out in the driver and whose `tauri://created` arrives
+	 * late: its reconcile hop runs while the driver is unbuilt (the retry's
+	 * window is still pending).
+	 */
+	async function lateCreatedWhileRetryPending(): Promise<{ late: FakeWindow; retry: FakeWindow }> {
+		const late = await startBuild();
+		await vi.advanceTimersByTimeAsync(10_000);
+		await vi.advanceTimersByTimeAsync(500);
+		await vi.advanceTimersByTimeAsync(100);
+		const retry = lastWindow();
+		expect(retry).not.toBe(late);
+		await fire(late, 'tauri://created');
+		expect(ww.driver.built()).toBe(false);
+		return { late, retry };
+	}
+
+	it('re-checks the late build once the driver has built, one hop after an unbuilt hop', async () => {
+		const { retry } = await lateCreatedWhileRetryPending();
+		expect(gameQueries).toHaveLength(2);
+		await vi.advanceTimersToNextTimerAsync();
+		expect(gameQueries).toHaveLength(2);
+		await fire(retry, 'tauri://created');
+		await vi.advanceTimersToNextTimerAsync();
+		expect(gameQueries).toHaveLength(3);
+		await vi.advanceTimersByTimeAsync(1000);
+		expect(gameQueries).toEqual([
+			{ built: false },
+			{ built: false },
+			{ built: true },
+			{ built: true }
+		]);
+		expect(h.instances).toHaveLength(2);
+	});
+
+	it('stops after one retried hop when the driver never builds', async () => {
+		await lateCreatedWhileRetryPending();
+		const pendingBefore = vi.getTimerCount();
+		await vi.advanceTimersToNextTimerAsync();
+		expect(vi.getTimerCount()).toBe(pendingBefore);
+		await vi.advanceTimersToNextTimerAsync();
+		expect(vi.getTimerCount()).toBe(pendingBefore - 1);
+		expect(gameQueries).toHaveLength(2);
+	});
+
 	it('schedules no re-check after a failed build', async () => {
 		const first = await startBuild();
 		await fire(first, 'tauri://error', { payload: 'boom' });
