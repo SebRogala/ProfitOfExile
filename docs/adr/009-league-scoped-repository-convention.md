@@ -165,3 +165,27 @@ Implementation evidence:
   with the boot scope, `internal/server/server.go` (`NewRouter`) registers it,
   and `internal/server/handlers/boss_loot.go` (`Submit`) passes that scope to
   the repository. (Evidence amended 2026-11-12, POE-344; decision unchanged.)
+
+## Amended 2026-11-12 (POE-118): fence-loss contract (interim, pending owner)
+
+Status: interim pending owner decision (exit vs stay-up-and-stop-writers).
+
+The server supervises its fence connection (the `ServerLockKey` session) every
+`fenceCheckInterval` (5 s) with a `fenceCheckTimeout` (2 s) per check
+(`cmd/server/main.go`). A failed or timed-out check is fence loss. On loss the
+server cancels its service context (recompute runtime, trade gate, publishers),
+shuts the HTTP server down (10 s bound) and exits 1. There is no re-acquire;
+recovery is a fresh boot through `AcquireFencedScope`, and reads are down until
+the container restarts. `GET /api/health` still answers 503 on a failed fence
+check. The collector fence is unchanged.
+
+Two residual windows are accepted. Loss → detection lasts up to
+`fenceCheckInterval + fenceCheckTimeout` (about 7 s); a per-write fencing token
+would close it and is deferred. Detection → exit is the graceful HTTP drain
+(up to 10 s): requests already in flight run on their own request context and
+can still commit, for example a boss-loot submit; an HTTP write gate would close
+it and is deferred. Writes stop for certain only when the process exits.
+
+**Operator precondition for deploy: verify the prod server container restarts after a non-zero exit.**
+Evidence: the repository `docker-compose.yml` app service sets
+`restart: unless-stopped`; the prod restart policy is unverified.

@@ -36,6 +36,13 @@ var frontendEmbed embed.FS
 // its fail-fast acquire because it wants to skip the cycle, not wait.
 const fenceAcquireMaxWait = 15 * time.Second
 
+// fenceCheckInterval and fenceCheckTimeout set the mid-life fence watcher:
+// loss is detected within their sum (about 7 s) of the fence session dropping.
+const (
+	fenceCheckInterval = 5 * time.Second
+	fenceCheckTimeout  = 2 * time.Second
+)
+
 func main() {
 	port, portErr := loadPort()
 	if portErr != nil {
@@ -79,6 +86,8 @@ func main() {
 	// RuntimeLockKey — co-located server+collector must fence independently, not
 	// deadlock on a shared key. On contention the peer is the legitimate owner:
 	// refuse readiness and exit non-zero before binding routes or subscribing.
+	// Mid-life, a lost fence session cancels every writer and exits non-zero
+	// (serviceCtx below; ADR-009, POE-118 amendment).
 	//
 	// The server needs at least THREE connections, not two. The fence parks one
 	// for the process lifetime. The delayed-recompute path then nests: it holds
@@ -111,6 +120,7 @@ func main() {
 	}
 	defer serverLock.Release()
 	slog.Info("server fence acquired", "league", scope.ID(), "revision", scope.Revision())
+	serviceCtx := serverLock.Supervise(ctx, fenceCheckInterval, fenceCheckTimeout)
 
 	// EXPECTED_LEAGUE is an optional deploy-time assertion: if the operator
 	// pins the league they believe this process should serve, a mismatch with
@@ -161,12 +171,12 @@ func main() {
 	// stores several hours back to back and triggers one recompute per hour, and
 	// clients only need to be told once, about the final state.
 	marketPublisher := marketUpdatePublisher{scope: scope, mercureURL: mercureURL, mercureSecret: mercureSecret}
-	if err := marketPublisher.PublishLeagueActive(ctx); err != nil {
+	if err := marketPublisher.PublishLeagueActive(serviceCtx); err != nil {
 		slog.Warn("league: publishing the boot event failed", "error", err)
 	}
 	// Captured explicitly: the closure runs on a timer goroutine long after this
 	// line, so it must hold the process-lifetime context by value.
-	publishCtx := ctx
+	publishCtx := serviceCtx
 	exchangeDebounce := exchange.NewDebouncer(exchange.DefaultUpdateDebounce, func() {
 		res, _ := exchangeCache.Snapshot(exchange.DefaultHorizon)
 		if err := marketPublisher.Publish(publishCtx, exchange.UpdatedTopic, exchange.UpdatePayload(res, time.Now())); err != nil {
@@ -212,7 +222,7 @@ func main() {
 		tradeRepo = trade.NewRepository(pool)
 
 		// Warm trade cache from DB — load latest lookup per gem+variant (last 24h).
-		warmCtx, warmCancel := context.WithTimeout(ctx, 10*time.Second)
+		warmCtx, warmCancel := context.WithTimeout(serviceCtx, 10*time.Second)
 		results, err := tradeRepo.LatestLookups(warmCtx, scope, 24)
 		warmCancel()
 		if err != nil {
@@ -254,7 +264,7 @@ func main() {
 
 		tradeGate = trade.NewGate(tradeCfg, scope, tradeLimiter, tradeClient, tradePub, tradeCache, divineRateFn, tradeRepo)
 
-		go tradeGate.Run(ctx)
+		go tradeGate.Run(serviceCtx)
 		slog.Info("trade gate started", "league", tradeCfg.LeagueName, "cacheMax", tradeCacheMax)
 		// Trade refresh scheduling: collector publishes poe/collector/trade-tick
 		// Mercure events; the server subscriber routes them to HandleTradeTick.
@@ -301,7 +311,7 @@ func main() {
 
 	router := server.NewRouter(pool, frontendFS, routerCfg)
 
-	runtime := newRecomputeRuntime(ctx, scope)
+	runtime := newRecomputeRuntime(serviceCtx, scope)
 	runtime.pool = pool
 	runtime.labCache = labCache
 	runtime.throttler = throttler
@@ -383,6 +393,15 @@ func main() {
 		}
 	case sig := <-quit:
 		slog.Info("shutting down server", "signal", sig.String())
+	case <-serviceCtx.Done():
+		slog.Error("server fence lost; stopping writers and exiting", "cause", context.Cause(serviceCtx))
+		fenceLossCtx, fenceLossCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := srv.Shutdown(fenceLossCtx); err != nil {
+			slog.Error("server forced to shutdown", "error", err)
+		}
+		fenceLossCancel()
+		runtime.Close()
+		os.Exit(1)
 	}
 
 	// Named apart from the service ctx above: closures still running (the

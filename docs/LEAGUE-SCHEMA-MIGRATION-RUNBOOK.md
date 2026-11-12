@@ -286,6 +286,13 @@ their boot-time league. Wipe dry runs and `prepare` work with either running.
 Prepare and activate dry runs execute their control-row changes and roll back;
 wipe dry runs only preview counts, mode, and SQL, executing no TRUNCATE/DELETE.
 
+A server whose fence session drops exits non-zero within about 17 s
+(`fenceCheckInterval + fenceCheckTimeout` + the 10 s HTTP drain) and relies on
+the container restart policy. After such an exit `activate` stops refusing with
+`server holds the server lock` until the restarted server re-acquires the fence,
+so re-check service state before activating. The normative contract is the
+ADR-009 amendment of 2026-11-12 (POE-118).
+
 ### Phase A — prepare (before start; no restart)
 
 1. Preview registration, using the announced start in RFC3339 format:

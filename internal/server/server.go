@@ -90,16 +90,10 @@ type RouterConfig struct {
 	DeviceRepo *device.Repository
 	// FenceChecker reports the liveness of the server's process fence (the held
 	// advisory-lock connection). May be nil — health then reflects the DB ping
-	// alone. The fence's actual guarantee is boot-time exclusion: a second server
-	// cannot acquire ServerLockKey and refuses readiness, so only one writer boots.
-	// When set, a mid-life fence loss is DETECTED here (CheckHeld) and degrades
-	// /api/health to 503 — but that only sheds HTTP traffic. It does NOT stop the
-	// writers, which run off Mercure events and timers (recompute) and GGG trade
-	// calls, not off HTTP requests; those keep writing until the process exits.
-	// Quiescing behind a peer that grabbed the lock therefore depends on an
-	// external liveness probe restarting this process on the sustained 503.
-	// TODO(POE-118): cancel the writer lifecycle on fence loss so a demoted server
-	// stops writing without waiting for an external restart.
+	// alone. A failed check degrades /api/health to 503, which stays the HTTP
+	// signal of a lost fence; the mid-life loss itself is acted on in cmd/server,
+	// which cancels the writers' context and exits non-zero (ADR-009, POE-118
+	// amendment).
 	FenceChecker handlers.LivenessChecker
 	// IconSets serves /api/icon/{type}/{name} and /api/gem-icon/{name}; build it
 	// with BuildIconSets. Nil leaves both icon routes unregistered.
