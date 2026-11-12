@@ -438,7 +438,7 @@ func (c *Cache) SetOfferingTiming(data json.RawMessage) {
 // because every writer marshals a never-nil slice: an answer with no offerings in
 // it is stored as `[]`, which is two bytes and not nil. So nil means COLD, and
 // MarketOverview's fallback — ten queries — is reached exactly once rather than
-// on every request. ComputeOfferingTimings returning a non-nil empty slice is
+// on every request. (*Repository).OfferingTimings returning a non-nil empty slice is
 // what makes that true; see its doc comment.
 func (c *Cache) OfferingTiming() json.RawMessage {
 	c.mu.RLock()

@@ -14,16 +14,16 @@ import (
 
 var offeringScope = league.Historical("Mirage")
 
-// unusablePool is the database seam for MarketOverview, which takes a pool
-// rather than a repository: a zero-value pool has no puddle behind it, so the
-// first query panics. It is the same observable the nil-repository handlers use
-// — "this request reached the database" — expressed for a pool argument.
+// unusableRepo is the database seam for MarketOverview: a repository over a
+// zero-value pool has no puddle behind it, so the first query panics. It is the
+// same observable the nil-repository handlers use — "this request reached the
+// database" — for a handler whose nil repository means "never compute".
 //
-// MarketOverview touches the pool in exactly one place, the offering-timing
-// block, so a panic here can only have come from that block.
-func unusablePool() *pgxpool.Pool { return &pgxpool.Pool{} }
+// MarketOverview touches the repository in exactly one place, the
+// offering-timing block, so a panic here can only have come from that block.
+func unusableRepo() *lab.Repository { return lab.NewRepository(&pgxpool.Pool{}) }
 
-// The dormant half of POE-152. ComputeOfferingTimings drops an offering whose
+// The dormant half of POE-152. OfferingTimings drops an offering whose
 // current-price query returns NULL, so an offering with no fragment_snapshots
 // rows produces an empty result. Judging the cache by the number of offerings in
 // it made that empty result a permanent miss: ten queries per request, forever.
@@ -43,7 +43,7 @@ func TestMarketOverview_EmptyCachedOfferingTimingIsServedNotRecomputed(t *testin
 		}
 	}()
 
-	MarketOverview(cache, unusablePool(), offeringScope).ServeHTTP(w, req)
+	MarketOverview(cache, unusableRepo(), offeringScope).ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
@@ -65,7 +65,7 @@ func TestMarketOverview_PopulatedCachedOfferingTimingIsServedFromTheCache(t *tes
 		}
 	}()
 
-	MarketOverview(cache, unusablePool(), offeringScope).ServeHTTP(w, req)
+	MarketOverview(cache, unusableRepo(), offeringScope).ServeHTTP(w, req)
 
 	var resp struct {
 		Offerings []struct {
@@ -92,7 +92,7 @@ func TestMarketOverview_ColdOfferingTimingCacheReachesThePool(t *testing.T) {
 				reached = true
 			}
 		}()
-		MarketOverview(cache, unusablePool(), offeringScope).
+		MarketOverview(cache, unusableRepo(), offeringScope).
 			ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/analysis/market-overview", nil))
 		return false
 	}()
