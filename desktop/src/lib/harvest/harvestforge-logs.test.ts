@@ -30,8 +30,15 @@ function parseLog(csv: string): HarvestForgeLog {
 	return { types, totalRolls: Number(footer.get('Total rolls')) };
 }
 
+/** A log less the rows 3.30 removed from the game (patch notes, 03 Endgame): the fixture drops them. */
+function without(log: HarvestForgeLog, removed: string[]): HarvestForgeLog {
+	const kept = log.types.filter(([name]) => !removed.includes(name));
+	const dropped = log.types.filter(([name]) => removed.includes(name)).reduce((s, [, rolls]) => s + rolls, 0);
+	return { types: kept, totalRolls: log.totalRolls - dropped };
+}
+
 const LOGS = [
-	['astrolabe', parseLog(astrolabesCsv)],
+	['astrolabe', without(parseLog(astrolabesCsv), ['Deceptive Astrolabe', 'Fruiting Astrolabe'])],
 	['catalyst', parseLog(catalystsCsv)],
 	['fossil', parseLog(fossilsCsv)],
 	['oil', parseLog(oilsCsv)]

@@ -229,7 +229,7 @@ describe('status line', () => {
 
 	it('Delirium Orbs name their logged sample (reference 02)', async () => {
 		const view = pageView(await input({ familyId: 'delirium' }));
-		expect(view.status?.segments.at(-1)).toBe('weights: HarvestForge log · 5,122 rolls · 2026-10-09');
+		expect(view.status?.segments.at(-1)).toBe('weights: HarvestForge log · 4,988 rolls · 2026-10-09');
 	});
 
 	it('Deafening Essences read uniform ~5% (reference 03)', async () => {
@@ -250,15 +250,15 @@ describe('Delirium Orbs (reference 02)', () => {
 	});
 
 	it('prints the divine line in Primal', async () => {
-		expect((await body()).verdict.divineLine).toBe('1 div profit ≈ 17 feeders · ~229 rerolls · ~6,872 Primal');
+		expect((await body()).verdict.divineLine).toBe('1 div profit ≈ 16 feeders · ~208 rerolls · ~6,227 Primal');
 	});
 
 	it('feeds one LOW card', async () => {
 		expect((await body()).feeders.cards.map((c) => c.tier)).toEqual(['LOW']);
 	});
 
-	it('prints LOW as 10 types · 10.3c–16.7c', async () => {
-		expect(card(await body(), 'feeders', 'LOW').meta).toBe('10 types · 10.3c–16.7c');
+	it('prints LOW as 9 types · 10.3c–16.7c', async () => {
+		expect(card(await body(), 'feeders', 'LOW').meta).toBe('9 types · 10.3c–16.7c');
 	});
 
 	it('keeps one HIGH card', async () => {
@@ -269,8 +269,8 @@ describe('Delirium Orbs (reference 02)', () => {
 		expect(card(await body(), 'keepers', 'HIGH').meta).toBe('2 types · 41.5c–54.5c');
 	});
 
-	it('keeps Diviner’s and Skittering in HIGH', async () => {
-		expect(card(await body(), 'keepers', 'HIGH').chips.map((c) => c.shortName)).toEqual(["Diviner's", 'Skittering']);
+	it('keeps Diviner’s and Threaded in HIGH', async () => {
+		expect(card(await body(), 'keepers', 'HIGH').chips.map((c) => c.shortName)).toEqual(["Diviner's", 'Threaded']);
 	});
 });
 
@@ -1166,13 +1166,13 @@ describe('reference values (C13)', () => {
 		expect(chip.evText).toBe('+2.5c');
 	});
 
-	it('reference 02: feeders regex 41 / 250 characters', async () => {
-		expect(family(pageView(await input({ familyId: 'delirium' }))).regex.feeders.count).toBe('41 / 250 characters');
+	it('reference 02: feeders regex 37 / 250 characters', async () => {
+		expect(family(pageView(await input({ familyId: 'delirium' }))).regex.feeders.count).toBe('37 / 250 characters');
 	});
 
-	it('reference 02: shares Diviner’s 5.1% and Skittering 0.94%', async () => {
+	it('reference 02: shares Diviner’s 5.3% and Threaded 0.96%', async () => {
 		const chips = card(family(pageView(await input({ familyId: 'delirium' }))), 'keepers', 'HIGH').chips;
-		expect(chips.map((c) => c.shareText)).toEqual(['5.1%', '0.94%']);
+		expect(chips.map((c) => c.shareText)).toEqual(['5.3%', '0.96%']);
 	});
 
 	const essence = async () => family(pageView(await input({ familyId: 'essence' })));
@@ -1542,7 +1542,7 @@ describe('Astrolabes, Oils and Catalysts on the committed fixture (WI-2b)', () =
 	});
 
 	it.each([
-		['astrolabe', 'Metadata/Items/Currency/AstrolabeHarvest', 'TOP'],
+		['astrolabe', 'Metadata/Items/Currency/AstrolabeAbyss', 'HIGH'],
 		['oil', 'Metadata/Items/Currency/Mushrune12', 'HIGH'],
 		['catalyst', 'Metadata/Items/Currency/CurrencyJewelleryQualityResistance', 'HIGH']
 	])('cards the %s tier member %s under %s', async (id, itemId, tier) => {

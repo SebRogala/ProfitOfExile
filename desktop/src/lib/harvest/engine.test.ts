@@ -166,7 +166,7 @@ describe('solveFamily', () => {
 	describe('Delirium default (reference 02)', () => {
 		const r = () => ok(solveFamily(inputFor('delirium')));
 
-		it('keeps Diviner\u2019s and Skittering', () => {
+		it('keeps Diviner\u2019s and Threaded', () => {
 			expect(sorted(shortNamesOf('delirium', r().keepers))).toEqual(sorted(derived.delirium.keepers));
 		});
 
@@ -175,36 +175,36 @@ describe('solveFamily', () => {
 			expect(r().headline.priceChaos.toFixed(1)).toBe('10.3');
 		});
 
-		it('pays +22.4c per loop', () => {
-			expect(r().headline.loopEvChaos.toFixed(1)).toBe('22.4');
+		it('pays +23.1c per loop', () => {
+			expect(r().headline.loopEvChaos.toFixed(1)).toBe('23.1');
 		});
 
-		it('rounds the divine line to 17 feeders, 229 rerolls, 6,872 Primal', () => {
-			expect(r().divineLine).toEqual({ feeders: 17, rerolls: 229, lifeforce: 6872 });
+		it('rounds the divine line to 16 feeders, 208 rerolls, 6,227 Primal', () => {
+			expect(r().divineLine).toEqual({ feeders: 16, rerolls: 208, lifeforce: 6227 });
 		});
 
-		it('hits a keeper 7.7% of rolls', () => {
-			expect((r().headline.keeperHitPerRoll * 100).toFixed(1)).toBe('7.7');
+		it('hits a keeper 8.0% of rolls', () => {
+			expect((r().headline.keeperHitPerRoll * 100).toFixed(1)).toBe('8.0');
 		});
 
-		it('takes ~13.5 rerolls per keeper', () => {
-			expect(r().headline.rerollsPerKeeper.toFixed(1)).toBe('13.5');
+		it('takes ~13.0 rerolls per keeper', () => {
+			expect(r().headline.rerollsPerKeeper.toFixed(1)).toBe('13.0');
 		});
 
-		it('spends ~404 Primal per keeper', () => {
-			expect(Math.round(r().headline.lifeforcePerKeeper)).toBe(404);
+		it('spends ~389 Primal per keeper', () => {
+			expect(Math.round(r().headline.lifeforcePerKeeper)).toBe(389);
 		});
 
-		it('spends 19.8c of lifeforce per keeper', () => {
-			expect(r().headline.lifeforceChaosPerKeeper.toFixed(1)).toBe('19.8');
+		it('spends 19.1c of lifeforce per keeper', () => {
+			expect(r().headline.lifeforceChaosPerKeeper.toFixed(1)).toBe('19.1');
 		});
 
-		it('yields ~18.4 keepers per divine of lifeforce', () => {
-			expect(r().headline.keepersPerDivine.toFixed(1)).toBe('18.4');
+		it('yields ~19.1 keepers per divine of lifeforce', () => {
+			expect(r().headline.keepersPerDivine.toFixed(1)).toBe('19.1');
 		});
 
-		it('makes +412c from those keepers', () => {
-			expect(Math.round(r().headline.keepersPerDivineWorthChaos)).toBe(412);
+		it('makes +442c from those keepers', () => {
+			expect(Math.round(r().headline.keepersPerDivineWorthChaos)).toBe(442);
 		});
 
 		it('costs 1.5c a reroll', () => {

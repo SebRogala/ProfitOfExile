@@ -86,8 +86,8 @@ describe('harvest fixture adapter', () => {
 		expect((await family('catalyst')).tiers!.boundariesChaos).toEqual([99.65, 2.69]);
 	});
 
-	it('serves Delirium Orbs as twelve types', async () => {
-		expect((await family('delirium')).weights!.types).toHaveLength(12);
+	it('serves Delirium Orbs as eleven types', async () => {
+		expect((await family('delirium')).weights!.types).toHaveLength(11);
 	});
 
 	it('leaves the Obscured Delirium Orb out of Delirium Orbs', async () => {
@@ -161,6 +161,6 @@ describe('harvest fixture adapter', () => {
 		const first = await loadHarvestFamilies('day');
 		first.families[0].weights!.types.pop();
 		const second = await loadHarvestFamilies('day');
-		expect(second.families[0].weights!.types).toHaveLength(12);
+		expect(second.families[0].weights!.types).toHaveLength(11);
 	});
 });

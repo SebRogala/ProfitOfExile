@@ -104,8 +104,8 @@ func TestFamilies_samplePointersAreCopied(t *testing.T) {
 
 func TestItemIDs_coversEveryWeightedType(t *testing.T) {
 	ids := ItemIDs()
-	if len(ids) != 93 {
-		t.Fatalf("len(ItemIDs()) = %d, want 93 weighted types across all families", len(ids))
+	if len(ids) != 90 {
+		t.Fatalf("len(ItemIDs()) = %d, want 90 weighted types across all families", len(ids))
 	}
 	if !slices.Contains(ids, "Metadata/Items/Currency/CurrencyDelveCraftingAbyss") {
 		t.Fatal("ItemIDs() does not contain CurrencyDelveCraftingAbyss")

@@ -361,6 +361,16 @@ Recorded so the status is explicit, not so they can be built on.
   whether the rename changed the id is unverified. Regenerate from the 3.30
   feed.
 
+- **3.30 Harvest Flipping weights and costs.** The Delirium Orb and
+  Astrolabe weights in `internal/harvest/familydata/families.json` are pre-3.30
+  HarvestForge logs with the removed rows dropped (Fragmented Delirium Orb;
+  Deceptive and Fruiting Astrolabes) and are provisional: 3.30 makes Delirium
+  Orbs reforge rare Maps (patch notes 03 Endgame, line 72), and the Threaded
+  Delirium Orb keeps the Skittering weight although Fragmented stock converts
+  to it (line 78). Every family's `rerollCost` and `lifeforce` are unverified
+  for 3.30: the notes give no reroll cost (06 League Changes, lines 72-80).
+  Re-measure both in 3.30.
+
 - **League start and the weekly cycle.** Owner's account: leagues start Friday
   evening CET; the first hours are a dump as veterans clear their first lab;
   the market is usable for farming decisions from roughly hour twelve; and

@@ -25,7 +25,7 @@ function side(id: FamilyId, keeperShortNames: string[], keepers: boolean): strin
 }
 
 const FOSSIL_KEEPERS = ['Hollow', 'Faceted', 'Sanctified', 'Gilded', 'Glyphic', 'Fractured', 'Shuddering', 'Dense'];
-const DELIRIUM_KEEPERS = ["Diviner's", 'Skittering'];
+const DELIRIUM_KEEPERS = ["Diviner's", 'Threaded'];
 const CORRUPT_KEEPERS = ['Horror'];
 
 describe('stashRegex', () => {
@@ -42,16 +42,16 @@ describe('stashRegex', () => {
 		expect(r.length).toBe(69);
 	});
 
-	it('Delirium keepers give "div|ski", 9 characters', () => {
+	it('Delirium keepers give "div|thr", 9 characters', () => {
 		const r = stashRegex(side('delirium', DELIRIUM_KEEPERS, true), familyNames('delirium'));
-		expect(r.text).toBe('"div|ski"');
+		expect(r.text).toBe('"div|thr"');
 		expect(r.length).toBe(9);
 	});
 
-	it('Delirium feeders give 41 characters starting "bla|arm|jew|fin|car|whi|sin|t', () => {
+	it('Delirium feeders give 37 characters starting "bla|arm|jew|fin|car|whi|sin|t', () => {
 		const r = stashRegex(side('delirium', DELIRIUM_KEEPERS, false), familyNames('delirium'));
 		expect(r.text.startsWith('"bla|arm|jew|fin|car|whi|sin|t')).toBe(true);
-		expect(r.length).toBe(41);
+		expect(r.length).toBe(37);
 	});
 
 	it('Corrupted feeders give "hys|ins|del", 13 characters', () => {
