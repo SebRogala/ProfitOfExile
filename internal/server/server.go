@@ -69,6 +69,9 @@ type RouterConfig struct {
 	Analyzer *lab.Analyzer
 	// LayoutRepo is the repository for daily lab layout data.
 	LayoutRepo *lab.LayoutRepository
+	// BossLoot serves the /api/boss-loot routes under the boot scope; nil
+	// leaves them unregistered.
+	BossLoot *handlers.BossLoot
 	// LabRunRepo stores and lists desktop lab-run timings; nil leaves
 	// /api/lab/runs unregistered.
 	LabRunRepo *lab.LabRunRepository
@@ -279,12 +282,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Post("/api/desktop/gems", handlers.DesktopGems(cfg.MercureURL, cfg.MercureSecret))
 	}
 
-	if cfg.Pool != nil {
-		bossLoot := handlers.NewBossLoot(cfg.Pool, cfg.League, ratelimit.NewRateLimiter(
-			handlers.DefaultBossLootWriteBudget,
-			handlers.DefaultBossLootWriteWindow,
-			handlers.DefaultBossLootRateLimitDevices,
-		))
+	if bossLoot := cfg.BossLoot; bossLoot != nil {
 		r.Post("/api/boss-loot/runs", bossLoot.Submit)
 		r.Get("/api/boss-loot/runs", bossLoot.List)
 		r.Patch("/api/boss-loot/runs/{id}", bossLoot.Edit)

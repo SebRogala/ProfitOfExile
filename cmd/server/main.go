@@ -271,8 +271,6 @@ func main() {
 		Pool:                 pool,
 		LabRepo:              labRepo,
 		LayoutRepo:           layoutRepo,
-		LabRunRepo:           lab.NewLabRunRepository(pool),
-		FontSessionRepo:      lab.NewFontSessionRepository(pool),
 		LabCache:             labCache,
 		ExchangeCache:        exchangeCache,
 		HarvestCache:         harvestCache,
@@ -300,6 +298,8 @@ func main() {
 		// source URL, since the filename carries a hash of that URL too.
 		IconCacheDir: serviceCfg.IconCacheDir,
 	}
+
+	newRouterDeps(pool, scope).applyTo(&routerCfg)
 
 	router := server.NewRouter(pool, frontendFS, routerCfg)
 

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"profitofexile/internal/bossloot"
 	"profitofexile/internal/league"
 	"profitofexile/internal/ratelimit"
@@ -30,8 +29,8 @@ type BossLoot struct {
 	limiter *ratelimit.RateLimiter
 }
 
-func NewBossLoot(pool *pgxpool.Pool, scope league.Scope, limiter *ratelimit.RateLimiter) *BossLoot {
-	return &BossLoot{repo: bossloot.NewRepository(pool), scope: scope, limiter: limiter}
+func NewBossLoot(repo *bossloot.Repository, scope league.Scope, limiter *ratelimit.RateLimiter) *BossLoot {
+	return &BossLoot{repo: repo, scope: scope, limiter: limiter}
 }
 func bossDevice(w http.ResponseWriter, r *http.Request) string {
 	dev := middleware.DeviceFromContext(r.Context())

@@ -76,7 +76,7 @@ func TestBossLootHTTPUsesBootScope(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO devices(fingerprint) VALUES ($1)`, deviceID); err != nil {
 		t.Fatal(err)
 	}
-	h := NewBossLoot(pool, boot, nil)
+	h := NewBossLoot(bossloot.NewRepository(pool), boot, nil)
 	if _, err := pool.Exec(ctx, `UPDATE runtime_config SET active_league=$1,revision=revision+1 WHERE singleton=TRUE`, next); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestBossLootHTTPUsesBootScope(t *testing.T) {
 	if err != nil || reboot.ID() != next || reboot.Revision() != boot.Revision()+1 {
 		t.Fatalf("reboot scope did not capture runtime B: %v", err)
 	}
-	h = NewBossLoot(pool, reboot, nil)
+	h = NewBossLoot(bossloot.NewRepository(pool), reboot, nil)
 	submit(next)
 }
 
@@ -168,7 +168,7 @@ func TestBossLootHTTPRetainsHistoricalObservation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := NewBossLoot(pool, boot, ratelimit.NewRateLimiter(DefaultBossLootWriteBudget, DefaultBossLootWriteWindow, DefaultBossLootRateLimitDevices))
+	h := NewBossLoot(bossloot.NewRepository(pool), boot, ratelimit.NewRateLimiter(DefaultBossLootWriteBudget, DefaultBossLootWriteWindow, DefaultBossLootRateLimitDevices))
 	router := chi.NewRouter()
 	router.Use(middleware.DeviceMiddleware(bossLootDevice{}))
 	router.Post("/api/boss-loot/runs", h.Submit)

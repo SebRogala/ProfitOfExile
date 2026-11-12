@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/league"
@@ -560,7 +559,7 @@ func TestBossLootMutationCORS(t *testing.T) {
 }
 
 func TestBossLootRoutesReturnIdentityError(t *testing.T) {
-	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{Pool: &pgxpool.Pool{}})
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{BossLoot: handlers.NewBossLoot(nil, league.Scope{}, nil)})
 	for _, tc := range []struct{ method, path string }{
 		{"POST", "/api/boss-loot/runs"}, {"GET", "/api/boss-loot/runs"}, {"PATCH", "/api/boss-loot/runs/1"}, {"POST", "/api/boss-loot/runs/1/delete"}, {"GET", "/api/boss-loot/stats"},
 	} {
@@ -570,4 +569,11 @@ func TestBossLootRoutesReturnIdentityError(t *testing.T) {
 			t.Fatalf("%s %s: %d %s", tc.method, tc.path, w.Code, w.Body.String())
 		}
 	}
+}
+
+func TestNewRouter_BossLootRoutesAreAbsentWithoutAHandler(t *testing.T) {
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/boss-loot/stats", nil))
+	assertAPINotFound(t, w)
 }

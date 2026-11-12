@@ -161,6 +161,7 @@ Implementation evidence:
 - `desktop/src-tauri/src/ssot.rs` (`write_league`, `apply_league`,
   `run_league_resolver`) and `desktop/src/lib/stores/ssot.svelte.ts`
   (`applySnapshot`, `onLeagueChange`) implement ownership and reconciliation.
-- `internal/server/server.go` (`NewRouter`) injects `RouterConfig.League` into
-  `NewBossLoot`; `internal/server/handlers/boss_loot.go` (`Submit`) passes that
-  scope to the repository.
+- `cmd/server/router_deps.go` (`newRouterDeps`) builds `handlers.NewBossLoot`
+  with the boot scope, `internal/server/server.go` (`NewRouter`) registers it,
+  and `internal/server/handlers/boss_loot.go` (`Submit`) passes that scope to
+  the repository. (Evidence amended 2026-11-12, POE-344; decision unchanged.)
