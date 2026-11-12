@@ -20,6 +20,7 @@ import (
 
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/league"
+	"profitofexile/internal/mercenary"
 	"profitofexile/internal/server/handlers"
 )
 
@@ -575,5 +576,15 @@ func TestNewRouter_BossLootRoutesAreAbsentWithoutAHandler(t *testing.T) {
 	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/boss-loot/stats", nil))
+	assertAPINotFound(t, w)
+}
+
+func TestNewRouter_MercTemplateRoutesAreAbsentWithoutTheirLimiter(t *testing.T) {
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{
+		MercTemplateRepo: mercenary.NewRepository(nil),
+		MercCorpus:       handlers.NewMercCorpusCache(handlers.DefaultMercCorpusTTL),
+	})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/desktop/merc-templates", nil))
 	assertAPINotFound(t, w)
 }

@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/league"
+	"profitofexile/internal/mercenary"
+	"profitofexile/internal/mercure"
 	"profitofexile/internal/server"
 	"profitofexile/internal/server/handlers"
 )
@@ -21,7 +23,7 @@ import (
 func productionRouter(t *testing.T) http.Handler {
 	t.Helper()
 	var cfg server.RouterConfig
-	newRouterDeps(&pgxpool.Pool{}, league.Scope{}).applyTo(&cfg)
+	newRouterDeps(&pgxpool.Pool{}, league.Scope{}, "", "", nil).applyTo(&cfg)
 	return server.NewRouter(handlers.NopPinger{}, nil, cfg)
 }
 
@@ -67,4 +69,48 @@ func TestNewRouterDeps_RegistersFontSessionRouteBehindTheDeviceCheck(t *testing.
 	router := productionRouter(t)
 	validSession := `{"lab_type":"Uber","total_crafts":3,"rounds":[{"option_chosen":"a"}]}`
 	assertDeviceRequired(t, router, http.MethodPost, "/api/desktop/font-session", validSession)
+}
+
+func TestNewRouterDeps_RegistersMercWriteRoutesBehindTheDeviceCheck(t *testing.T) {
+	router := productionRouter(t)
+	assertDeviceRequired(t, router, http.MethodPost, "/api/desktop/merc-templates", `{}`)
+	assertDeviceRequired(t, router, http.MethodPost, "/api/desktop/merc-templates/tombstone", `{}`)
+}
+
+func TestLayoutPublisher_IsUntypedNilWithoutAHubURL(t *testing.T) {
+	if pub := layoutPublisher("", "secret"); pub != nil {
+		t.Fatalf("layoutPublisher(\"\", secret) = %#v, want untyped nil", pub)
+	}
+}
+
+func TestLayoutPublisher_IsUntypedNilWithoutASecret(t *testing.T) {
+	if pub := layoutPublisher("http://hub/.well-known/mercure", ""); pub != nil {
+		t.Fatalf("layoutPublisher(url, \"\") = %#v, want untyped nil", pub)
+	}
+}
+
+func TestLayoutPublisher_CarriesTheConfiguredHub(t *testing.T) {
+	pub := layoutPublisher("http://hub/.well-known/mercure", "secret")
+	want := &mercure.HubPublisher{URL: "http://hub/.well-known/mercure", Secret: "secret"}
+	if !reflect.DeepEqual(pub, mercure.Publisher(want)) {
+		t.Fatalf("layoutPublisher = %#v, want %#v", pub, want)
+	}
+}
+
+func TestKnownGemFunc_IsNilForANilRepository(t *testing.T) {
+	if fn := knownGemFunc(nil); fn != nil {
+		t.Fatal("knownGemFunc(nil) returned a func, want nil")
+	}
+}
+
+func TestNewRouterDeps_MercLimiterUsesTheMercenaryUploadBudget(t *testing.T) {
+	deps := newRouterDeps(&pgxpool.Pool{}, league.Scope{}, "", "", nil)
+	for i := 0; i < mercenary.DefaultUploadBudget; i++ {
+		if ok, _ := deps.MercLimiter.Allow("fp"); !ok {
+			t.Fatalf("request %d refused, want %d allowed", i+1, mercenary.DefaultUploadBudget)
+		}
+	}
+	if ok, _ := deps.MercLimiter.Allow("fp"); ok {
+		t.Fatalf("request %d allowed, want refused after the budget", mercenary.DefaultUploadBudget+1)
+	}
 }

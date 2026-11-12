@@ -69,6 +69,11 @@ type RouterConfig struct {
 	Analyzer *lab.Analyzer
 	// LayoutRepo is the repository for daily lab layout data.
 	LayoutRepo *lab.LayoutRepository
+	// LayoutPublisher announces layout uploads and room patches; nil skips
+	// publishing. Must be an untyped nil when the hub is not configured.
+	LayoutPublisher mercure.Publisher
+	// KnownGem checks trade-name membership for the trade routes; nil skips it.
+	KnownGem func(context.Context, league.Scope, string) (bool, error)
 	// BossLoot serves the /api/boss-loot routes under the boot scope; nil
 	// leaves them unregistered.
 	BossLoot *handlers.BossLoot
@@ -115,6 +120,12 @@ type RouterConfig struct {
 	// registered, which the desktop's pull already treats as "keep the local
 	// store" rather than as an error.
 	MercTemplateRepo *mercenary.Repository
+	// MercLimiter is the one device budget shared by the merc upload and
+	// tombstone writes; nil leaves the merc routes unregistered.
+	MercLimiter *ratelimit.RateLimiter
+	// MercCorpus is the one corpus cache shared by all three merc routes (the
+	// writes invalidate the read); nil leaves the merc routes unregistered.
+	MercCorpus *handlers.MercCorpusCache
 	// TempleCache holds the newest computed temple market, refreshed by
 	// temple.Service in cmd/server on each of the seven poe.ninja item ticks.
 	// May be nil — the handler then reads as COLD and answers 200 with the
@@ -260,10 +271,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 
 	// Both trade routes share name membership and dictionary warmth. Keep it
 	// available for contributions even when the live server gate is disabled.
-	var knownGem func(context.Context, league.Scope, string) (bool, error)
-	if cfg.TradeRepo != nil {
-		knownGem = cfg.TradeRepo.KnownGem
-	}
+	knownGem := cfg.KnownGem
 	if cfg.TradeGate != nil {
 		r.Post("/api/trade/lookup", handlers.TradeLookup(cfg.TradeGate, cfg.TradeCache, cfg.League, cfg.TradeSyncTimeout, cfg.LabCache, knownGem))
 		// Trade refresh ticks arrive over Mercure (poe/collector/trade-tick),
@@ -300,27 +308,14 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	}
 
 	if cfg.LayoutRepo != nil {
-		var layoutPub mercure.Publisher
-		if cfg.MercureURL != "" && cfg.MercureSecret != "" {
-			layoutPub = &mercure.HubPublisher{URL: cfg.MercureURL, Secret: cfg.MercureSecret}
-		}
+		layoutPub := cfg.LayoutPublisher
 		r.Get("/api/lab/layout/{difficulty}", handlers.GetLayout(cfg.LayoutRepo))
 		r.Post("/api/lab/layout/{difficulty}", handlers.UploadLayout(cfg.LayoutRepo, layoutPub))
 		r.Patch("/api/lab/layout/{difficulty}/room/{roomId}", handlers.PatchRoom(cfg.LayoutRepo, layoutPub))
 	}
 
-	if cfg.MercTemplateRepo != nil {
-		// One limiter for the whole process, shared by both writes: a device
-		// that has spent its budget spamming uploads must not get free
-		// tombstones with what is left.
-		mercLimiter := ratelimit.NewRateLimiter(
-			mercenary.DefaultUploadBudget,
-			mercenary.DefaultUploadWindow,
-			mercenary.DefaultRateLimitDevices,
-		)
-		// One cache shared by all three routes: the writes are what invalidate
-		// the read, so they have to be looking at the same entry.
-		mercCorpus := handlers.NewMercCorpusCache(handlers.DefaultMercCorpusTTL)
+	if cfg.MercTemplateRepo != nil && cfg.MercLimiter != nil && cfg.MercCorpus != nil {
+		mercLimiter, mercCorpus := cfg.MercLimiter, cfg.MercCorpus
 		r.Get("/api/desktop/merc-templates", handlers.MercTemplatesServe(cfg.MercTemplateRepo, mercCorpus))
 		r.Post("/api/desktop/merc-templates", handlers.MercTemplatesUpload(cfg.MercTemplateRepo, mercLimiter, mercCorpus))
 		r.Post("/api/desktop/merc-templates/tombstone", handlers.MercTemplatesTombstone(cfg.MercTemplateRepo, mercLimiter, mercCorpus))

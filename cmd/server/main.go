@@ -19,7 +19,6 @@ import (
 	"profitofexile/internal/harvest"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
-	"profitofexile/internal/mercenary"
 	"profitofexile/internal/mercure"
 	"profitofexile/internal/server"
 	"profitofexile/internal/temple"
@@ -262,7 +261,6 @@ func main() {
 	}
 
 	deviceRepo := device.NewRepository(pool)
-	mercTemplateRepo := mercenary.NewRepository(pool)
 
 	routerCfg := server.RouterConfig{
 		MercureURL:           mercureURL,
@@ -285,7 +283,6 @@ func main() {
 		Analyzer:             analyzer,
 		AllowedOrigins:       serviceCfg.AllowedOrigins,
 		DeviceRepo:           deviceRepo,
-		MercTemplateRepo:     mercTemplateRepo,
 		FenceChecker:         serverLock,
 		// PROD: this must be a persistent Coolify volume (/data/icons-cache),
 		// else every redeploy starts empty and re-fetches every icon from
@@ -299,7 +296,8 @@ func main() {
 		IconCacheDir: serviceCfg.IconCacheDir,
 	}
 
-	newRouterDeps(pool, scope).applyTo(&routerCfg)
+	deps := newRouterDeps(pool, scope, mercureURL, mercureSecret, tradeRepo)
+	deps.applyTo(&routerCfg)
 
 	router := server.NewRouter(pool, frontendFS, routerCfg)
 
@@ -317,12 +315,8 @@ func main() {
 		return server.NewMercureSubscriber(hubURL, topics, subscriberKey, handler)
 	}
 	if tradeGate != nil {
-		var knownGem func(context.Context, league.Scope, string) (bool, error)
-		if tradeRepo != nil {
-			knownGem = tradeRepo.KnownGem
-		}
 		runtime.tradeTick = func(eventCtx context.Context, raw []byte) {
-			server.HandleTradeTick(eventCtx, tradeGate, tradeCache, labCache, scope, raw, knownGem)
+			server.HandleTradeTick(eventCtx, tradeGate, tradeCache, labCache, scope, raw, deps.KnownGem)
 		}
 	}
 	runtime.updateRate = func(_ context.Context) {
