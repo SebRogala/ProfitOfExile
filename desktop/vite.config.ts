@@ -1,7 +1,7 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 // `vitest/config` rather than `vite`: same `defineConfig`, plus the `test`
 // field below. Vitest is already a devDependency.
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 // @ts-expect-error process is available at Vite build time (Node)
 const host = process.env.TAURI_DEV_HOST;
@@ -19,7 +19,7 @@ export default defineConfig({
 				extends: true,
 				test: {
 					name: 'unit',
-					exclude: ['**/node_modules/**', '**/*.effect.svelte.test.ts']
+					exclude: [...configDefaults.exclude, '**/*.effect.svelte.test.ts']
 				}
 			},
 			{

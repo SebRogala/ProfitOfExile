@@ -1,6 +1,5 @@
 import { flushSync } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { moduleOverlayWanted, moduleWindowStep } from './module-lifecycle';
 
 const h = vi.hoisted(() => {
 	interface FakeWindow {
@@ -14,7 +13,7 @@ const h = vi.hoisted(() => {
 
 vi.mock('./widget-window', () => ({
 	createWidgetWindow: (o: { label: string; moduleId: string }) => {
-		let built = $state(false);
+		let built = false;
 		const desired: boolean[] = [];
 		const w = {
 			label: o.label,
@@ -66,25 +65,6 @@ function mount(inputs: { enabled: boolean | undefined; granted: boolean }) {
 	return { mw, fake: h.created.find((w) => w.label === 'win-a')! };
 }
 
-describe('rune-effect project probe', () => {
-	it('runs an $effect and re-runs it after a $state change', () => {
-		let source = $state(1);
-		const seen: number[] = [];
-		cleanups.push(
-			$effect.root(() => {
-				$effect(() => {
-					seen.push(source);
-				});
-			})
-		);
-		flushSync();
-		source = 2;
-		flushSync();
-
-		expect(seen).toEqual([1, 2]);
-	});
-});
-
 describe('createModuleWindows desired-state effect', () => {
 	it('reports nothing while the module flag is not yet known', () => {
 		const { fake } = mount(reactiveInputs(undefined, true));
@@ -114,17 +94,20 @@ describe('createModuleWindows desired-state effect', () => {
 		expect(fake.desired).not.toContain(true);
 	});
 
-	it('tears down a pre-poll session window when the session ends', () => {
+	it('lowers a session-raised pre-poll window when the session ends', () => {
 		const { mw, fake } = mount(reactiveInputs(undefined, true));
+		expect(fake.desired).toEqual([]);
+
 		mw.setSessions({ 'win-a': { shown: true } });
 		flushSync();
-		fake.setBuilt(true);
-		flushSync();
+		expect(fake.desired).toEqual([true]);
 
+		fake.setBuilt(true);
+		fake.desired.length = 0;
 		mw.setSessions({});
 		flushSync();
 
-		expect(fake.desired.at(-1)).toBe(false);
+		expect(fake.desired).toEqual([false]);
 	});
 
 	it('takes down a session-held window when the grant is withdrawn', () => {
@@ -132,14 +115,13 @@ describe('createModuleWindows desired-state effect', () => {
 		const { mw, fake } = mount(inputs);
 		mw.setSessions({ 'win-a': { shown: true } });
 		flushSync();
-		fake.setBuilt(true);
-		flushSync();
+		expect(fake.desired).toEqual([false, true]);
 
+		fake.setBuilt(true);
+		fake.desired.length = 0;
 		inputs.granted = false;
 		flushSync();
 
-		const step = moduleWindowStep({ enabled: false, configuring: true, built: true, granted: false });
-		expect(step).toEqual({ skip: false, desired: moduleOverlayWanted(false, true, false) });
-		expect(fake.desired.at(-1)).toBe(false);
+		expect(fake.desired).toEqual([false]);
 	});
 });
