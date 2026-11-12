@@ -6,7 +6,7 @@ import { createHarvestController } from '$lib/harvest/controller.svelte';
 import { createExchangeFixture } from '$lib/harvest/sources/exchange-fixture';
 import { loadHarvestFamilies } from '$lib/harvest/sources/harvest-fixture';
 import { currentDivineRate, initDivineRateStore, resetDivineRate, refreshDivineRate } from '$lib/stores/divine-rate.svelte';
-import type { CompareGem, CurrencyExchangeResponse, DivineRate, GemPlay, StatusData, MarketOverviewData } from '$lib/api';
+import type { CompareGem, CurrencyExchangeResponse, DivineRate, GemPlay, RankingsQuery, StatusData, MarketOverviewData } from '$lib/api';
 import type { TradeLookupResult } from '$lib/tradeApi';
 import type { QueueItem } from '$lib/session-queue';
 import type { ExchangePriceRead } from '$lib/harvest/seam';
@@ -38,7 +38,7 @@ const rate = (value: number) => ({ divineChaosRate: value, state: 'ready', updat
 const queueItem = () => ({ gem: 'Arc', variant: '20/20', pickedAt: new Date(), snapshotROI: 10, snapshot: null, snapshotDivineRate: 0 } as QueueItem);
 function dashboard() {
 	return createLabController({
-		status: async () => ({ divinePrice: 0 } as StatusData), rankings: async () => [],
+		status: async () => ({ divinePrice: 0 } as StatusData), rankings: async () => ({ rows: [], total: 0 }),
 		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
 	});
 }
@@ -73,9 +73,13 @@ it('a disposed queue refresh cannot patch a retained pick', async () => {
 	expect(queue.items.map((item) => item.gem)).toEqual(['Arc']);
 });
 
-it('late A rankings cannot refill the dashboard during a failed B load', async () => {
-	const ranksA = deferred<GemPlay[]>();
-	const ranksB = deferred<GemPlay[]>();
+type RankingsPage = { rows: GemPlay[]; total: number };
+const rankingsQuery = (tab: string): RankingsQuery => ({ mode: 'normal', tab, color: 'ALL', budget: 0, pageSize: 20, sort: 'price', showLowConf: true });
+const page = (...names: string[]): RankingsPage => ({ rows: names.map((name) => ({ name }) as GemPlay), total: names.length });
+
+it('a rankings response from the previous league is dropped', async () => {
+	const ranksA = deferred<RankingsPage>();
+	const ranksB = deferred<RankingsPage>();
 	const statusA = deferred<StatusData>();
 	const statusB = deferred<StatusData>();
 	const readings: number[] = [];
@@ -87,16 +91,90 @@ it('late A rankings cannot refill the dashboard during a failed B load', async (
 		market: async () => ({} as MarketOverviewData), rate: (value) => readings.push(value), connected: () => undefined
 	});
 	stops.push(controller.start(() => {}));
+	controller.setRankingsQuery(rankingsQuery('20/20'));
 	const old = controller.loadAll();
 	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
 	expect([controller.state.bestPlays, controller.state.status, controller.state.loading, readings]).toEqual([[], null, true, [0]]);
 	statusB.reject(new Error('B offline'));
-	ranksB.resolve([]);
+	ranksB.resolve(page());
 	await settle();
 	statusA.resolve({ divinePrice: 999 } as StatusData);
-	ranksA.resolve([{ name: 'outgoing' }] as GemPlay[]);
+	ranksA.resolve(page('outgoing'));
 	await old;
 	expect([controller.state.bestPlays, controller.state.status, controller.state.marketOverview, controller.state.loading, controller.state.error, readings]).toEqual([[], null, null, false, 'B offline', [0]]);
+});
+
+it('rankings refetch after a league change uses the stored query', async () => {
+	const asked: RankingsQuery[] = [];
+	const controller = createLabController({
+		status: async () => ({ divinePrice: 0 } as StatusData),
+		rankings: async (q) => { asked.push(q); return page('row'); },
+		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
+	});
+	stops.push(controller.start(() => {}));
+	const stored = { ...rankingsQuery('1/20'), color: 'BLUE', budget: 40, sort: 'roiPercent' as const };
+	controller.setRankingsQuery(stored);
+	await settle();
+	asked.length = 0;
+	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+	await settle();
+	expect(asked).toEqual([stored]);
+});
+
+it('a rankings response from a superseded query is dropped', async () => {
+	const pages = { '20/20': deferred<RankingsPage>(), '1/0': deferred<RankingsPage>() };
+	const controller = createLabController({
+		status: async () => ({ divinePrice: 0 } as StatusData),
+		rankings: (q) => pages[q.tab as keyof typeof pages].promise,
+		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
+	});
+	controller.setRankingsQuery(rankingsQuery('20/20'));
+	controller.setRankingsQuery(rankingsQuery('1/0'));
+	pages['1/0'].resolve(page('current'));
+	await settle();
+	pages['20/20'].resolve(page('superseded'));
+	await settle();
+	expect(controller.state.bestPlays.map((g) => g.name)).toEqual(['current']);
+});
+
+it('a failed rankings page sets bestPlaysError and clears rows', async () => {
+	let fail = false;
+	const controller = createLabController({
+		status: async () => ({ divinePrice: 0 } as StatusData),
+		rankings: async () => { if (fail) throw new Error('offline'); return page('kept?'); },
+		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
+	});
+	vi.spyOn(console, 'warn').mockImplementation(() => {});
+	controller.setRankingsQuery(rankingsQuery('20/20'));
+	await settle();
+	fail = true;
+	await controller.refreshBestPlays();
+	expect([controller.state.bestPlays, controller.state.bestPlaysError]).toEqual([[], 'Rankings failed to load for this market — retry to see current numbers.']);
+});
+
+it('a new rankings query clears the previous query rows until its page arrives', async () => {
+	const pages = { '20/20': deferred<RankingsPage>(), '1/0': deferred<RankingsPage>() };
+	const controller = createLabController({
+		status: async () => ({ divinePrice: 0 } as StatusData),
+		rankings: (q) => pages[q.tab as keyof typeof pages].promise,
+		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
+	});
+	controller.setRankingsQuery(rankingsQuery('20/20'));
+	pages['20/20'].resolve(page('old market'));
+	await settle();
+	controller.setRankingsQuery(rankingsQuery('1/0'));
+	expect(controller.state.bestPlays).toEqual([]);
+});
+
+it('a rankings page stores its total', async () => {
+	const controller = createLabController({
+		status: async () => ({ divinePrice: 0 } as StatusData),
+		rankings: async () => ({ rows: [{ name: 'a' } as GemPlay], total: 137 }),
+		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
+	});
+	controller.setRankingsQuery(rankingsQuery('20/20'));
+	await settle();
+	expect(controller.state.rankingsTotal).toBe(137);
 });
 
 it.each(['failed', 'cold'] as const)('withdraws every outgoing consumer while B is %s', async (replacement) => {

@@ -1,5 +1,7 @@
 import { onLeagueChange, ssot } from '$lib/stores/ssot.svelte';
-import { fetchCompare, fetchGemNames, type CompareGem, type GemPlay, type StatusData, type MarketOverviewData } from '$lib/api';
+import { fetchCompare, fetchGemNames, type CompareGem, type GemPlay, type RankingsQuery, type StatusData, type MarketOverviewData } from '$lib/api';
+
+export type RankingsPage = { rows: GemPlay[]; total: number };
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { isSource, type TradeLookupResult, type TradeQueueDisplay, type TradeQueueEvent } from '$lib/tradeApi';
@@ -280,7 +282,7 @@ const MERCURE_JITTER_MS = 4000;
 
 export function createLabController(dependencies: {
 	status: () => Promise<StatusData>;
-	rankings: () => Promise<GemPlay[]>;
+	rankings: (q: RankingsQuery) => Promise<RankingsPage>;
 	market: () => Promise<MarketOverviewData>;
 	rate: (value: number) => void;
 	connected: () => boolean | undefined;
@@ -292,25 +294,50 @@ export function createLabController(dependencies: {
 	const state = $state({
 		status: null as StatusData | null,
 		bestPlays: [] as GemPlay[],
+		rankingsTotal: 0,
+		// True from a new query until its page (or its failure) arrives.
+		rankingsPending: true,
 		marketOverview: null as MarketOverviewData | null,
 		bestPlaysError: '', error: '', loading: true
 	});
 	let generation = 0;
 	let rankingsGeneration = 0;
 	let loadGeneration = 0;
+	// The rankings controls' current query: a league change or a Mercure reload
+	// refetches it. Rows are only ever shown under the query they were fetched for.
+	let rankingsQuery: RankingsQuery | null = null;
+	let rankingsQueryKey = '';
 	async function refreshBestPlays() {
+		const q = rankingsQuery;
+		if (!q) return;
 		const mine = generation;
 		const request = ++rankingsGeneration;
 		state.bestPlaysError = '';
 		try {
-			const rows = await dependencies.rankings();
-			if (mine === generation && request === rankingsGeneration) state.bestPlays = rows;
+			const page = await dependencies.rankings(q);
+			if (mine !== generation || request !== rankingsGeneration) return;
+			state.bestPlays = page.rows;
+			state.rankingsTotal = page.total;
+			state.rankingsPending = false;
 		} catch (error) {
 			if (mine !== generation || request !== rankingsGeneration) return;
 			console.warn('[LabPage] re-fetch bestPlays failed:', error);
 			state.bestPlays = [];
+			state.rankingsTotal = 0;
+			state.rankingsPending = false;
 			state.bestPlaysError = 'Rankings failed to load for this market — retry to see current numbers.';
 		}
+	}
+	function setRankingsQuery(q: RankingsQuery) {
+		const key = JSON.stringify(q);
+		rankingsQuery = q;
+		if (key !== rankingsQueryKey) {
+			rankingsQueryKey = key;
+			state.bestPlays = [];
+			state.rankingsTotal = 0;
+			state.rankingsPending = true;
+		}
+		return refreshBestPlays();
 	}
 	async function loadAll() {
 		const mine = generation;
@@ -368,7 +395,8 @@ export function createLabController(dependencies: {
 	function start(invalidateQueue: () => void) {
 		const stop = onLeagueChange(() => {
 			generation++;
-			state.bestPlays = []; state.status = null; state.marketOverview = null;
+			state.bestPlays = []; state.rankingsTotal = 0; state.rankingsPending = true;
+			state.status = null; state.marketOverview = null;
 			state.bestPlaysError = ''; state.error = ''; state.loading = true;
 			dependencies.rate(0);
 			clearDebounce();
@@ -377,5 +405,5 @@ export function createLabController(dependencies: {
 		});
 		return () => { generation++; stop(); };
 	}
-	return { state, refreshBestPlays, loadAll, start, onMercureUpdate, setConnected, dispose: clearDebounce };
+	return { state, refreshBestPlays, setRankingsQuery, loadAll, start, onMercureUpdate, setConnected, dispose: clearDebounce };
 }

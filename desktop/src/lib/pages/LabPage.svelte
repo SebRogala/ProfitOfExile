@@ -8,13 +8,12 @@
 	import { mercureConnected, subscribeMercureConnection, subscribeMercureUpdate } from '$lib/stores/mercure.svelte';
 	import {
 		fetchStatus,
-		fetchBestPlays,
 		VARIANTS,
 		DEDICATION_VARIANTS,
 		DEDICATION_POOLS,
 		DEDICATION_POOL_LABELS,
 		fetchMarketOverview,
-		type GemPlay,
+		fetchRankingsPage,
 	} from '$lib/api';
 	import type { TradeLookupResult } from '$lib/tradeApi';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
@@ -62,7 +61,6 @@
 				const mode = await invoke<string>('get_lab_mode');
 				if (cancelled || (mode !== 'Normal' && mode !== 'Dedication')) return;
 				labMode = mode;
-				refreshBestPlays();
 			} catch (e) {
 				console.warn('[LabPage] lab-mode-changed failed:', e);
 			}
@@ -129,7 +127,7 @@
 	});
 
 	const dashboard = createLabController({
-		status: fetchStatus, rankings: () => loadBestPlays(isDedication),
+		status: fetchStatus, rankings: fetchRankingsPage,
 		market: fetchMarketOverview, rate: setDivineRate,
 		connected: mercureConnected,
 		onReload: () => { refreshKey++; }
@@ -138,31 +136,9 @@
 	const refreshBestPlays = dashboard.refreshBestPlays;
 	const loadAll = dashboard.loadAll;
 
-	// Rankings are fetched per variant, not as one global top-100. The server ranks
-	// across all variants, so a single capped list let the best-ranking variants
-	// crowd the others out and By Variant showed a starved slice (POE-132). The
-	// merged result is a superset of the old global list.
-	//
-	// Dedication mode splits the same way, over its two corrupted markets: the
-	// rankings show both, filtered client-side by market and pool.
-	async function loadBestPlays(dedication: boolean): Promise<GemPlay[]> {
-		if (dedication) {
-			const perVariant = await Promise.all(
-				DEDICATION_VARIANTS.map(v => fetchBestPlays(v, undefined, undefined, 100, undefined, 'dedication')),
-			);
-			return perVariant.flat();
-		}
-		const perVariant = await Promise.all(
-			VARIANTS.map(v => fetchBestPlays(v, undefined, undefined, 100)),
-		);
-		return perVariant.flat();
-	}
-
 	function handleLabModeChange(mode: LabMode) {
 		labMode = mode;
 		invoke('set_lab_mode', { mode }).catch(e => console.warn('[LabPage] set_lab_mode failed:', e));
-		// Re-fetch rankings for the new mode.
-		refreshBestPlays();
 	}
 
 	const status = $derived(dashboard.state.status);
@@ -274,13 +250,13 @@
 
 	// Initial data load — fires once when status is ready.
 	// Subsequent reloads come from Mercure events via dashboard.onMercureUpdate.
-	// untrack prevents Svelte from tracking isDedication (read inside loadAll),
-	// which would re-trigger the full reload on mode change and overwrite
-	// status.connected, causing a disconnect flash.
+	// untrack keeps loadAll's reads out of this effect, so a later state change
+	// cannot re-trigger the full reload and overwrite status.connected, causing a
+	// disconnect flash.
 	$effect(() => {
 		if (!statusReady) return;
-		// No longer waits on the persisted market: the rankings fetch both, so
-		// nothing the first load reads depends on the restore finishing.
+		// No longer waits on the persisted market: the rankings query arrives from
+		// ByVariant, so nothing the first load reads depends on the restore finishing.
 		untrack(() => loadAll());
 	});
 
@@ -386,7 +362,7 @@
 					<button class="retry-btn" onclick={refreshBestPlays}>Retry</button>
 				</div>
 			{/if}
-			<ByVariant allPlays={bestPlays} labMode={labModeForChild} />
+			<ByVariant allPlays={bestPlays} rankingsPending={dashboard.state.rankingsPending} onQuery={dashboard.setRankingsQuery} labMode={labModeForChild} />
 		{:else if activeTab === 'Font EV'}
 			<FontEVCompare {refreshKey} labMode={labModeForChild} />
 		{:else if activeTab === 'Market'}

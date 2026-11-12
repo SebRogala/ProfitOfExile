@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { invoke } from '@tauri-apps/api/core';
 	import {
 		VARIANTS,
 		DEDICATION_VARIANTS,
@@ -7,8 +8,10 @@
 		DEDICATION_POOL_LABELS,
 		type DedicationPool,
 		fetchGemNames,
-		fetchBestPlays,
+		fetchRankingsPage,
 		type GemPlay,
+		type RankingsQuery,
+		type RankingsSort,
 	} from '$lib/api';
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import { persisted } from '$lib/prefs.svelte';
@@ -16,7 +19,19 @@
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
-	let { allPlays = [], labMode = 'normal' }: { allPlays?: GemPlay[]; labMode?: 'normal' | 'dedication' } = $props();
+	// The owner (LabPage → createLabController) fetches the page for the query
+	// this component hands up through onQuery, and passes the rows back as allPlays.
+	let {
+		allPlays = [],
+		rankingsPending = false,
+		onQuery = () => {},
+		labMode = 'normal',
+	}: {
+		allPlays?: GemPlay[];
+		rankingsPending?: boolean;
+		onQuery?: (q: RankingsQuery) => void;
+		labMode?: 'normal' | 'dedication';
+	} = $props();
 
 	const isDedication = $derived(labMode === 'dedication');
 
@@ -71,6 +86,18 @@
 	const colorPref = persisted('rankingsColor', 'ALL');
 	const limitPref = persisted('rankingsLimit', '20');
 	const tabViewPref = persisted('rankingsTabView', '');
+	// Persisted (ADR-013): one key, so every rankings table sorts the same way.
+	const sortPref = persisted('rankingsSort', 'price');
+	const sortBy = $derived<RankingsSort>(
+		(['price', 'riskAdjusted', 'roi', 'roiPercent'] as const).find(s => s === sortPref.value) ?? 'price'
+	);
+	// Default ON to match the Rust-side setting default; the stored value below
+	// overwrites it on mount. Starting false would flash a filtered list first.
+	let showLowConf = $state(true);
+	$effect(() => {
+		invoke<boolean>('get_show_low_confidence').then(v => { showLowConf = v; })
+			.catch(() => {});
+	});
 	$effect(() => {
 		if (tabViewPref.value === 'ALL') activeTab = 'ALL';
 	});
@@ -93,41 +120,49 @@
 	// the unsearched rows go through. A market with no match renders its usual
 	// empty state, which is the useful answer — it says the gem does not sell at
 	// that level/quality.
-	// --- Budget (one box for every table below it, like the search) ---
+	// --- Rankings query ---
 	//
-	// A budget is answered by the SERVER, not by filtering the loaded rows: the
-	// ranked pool on hand is the top-100 per market by absolute ROI, so a small
-	// budget filtered client-side keeps only the affordable stragglers of an
-	// expensive-base list. The server's budget param filters the full corpus
-	// before its limit (internal/lab/collective.go). The client-side filter in
-	// browseFilter stays as the fallback while the fetch is in flight or failed.
+	// The server filters, sorts, counts and caps (ADR-030): every control below
+	// becomes a request param and the table shows the returned rows in order.
+	// The ALL tab is therefore the global top N under the chosen sort.
 	const budgetPref = persisted('rankingsBudget', '');
 	const budgetChaos = $derived(parseInt(budgetPref.value) > 0 ? parseInt(budgetPref.value) : 0);
-	let budgetResults = $state<GemPlay[] | null>(null);
-	let budgetGeneration = 0;
+	let selectedGem = $state('');
+	let searchGeneration = 0;
 	$effect(() => {
-		const b = budgetChaos;
-		const dedication = isDedication;
-		const generation = ++budgetGeneration;
-		if (b <= 0) {
-			budgetResults = null;
-			return;
-		}
-		// Debounced: the box is a text input, and each fetch fans out per market.
+		const q: RankingsQuery = {
+			mode: isDedication ? 'dedication' : 'normal',
+			tab: isDedication ? activeDedTabInfo.variant : activeTab,
+			pool: isDedication ? activeDedTabInfo.pool : undefined,
+			color: colorPref.value,
+			budget: budgetChaos,
+			pageSize: parseInt(limitPref.value) || 20,
+			sort: sortBy,
+			showLowConf,
+			search: selectedGem || undefined,
+		};
+		const generation = ++searchGeneration;
+		// Debounced: the budget box is a text input.
 		const timer = setTimeout(async () => {
+			if (!q.search) {
+				onQuery(q);
+				return;
+			}
 			try {
-				const rows = dedication
-					? (await Promise.all(
-							DEDICATION_VARIANTS.map((v) => fetchBestPlays(v, b, undefined, 100, undefined, 'dedication')),
-						)).flat()
-					: (await Promise.all(
-							VARIANTS.map((v) => fetchBestPlays(v, b, undefined, 100)),
-						)).flat();
-				if (generation === budgetGeneration) budgetResults = rows;
+				// The dedication endpoint answers for ONE market per request: omitting
+				// `variant` does not mean "all", it silently defaults to 21/23, so a
+				// 21/20 tab found nothing. Fan out and merge. Normal mode does return
+				// every variant in one response.
+				const rows = q.mode === 'dedication'
+					? (await Promise.all(DEDICATION_VARIANTS.map((v) => fetchRankingsPage({ ...q, tab: v })))).flatMap((p) => p.rows)
+					: (await fetchRankingsPage(q)).rows;
+				if (generation === searchGeneration) searchResults = rows;
 			} catch (err) {
-				// Fall back to filtering the rows on hand — fewer results, never wrong ones.
-				console.warn('[ByVariant] budget fetch failed:', err);
-				if (generation === budgetGeneration) budgetResults = null;
+				// Without this the rejection was silent and the UI simply never changed.
+				console.warn('[ByVariant] gem search failed:', err);
+				if (generation !== searchGeneration) return;
+				searchResults = null;
+				searchError = `Search for "${q.search}" failed \u2014 check the connection and try again.`;
 			}
 		}, 300);
 		return () => clearTimeout(timer);
@@ -143,6 +178,7 @@
 
 	function clearSearch() {
 		searchQuery = '';
+		selectedGem = '';
 		searchResults = null;
 		searchError = '';
 		suggestions = [];
@@ -179,29 +215,12 @@
 		}, 100);
 	}
 
-	async function selectGem(name: string) {
+	function selectGem(name: string) {
 		searchQuery = name;
 		suggestions = [];
 		showDropdown = false;
 		searchError = '';
-		try {
-			// The dedication endpoint answers for ONE market per request: omitting
-			// `variant` does not mean "all", it silently defaults to 21/23, so a
-			// 21/20 tab found nothing. Fan out and merge, the way the ranked rows
-			// are loaded. Normal mode does return every variant in one response.
-			searchResults = isDedication
-				? (await Promise.all(
-						DEDICATION_VARIANTS.map((v) =>
-							fetchBestPlays(v, undefined, undefined, undefined, name, 'dedication'),
-						),
-					)).flat()
-				: await fetchBestPlays(undefined, undefined, undefined, undefined, name);
-		} catch (err) {
-			// Without this the rejection was silent and the UI simply never changed.
-			console.warn('[ByVariant] gem search failed:', err);
-			searchResults = null;
-			searchError = `Search for "${name}" failed \u2014 check the connection and try again.`;
-		}
+		selectedGem = name;
 	}
 
 	function handleSearchKeydown(e: KeyboardEvent) {
@@ -218,12 +237,6 @@
 			clearSearch();
 		}
 	}
-
-	// A search replaces the ranked rows as the source, but never the scoping: the
-	// per-market and per-color filters below apply to it exactly as they do to
-	// the ranked rows. A budget-scoped fetch replaces them the same way, one
-	// rung lower — search wins over budget.
-	const playSource = $derived(searchResults ?? budgetResults ?? allPlays);
 
 	// Switching lab mode re-fetches under a different mode, so a result carried
 	// across would be from the wrong one.
@@ -268,52 +281,30 @@
 			: `${searchQuery} is not in the rankings.`;
 	}
 
-	// Browse-mode filters shared by both table shapes: budget, then colour. A
-	// search bypasses both — it names one gem explicitly, so hiding it by budget
-	// or colour and then blaming the market answers a question the player did
-	// not ask, with the wrong reason.
-	//
-	// No row cap here: the cap belongs downstream in BestPlays, AFTER its sort.
-	// Capping before the sort handed the table "the top rows by fetch order,
-	// reordered" — under a ROI sort that is not the top rows by ROI at all.
-	function browseFilter(filtered: GemPlay[]): GemPlay[] {
-		if (budgetChaos > 0) {
-			// NO_BASE gems have no known cost basis (basePrice 0 means unknown, not
-			// free), so they can't be shown to fit a budget — same rule as the server.
-			filtered = filtered.filter(g => g.confidence !== 'NO_BASE' && g.basePrice <= budgetChaos);
-		}
-		if (colorPref.value !== 'ALL') {
-			filtered = filtered.filter(g => g.color === colorPref.value);
-		}
-		return filtered;
-	}
-
-	// Filter from already-loaded data — zero API calls.
+	// A search returns its gem across every market; each tab keeps only its own.
+	// Browsing shows the server's page as returned.
 	function playsForVariant(variant: string): GemPlay[] {
-		const filtered = playSource.filter(g => g.variant === variant);
-		if (searchResults) return filtered;
-		return browseFilter(filtered);
+		return searchResults ? searchResults.filter(g => g.variant === variant) : allPlays;
 	}
 
-	// The ALL tab is ONE merged table, not four stacked ones: a budget or colour
-	// filter there is a cross-market question, and four tables answer it four
-	// separate times. The merged pool arrives variant-grouped (per-variant
-	// fetches, concatenated) — safe to pass on unordered, because BestPlays
-	// sorts before it caps.
 	function playsForAll(): GemPlay[] {
-		if (searchResults) return playSource;
-		return browseFilter(playSource);
+		return searchResults ?? allPlays;
 	}
 
+	// baseName holds "skill" or "transfigured" for Dedication gems, and the
+	// server stamps each row with the market it was ranked in, so both halves of
+	// a search result's tab filter.
 	function playsForPool(poolType: string, variant: string): GemPlay[] {
-		// baseName holds "skill" or "transfigured" for Dedication gems, and the
-		// server stamps each row with the market it was ranked in. Filtering on
-		// both means a heading that has moved ahead of its rows shows an empty
-		// table rather than the previous market's numbers — the rows themselves
-		// are the only thing here that knows which market they describe.
-		const filtered = playSource.filter(g => g.baseName === poolType && g.variant === variant);
-		if (searchResults) return filtered;
-		return browseFilter(filtered);
+		return searchResults ? searchResults.filter(g => g.baseName === poolType && g.variant === variant) : allPlays;
+	}
+
+	function setSort(sort: RankingsSort) {
+		sortPref.value = sort;
+	}
+
+	function setShowLowConf(show: boolean) {
+		showLowConf = show;
+		invoke('set_show_low_confidence', { show }).catch(() => {});
 	}
 </script>
 
@@ -418,31 +409,13 @@
 	{#if isDedication}
 		{@const tab = activeDedTabInfo}
 		{@const vd = playsForPool(tab.pool, tab.variant)}
-		{#if vd.length > 0}
-			<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool] || tab.pool}) — {tab.variant}" showVariantColumn={false} rowCap={parseInt(limitPref.value)} searchActive={searchResults !== null} />
-		{:else if searchResults}
-			<div class="loading">{searchMissReason()}</div>
-		{:else}
-			<div class="loading">No data for this pool</div>
-		{/if}
+		<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool] || tab.pool}) — {tab.variant}" showVariantColumn={false} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} emptyText={searchResults ? searchMissReason() : rankingsPending ? 'Loading…' : 'No data for this pool'} />
 	{:else if activeTab === 'ALL'}
 		{@const vd = playsForAll()}
-		{#if vd.length > 0}
-			<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} rowCap={parseInt(limitPref.value)} searchActive={searchResults !== null} />
-		{:else if searchResults}
-			<div class="loading">{searchMissReason()}</div>
-		{:else}
-			<div class="loading">No data available</div>
-		{/if}
+		<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} emptyText={searchResults ? searchMissReason() : rankingsPending ? 'Loading…' : 'No data available'} />
 	{:else}
 		{@const vd = playsForVariant(activeTab)}
-		{#if vd.length > 0}
-			<BestPlays plays={vd} title="Best Plays ({activeTab})" showVariantColumn={false} rowCap={parseInt(limitPref.value)} searchActive={searchResults !== null} />
-		{:else if searchResults}
-			<div class="loading">{searchMissReason()}</div>
-		{:else}
-			<div class="loading">No data for this variant</div>
-		{/if}
+		<BestPlays plays={vd} title="Best Plays ({activeTab})" showVariantColumn={false} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} emptyText={searchResults ? searchMissReason() : rankingsPending ? 'Loading…' : 'No data for this variant'} />
 	{/if}
 </section>
 
@@ -620,10 +593,5 @@
 		margin-right: 2px;
 		font-size: 0.625rem;
 		vertical-align: middle;
-	}
-	.loading {
-		color: var(--color-lab-text-secondary);
-		font-size: 0.9375rem;
-		padding: 16px 0;
 	}
 </style>

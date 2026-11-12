@@ -1,10 +1,8 @@
 <script lang="ts">
-	import { invoke } from '@tauri-apps/api/core';
-	import { fetchSignalHistory, type GemPlay, type SignalTransition } from '$lib/api';
+	import { fetchSignalHistory, type GemPlay, type RankingsSort, type SignalTransition } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { formatPrice } from '$lib/price.svelte';
 	import { ssot } from '$lib/stores/ssot.svelte';
-	import { persisted } from '$lib/prefs.svelte';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
@@ -19,68 +17,34 @@
 		{ value: 'roiPercent', label: 'ROI%' },
 	];
 
-	// `plays` arrives already scoped to this table's variant (and pool, in
-	// Dedication mode) by the owner. Search lives in the owner too, for the same
-	// reason: a search run per-table fetched across every variant and replaced
-	// the scoped rows wholesale, so a table headed "Best Plays (20/20)" listed
-	// all four variants of the matched gem with no column to tell them apart.
-	//
-	// `searchActive` is the one thing a scoped table still needs to know about
-	// the search: a search names a gem explicitly, so its result is shown even
-	// when that gem is low-confidence and the toggle is off.
-	// `rowCap` is applied AFTER the sort: the owner passes the full filtered
-	// pool, and "top N" must mean top N under the sort the user picked. Capping
-	// upstream handed this table the top N by fetch order, reordered.
+	// The owner fetches the page this table shows: rows arrive filtered, sorted
+	// and capped by the server, and render in the order received. The sort and
+	// low-confidence controls live here but report up to the owner.
 	let {
 		plays,
 		title = 'Best Plays Now (ALL variants)',
 		showVariantColumn = true,
-		searchActive = false,
-		rowCap = Infinity,
+		sort = 'price',
+		onSortChange = () => {},
+		showLowConf = true,
+		onShowLowConfChange = () => {},
+		emptyText = '',
 	}: {
 		plays: GemPlay[];
 		title?: string;
 		showVariantColumn?: boolean;
-		searchActive?: boolean;
-		rowCap?: number;
+		sort?: RankingsSort;
+		onSortChange?: (sort: RankingsSort) => void;
+		showLowConf?: boolean;
+		onShowLowConfChange?: (show: boolean) => void;
+		/** Shown under the controls when `plays` is empty; the controls stay mounted. */
+		emptyText?: string;
 	} = $props();
 
-	// Persisted (ADR-013): the chosen sort survives restarts, and one key means
-	// every rankings table sorts the same way.
-	const sortPref = persisted('rankingsSort', 'price');
-	const sortBy = $derived(
-		(['price', 'riskAdjusted', 'roi', 'roiPercent'] as const).find(s => s === sortPref.value) ?? 'price'
-	);
-	// Default ON to match the Rust-side setting default; the stored value below
-	// overwrites it on mount. Starting false would flash a filtered list first.
-	let showLowConf = $state(true);
-	// Load from Tauri settings on mount
-	$effect(() => {
-		invoke<boolean>('get_show_low_confidence').then(v => { showLowConf = v; })
-			.catch(() => {});
-	});
 	let expandedRow = $state<number | null>(null);
 
 	let expandedHistory = $state<SignalTransition[]>([]);
 	let historyLoading = $state(false);
-
-	let sorted = $derived.by(() => {
-		let filtered = [...plays];
-		if (!showLowConf && !searchActive) {
-			filtered = filtered.filter((p) => !p.lowConfidence);
-		}
-		if (sortBy === 'price') {
-			filtered.sort((a, b) => b.transPrice - a.transPrice);
-		} else if (sortBy === 'riskAdjusted') {
-			filtered.sort((a, b) => b.weightedRoi - a.weightedRoi);
-		} else {
-			filtered.sort((a, b) =>
-				sortBy === 'roi' ? b.roi - a.roi : b.roiPercent - a.roiPercent
-			);
-		}
-		// A search names its gems explicitly — show them all, cap only browsing.
-		return searchActive ? filtered : filtered.slice(0, rowCap);
-	});
 
 	function velocityStr(v: number): string {
 		if (v > 0) return `↑${v}`;
@@ -100,7 +64,7 @@
 		expandedHistory = [];
 		historyLoading = true;
 		historyError = false;
-		const gem = sorted[i];
+		const gem = plays[i];
 		try {
 			expandedHistory = await fetchSignalHistory(gem.name, gem.variant);
 		} catch (err) {
@@ -117,15 +81,16 @@
 	<div class="plays-controls">
 		<label class="control-label">
 			Sort:
-			<Select bind:value={sortPref.value} options={SORT_OPTIONS} />
+			<Select bind:value={() => sort, (v) => onSortChange(v as RankingsSort)} options={SORT_OPTIONS} />
 		</label>
 		<Tooltip text="Show gems with very few listings (unreliable prices)"><label class="low-conf-toggle">
-			<input type="checkbox" bind:checked={showLowConf} onchange={() => invoke('set_show_low_confidence', { show: showLowConf }).catch(() => {})} />
+			<input type="checkbox" checked={showLowConf} onchange={(e) => onShowLowConfChange(e.currentTarget.checked)} />
 			<span>Low confidence</span>
 		</label></Tooltip>
 	</div>
 </div>
 
+{#if plays.length > 0}
 <div class="table-scroll">
 <table class="plays-table">
 	<thead>
@@ -134,7 +99,7 @@
 			{#if showVariantColumn}<th class="col-var"><Tooltip text="Gem variant: level/quality (e.g. 20/20 = level 20, 20% quality)">Var</Tooltip></th>{/if}
 			<th class="col-tier"><Tooltip text="<b>Price Tier</b> — per variant, dynamic boundaries.<br><br><span style='color:#fbbf24'>TOP</span> — Monopoly outliers (gap-detected)<br><span style='color:#fb923c'>HIGH</span> — Within 30% of top gem<br><span style='color:#c084fc'>MID-HIGH</span> — Above 50% of HIGH boundary<br><span style='color:#94a3b8'>MID</span> — Natural gap above LOW<br><span style='color:#64748b'>LOW</span> — Marginal profit above FLOOR<br><span style='color:#475569'>FLOOR</span> — Below 8% of top-5 average<br><br>Low-confidence gems (thin market) excluded from tier computation. Boundaries adapt to market prices automatically.">Tier</Tooltip></th>
 			<th class="col-num"><Tooltip text="Current ninja price of the transfigured gem">Price</Tooltip></th>
-			<th class="col-num"><Tooltip text={sortBy === 'riskAdjusted' ? 'Risk-adjusted ROI: raw ROI weighted by sellability and market stability' : METRIC_TOOLTIPS.ROI}>{sortBy === 'riskAdjusted' ? 'Adj ROI' : 'ROI'}</Tooltip></th>
+			<th class="col-num"><Tooltip text={sort === 'riskAdjusted' ? 'Risk-adjusted ROI: raw ROI weighted by sellability and market stability' : METRIC_TOOLTIPS.ROI}>{sort === 'riskAdjusted' ? 'Adj ROI' : 'ROI'}</Tooltip></th>
 			<th class="col-signal"><Tooltip text="<b>Market Signal + Sell Confidence</b><br><br><b>Signals</b> (current market behavior):<br>• <span style='color:#5eead4'>STABLE</span> — Steady price, safe to sell at listed<br>• <span style='color:#94a3b8'>UNCERTAIN</span> — Direction unclear (accuracy &lt;50%, showing raw data)<br>• <span style='color:#eab308'>HERD</span> — Farmers flooding in, price + listings surging<br>• <span style='color:#ef4444'>DUMPING</span> — Price crashing with rising supply<br>• <span style='color:#a855f7'>RECOVERY</span> — Supply draining, potential price recovery<br>• <span style='color:#22c55e'>DEMAND</span> — Listings draining, buyers absorbing supply<br>• <span style='color:#eab308'>CAUTION</span> — Short-term volatility, check history<br><br><b>Sell Confidence</b> (can you sell near listed price?):<br>• <span style='color:#22c55e'>✓ SAFE</span> — Liquid + stable, sell confidently<br>• <span style='color:#eab308'>• FAIR</span> — Moderate risk, may need patience<br>• <span style='color:#ef4444'>✗ RISKY</span> — Thin market or volatile, undercut aggressively">Signal</Tooltip></th>
 			<th class="col-sell"><Tooltip text="Sellability score 0-100. How quickly you can sell this gem. Based on listings, demand velocity, and price tier.">Sell</Tooltip></th>
 			<th class="col-signals"><Tooltip text="Window: CLOSED, BREWING, OPENING, OPEN, CLOSING, EXHAUSTED. Advanced: BREAKOUT, COMEBACK, POTENTIAL, CASCADE, PRICE_MANIPULATION.">Signals</Tooltip></th>
@@ -143,7 +108,7 @@
 		</tr>
 	</thead>
 	<tbody>
-		{#each sorted as gem, i}
+		{#each plays as gem, i}
 			<tr
 				class="play-row"
 				class:row-even={i % 2 === 0}
@@ -162,7 +127,7 @@
 					{#if gem.confidence === 'NO_BASE'}
 						<Tooltip text="Base gem is not listed on poe.ninja yet, so ROI can't be computed. The gem's own price is real — common right after a league start."><span class="roi-unknown">—</span></Tooltip>
 					{:else}
-						{sortBy === 'riskAdjusted' ? gem.weightedRoi : gem.roi}c
+						{sort === 'riskAdjusted' ? gem.weightedRoi : gem.roi}c
 					{/if}
 				</td>
 				<td class="col-signal">
@@ -264,8 +229,16 @@
 	</tbody>
 </table>
 </div>
+{:else}
+<div class="plays-empty">{emptyText}</div>
+{/if}
 
 <style>
+	.plays-empty {
+		color: var(--color-lab-text-secondary);
+		font-size: 0.9375rem;
+		padding: 16px 0;
+	}
 	.plays-header {
 		display: flex;
 		justify-content: space-between;
