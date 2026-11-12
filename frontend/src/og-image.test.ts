@@ -34,6 +34,15 @@ function prerenderedHtml(route: string): string {
 	return join(BUILD, route === '/' ? 'index.html' : `${route.slice(1)}.html`);
 }
 
+function schemaImageHints(html: string): string[] {
+	const graphs = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) =>
+		JSON.parse(m[1]),
+	);
+	return graphs.flatMap((g) =>
+		g['@type'] === 'WebPage' ? [g.primaryImageOfPage?.url] : g['@type'] === 'SoftwareApplication' ? [g.image, g.screenshot] : [],
+	);
+}
+
 function ogImageOf(html: string): string[] {
 	return [...html.matchAll(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"/g)].map((m) => m[1]);
 }
@@ -83,6 +92,15 @@ describe('og:image across builds', () => {
 			const name = card.url.slice(SITE.length);
 			expect(card.sha256, card.page).toBe(sha256(join(STATIC, name)));
 		}
+	});
+
+	it('uses the logo card as the home page og:image', () => {
+		expect(first.find((c) => c.page === '/')?.url).toBe(`${SITE}og-card.jpg`);
+	});
+
+	it('keeps the home page schema.org image hints on og-home.jpg', () => {
+		const hints = schemaImageHints(readFileSync(prerenderedHtml('/'), 'utf8'));
+		expect(hints).toEqual(Array(3).fill(`${SITE}og-home.jpg`));
 	});
 
 	it('gives the same og:image URL and bytes on a second build', () => {

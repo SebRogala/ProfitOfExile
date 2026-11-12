@@ -48,6 +48,8 @@
 	 * characters to work with, this has no such budget.
 	 */
 	const CARD_IMAGE = 'https://profitofexile.top/og-home.jpg';
+	/** The link-preview card: the logo card, not the schema.org screenshot card. */
+	const OG_IMAGE = 'https://profitofexile.top/og-card.jpg';
 
 	const structuredData = {
 		'@context': 'https://schema.org',
@@ -72,8 +74,8 @@
 
 	/**
 	 * Names the page's preferred image for Google, which otherwise picks one of
-	 * the in-page screenshots. `primaryImageOfPage`, the main entity's `image`
-	 * and og:image are the documented hints, so all three name the same card.
+	 * the in-page screenshots. `primaryImageOfPage` and the main entity's `image`
+	 * name og-home.jpg; og:image names the separate logo card (OG_IMAGE).
 	 */
 	const webPageData = {
 		'@context': 'https://schema.org',
@@ -135,17 +137,17 @@
 	<link rel="describedby" href="/llms.txt" />
 	<!-- Link previews (Discord, Twitter, Slack). Absolute URLs: scrapers fetch
 	     these without a page context, so a relative path resolves to nothing.
-	     og-home.jpg (1200x630) is rendered from frontend/og/home.html by
-	     frontend/og/render.sh. -->
+	     og-card.jpg (1200x630) is the logo card; og-home.jpg, the schema.org
+	     image, is rendered from frontend/og/home.html by frontend/og/render.sh. -->
 	<meta property="og:type" content="website" />
 	<meta property="og:site_name" content="ProfitOfExile" />
 	<meta property="og:url" content="https://profitofexile.top/" />
 	<meta property="og:title" content="ProfitOfExile — Companion Overlays for Wraeclast" />
 	<meta property="og:description" content={PITCH} />
-	<meta property="og:image" content={CARD_IMAGE} />
+	<meta property="og:image" content={OG_IMAGE} />
 	<meta property="og:image:width" content="1200" />
 	<meta property="og:image:height" content="630" />
-	<meta property="og:image:alt" content="ProfitOfExile: Lab Farming Dashboard rankings, Temple and mercenary overlays for Path of Exile" />
+	<meta property="og:image:alt" content="ProfitOfExile logo with the line Companion overlays for Path of Exile" />
 	<meta name="twitter:card" content="summary_large_image" />
 	<!-- A literal <script> tag inside <svelte:head> is compiled as component
 	     code, so the JSON-LD goes in as markup. The content is our own strings;
