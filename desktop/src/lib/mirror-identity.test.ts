@@ -92,25 +92,27 @@ type MirrorCheckPlan = { run: true } | { run: false; reason: string };
  * at all; that is an absent tree, not a stale list, so the guard skips there.
  * Any web file present means the tree exists and every rule runs.
  */
-function mirrorCheckPlan(webSides: Side[]): MirrorCheckPlan {
-	if (webSides.some((side) => side.size > 0)) return { run: true };
+function mirrorCheckPlan(webTreeFiles: string[]): MirrorCheckPlan {
+	if (webTreeFiles.length > 0) return { run: true };
 	return { run: false, reason: `mirror identity check did not run: no web files found under ${WEB_TREE}` };
 }
 
 describe('mirrorCheckPlan', () => {
 	it('skips with a reason naming the web tree when no web file is discovered', () => {
-		expect(mirrorCheckPlan([new Map(), new Map()])).toEqual({
+		expect(mirrorCheckPlan([])).toEqual({
 			run: false,
 			reason: 'mirror identity check did not run: no web files found under frontend/src',
 		});
 	});
 
-	it('runs when any web root has a file', () => {
-		expect(mirrorCheckPlan([new Map(), new Map([['api.ts', '']])])).toEqual({ run: true });
+	it('runs when the web tree has files only outside the mirrored roots', () => {
+		expect(mirrorCheckPlan(['../../../frontend/src/routes/+page.svelte'])).toEqual({ run: true });
 	});
 });
 
-const plan = mirrorCheckPlan(ROOTS.map((root) => root.web));
+// Keys only (lazy loaders): absence is decided on the whole web tree, not on the mirrored roots.
+const webTree = Object.keys(import.meta.glob('../../../frontend/src/**/*'));
+const plan = mirrorCheckPlan(webTree);
 if (!plan.run) console.warn(plan.reason);
 
 function pairsOf(root: MirrorRoot): string[] {
