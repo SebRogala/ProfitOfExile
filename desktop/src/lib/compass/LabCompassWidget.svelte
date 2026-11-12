@@ -1,19 +1,20 @@
 <script lang="ts">
-	import { listen } from '@tauri-apps/api/event';
+	import { getContext, untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import CompassOverlay from '$lib/compass/CompassOverlay.svelte';
-	import { resolvePreset, getDoorExitLocations, getVisibleContentLocations, hasSecretPassage, getTileRect } from '$lib/compass/room-presets';
+	import { resolvePreset, getDoorExitLocations, getVisibleContentLocations, hasSecretPassage } from '$lib/compass/room-presets';
 	import {
-		createNavState,
-		loadLayout,
-		handleNavEvent,
 		resolveRouteDoors,
 		getNextExitText,
 		getRoomContents,
-		setStrategy,
-		type NavEvent,
+		type NavState,
 	} from '$lib/compass/navigation';
-	import { fetchLabLayout } from '$lib/compass/layout-loader';
+	import {
+		LAB_SESSION,
+		type CompassSettings,
+		type LabNavEvent,
+		type LabSession,
+	} from '$lib/compass/lab-session.svelte';
 	import type { DoorExitLocation, ContentLocation } from '$lib/compass/room-presets';
 	import {
 		createTimerState,
@@ -26,15 +27,8 @@
 	let { configMode, label }: { configMode: boolean; label: string } = $props();
 
 	// --- State ---
-	let navState = $state(createNavState());
-	let pendingLayoutReset = $state(false);
+	const session = getContext<LabSession>(LAB_SESSION);
 	let mode = $state<'minimap' | 'direction' | 'minimal'>('minimap');
-
-	function applyLayoutReset() {
-		navState = createNavState();
-		layoutLoaded = false;
-		pendingLayoutReset = false;
-	}
 
 	// Timer state (shared module)
 	let timer = $state(createTimerState());
@@ -46,6 +40,7 @@
 	function resetTimer() { timer = timerReset_fn(timer); elapsed = 0; }
 
 	// --- Derived from navigation state ---
+	let navState = $derived(session.navState);
 	let currentRoom = $derived(navState.currentRoom ? navState.roomById.get(navState.currentRoom) : null);
 	// The same preset the room's exits were normalized with at layout load.
 	let preset = $derived(currentRoom ? resolvePreset(currentRoom) : null);
@@ -81,8 +76,15 @@
 	let areaCode = $derived(preset?.areaCode ?? currentRoom?.areacode ?? '');
 	let contentNames = $derived(currentRoom ? getRoomContents(navState, currentRoom.id) : []);
 	let hidden = $state(false);
-	let layoutLoaded = $state(false);
-	const drawing = $derived(layoutLoaded && !hidden && navState.inLab);
+	const drawing = $derived(session.layoutLoaded && !hidden && navState.inLab);
+
+	// Shrine warning state
+	let shrineEnabled = $state(true);
+	let shrineSize = $state('medium');
+	let shrineCorner = $state('bottom-right');
+	let shrineOnTake = $state('green');
+	let shrineTakenInRoom = $state(false);
+	let hasDarkshrine = $derived(contentNames.some(c => c.toLowerCase() === 'darkshrine'));
 
 	// --- Event handling ---
 
@@ -93,20 +95,17 @@
 		invoke('app_log_from_frontend', { msg }).catch((e) => console.warn('[compass] logToApp IPC failed:', msg, e));
 	}
 
-	function onNavEvent(event: any) {
-		if (event.type === 'LayoutChanged') {
-			fetchLayoutFromServer(event.difficulty);
-			return;
-		}
-		if (event.type === 'StrategyChanged') {
-			navState = setStrategy(navState, event.strategy);
-			return;
-		}
-		navState = handleNavEvent(navState, event as NavEvent);
-		if (navState.currentRoom) {
-			const room = navState.roomById.get(navState.currentRoom);
-			logToApp(`[compass] room=${room?.name} id=${navState.currentRoom} route=${navState.plannedRoute.slice(0,4).join('>')} navDir=${navDirection} targetDir=${targetDirection} entryDir=${entryDirection}`);
-		}
+	function logRoom(navAfter: NavState) {
+		if (!navAfter.currentRoom) return;
+		const room = navAfter.roomById.get(navAfter.currentRoom);
+		const doorsAfter = room && navAfter.layout
+			? resolveRouteDoors(navAfter.layout.rooms, navAfter.plannedRoute, room.id, navAfter.previousRoom, resolvePreset(room))
+			: { entry: null, exit: null };
+		logToApp(`[compass] room=${room?.name} id=${navAfter.currentRoom} route=${navAfter.plannedRoute.slice(0,4).join('>')} navDir=${doorsAfter.exit} targetDir=${doorsAfter.exit} entryDir=${doorsAfter.entry}`);
+	}
+
+	function onNavEvent(event: LabNavEvent, navAfter: NavState) {
+		logRoom(navAfter);
 
 		switch (event.type) {
 			case 'PlazaEntered':
@@ -114,12 +113,12 @@
 				hidden = false;
 				break;
 			case 'RoomChanged': {
-				if (navState.inLab && timer.startTimestamp === null) {
+				if (navAfter.inLab && timer.startTimestamp === null) {
 					startTimer();
 				}
 				shrineTakenInRoom = false;
 				// Hide during Izaro fights, show again on regular rooms
-				const room = navState.currentRoom ? navState.roomById.get(navState.currentRoom) : null;
+				const room = navAfter.currentRoom ? navAfter.roomById.get(navAfter.currentRoom) : null;
 				hidden = room?.name.toLowerCase() === "aspirant's trial";
 				break;
 			}
@@ -132,119 +131,19 @@
 			case 'LabExited':
 				resetTimer();
 				hidden = true;
-				if (pendingLayoutReset) {
-					applyLayoutReset();
-				}
 				break;
 		}
 	}
 
-	// --- Initialization via $effect (onMount does not fire in overlay windows) ---
-
-	// Shrine warning state
-	let shrineEnabled = $state(true);
-	let shrineSize = $state('medium');
-	let shrineCorner = $state('bottom-right');
-	let shrineOnTake = $state('green');
-	let shrineTakenInRoom = $state(false);
-	let hasDarkshrine = $derived(contentNames.some(c => c.toLowerCase() === 'darkshrine'));
-
-	// Poll compass settings every 2s (mode/strategy/difficulty can change from planner tab)
-	let settingsErrorLogged = false;
-	$effect(() => {
-		function loadSettings() {
-			invoke<any>('get_compass_settings')
-				.then((settings) => {
-					settingsErrorLogged = false;
-					if (settings?.mode && settings.mode !== mode) mode = settings.mode;
-					if (settings?.strategy && settings.strategy !== navState.strategy) {
-						navState = setStrategy(navState, settings.strategy);
-					}
-					if (settings?.difficulty && !lockedDifficulty) {
-						lockedDifficulty = settings.difficulty;
-					}
-					if (settings?.shrine_warn_enabled !== undefined) shrineEnabled = settings.shrine_warn_enabled;
-					if (settings?.shrine_warn_size) shrineSize = settings.shrine_warn_size;
-					if (settings?.shrine_warn_corner) shrineCorner = settings.shrine_warn_corner;
-					if (settings?.shrine_warn_on_take) shrineOnTake = settings.shrine_warn_on_take;
-				})
-				.catch((e: any) => {
-					if (!settingsErrorLogged) {
-						logToApp(`[compass] settings poll failed: ${e}`);
-						settingsErrorLogged = true;
-					}
-				});
-		}
-		loadSettings();
-		const interval = setInterval(loadSettings, 2000);
-		return () => clearInterval(interval);
-	});
-
-	let lockedDifficulty = $state<string | null>(null);
-
-	async function fetchLayoutFromServer(preferredDiff?: string) {
-		if (preferredDiff) lockedDifficulty = preferredDiff;
-		const layout = await fetchLabLayout({
-			preferredDifficulty: preferredDiff,
-			lockedDifficulty,
-			log: (msg) => logToApp(`[compass] ${msg}`),
-		});
-		if (!layout) return;
-		navState = loadLayout(navState, layout);
-		if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
-		layoutLoaded = true;
-		logToApp(`[compass] layout loaded: ${layout.difficulty} (${layout.rooms.length} rooms)`);
+	function onSettings(settings: CompassSettings) {
+		if (settings.mode && settings.mode !== mode) mode = settings.mode as typeof mode;
+		if (settings.shrine_warn_enabled !== undefined) shrineEnabled = settings.shrine_warn_enabled;
+		if (settings.shrine_warn_size) shrineSize = settings.shrine_warn_size;
+		if (settings.shrine_warn_corner) shrineCorner = settings.shrine_warn_corner;
+		if (settings.shrine_warn_on_take) shrineOnTake = settings.shrine_warn_on_take;
 	}
 
-	// Fetch layout and catch up to current lab state on init
-	$effect(() => {
-		if (layoutLoaded) return;
-		(async () => {
-			// Read difficulty from settings before fetching layout
-			const settings = await invoke<any>('get_compass_settings').catch(() => null);
-			if (settings?.difficulty) lockedDifficulty = settings.difficulty;
-			if (settings?.strategy) navState = setStrategy(navState, settings.strategy);
-			if (settings?.mode) mode = settings.mode;
-			await fetchLayoutFromServer();
-			// Replay recent Client.txt events to reconstruct current room
-			const catchup = await invoke<any>('get_lab_catchup').catch((e: any) => {
-				logToApp(`[compass] catchup failed: ${e}`);
-				return null;
-			});
-			if (catchup?.events?.length) {
-				logToApp(`[compass] replaying ${catchup.events.length} catchup events`);
-				for (const event of catchup.events) {
-					onNavEvent(event);
-				}
-			}
-		})();
-	});
-
-	// Listen for lab-nav events + layout updates from server
-	$effect(() => {
-		let cancelled = false;
-		const navPromise = listen<NavEvent>('lab-nav', (event) => {
-			if (cancelled) return;
-			onNavEvent(event.payload);
-		});
-		const layoutPromise = listen<any>('lab-layout-updated', (event) => {
-			if (cancelled) return;
-			if (event.payload?.action === 'reset') {
-				if (navState.inLab) {
-					pendingLayoutReset = true;
-				} else {
-					applyLayoutReset();
-				}
-				return;
-			}
-			fetchLayoutFromServer(event.payload?.difficulty);
-		});
-		return () => {
-			cancelled = true;
-			navPromise.then((unlisten) => unlisten());
-			layoutPromise.then((unlisten) => unlisten());
-		};
-	});
+	$effect(() => untrack(() => session.acquire({ onNavEvent, onSettings })));
 </script>
 
 <div class="compass-container">

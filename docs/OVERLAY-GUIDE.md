@@ -145,8 +145,9 @@ the one thing that raises such a window without any module work running. The
 temple, merc, and lab windows follow the Rust focus poller's
 game-focus show/hide behavior, and appear in `set_debug_mode`'s force-show
 branch. The lab widget window is governed by `lab_overlays_enabled`; its compass, map
-and timer widgets own their in-lab visibility rules, while the comparator draws
-on gem results whether or not the player is in the lab.
+and timer widgets share one lab nav session owned by the lab window page, while
+each keeps its own in-lab visibility rule; the comparator draws on gem results
+whether or not the player is in the lab.
 Persisted geometry is independent of the
 coupling: the merc widget's placement is a `Settings.widgets` row like the
 temple's, and neither monitor-sized window has a persisted rect of its own
@@ -332,9 +333,10 @@ the timer, compass, path-strip and comparator widgets.
   is built on it, `capture::capture_screen` grabs it, and `ssot.screen` carries
   its id and origin) — so a user-placed widget and a game-anchored one need no
   conversion between them beyond the window's own scale factor.
-- The `lab` widget window follows GAME FOCUS only; its
-  widgets own their visibility and in-lab rules, so they can stay hidden outside
-  a lab without hiding the window that hosts them.
+- The `lab` widget window follows GAME FOCUS only; its compass, map and timer
+  widgets share one lab nav session owned by the lab window page, while each
+  widget keeps its own visibility and in-lab rule, so they can stay hidden
+  outside a lab without hiding the window that hosts them.
 - **The shipped widget list.** Eight: three temple widgets, the Lab comparator,
   Lab compass, Lab map, Lab timer and the Merc verdict:
   `temple.offers` — the OFFER BOXES (POE-249), `anchored`, one box per architect
@@ -773,8 +775,9 @@ remains; this path covers widget config sessions only.
 
 - Shared main-window status is event-driven through `status.svelte.ts`.
 - The Lab comparator widget polls Rust-held comparator data every 500 ms.
-- Lab compass and map widgets poll their compass settings or layout path and
-  reconcile navigation from lab-nav events and catch-up replay.
+- The lab window's session polls compass settings every 2 s and reconciles
+  navigation from lab-nav events and one catch-up replay, starting with the
+  first shown nav widget and stopping with the last.
 - Game focus is determined in Rust by a `GetForegroundWindow` poller; Client.txt
   focus events are not the authority.
 - Client.txt uses filesystem notifications with a five-second polling fallback.
