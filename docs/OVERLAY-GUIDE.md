@@ -222,7 +222,8 @@ destroyed overlay leaves the hook's registry through the `Destroyed` arm of
 `on_window_event`, which also tears the hook down when it was the last one.
 
 What the caller does with the failure differs by overlay type. The two answers
-are in `routes/(app)/+layout.svelte`:
+are in the windows `lib/overlay/module-windows.svelte.ts` builds (the layout
+supplies the rows):
 
 - The two MODULE-COUPLED windows (temple, merc) destroy the half-built window
   and report the creation failed, which `module-lifecycle.ts` retries with its
@@ -261,7 +262,8 @@ the timer, compass, path-strip and comparator widgets.
   defaults also coincide, `lab.comparator` and `lab.compass` both starting at
   (100, 100), so a fresh profile draws them stacked until one is dragged.
 
-- The window is the GAME monitor (POE-237). `routes/(app)/+layout.svelte` asks
+- The window is the GAME monitor (POE-237). Each window
+  `lib/overlay/module-windows.svelte.ts` builds (rows from the layout) asks
   Rust's `get_game_monitor` — which the focus poller answers from the PoE
   window's own HWND — and matches it against an `availableMonitors()` entry by
   POSITION, because the two enumerations do not share an id space; the rule is

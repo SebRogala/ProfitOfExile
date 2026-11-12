@@ -28,16 +28,10 @@
 		TEMPLE_MODULE_ID,
 		TEMPLE_WINDOW_LABEL
 	} from '$lib/overlay/manager';
-	import { moduleOverlayWanted } from '$lib/overlay/module-lifecycle';
-	import { createWidgetWindow, type WidgetWindow } from '$lib/overlay/widget-window';
+	import { createModuleWindows } from '$lib/overlay/module-windows.svelte';
 	import { WIDGETS } from '$lib/overlay/widgets/widget-registry';
 	import { setWidgetVisible, widgetPlacements } from '$lib/overlay/widgets/widget-placements.svelte';
 	import { type GameMonitorInfo } from '$lib/overlay/monitor-choice';
-	import {
-		widgetConfigLive,
-		widgetConfigSessionsInit,
-		type WidgetConfigSessions
-	} from '$lib/overlay/widgets/widget-config-session';
 	import { createWidgetConfigOrchestrator } from '$lib/overlay/widgets/widget-config-orchestrator';
 	import LabPage from '$lib/pages/LabPage.svelte';
 	import SettingsPage from '$lib/pages/SettingsPage.svelte';
@@ -130,86 +124,33 @@
 	 *  not-yet-known the module flags have before the first poll. */
 	let labOverlaysLoaded = $state(false);
 
-	/**
-	 * Whether anything currently wants the temple overlay window — the module
-	 * flag, or a live widget-config session, both under the feature grant.
-	 *
-	 * THREE readers since POE-245 (`module-lifecycle.ts`'s `moduleOverlayWanted`
-	 * is the rule): the desired-state effect below, and the two places that
-	 * rebuild the window onto another display. A rebuild is an unconditional
-	 * `setDesired(false)` then `setDesired(true)`, so without this a module the
-	 * user switched off while the window was being built would come straight
-	 * back — the correction winning over the toggle.
-	 */
-	function templeOverlayWanted(): boolean {
-		return moduleOverlayWanted(
-			ssot.modules[TEMPLE_MODULE_ID],
-			widgetConfigLive(widgetConfigSessions, TEMPLE_WINDOW_LABEL),
-			templeGranted
-		);
-	}
-
-	const templeWindow = createWidgetWindow({
-		label: TEMPLE_WINDOW_LABEL,
-		moduleId: TEMPLE_MODULE_ID,
-		wanted: templeOverlayWanted,
-		configLive: () => widgetConfigLive(widgetConfigSessions, TEMPLE_WINDOW_LABEL),
-		debug: () => debugMode
-	});
-
-	function mercOverlayWanted(): boolean {
-		return moduleOverlayWanted(
-			ssot.modules[MERCENARY_MODULE_ID],
-			widgetConfigLive(widgetConfigSessions, MERCENARY_WINDOW_LABEL),
-			mercGranted
-		);
-	}
-
 	// Grab exclusion is Rust-side and BY LABEL (`capture.rs` `EXCLUDED_WHILE_GRABBING`),
-	// so this window must keep the `mercenary` label.
-	const mercenaryWindow = createWidgetWindow({
-		label: MERCENARY_WINDOW_LABEL,
-		moduleId: MERCENARY_MODULE_ID,
-		wanted: mercOverlayWanted,
-		configLive: () => widgetConfigLive(widgetConfigSessions, MERCENARY_WINDOW_LABEL),
-		// The merc route has no debug surface; the window was never built with `?debug`.
-		debug: () => false
-	});
-
-	function lootOverlayWanted(): boolean {
-		return moduleOverlayWanted(
-			ssot.modules[LOOT_MODULE_ID],
-			widgetConfigLive(widgetConfigSessions, LOOT_WINDOW_LABEL),
-			bossLootGranted
-		);
-	}
-
-	const lootWindow = createWidgetWindow({
-		label: LOOT_WINDOW_LABEL,
-		moduleId: LOOT_MODULE_ID,
-		wanted: lootOverlayWanted,
-		configLive: () => widgetConfigLive(widgetConfigSessions, LOOT_WINDOW_LABEL),
-		debug: () => false
-	});
-
-	function labOverlayWanted(): boolean {
-		return moduleOverlayWanted(
-			labOverlaysLoaded ? labOverlaysActive : undefined,
-			widgetConfigLive(widgetConfigSessions, LAB_WINDOW_LABEL),
-			true
-		);
-	}
-
-	const labWindow = createWidgetWindow({
-		label: LAB_WINDOW_LABEL, moduleId: LAB_WINDOW_LABEL, wanted: labOverlayWanted,
-		configLive: () => widgetConfigLive(widgetConfigSessions, LAB_WINDOW_LABEL), debug: () => false
-	});
+	// so the merc row must keep the `mercenary` label.
+	// The merc route has no debug surface; the window was never built with `?debug`.
+	const moduleWindows = createModuleWindows([
+		{
+			label: TEMPLE_WINDOW_LABEL, moduleId: TEMPLE_MODULE_ID,
+			granted: () => templeGranted, enabled: () => ssot.modules[TEMPLE_MODULE_ID], debug: () => debugMode
+		},
+		{
+			label: MERCENARY_WINDOW_LABEL, moduleId: MERCENARY_MODULE_ID,
+			granted: () => mercGranted, enabled: () => ssot.modules[MERCENARY_MODULE_ID], debug: () => false
+		},
+		{
+			label: LAB_WINDOW_LABEL, moduleId: LAB_WINDOW_LABEL,
+			granted: () => true, enabled: () => (labOverlaysLoaded ? labOverlaysActive : undefined), debug: () => false
+		},
+		{
+			label: LOOT_WINDOW_LABEL, moduleId: LOOT_MODULE_ID,
+			granted: () => bossLootGranted, enabled: () => ssot.modules[LOOT_MODULE_ID], debug: () => false
+		}
+	]);
 	const LAB_COMPARATOR_SPEC = WIDGETS.find((spec) => spec.id === 'lab.comparator')!;
 	const LAB_COMPASS_SPEC = WIDGETS.find((spec) => spec.id === 'lab.compass')!;
 	const LAB_PATHSTRIP_SPEC = WIDGETS.find((spec) => spec.id === 'lab.pathstrip')!;
 	const LAB_TIMER_SPEC = WIDGETS.find((spec) => spec.id === 'lab.timer')!;
 	/** Every monitor-sized widget window this layout builds. */
-	const WIDGET_WINDOWS: WidgetWindow[] = [templeWindow, mercenaryWindow, labWindow, lootWindow];
+	const WIDGET_WINDOWS = moduleWindows.windows;
 
 	// Window-scoped, because Rust sends this with `emit_to("main")`.
 	getCurrentWebviewWindow()
@@ -220,68 +161,13 @@
 			for (const w of WIDGET_WINDOWS) w.log(`could not listen for game-monitor-changed: ${e}`);
 		});
 
-	// Two terms, ORed: the module flag (× its feature grant) and a live
-	// widget-config session. `undefined` means the first poll has not answered
-	// yet, and is treated as "not yet known" rather than as off — tearing a
-	// window down on a value nobody has reported would fight the startup poll.
-	// Re-reporting the same value is a no-op inside the driver.
-	//
-	// The SESSION term is what makes arranging widgets cost no module work
-	// (POE-241): the window is raised here, for the length of the session, while
-	// the Rust temple loop stays spawned by the module flag alone
-	// (`modules.rs` reconcile — untouched by this flow). Dropping the record in
-	// the orchestrator's `end` is therefore what tears the window down again when the
-	// flag is off, and it is the LAST thing that function does for exactly that
-	// reason.
-	$effect(() => {
-		const enabled = ssot.modules[TEMPLE_MODULE_ID];
-		const configuring = widgetConfigLive(widgetConfigSessions, TEMPLE_WINDOW_LABEL);
-		// A session wants the window whatever the poll has or has not said, so
-		// the not-yet-known bail-out needs BOTH halves: nothing to say AND
-		// nothing to take down. A session that opened before the first poll
-		// answered leaves a window that only this effect can remove, and bailing
-		// out on its end would strand it until the poll lands — which, on a
-		// device that never answers, is never.
-		if (enabled === undefined && !configuring && !templeWindow.driver.built()) return;
-		// The feature gate is ANDed over BOTH terms rather than the flag alone: a
-		// device that loses the grant must have the window taken down whether the
-		// module flag or a config session is what is holding it up (POE-203).
-		// This takes the WINDOW down, not the module — the Rust temple module
-		// keeps running on its own flag, because the gate is hiding and not
-		// securing.
-		// The same rule the two rebuild sites ask, so the three cannot drift.
-		// `enabled` and `configuring` are read above as well, which is what keeps
-		// this effect subscribed to them.
-		templeWindow.driver.setDesired(templeOverlayWanted());
-	});
-
-	$effect(() => {
-		const enabled = ssot.modules[MERCENARY_MODULE_ID];
-		const configuring = widgetConfigLive(widgetConfigSessions, MERCENARY_WINDOW_LABEL);
-		if (enabled === undefined && !configuring && !mercenaryWindow.driver.built()) return;
-		mercenaryWindow.driver.setDesired(mercOverlayWanted());
-	});
-
-	$effect(() => {
-		const enabled = ssot.modules[LOOT_MODULE_ID];
-		const configuring = widgetConfigLive(widgetConfigSessions, LOOT_WINDOW_LABEL);
-		if (enabled === undefined && !configuring && !lootWindow.driver.built()) return;
-		lootWindow.driver.setDesired(lootOverlayWanted());
-	});
-
-	$effect(() => {
-		const enabled = labOverlaysActive;
-		const configuring = widgetConfigLive(widgetConfigSessions, LAB_WINDOW_LABEL);
-		if (!labOverlaysLoaded && !configuring && !labWindow.driver.built()) return;
-		labWindow.driver.setDesired(labOverlayWanted());
-	});
-
 	// --- Widget config mode (POE-226) ---
 	//
 	// Settings cannot open config mode itself: the three steps have to happen in
 	// one order (`docs/OVERLAY-GUIDE.md`, "Config-mode ordering contract") and
 	// the first of them is ensuring the module's WINDOW exists and is on screen,
-	// which is this file's job — it owns every overlay window's creation. So
+	// which this layout supplies — its row table is what
+	// `module-windows.svelte.ts` builds every module overlay window from. So
 	// Settings emits `widget-config-start {module}` and the work happens here.
 	//
 	// What makes step 1 more than a `show()` is that a module-coupled overlay
@@ -295,34 +181,6 @@
 	// `widget-config-session.ts` is the record of it, because both restores are
 	// silent when they are wrong.
 
-	/**
-	 * The overlay window behind each module that has widgets. Temple and Merc
-	 * both use the monitor-sized widget engine (POE-225 D1, POE-232).
-	 *
-	 * Keyed by the WINDOW LABEL, because that is what a `WidgetSpec.module` is
-	 * and therefore what Settings sends — the distinction `manager.ts` keeps
-	 * between a window label and the module id that happens to spell the same
-	 * word. The module id itself is no longer stored here: nothing in this flow
-	 * touches a module flag any more. Entries come from `WIDGET_WINDOWS`, so each
-	 * monitor-sized widget window contributes its own config target.
-	 */
-	const WIDGET_CONFIG_TARGETS: Record<string, { label: string; built: () => boolean }> = Object.fromEntries(
-		WIDGET_WINDOWS.map((w) => [w.label, w.configTarget])
-	);
-
-	/**
-	 * What each live config session forced — and, since POE-241, the second term
-	 * of every module overlay's desired state, which is why it is a rune.
-	 *
-	 * `$state.raw` and not deep `$state`: the map is only ever REPLACED (both
-	 * reducers return a new object), so a proxy would buy nothing and would put
-	 * one between `widgetConfigLive` and a plain record read. Nothing renders
-	 * from it; its one reactive consumer is the overlay effect above, which
-	 * writes nothing, so a session recorded here asks for the window the same
-	 * way the module flag does.
-	 */
-	let widgetConfigSessions: WidgetConfigSessions = $state.raw(widgetConfigSessionsInit());
-
 	/** The production ports for the widget-config flow (POE-346 D1): Tauri lives here, the flow does not. */
 	const widgetConfig = createWidgetConfigOrchestrator({
 		loadWindowApi: async () => { await import('@tauri-apps/api/webviewWindow'); },
@@ -333,9 +191,9 @@
 		invoke: (cmd, args) => invoke(cmd, args),
 		emitTo: (label, event, payload) => emitTo(label, event, payload),
 		emitToMain: (event, payload) => getCurrentWebviewWindow().emit(event, payload),
-		getSessions: () => widgetConfigSessions,
-		setSessions: (s) => { widgetConfigSessions = s; },
-		targets: () => WIDGET_CONFIG_TARGETS,
+		getSessions: moduleWindows.getSessions,
+		setSessions: moduleWindows.setSessions,
+		targets: () => moduleWindows.configTargets,
 		setTimer: (cb, ms) => setTimeout(cb, ms),
 		clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
 		wait: (ms) => new Promise<void>((r) => setTimeout(r, ms)),

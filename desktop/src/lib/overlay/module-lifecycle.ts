@@ -102,6 +102,37 @@ export function moduleOverlayWanted(
 	return (configuring || enabled === true) && granted;
 }
 
+/**
+ * One desired-state step for a module window's effect: whether to report a
+ * desired state at all, and which.
+ *
+ * `enabled === undefined` means the first poll has not answered yet, and is
+ * treated as "not yet known" rather than as off — tearing a window down on a
+ * value nobody has reported would fight the startup poll. A session wants the
+ * window whatever the poll has or has not said, so the not-yet-known bail-out
+ * needs BOTH halves: nothing to say AND nothing to take down. A session that
+ * opened before the first poll answered leaves a window that only this step can
+ * remove, and bailing out on its end would strand it until the poll lands —
+ * which, on a device that never answers, is never.
+ *
+ * The feature grant is ANDed over BOTH terms (inside `moduleOverlayWanted`)
+ * rather than the flag alone: a device that loses the grant must have the
+ * window taken down whether the module flag or a config session is what is
+ * holding it up (POE-203). This takes the WINDOW down, not the module — the
+ * Rust module keeps running on its own flag, because the gate is hiding and
+ * not securing. The two rebuild sites ask `moduleOverlayWanted` too, so the
+ * three readers cannot drift.
+ */
+export function moduleWindowStep(input: {
+	enabled: boolean | undefined;
+	configuring: boolean;
+	built: boolean;
+	granted: boolean;
+}): { skip: true } | { skip: false; desired: boolean } {
+	if (input.enabled === undefined && !input.configuring && !input.built) return { skip: true };
+	return { skip: false, desired: moduleOverlayWanted(input.enabled, input.configuring, input.granted) };
+}
+
 /** The state before the first poll: nothing wanted, nothing built. */
 export function moduleOverlayInit(): ModuleOverlayLifecycle {
 	return { desired: undefined, actual: false, pending: 'none', attempts: 0, gaveUp: false };

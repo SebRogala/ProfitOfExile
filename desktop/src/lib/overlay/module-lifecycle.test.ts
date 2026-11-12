@@ -12,6 +12,7 @@ import {
 	moduleOverlayRetryDelayMs,
 	moduleOverlaySettle,
 	moduleOverlayWanted,
+	moduleWindowStep,
 	type ModuleOverlayLifecycle
 } from './module-lifecycle';
 
@@ -537,5 +538,40 @@ describe('moduleOverlayWanted', () => {
 
 	it('refuses an enabled module on a device without the grant', () => {
 		expect(moduleOverlayWanted(true, false, false)).toBe(false);
+	});
+});
+
+describe('moduleWindowStep', () => {
+	/** lab-unknown: nothing reported, nothing configuring, nothing to take down. */
+	it('skips while the flag is unknown with no session and no window built', () => {
+		expect(moduleWindowStep({ enabled: undefined, configuring: false, built: false, granted: true })).toEqual({ skip: true });
+	});
+
+	/** lab-unknown: a window a pre-poll session left behind must be taken down on its end, not stranded. */
+	it('takes down a built window while the flag is still unknown', () => {
+		expect(moduleWindowStep({ enabled: undefined, configuring: false, built: true, granted: true })).toEqual({ skip: false, desired: false });
+	});
+
+	/** lab-unknown: a session wants the window whatever the poll has said. */
+	it('wants the window for a session opened before the flag is known', () => {
+		expect(moduleWindowStep({ enabled: undefined, configuring: true, built: false, granted: true })).toEqual({ skip: false, desired: true });
+	});
+
+	/** grant-ANDs-both-terms: losing the grant takes the window down even with flag and session both up. */
+	it('does not want the window without the grant', () => {
+		expect(moduleWindowStep({ enabled: true, configuring: true, built: true, granted: false })).toEqual({ skip: false, desired: false });
+	});
+
+	/** session-overrides-off-flag: a config session raises a window for a module switched off. */
+	it('wants the window for a session on a module switched off', () => {
+		expect(moduleWindowStep({ enabled: false, configuring: true, built: false, granted: true })).toEqual({ skip: false, desired: true });
+	});
+
+	it('wants the window for an enabled, granted module with no session', () => {
+		expect(moduleWindowStep({ enabled: true, configuring: false, built: false, granted: true })).toEqual({ skip: false, desired: true });
+	});
+
+	it('takes down the window of a module switched off with no session', () => {
+		expect(moduleWindowStep({ enabled: false, configuring: false, built: true, granted: true })).toEqual({ skip: false, desired: false });
 	});
 });
