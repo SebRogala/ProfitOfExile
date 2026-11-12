@@ -238,8 +238,8 @@ pub enum Reason {
     /// RU declined the key: every corridor worth a key would dilute an upgrade
     /// room whose picks are currently certainties. Case 5's actual reason.
     RuDeclined { slot: Slot },
-    /// Equal architect rules inside the noise band were ordered by grade.
-    GradeFallback { grade: String },
+    /// Equal architect rules inside the noise band were ordered by the sheet's pick order.
+    GradeFallback,
     /// The rollout separated the architects beyond the noise band.
     ExpectedValue,
 }
@@ -333,9 +333,9 @@ impl Reason {
                 "RU: every corridor a key could buy would dilute {}, so open nothing",
                 slot.as_str()
             ),
-            Reason::GradeFallback { grade } => format!(
-                "grade fallback: {grade} in rollout noise; better grade breaks equal architect rules"
-            ),
+            Reason::GradeFallback => {
+                "unpriced fallback: rollouts within noise, so the sheet's room order breaks equal architect rules".to_string()
+            }
             Reason::ExpectedValue => "architect ranked on expected value; architect tie-breaks did not decide it".to_string(),
         }
     }

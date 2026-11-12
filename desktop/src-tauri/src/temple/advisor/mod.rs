@@ -783,9 +783,7 @@ fn rank(scored: Vec<Scored>, profile: &StrategyProfile) -> Vec<Ranked> {
             if ev_decided {
                 reasons.insert(0, Reason::ExpectedValue);
             } else if grade_decided {
-                reasons.insert(0, Reason::GradeFallback {
-                    grade: fallback_ranks[*index].expect("fallback band").label(),
-                });
+                reasons.insert(0, Reason::GradeFallback);
             }
             Ranked {
                 option: option.option,
@@ -1200,7 +1198,26 @@ mod tests {
     fn fallback_d2_beats_e4_inside_rollout_noise() {
         let ranked = grade_pair("sadists_den", "court_of_sealed_death", 12.16, false);
         assert_eq!(ranked[0].option.architect.as_ref().unwrap().line, Line::named("sadists_den"));
-        assert!(ranked[0].reasons.contains(&Reason::GradeFallback { grade: "D2".to_string() }));
+        assert!(ranked[0].reasons.contains(&Reason::GradeFallback));
+    }
+
+    #[test]
+    fn the_fallback_band_reason_names_no_grade_letter() {
+        let ranked = grade_pair("sadists_den", "court_of_sealed_death", 12.16, false);
+        let text = ranked[0]
+            .reasons
+            .iter()
+            .find(|reason| matches!(reason, Reason::GradeFallback))
+            .expect("the fallback band decided this pair")
+            .describe();
+        assert_eq!(
+            text,
+            "unpriced fallback: rollouts within noise, so the sheet's room order breaks equal architect rules"
+        );
+        let bytes = text.as_bytes();
+        let letter = bytes.windows(2).any(|w| (b'A'..=b'E').contains(&w[0]) && w[1].is_ascii_digit());
+        assert!(!letter, "reason prints a grade letter: {text}");
+        assert!(!text.to_lowercase().contains("grade"), "reason names the grade: {text}");
     }
 
     #[test]
@@ -1226,7 +1243,7 @@ mod tests {
     fn a_per_tier_override_does_not_borrow_the_fallback_grade_order() {
         let ranked = grade_pair("sadists_den", "court_of_sealed_death", 12.16, true);
         assert_eq!(ranked[0].option.architect.as_ref().unwrap().line, Line::named("court_of_sealed_death"));
-        assert!(!ranked[0].reasons.iter().any(|reason| matches!(reason, Reason::GradeFallback { .. })));
+        assert!(!ranked[0].reasons.iter().any(|reason| matches!(reason, Reason::GradeFallback)));
     }
 
     /// Synthetic board with the report's displayed 36c/41c and an explicit
