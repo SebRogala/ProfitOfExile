@@ -453,6 +453,11 @@ fn capture_location(
             full_frame = true;
             view = &img;
             frame = geometry::Frame::full(screen);
+            if let Some(msg) = super::oversize_frame_warning(iw, ih, crate::ocr::max_image_dimension()) {
+                if let Some(line) = session.errors.admit(&msg) {
+                    crate::app_log(app, line);
+                }
+            }
             let lines = match crate::ocr::recognize_lines(view) {
                 Ok(lines) => frame.to_screen(lines),
                 Err(e) => {

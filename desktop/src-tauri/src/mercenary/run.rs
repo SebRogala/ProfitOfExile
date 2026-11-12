@@ -1062,6 +1062,16 @@ impl OnceLog {
     }
 }
 
+/// The warning for a frame the OCR engine will refuse, or `None` when it fits
+/// (POE-361). Only the full-frame locate hands OCR the raw grab; every other
+/// merc read is a crop of it, so it cannot be larger.
+pub(super) fn oversize_frame_warning(w: u32, h: u32, limit: Option<u32>) -> Option<String> {
+    let limit = limit?;
+    (w > limit || h > limit).then(|| {
+        format!("Merc: frame {w}x{h} exceeds the OCR limit of {limit} px — the full-screen locate will fail")
+    })
+}
+
 /// The screen region a hover-confirm OCRs, clamped to the screen (D5).
 ///
 /// The tooltip is placed by the game, not by us, and where it lands relative to
@@ -5496,6 +5506,29 @@ mod tests {
         budget.clear();
 
         assert!(budget.take(cell, ReadState::Matched));
+    }
+
+    #[test]
+    fn a_frame_wider_than_the_ocr_limit_is_warned_about_with_its_size_and_the_limit() {
+        assert_eq!(
+            oversize_frame_warning(10_001, 4320, Some(10_000)).as_deref(),
+            Some("Merc: frame 10001x4320 exceeds the OCR limit of 10000 px — the full-screen locate will fail")
+        );
+    }
+
+    #[test]
+    fn a_frame_taller_than_the_ocr_limit_is_warned_about() {
+        assert!(oversize_frame_warning(3840, 10_001, Some(10_000)).is_some());
+    }
+
+    #[test]
+    fn a_frame_exactly_at_the_ocr_limit_gets_no_warning() {
+        assert_eq!(oversize_frame_warning(10_000, 10_000, Some(10_000)), None);
+    }
+
+    #[test]
+    fn an_unknown_ocr_limit_gets_no_warning() {
+        assert_eq!(oversize_frame_warning(u32::MAX, u32::MAX, None), None);
     }
 
     #[test]
