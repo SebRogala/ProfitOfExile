@@ -3,7 +3,8 @@
 //! POE-255 serves one aggregated, league-keyed object at
 //! `GET /api/analysis/temple-market`: every room-tier's sale delta, every
 //! recipe member's price, and the recipe table that ties them together. This
-//! module is the desktop's mirror of that payload and nothing else.
+//! module is the desktop's mirror of that payload, plus the poll that fetches
+//! it and publishes it onto the temple slice.
 //!
 //! The poll ([`spawn_temple_market_poll`], POE-258) lives here as its own tokio
 //! task, never on the 650 ms tick (`docs/TEMPLE-LIFECYCLE.md` forbids network
@@ -404,7 +405,7 @@ impl From<WireMarket> for MarketInput {
 /// How often the temple market is re-read from the server.
 ///
 /// Five minutes, and the cadence is the poll's own rather than a ride on some
-/// other tick because there is no other tick to ride: the league service above
+/// other tick because there is no other tick to ride: the league service in `ssot.rs`
 /// waits indefinitely after success, and the only periodic
 /// server read the app already had is the webview's 30-minute entitlement +
 /// update check in `stores/status.svelte.ts` — six times too slow for a price

@@ -4181,7 +4181,7 @@ fn full_read(
     // weightings each time". It is the same call `commands::temple_value_table`
     // makes for the preset in force, so the page and this board are one object.
     //
-    // The market arrives as STATE, never as a fetch: `crate::ssot` polls it
+    // The market arrives as STATE, never as a fetch: `temple::market` polls it
     // every `market::TEMPLE_MARKET_POLL` and this reads what it stored, because
     // `docs/TEMPLE-LIFECYCLE.md` forbids network work on this tick. It comes
     // back FROM the accessor rather than being read again here, so the table
