@@ -4471,4 +4471,22 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    macro_rules! status_echoes {
+        ($($name:ident: $field:ident = $value:expr;)*) => {$(
+            #[test]
+            fn $name() {
+                let state = crate::settings::tests::test_app_state();
+                *state.$field.lock().unwrap() = $value;
+                assert_eq!(super::build_status(&state).$field, $value);
+            }
+        )*};
+    }
+
+    status_echoes! {
+        status_echoes_trade_stale_warn_secs: trade_stale_warn_secs = 121;
+        status_echoes_trade_stale_critical_secs: trade_stale_critical_secs = 601;
+        status_echoes_trade_auto_refresh_secs: trade_auto_refresh_secs = 901;
+        status_echoes_auto_trade_enabled: auto_trade_enabled = true;
+    }
 }

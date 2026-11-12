@@ -3519,6 +3519,23 @@ mod tests {
             [0, 0, 1920, 1200],
         ));
     }
+
+    macro_rules! snapshot_echoes {
+        ($($name:ident: $field:ident = $value:expr;)*) => {$(
+            #[test]
+            fn $name() {
+                let state = crate::settings::tests::test_app_state();
+                *state.$field.lock().unwrap() = $value.into();
+                assert_eq!(build_snapshot(&state).$field, $value);
+            }
+        )*};
+    }
+
+    snapshot_echoes! {
+        ssot_snapshot_echoes_the_selected_normal_variant: normal_variant = "1/0";
+        ssot_snapshot_echoes_the_selected_dedication_variant: dedication_variant = "21/20";
+        ssot_snapshot_echoes_the_selected_dedication_pool: dedication_pool = "transfigured";
+    }
 }
 
 #[cfg(test)]

@@ -3844,4 +3844,120 @@ pub(crate) mod tests {
         assert_eq!(parsed.anchors, None);
     }
 
+    /// Every grouped lab, compass and trade field at a non-default, mutually
+    /// distinct value, with the three neighbours that bound the groups set too.
+    fn wire_fixture_settings() -> Settings {
+        let mut s = Settings::default();
+        s.client_txt_path = "C:/PoE/logs/Client.txt".into();
+        s.server_url = "https://fixture.invalid".into();
+        s.lab_overlays_enabled = false;
+        s.timer_bg_opacity = Some(0.5);
+        s.timer_text_stroke = Some(false);
+        s.trade_stale_warn_secs = 121;
+        s.trade_stale_critical_secs = 601;
+        s.trade_auto_refresh_secs = 901;
+        s.auto_trade_enabled = true;
+        s.compass_mode = "fixture-mode".into();
+        s.compass_strategy = "fixture-strategy".into();
+        s.compass_difficulty = "fixture-difficulty".into();
+        s.shrine_warn_enabled = false;
+        s.shrine_warn_size = "fixture-size".into();
+        s.shrine_warn_corner = "fixture-corner".into();
+        s.shrine_warn_on_take = "fixture-on-take".into();
+        s.lab_mode = "Dedication".into();
+        s.autoclear_minutes = 7;
+        s.dedication_pool = "transfigured".into();
+        s.dedication_variant = "21/20".into();
+        s.normal_variant = "1/0".into();
+        s.show_low_confidence = false;
+        s
+    }
+
+    #[test]
+    fn settings_json_keeps_its_flat_wire_shape() {
+        let fixture = include_str!("../tests/fixtures/settings/settings-wire-shape.json");
+        assert_eq!(
+            serde_json::to_string_pretty(&wire_fixture_settings()).unwrap(),
+            fixture.trim_end_matches('\n'),
+        );
+    }
+
+    /// A settings file that names none of the grouped fields.
+    fn settings_file_without_grouped_fields() -> Settings {
+        serde_json::from_str(r#"{"server_url":"https://fixture.invalid"}"#).unwrap()
+    }
+
+    macro_rules! absent_key_loads {
+        ($($name:ident: $field:ident == $literal:expr;)*) => {$(
+            #[test]
+            fn $name() {
+                assert_eq!(settings_file_without_grouped_fields().$field, $literal);
+            }
+        )*};
+    }
+
+    absent_key_loads! {
+        a_settings_file_without_lab_mode_loads_normal: lab_mode == "Normal";
+        a_settings_file_without_autoclear_minutes_loads_2: autoclear_minutes == 2;
+        a_settings_file_without_dedication_pool_loads_skill: dedication_pool == "skill";
+        a_settings_file_without_dedication_variant_loads_21_23: dedication_variant == "21/23";
+        a_settings_file_without_normal_variant_loads_20_20: normal_variant == "20/20";
+        a_settings_file_without_show_low_confidence_loads_false: show_low_confidence == false;
+        a_settings_file_without_compass_mode_loads_minimap: compass_mode == "minimap";
+        a_settings_file_without_compass_strategy_loads_darkshrines_on_route: compass_strategy == "darkshrines-on-route";
+        a_settings_file_without_compass_difficulty_loads_uber: compass_difficulty == "Uber";
+        a_settings_file_without_shrine_warn_enabled_loads_true: shrine_warn_enabled == true;
+        a_settings_file_without_shrine_warn_size_loads_medium: shrine_warn_size == "medium";
+        a_settings_file_without_shrine_warn_corner_loads_bottom_right: shrine_warn_corner == "bottom-right";
+        a_settings_file_without_shrine_warn_on_take_loads_green: shrine_warn_on_take == "green";
+        a_settings_file_without_trade_stale_warn_secs_loads_120: trade_stale_warn_secs == 120;
+        a_settings_file_without_trade_stale_critical_secs_loads_600: trade_stale_critical_secs == 600;
+        a_settings_file_without_trade_auto_refresh_secs_loads_900: trade_auto_refresh_secs == 900;
+        a_settings_file_without_auto_trade_enabled_loads_false: auto_trade_enabled == false;
+    }
+
+    /// `state` saved through `from_state` and the JSON file, then loaded onto a
+    /// fresh state through `apply_to_state` — the restart path.
+    fn restarted_from(state: &crate::AppState) -> crate::AppState {
+        let json = serde_json::to_string(&from_state(state)).unwrap();
+        let loaded: Settings = serde_json::from_str(&json).unwrap();
+        let fresh = test_app_state();
+        assert!(apply_to_state(&loaded, &fresh).is_empty());
+        fresh
+    }
+
+    macro_rules! state_round_trip {
+        ($($name:ident: $field:ident = $value:expr;)*) => {$(
+            #[test]
+            fn $name() {
+                let state = test_app_state();
+                *state.$field.lock().unwrap() = $value.into();
+                let restarted = restarted_from(&state);
+                assert_eq!(*restarted.$field.lock().unwrap(), $value);
+            }
+        )*};
+    }
+
+    // `show_low_confidence` and `shrine_warn_enabled` use the value that differs
+    // from `test_app_state`'s, so a dropped mapping line cannot pass by accident.
+    state_round_trip! {
+        lab_mode_survives_a_restart: lab_mode = "Dedication";
+        autoclear_minutes_survives_a_restart: autoclear_minutes = 7u32;
+        dedication_pool_survives_a_restart: dedication_pool = "transfigured";
+        dedication_variant_survives_a_restart: dedication_variant = "21/20";
+        normal_variant_survives_a_restart: normal_variant = "1/0";
+        show_low_confidence_survives_a_restart: show_low_confidence = true;
+        compass_mode_survives_a_restart: compass_mode = "fixture-mode";
+        compass_strategy_survives_a_restart: compass_strategy = "fixture-strategy";
+        compass_difficulty_survives_a_restart: compass_difficulty = "fixture-difficulty";
+        shrine_warn_enabled_survives_a_restart: shrine_warn_enabled = false;
+        shrine_warn_size_survives_a_restart: shrine_warn_size = "fixture-size";
+        shrine_warn_corner_survives_a_restart: shrine_warn_corner = "fixture-corner";
+        shrine_warn_on_take_survives_a_restart: shrine_warn_on_take = "fixture-on-take";
+        trade_stale_warn_secs_survives_a_restart: trade_stale_warn_secs = 121u32;
+        trade_stale_critical_secs_survives_a_restart: trade_stale_critical_secs = 601u32;
+        trade_auto_refresh_secs_survives_a_restart: trade_auto_refresh_secs = 901u32;
+        auto_trade_enabled_survives_a_restart: auto_trade_enabled = true;
+    }
+
 }
