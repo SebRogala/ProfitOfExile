@@ -99,7 +99,7 @@ func (p *blockingPersister) awaitPersisted(t *testing.T, n int64) {
 // explicit writer bounds.
 func boundedSubmitRouter(cache *trade.TradeCache, p tradeLookupPersister, cfg submitWriterConfig) http.Handler {
 	r := chi.NewRouter()
-	r.Post("/api/trade/submit", tradeSubmit(cache, p, league.Historical("Mirage"), cfg))
+	r.Post("/api/trade/submit", tradeSubmit(context.Background(), cache, p, league.Historical("Mirage"), cfg))
 	return r
 }
 
@@ -320,5 +320,51 @@ func TestTradeSubmit_PersistsResultWithRequestScopeAndDesktopSource(t *testing.T
 	}
 	if call.result.PriceFloor != 42.5 {
 		t.Errorf("persisted PriceFloor = %v, want 42.5", call.result.PriceFloor)
+	}
+}
+
+// ctxHonouringPersister records a row only while the insert context is live,
+// like a real repository insert. attempts counts every call so a test can wait
+// for the queue to drain without sleeping.
+type ctxHonouringPersister struct {
+	attempts atomic.Int64
+	rows     atomic.Int64
+}
+
+func (p *ctxHonouringPersister) InsertTradeLookup(ctx context.Context, _ league.Scope, _ *trade.TradeLookupResult, _ string) error {
+	defer p.attempts.Add(1)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	p.rows.Add(1)
+	return nil
+}
+
+func TestSubmitWriter_CancelledWriterContextPersistsNothing(t *testing.T) {
+	writerCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p := &ctxHonouringPersister{}
+	cache := trade.NewTradeCache(64, league.Historical("Mirage"))
+	r := chi.NewRouter()
+	r.Post("/api/trade/submit", tradeSubmit(writerCtx, cache, p, league.Historical("Mirage"), submitWriterConfig{
+		workers:       1,
+		queue:         8,
+		enqueueWait:   time.Second,
+		insertTimeout: 5 * time.Second,
+	}))
+
+	if code := postSubmit(r, "Vaal Grace of Phasing", "21/20").Code; code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", code)
+	}
+	deadline := time.After(3 * time.Second)
+	for p.attempts.Load() < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("queued submit never reached the persister within 3s")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if got := p.rows.Load(); got != 0 {
+		t.Fatalf("persisted rows on a cancelled writer context = %d, want 0", got)
 	}
 }

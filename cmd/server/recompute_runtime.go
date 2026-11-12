@@ -164,11 +164,12 @@ func runFullRecompute(ctx context.Context, analyzer recomputeAnalyzer, scope lea
 
 // delayedRecomputeLockTimeout bounds the delayed-recompute timer's attempt to
 // take the league data lock and re-resolve the active league. The timer fires
-// on context.Background(), and both pool.Acquire (advisory-lock connection) and
-// league.Resolve block on pool exhaustion, so without an independent deadline a
-// stuck decision would leak a goroutine every timer cycle. It is deliberately
-// separate from the context passed to RunV2, which keeps the pre-existing
-// unbounded background context so a long recompute is not truncated.
+// on the service context, which stays live for the process lifetime, and both
+// pool.Acquire (advisory-lock connection) and league.Resolve block on pool
+// exhaustion, so without an independent deadline a stuck decision would leak a
+// goroutine every timer cycle. It is deliberately separate from the context
+// passed to RunV2, which is the unbounded service context so a long recompute
+// is not truncated but stops when the service context is cancelled.
 const delayedRecomputeLockTimeout = 5 * time.Second
 
 // prepareDelayedRecompute decides whether a fired delayed-recompute timer may
@@ -176,7 +177,7 @@ const delayedRecomputeLockTimeout = 5 * time.Second
 // league data lock the caller must Release.
 //
 // The 15-minute timer captures a scope at schedule time and fires much later on
-// context.Background(), guarded only by an in-process mutex. That guard cannot
+// the service context, guarded only by an in-process mutex. That guard cannot
 // see two hazards this function closes:
 //   - concurrent delayed recompute: another delayed-recompute run may already be
 //     writing the same league. DataLockKey serialises THIS delayed run against
@@ -197,7 +198,7 @@ const delayedRecomputeLockTimeout = 5 * time.Second
 //   - err  != nil:            an unexpected failure while deciding; do not run.
 func prepareDelayedRecompute(ctx context.Context, pool *pgxpool.Pool, captured league.Scope) (lock *league.ProcessLock, skip string, err error) {
 	// Bound the whole decision independently of the recompute context: the timer
-	// fires on context.Background(), and both the lock acquire and the re-resolve
+	// fires on the service context, which never times out, and both the lock acquire and the re-resolve
 	// hit the pool, which blocks on exhaustion. An unbounded decision would leak
 	// a goroutine per 15-minute cycle.
 	decCtx, cancel := context.WithTimeout(ctx, delayedRecomputeLockTimeout)
@@ -587,7 +588,7 @@ func (r *recomputeRuntime) runDelayedRecompute() {
 	if r.prepareDelayed == nil || r.runV2 == nil {
 		return
 	}
-	lock, skip, err := r.prepareDelayed(context.Background(), r.scope)
+	lock, skip, err := r.prepareDelayed(r.ctx, r.scope)
 	if err != nil {
 		slog.Warn("delayed recompute: skipped", "reason", "lock/league check failed", "error", err)
 		return
@@ -599,7 +600,7 @@ func (r *recomputeRuntime) runDelayedRecompute() {
 	defer lock.Release()
 
 	slog.Info("delayed recompute: running v2 with accumulated trade data")
-	if err := r.runV2(context.Background(), r.scope); err != nil {
+	if err := r.runV2(r.ctx, r.scope); err != nil {
 		slog.Warn("delayed v2 recompute failed", "error", err)
 	}
 }

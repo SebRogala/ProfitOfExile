@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -700,5 +701,47 @@ func TestGate_BadKeyIsNotFirstPickAfterFloodPause(t *testing.T) {
 		return key == badKey
 	}); ok {
 		t.Fatalf("queued timeout shortened the six-hour rejection delay: eligible key=%q", key)
+	}
+}
+
+// ctxHonouringPersister records a row only while its context is live, like a
+// real repository insert would.
+type ctxHonouringPersister struct {
+	mu   sync.Mutex
+	rows int
+}
+
+func (p *ctxHonouringPersister) InsertTradeLookup(ctx context.Context, _ league.Scope, _ *TradeLookupResult, _ string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	p.mu.Lock()
+	p.rows++
+	p.mu.Unlock()
+	return nil
+}
+
+func TestGateCompleteLookup_CancelledRunContextPersistsNothing(t *testing.T) {
+	server := emptySearchServer(t, 0)
+	defer server.Close()
+	g := newTestGate(t, server, &mockPublisher{}, 30*time.Second)
+	hardeningClock(g)
+	persisted := &ctxHonouringPersister{}
+	g.repo = persisted
+	g.persistAsync = func(f func()) { f() }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	key := CacheKey("Arc", "20/20")
+
+	g.completeLookup(ctx, hardeningRequest(g), key, &TradeLookupResult{Gem: "Arc", Variant: "20/20", Total: 3, PriceFloor: 7})
+
+	persisted.mu.Lock()
+	rows := persisted.rows
+	persisted.mu.Unlock()
+	if rows != 0 {
+		t.Fatalf("persisted rows on a cancelled run context = %d, want 0", rows)
+	}
+	if got, ok := g.cache.Get(key); !ok || got.Total != 3 || got.PriceFloor != 7 {
+		t.Fatalf("cached result = %+v (found %v), want the completed lookup", got, ok)
 	}
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +21,7 @@ import (
 func submitRouter(cache *trade.TradeCache, repo *trade.Repository) http.Handler {
 	r := chi.NewRouter()
 	if cache != nil {
-		r.Post("/api/trade/submit", TradeSubmit(cache, repo, league.Historical("Mirage"), nil, nil))
+		r.Post("/api/trade/submit", TradeSubmit(context.Background(), cache, repo, league.Historical("Mirage"), nil, nil))
 	}
 	return r
 }

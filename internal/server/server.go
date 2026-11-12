@@ -114,6 +114,10 @@ type RouterConfig struct {
 	// May be nil — the handler then reads as COLD and answers 200 with the
 	// static recipe table and no observations, rather than failing.
 	TempleCache *temple.Cache
+	// WriterContext is the service context background writers started by the
+	// router (the trade submit writer) persist on; cancelling it stops their
+	// writes (POE-118). Nil means context.Background().
+	WriterContext context.Context
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -249,7 +253,11 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	// Trade submit: available whenever trade cache exists (desktop can submit
 	// even when the server-side gate is disabled).
 	if cfg.TradeCache != nil {
-		r.Post("/api/trade/submit", handlers.TradeSubmit(cfg.TradeCache, cfg.TradeRepo, cfg.League, cfg.LabCache, knownGem))
+		writerCtx := cfg.WriterContext
+		if writerCtx == nil {
+			writerCtx = context.Background()
+		}
+		r.Post("/api/trade/submit", handlers.TradeSubmit(writerCtx, cfg.TradeCache, cfg.TradeRepo, cfg.League, cfg.LabCache, knownGem))
 	}
 
 	r.Get("/api/mercure/token", handlers.MercureToken(cfg.MercureSubscriberKey, cfg.MercurePublicURL))

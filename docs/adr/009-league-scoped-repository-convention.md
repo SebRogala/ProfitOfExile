@@ -189,3 +189,9 @@ it and is deferred. Writes stop for certain only when the process exits.
 **Operator precondition for deploy: verify the prod server container restarts after a non-zero exit.**
 Evidence: the repository `docker-compose.yml` app service sets
 `restart: unless-stopped`; the prod restart policy is unverified.
+
+Evidence (WI-3): the delayed-recompute timer (`cmd/server/recompute_runtime.go`
+`runDelayedRecompute`), the trade gate persist (`internal/trade/gate.go`
+`completeLookup`) and the trade submit writer (`internal/server/handlers/trade.go`
+`newSubmitWriter`, via `RouterConfig.WriterContext`) now run on the service
+context instead of `context.Background()`, so cancellation stops their writes.

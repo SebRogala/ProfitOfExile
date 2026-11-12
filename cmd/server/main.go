@@ -276,6 +276,7 @@ func main() {
 		MercureURL:           mercureURL,
 		MercureSecret:        mercureSecret,
 		DevMode:              devMode,
+		WriterContext:        serviceCtx,
 		Pool:                 pool,
 		LabRepo:              labRepo,
 		LayoutRepo:           layoutRepo,

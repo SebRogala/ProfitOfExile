@@ -370,14 +370,15 @@ func (g *Gate) stopQueueTimersLocked(key string) {
 	}
 }
 
-// completeLookup caches the result, persists it to the DB in the background,
-// delivers it to all fan-out waiters, and publishes the ready event.
+// completeLookup caches the result, persists it to the DB in the background on
+// the Run context (so a cancelled service context writes no row), delivers it
+// to all fan-out waiters, and publishes the ready event.
 func (g *Gate) completeLookup(ctx context.Context, req *GateRequest, key string, result *TradeLookupResult) {
 	result.FetchedAt = g.now()
 	g.cache.For(g.scope).Set(key, result)
 	if g.repo != nil {
 		g.persistAsync(func() {
-			if err := g.repo.InsertTradeLookup(context.Background(), g.scope, result, "server-gate"); err != nil {
+			if err := g.repo.InsertTradeLookup(ctx, g.scope, result, "server-gate"); err != nil {
 				slog.Warn("trade gate: persist lookup failed", "gem", req.Gem, "error", err)
 			}
 		})

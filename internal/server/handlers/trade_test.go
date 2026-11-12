@@ -658,7 +658,7 @@ func TestTradeLookup_CachedUnknownNameStillRejected(t *testing.T) {
 func TestTradeSubmit_PublicHandlerUsesDictionary(t *testing.T) {
 	scope := league.Historical("Mirage")
 	cache := trade.NewTradeCache(10, scope)
-	handler := TradeSubmit(cache, nil, scope, warmTradeDictionary(),
+	handler := TradeSubmit(context.Background(), cache, nil, scope, warmTradeDictionary(),
 		func(context.Context, league.Scope, string) (bool, error) { return false, nil })
 	w := submitValidationRequest(t, handler, trade.TradeLookupResult{League: "Mirage", Gem: "Junk of public", Variant: "20/20"})
 	var body map[string]string

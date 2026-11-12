@@ -816,3 +816,99 @@ func TestSeedNextFetch_FirstQueryErrorSeedsNothing(t *testing.T) {
 		t.Fatalf("NextFetch = %v, want zero time when the snapshot query fails", got)
 	}
 }
+
+// delayedWriteRecorder is a runV2 fake that persists a row only when its
+// context is live at call time, like a real repository write would.
+type delayedWriteRecorder struct {
+	mu   sync.Mutex
+	rows int
+}
+
+func (d *delayedWriteRecorder) runV2(ctx context.Context, _ league.Scope) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	d.mu.Lock()
+	d.rows++
+	d.mu.Unlock()
+	return nil
+}
+
+func (d *delayedWriteRecorder) count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.rows
+}
+
+// fireDelayedRecompute schedules the delayed timer and fires its callback.
+func fireDelayedRecompute(runtime *recomputeRuntime) {
+	var timer *fakeRuntimeTimer
+	runtime.timerFactory = func(_ time.Duration, callback func()) runtimeTimer {
+		timer = &fakeRuntimeTimer{callback: callback}
+		return timer
+	}
+	runtime.scheduleDelayedRecompute()
+	timer.fire()
+}
+
+// livePrepare returns a lock while ctx is live and a skip once it is cancelled.
+func livePrepare(lock runtimeLock) func(context.Context, league.Scope) (runtimeLock, string, error) {
+	return func(ctx context.Context, _ league.Scope) (runtimeLock, string, error) {
+		if ctx.Err() != nil {
+			return nil, "timed out acquiring league data lock", nil
+		}
+		return lock, "", nil
+	}
+}
+
+func TestRunDelayedRecompute_CancelledServiceContextWritesNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runtime := newRecomputeRuntime(ctx, runtimeScope())
+	writes := &delayedWriteRecorder{}
+	runtime.prepareDelayed = livePrepare(&fakeRuntimeLock{})
+	runtime.runV2 = writes.runV2
+
+	fireDelayedRecompute(runtime)
+
+	if got := writes.count(); got != 0 {
+		t.Fatalf("delayed recompute rows on a cancelled service context = %d, want 0", got)
+	}
+}
+
+func TestRunDelayedRecompute_ServiceContextCancelledAfterPrepareWritesNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runtime := newRecomputeRuntime(ctx, runtimeScope())
+	lock := &fakeRuntimeLock{}
+	writes := &delayedWriteRecorder{}
+	runtime.prepareDelayed = func(context.Context, league.Scope) (runtimeLock, string, error) {
+		cancel()
+		return lock, "", nil
+	}
+	runtime.runV2 = writes.runV2
+
+	fireDelayedRecompute(runtime)
+
+	if got := writes.count(); got != 0 {
+		t.Fatalf("delayed recompute rows after the service context was cancelled = %d, want 0", got)
+	}
+	lock.mu.Lock()
+	defer lock.mu.Unlock()
+	if lock.releases != 1 {
+		t.Fatalf("delayed lock releases = %d, want 1", lock.releases)
+	}
+}
+
+func TestRunDelayedRecompute_LiveServiceContextRunsV2(t *testing.T) {
+	runtime := newRecomputeRuntime(context.Background(), runtimeScope())
+	writes := &delayedWriteRecorder{}
+	runtime.prepareDelayed = livePrepare(&fakeRuntimeLock{})
+	runtime.runV2 = writes.runV2
+
+	fireDelayedRecompute(runtime)
+
+	if got := writes.count(); got != 1 {
+		t.Fatalf("delayed recompute rows on a live service context = %d, want 1", got)
+	}
+}

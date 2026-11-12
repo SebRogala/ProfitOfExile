@@ -99,25 +99,27 @@ type submitWriter struct {
 
 // newSubmitWriter starts cfg.workers goroutines. They run for the life of the
 // process, which is the same lifetime the detached goroutines they replace had;
-// the difference is that there are now a fixed number of them. In-flight queued
-// rows are still lost on shutdown, exactly as before.
-func newSubmitWriter(p tradeLookupPersister, scope league.Scope, cfg submitWriterConfig) *submitWriter {
+// the difference is that there are now a fixed number of them. ctx is the
+// service (writer) context: once it is cancelled no queued row is written, and
+// in-flight queued rows are lost on shutdown, exactly as before.
+func newSubmitWriter(ctx context.Context, p tradeLookupPersister, scope league.Scope, cfg submitWriterConfig) *submitWriter {
 	sw := &submitWriter{
 		jobs: make(chan *trade.TradeLookupResult, cfg.queue),
 		cfg:  cfg,
 	}
 	for i := 0; i < cfg.workers; i++ {
-		go sw.run(p, scope)
+		go sw.run(ctx, p, scope)
 	}
 	return sw
 }
 
 // run drains the queue. Each insert gets its own timeout context derived from
-// Background, not from the request: the write deliberately outlives the 204.
-func (sw *submitWriter) run(p tradeLookupPersister, scope league.Scope) {
+// the writer context ctx, not from the request: the write deliberately outlives
+// the 204, but not the service context.
+func (sw *submitWriter) run(ctx context.Context, p tradeLookupPersister, scope league.Scope) {
 	for result := range sw.jobs {
-		ctx, cancel := context.WithTimeout(context.Background(), sw.cfg.insertTimeout)
-		if err := p.InsertTradeLookup(ctx, scope, result, "desktop"); err != nil {
+		insertCtx, cancel := context.WithTimeout(ctx, sw.cfg.insertTimeout)
+		if err := p.InsertTradeLookup(insertCtx, scope, result, "desktop"); err != nil {
 			slog.Warn("trade submit: persist lookup failed", "gem", result.Gem, "variant", result.Variant, "error", err)
 		}
 		cancel()
@@ -150,15 +152,16 @@ func (sw *submitWriter) enqueue(ctx context.Context, result *trade.TradeLookupRe
 // TradeSubmit handles POST /api/trade/submit. It accepts a TradeLookupResult
 // from the desktop app (which queries GGG directly), stores it in the shared
 // LRU cache so CompareAnalysis can enrich responses, and optionally persists
-// to the database for historical tracking.
-func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository, scope league.Scope, dictionary *lab.Cache, checker tradeGemNameChecker) http.HandlerFunc {
+// to the database for historical tracking. Persistence runs on ctx, the
+// service writer context, so a cancelled ctx writes no rows.
+func TradeSubmit(ctx context.Context, cache *trade.TradeCache, repo *trade.Repository, scope league.Scope, dictionary *lab.Cache, checker tradeGemNameChecker) http.HandlerFunc {
 	// The nil check has to happen on the concrete type: a typed-nil
 	// *trade.Repository stored in an interface produces a non-nil interface.
 	var persister tradeLookupPersister
 	if repo != nil {
 		persister = repo
 	}
-	return tradeSubmit(cache, persister, scope, defaultSubmitWriterConfig, tradeSubmitOptions{dictionary: dictionary, checker: checker})
+	return tradeSubmit(ctx, cache, persister, scope, defaultSubmitWriterConfig, tradeSubmitOptions{dictionary: dictionary, checker: checker})
 }
 
 // contributionMaxAge matches HandleTradeTick's current default stale window.
@@ -175,10 +178,10 @@ type tradeSubmitOptions struct {
 
 // tradeSubmit keeps the bounded writer lifecycle separate from HTTP validation.
 // Missing validation options use the same cold-dictionary startup policy.
-func tradeSubmit(cache *trade.TradeCache, persister tradeLookupPersister, scope league.Scope, cfg submitWriterConfig, options ...tradeSubmitOptions) http.HandlerFunc {
+func tradeSubmit(ctx context.Context, cache *trade.TradeCache, persister tradeLookupPersister, scope league.Scope, cfg submitWriterConfig, options ...tradeSubmitOptions) http.HandlerFunc {
 	var enqueue func(context.Context, *trade.TradeLookupResult) bool
 	if persister != nil {
-		writer := newSubmitWriter(persister, scope, cfg)
+		writer := newSubmitWriter(ctx, persister, scope, cfg)
 		enqueue = func(ctx context.Context, result *trade.TradeLookupResult) bool {
 			accepted := writer.enqueue(ctx, result)
 			if !accepted {
