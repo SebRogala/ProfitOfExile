@@ -142,7 +142,77 @@ Write the report in the scratch directory, with these sections in order:
 Merge hits that need the same fix into one change. Keep `observed` and
 `inferred` on every merged line.
 
-### 6. Propose the epic and its tasks
+### 6. Sweep the repository for every changed name
+
+Run one dedicated name sweep after the report and before the epic. The sweep
+catches dependencies that cross product areas, which a scout reading one
+section misses. It does not replace the scouts in step 3.
+
+The sweep reads the notes, every external change doc, and the coverage list.
+The coverage list is one line per change under Breaks, Needs update and
+GAME-FACTS changes in the report, with its title and affected files. Each such
+change becomes one task in step 7. When tracker tasks for the patch already
+exist, the coverage list is each task's id and title instead.
+
+1. **Extract names.** Take every proper name from each note line that removes,
+   renames, converts, adds, moves or re-values something. Names cover items,
+   currencies, rooms, gems, bosses, NPCs, mechanics, stash-tab categories and
+   item classes, such as "Scarab". Take both the old and the new name of a
+   rename. Skip cosmetic and Ruthless-only lines.
+2. **Grep each name across the whole repository.** Run from the repository
+   root:
+
+   ```
+   git grep -n -i -F "<name>"
+   ```
+
+   `-i -F` already matches a name's plural and possessive. Grep three
+   variants the same way: the metadata-id form without spaces (for example
+   `AfflictionOrb`), the singular of a plural name, and the form with an
+   ASCII apostrophe in place of a typographic one.
+3. **Assign each hit file to the change that covers it.** A change covers a
+   file only when the change's scope includes that file. A name match alone is
+   not coverage. Mark each hit that no change covers `UNCOVERED`.
+4. **Report in the fixed shape below.** List the names with zero hits in one
+   line, not one line each. Order UNCOVERED lines with hits that break
+   shipped behavior first. A Doubt is a hit the sweeper cannot place in a
+   change or in No impact. Write at most 5 Doubts.
+
+Sweep output (illustrative values):
+
+```
+### Summary
+- names extracted: 41; names with repo hits: 23; hit files: 57; UNCOVERED hits: 6
+
+### UNCOVERED
+Vial | removed | internal/collector/<file>:<line> | the collector still fetches vial prices | NEW
+
+### Covered
+Vial | removed | 3 | Temple: remove vials, Docs: update GAME-FACTS
+
+### Zero-hit names
+<name>, <name>
+
+### Doubts
+- <one line per doubt; none when there are none>
+```
+
+An UNCOVERED line is `name | change | file:line | why it matters | covering
+change or NEW`, one per uncovered `file:line`. Write at most 3 lines for one
+name in one file, then one `<name> | <file> | and N more` line. A Covered line
+is `name | change | <hit-file count> | <covering changes, comma-separated>`.
+Name a covering change by its title, or by its tracker id once the task
+exists.
+
+5. **Verify and fold.** The agent running the pass opens each UNCOVERED hit at
+   its `file:line` and confirms the dependency. Drop a false hit, and record
+   it under No impact with its reason. Fold each confirmed hit into the
+   report: extend the change that should cover it, or add a new change under
+   Breaks or Needs update. Give a new change a class and a basis, as for a
+   scout hit. Mark a change `owner ruling` when its fix is a product decision.
+   Resolve each Doubt the same way, or mark it `owner ruling`.
+
+### 7. Propose the epic and its tasks
 
 Propose one epic for the patch and one task per change from Breaks, Needs
 update and GAME-FACTS changes. List Opportunities separately; the owner picks
@@ -163,12 +233,13 @@ Each task carries:
 - the source: the notes, an external doc, or both;
 - the class and the `observed` / `inferred` basis.
 
-Show the list to the owner. Create the epic and tasks in the YouTrack project
+Show the list to the owner, and ask for a ruling on each change marked
+`owner ruling`. Create the epic and tasks in the YouTrack project
 `POE` only after the owner approves the list. Use the `pipeforge tracker` CLI,
 or the pipeforge breakdown workflow for the epic. Tracker descriptions are the
 canonical specification for each change (see [AGENTS.md](../AGENTS.md)).
 
-### 7. GAME-FACTS updates
+### 8. GAME-FACTS updates
 
 Every GAME-FACTS entry the patch changes gets its own task in the epic. The
 pass itself edits no GAME-FACTS entry. The task updates the entry, its date

@@ -25,7 +25,15 @@ the pass. This skill adds only the Claude Code mechanics below.
   `docs/PATCH-NOTES-IMPACT.md` for the hit format.
 - **External sheet tabs (step 4).** Fetch a CSV export URL with WebFetch, or
   the `web-fetch` agent when WebFetch is absent.
-- **Owner approval (step 6).** Ask with AskUserQuestion before any tracker
+- **Name sweep (step 6).** Dispatch one sub-agent and pass `model: "opus"`.
+  This is the one exception to the scout model rule above; keep the area
+  scouts on sonnet. The owner chose Opus on 2026-11-12, after a four-model
+  trial on the same brief. Brief the sweeper as a read-only worker that must
+  not re-delegate. Give it the paths of the notes, the external docs, the
+  report, and the coverage list, and name `docs/PATCH-NOTES-IMPACT.md` step 6
+  for the output shape. When tracker tasks exist, give it each task's id and
+  title as the coverage list.
+- **Owner approval (step 7).** Ask with AskUserQuestion before any tracker
   write.
-- **Tracker writes (step 6).** Load the `pipeforge:tracker` skill before the
+- **Tracker writes (step 7).** Load the `pipeforge:tracker` skill before the
   first `pipeforge tracker` call, or run `/pipeforge:breakdown` for the epic.
