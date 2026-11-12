@@ -1,14 +1,9 @@
 <script lang="ts">
+	import { getContext, untrack } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
-	import {
-		createNavState,
-		loadLayout,
-		handleNavEvent,
-		setStrategy,
-		type NavEvent,
-	} from '$lib/compass/navigation';
-	import { fetchLabLayout } from '$lib/compass/layout-loader';
+	import type { NavState } from '$lib/compass/navigation';
+	import { LAB_SESSION, type LabNavEvent, type LabSession } from '$lib/compass/lab-session.svelte';
 	import {
 		createTimerState,
 		formatTimer,
@@ -22,18 +17,7 @@
 	// --- Navigation state (needed to know when we're in the lab and which room) ---
 	// Display only: run measurement and submission live in $lib/run-recorder.ts,
 	// which runs in the main window regardless of this overlay's toggle.
-	let navState = $state(createNavState());
-	let lockedDifficulty = $state<string | null>(null);
-	let layoutLoaded = $state(false);
-	let pendingLayoutReset = $state(false);
-
-	function applyLayoutReset() {
-		navState = createNavState();
-		layoutLoaded = false;
-		lockedDifficulty = null;
-		pendingLayoutReset = false;
-		logToApp('[timer] layout reset applied (midnight UTC)');
-	}
+	const session = getContext<LabSession>(LAB_SESSION);
 
 	// --- Timer state ---
 	let timer = $state(createTimerState());
@@ -45,39 +29,25 @@
 	let bgOpacity = $state(0.75);
 	let textStroke = $state(true);
 	let bgStyle = $derived(`rgba(13, 13, 21, ${bgOpacity})`);
-	const drawing = $derived(!hidden && navState.inLab);
+	const drawing = $derived(!hidden && session.navState.inLab);
 
 	function startTimer() { timer = timerStart_fn(timer, (e) => { elapsed = e; }); }
 	function stopTimer() { timer = timerStop_fn(timer); }
 	function resetTimer() { timer = timerReset_fn(timer); elapsed = 0; }
 
-	function logToApp(msg: string) {
-		invoke('app_log_from_frontend', { msg }).catch((e) => console.warn('[timer] logToApp IPC failed:', msg, e));
-	}
-
 	// --- Event handling ---
-	function onNavEvent(event: any) {
-		if (event.type === 'LayoutChanged') {
-			fetchLayoutFromServer(event.difficulty);
-			return;
-		}
-		if (event.type === 'StrategyChanged') {
-			navState = setStrategy(navState, event.strategy);
-			return;
-		}
-		navState = handleNavEvent(navState, event as NavEvent);
-
+	function onNavEvent(event: LabNavEvent, navAfter: NavState) {
 		switch (event.type) {
 			case 'PlazaEntered':
 				resetTimer();
 				hidden = false;
 				break;
 			case 'RoomChanged': {
-				if (navState.inLab && timer.startTimestamp === null) {
+				if (navAfter.inLab && timer.startTimestamp === null) {
 					startTimer();
 				}
 				// Hide during Izaro fights
-				const room = navState.currentRoom ? navState.roomById.get(navState.currentRoom) : null;
+				const room = navAfter.currentRoom ? navAfter.roomById.get(navAfter.currentRoom) : null;
 				hidden = room?.name.toLowerCase() === "aspirant's trial";
 				break;
 			}
@@ -89,52 +59,11 @@
 				stopTimer();
 				resetTimer();
 				hidden = true;
-				if (pendingLayoutReset) {
-					applyLayoutReset();
-				}
 				break;
 		}
 	}
 
-	// --- Layout fetching (needed for navigation, room_count, and golden door detection) ---
-	async function fetchLayoutFromServer(preferredDiff?: string) {
-		if (preferredDiff) lockedDifficulty = preferredDiff;
-		const layout = await fetchLabLayout({
-			preferredDifficulty: preferredDiff,
-			lockedDifficulty,
-			log: (msg) => logToApp(`[timer] ${msg}`),
-		});
-		if (!layout) return;
-		navState = loadLayout(navState, layout);
-		if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
-		layoutLoaded = true;
-		logToApp(`[timer] layout loaded: ${layout.difficulty} (${layout.rooms.length} rooms)`);
-	}
-
-	// --- Init: read settings, fetch layout, catch up ---
-	$effect(() => {
-		if (layoutLoaded) return;
-		(async () => {
-			const settings = await invoke<any>('get_compass_settings').catch((e: any) => {
-				logToApp(`[timer] init settings failed: ${e}`);
-				return null;
-			});
-			if (settings?.difficulty) lockedDifficulty = settings.difficulty;
-			if (settings?.strategy) navState = setStrategy(navState, settings.strategy);
-			await fetchLayoutFromServer();
-			// Catch up to current lab state
-			const catchup = await invoke<any>('get_lab_catchup').catch((e: any) => {
-				logToApp(`[timer] catchup failed: ${e}`);
-				return null;
-			});
-			if (catchup?.events?.length) {
-				logToApp(`[timer] replaying ${catchup.events.length} catchup events`);
-				for (const event of catchup.events) {
-					onNavEvent(event);
-				}
-			}
-		})();
-	});
+	$effect(() => untrack(() => session.acquire({ onNavEvent })));
 
 	// --- Load appearance settings ---
 	$effect(() => {
@@ -146,27 +75,9 @@
 		}).catch(() => {});
 	});
 
-	// --- Listen for lab-nav events + appearance changes ---
+	// --- Listen for appearance changes ---
 	$effect(() => {
 		let cancelled = false;
-		const navPromise = listen<NavEvent>('lab-nav', (event) => {
-			if (cancelled) return;
-			onNavEvent(event.payload);
-		});
-		const layoutPromise = listen<any>('lab-layout-updated', (event) => {
-			if (cancelled) return;
-			if (event.payload?.action === 'reset') {
-				if (navState.inLab) {
-					// Mid-run at midnight — defer reset until lab exit
-					pendingLayoutReset = true;
-					logToApp('[timer] layout reset deferred (in lab)');
-				} else {
-					applyLayoutReset();
-				}
-				return;
-			}
-			fetchLayoutFromServer(event.payload?.difficulty);
-		});
 		const appearancePromise = listen<any>('timer-appearance-changed', (event) => {
 			if (cancelled) return;
 			const a = event.payload;
@@ -177,8 +88,6 @@
 		});
 		return () => {
 			cancelled = true;
-			navPromise.then((unlisten) => unlisten());
-			layoutPromise.then((unlisten) => unlisten());
 			appearancePromise.then((unlisten) => unlisten());
 		};
 	});

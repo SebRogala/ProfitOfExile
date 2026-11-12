@@ -1,51 +1,24 @@
 <script lang="ts">
-	import { listen } from '@tauri-apps/api/event';
-	import { invoke } from '@tauri-apps/api/core';
+	import { getContext, untrack } from 'svelte';
 	import LabGraph from '$lib/compass/LabGraph.svelte';
-	import {
-		createNavState,
-		loadLayout,
-		handleNavEvent,
-		setStrategy,
-		type NavEvent,
-	} from '$lib/compass/navigation';
-	import { fetchLabLayout } from '$lib/compass/layout-loader';
+	import type { NavState } from '$lib/compass/navigation';
+	import { LAB_SESSION, type LabNavEvent, type LabSession } from '$lib/compass/lab-session.svelte';
 
 	let { configMode, label }: { configMode: boolean; label: string } = $props();
 
-	// Everything this window can report goes through the app log. console is
-	// unreachable in a release webview with no devtools, so a console.warn here
-	// is a message that is never read by anyone — and a path strip that has
-	// given up renders nothing at all, which makes the log the only trace.
-	function logToApp(msg: string) {
-		invoke('app_log_from_frontend', { msg }).catch((e) => console.warn('[pathstrip] logToApp IPC failed:', msg, e));
-	}
+	const session = getContext<LabSession>(LAB_SESSION);
 
-	let navState = $state(createNavState());
-	let pendingLayoutReset = $state(false);
 	let currentRoomId = $state<string | null>(null);
 	let visitedRoomIds = $state<string[]>([]);
 	let hidden = $state(false);
-	const drawing = $derived(!!navState.layout && !hidden && navState.inLab);
+	const drawing = $derived(!!session.navState.layout && !hidden && session.navState.inLab);
 
-	function applyLayoutReset() {
-		navState = createNavState();
-		layoutLoaded = false;
-		pendingLayoutReset = false;
+	function onReset() {
 		currentRoomId = null;
 		visitedRoomIds = [];
 	}
 
-	function onNavEvent(event: any) {
-		if (event.type === 'LayoutChanged') {
-			fetchLayoutFromServer(event.difficulty);
-			return;
-		}
-		if (event.type === 'StrategyChanged') {
-			navState = setStrategy(navState, event.strategy);
-			return;
-		}
-		navState = handleNavEvent(navState, event as NavEvent);
+	function onNavEvent(event: LabNavEvent, navAfter: NavState) {
 		switch (event.type) {
 			case 'PlazaEntered':
 				currentRoomId = null;
@@ -65,13 +38,13 @@
 				// marker of a shrine already taken. The "current room always renders in
 				// full" half of the invariant is LabGraph's job, enforced there for
 				// both of its visited sources.
-				const nextRoomId = navState.currentRoom;
+				const nextRoomId = navAfter.currentRoom;
 				if (currentRoomId && currentRoomId !== nextRoomId && !visitedRoomIds.includes(currentRoomId)) {
 					visitedRoomIds = [...visitedRoomIds, currentRoomId];
 				}
 				currentRoomId = nextRoomId;
 				// Hide during Izaro fights, show again on regular rooms
-				const room = navState.currentRoom ? navState.roomById.get(navState.currentRoom) : null;
+				const room = navAfter.currentRoom ? navAfter.roomById.get(navAfter.currentRoom) : null;
 				hidden = room?.name.toLowerCase() === "aspirant's trial";
 				break;
 			}
@@ -84,100 +57,11 @@
 				// visited set, and rooms it never entered render dimmed.
 				visitedRoomIds = [];
 				hidden = true;
-				if (pendingLayoutReset) {
-					applyLayoutReset();
-				}
 				break;
 		}
 	}
 
-	let lockedDifficulty = $state<string | null>(null);
-	let layoutLoaded = $state(false);
-
-	async function fetchLayoutFromServer(preferredDiff?: string) {
-		if (preferredDiff) lockedDifficulty = preferredDiff;
-		const layout = await fetchLabLayout({
-			preferredDifficulty: preferredDiff,
-			lockedDifficulty,
-			log: (msg) => logToApp(`[pathstrip] ${msg}`),
-		});
-		if (!layout) return;
-		navState = loadLayout(navState, layout);
-		if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
-		layoutLoaded = true;
-		logToApp(`[pathstrip] layout loaded: ${layout.difficulty} (${layout.rooms.length} rooms)`);
-	}
-
-	// Fetch layout and catch up to current lab state on init
-	$effect(() => {
-		if (layoutLoaded) return;
-		(async () => {
-			// Read difficulty/strategy from compass settings before fetching layout
-			const settings = await invoke<any>('get_compass_settings').catch(() => null);
-			if (settings?.difficulty) lockedDifficulty = settings.difficulty;
-			if (settings?.strategy) navState = setStrategy(navState, settings.strategy);
-			await fetchLayoutFromServer();
-			// Replay recent Client.txt events to reconstruct current room
-			const catchup = await invoke<any>('get_lab_catchup').catch((e: any) => {
-				logToApp(`[pathstrip] catchup failed: ${e}`);
-				return null;
-			});
-			if (catchup?.events?.length) {
-				for (const event of catchup.events) {
-					onNavEvent(event);
-				}
-			}
-		})();
-	});
-
-	// Poll strategy from compass settings every 2s — pathstrip shares strategy with compass (set from planner tab)
-	let settingsErrorLogged = false;
-	$effect(() => {
-		function loadSettings() {
-			invoke<any>('get_compass_settings')
-				.then((settings) => {
-					settingsErrorLogged = false;
-					if (settings?.strategy && settings.strategy !== navState.strategy) {
-						navState = setStrategy(navState, settings.strategy);
-					}
-				})
-				.catch((e: any) => {
-					if (!settingsErrorLogged) {
-						logToApp(`[pathstrip] settings poll failed: ${e}`);
-						settingsErrorLogged = true;
-					}
-				});
-		}
-		loadSettings();
-		const interval = setInterval(loadSettings, 2000);
-		return () => clearInterval(interval);
-	});
-
-	// Listen for lab-nav events + layout updates from server polling
-	$effect(() => {
-		let cancelled = false;
-		const navPromise = listen<NavEvent>('lab-nav', (event) => {
-			if (cancelled) return;
-			onNavEvent(event.payload);
-		});
-		const layoutPromise = listen<any>('lab-layout-updated', (event) => {
-			if (cancelled) return;
-			if (event.payload?.action === 'reset') {
-				if (navState.inLab) {
-					pendingLayoutReset = true;
-				} else {
-					applyLayoutReset();
-				}
-				return;
-			}
-			fetchLayoutFromServer(event.payload?.difficulty);
-		});
-		return () => {
-			cancelled = true;
-			navPromise.then((unlisten) => unlisten());
-			layoutPromise.then((unlisten) => unlisten());
-		};
-	});
+	$effect(() => untrack(() => session.acquire({ onNavEvent, onReset })));
 </script>
 
 <div class="strip-container">
@@ -186,7 +70,7 @@
 		     `navState.inLab` is true (set by PlazaEntered, cleared by LabExited, and
 		     rebuilt by catch-up replay); `hidden` remains the in-lab rule for Izaro fights. -->
 		<LabGraph
-			{navState}
+			navState={session.navState}
 			width={900}
 			height={350}
 			padding={40}
