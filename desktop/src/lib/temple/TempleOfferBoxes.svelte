@@ -487,7 +487,7 @@
 			{#if box.content !== null}
 				<!-- A content line draws its prose alone: it drops no unique. The
 				     drops-nothing note yields to it; the instrumental and own-number
-				     wordings still print under the row (262 px worst case, inside
+				     wordings still print under the row (277 px worst case, which is
 				     the budget). -->
 				<div class="items" class:aftersale={sale !== null}>
 					<span class="content-spacer"></span>
@@ -1061,14 +1061,14 @@
 	   Content lines say what they drop nothing for in the item row's right-hand
 	   `.content` cell, so the drops-nothing wording is never printed under one;
 	   the instrumental and own-number wordings are, and the tallest box that
-	   makes is 262 px (the own-number wording on a content line with a
-	   bonus row), inside the 274 the sum budgets.
+	   makes is 277 px (the instrumental wording, two lines, on a content
+	   line with a bonus row, in WARN) — which is `FULL_BOX_MAX_CSS`.
 	   `margin-top: 5`, and the ONE row here with no fixed height: its longest
 	   wording wraps to two lines at 272 px, and clipping it would drop the only
 	   sentence on a box that has no rows to read instead. It is not in
 	   `FULL_BOX_MAX_CSS` for the reason it can afford not to be — on a chest
 	   box every state that prints it has no item row and no fold, and the
-	   content boxes that print it stop at the 262 above. */
+	   content boxes that print it are the 277 the constant is set to. */
 	.note {
 		margin: 5px 0 0;
 		font-size: 11px;

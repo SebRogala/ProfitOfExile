@@ -309,6 +309,12 @@ export const FULL_BOX_BUDGET_CSS = DIAGONAL_BUDGET_CSS + 7;
  *     + architect 18
  *     + market line 13 = 274
  *
+ * One box outgrows that sum: the instrumental note under a content line with
+ * both ladders, in WARN (Temple Nexus) — the same rules, header, bonuses,
+ * architect and market line, with the content row (6 + 57) and the note
+ * wrapped to two lines (5 + 30) in place of sale and items: **277**. That is
+ * the constant (review r1 P2).
+ *
  * The 316 px diagonal budget therefore has 42 px of spare height: 3.30 removed
  * the temple-mod items (POE-367), and the 55 px mod block with its two chip
  * rows became the architect's one 18 px name. Any row added here is still a
@@ -321,16 +327,16 @@ export const FULL_BOX_BUDGET_CSS = DIAGONAL_BUDGET_CSS + 7;
  * - `note` (a wrapping 15 px line) fires only for `instrumental`, `override`
  *   and a line that drops nothing, and every one of those has no item row —
  *   it REPLACES the shape it would otherwise extend (a content line keeps its
- *   row, and its tallest such box is 262 px).
+ *   row, and its tallest such box is the 277 above, which IS the constant).
  *
  * Not measured from the DOM because this app has no DOM harness for a
  * `.svelte` file; `overlay-geometry.test.ts` restates the row table beside the
  * constant so a row added to the component without a number here fails.
  */
-export const FULL_BOX_MAX_CSS = 274;
+export const FULL_BOX_MAX_CSS = 277;
 
 /** What two FULL boxes and the gap between them need, CSS px —
- * `274 * 2 + STACK_GAP_CSS` = 556. This is the clearance [`offersCompact`]
+ * `277 * 2 + STACK_GAP_CSS` = 562. This is the clearance [`offersCompact`]
  * demands before it lets the pair render full.
  * It uses the WORST case rather than the design's typical one, because the box
  * that gets clamped for want of it is the LOWER one, and a clamped box lands

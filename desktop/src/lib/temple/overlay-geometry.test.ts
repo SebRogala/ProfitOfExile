@@ -616,14 +616,32 @@ describe('offerStackPlacement', () => {
 		architect: 18,
 		age: 13
 	};
-	const WORST_FULL_BOX = Object.values(FULL_BOX_ROWS).reduce((sum, row) => sum + row, 0);
+	const CHEST_FULL_BOX = Object.values(FULL_BOX_ROWS).reduce((sum, row) => sum + row, 0);
+	/** The tallest NOTE box: Temple Nexus (instrumental, content line with
+	 *  both ladders) in WARN, its long note wrapped to two 15 px lines. No sale
+	 *  row and no caption, so its rows differ from the chest table's. */
+	const INSTRUMENTAL_FULL_BOX_ROWS = {
+		border: 2 * 2,
+		padding: 10 * 2,
+		header: 26 + 15,
+		rules: 4 * (6 + 1 + 6),
+		content: 6 + 57,
+		note: 5 + 2 * 15,
+		bonuses: 18 + 13,
+		architect: 18,
+		age: 13
+	};
+	const INSTRUMENTAL_FULL_BOX = Object.values(INSTRUMENTAL_FULL_BOX_ROWS).reduce((sum, row) => sum + row, 0);
+	const WORST_FULL_BOX = Math.max(CHEST_FULL_BOX, INSTRUMENTAL_FULL_BOX);
 
 	it('budgets the pair against the tallest box the wording can build, not the design\'s typical one', () => {
-		// The full WARN form is 274 px since POE-367 cut the temple-mod block
-		// (55 px with its two chip rows) to the architect's 18 px name.
-		expect(WORST_FULL_BOX).toBe(274);
+		// Since POE-367 cut the temple-mod block to the architect's 18 px name
+		// the chest WARN form is 274 px, and the tallest box is the
+		// instrumental content WARN form at 277 (review r1 P2).
+		expect(CHEST_FULL_BOX).toBe(274);
+		expect(INSTRUMENTAL_FULL_BOX).toBe(277);
 		expect(FULL_BOX_MAX_CSS).toBe(WORST_FULL_BOX);
-		expect(FULL_PAIR_CSS).toBe(2 * 274 + STACK_GAP_CSS);
+		expect(FULL_PAIR_CSS).toBe(2 * 277 + STACK_GAP_CSS);
 		expect(FULL_BOX_MAX_CSS).toBeLessThanOrEqual(DIAGONAL_BUDGET_CSS);
 	});
 
@@ -730,7 +748,7 @@ describe('offersCompact', () => {
 
 	it('keeps the full form where the host has room for two of them', () => {
 		// 1080 - 133 is 947, and two full boxes plus the stack gap need
-		// FULL_PAIR_CSS = 274 * 2 + 8 = 556.
+		// FULL_PAIR_CSS = 277 * 2 + 8 = 562.
 		expect(
 			offersCompact({
 				driverCounts: THREE,
@@ -773,16 +791,16 @@ describe('offersCompact', () => {
 		).toBe(false);
 	});
 
-	it('draws the pair full from 556 px of free height and compact one px less', () => {
-		// The POE-367 budget as numbers, not as the constant: two 274 px boxes
-		// and the 8 px gap. Fails if FULL_PAIR_CSS keeps the 630 of the
-		// temple-mod box.
+	it('draws the pair full from 562 px of free height and compact one px less', () => {
+		// The POE-367 budget as numbers, not as the constant: two 277 px
+		// instrumental WARN boxes and the 8 px gap. Fails if FULL_PAIR_CSS
+		// keeps the 630 of the temple-mod box or the 556 of the chest box.
 		const at = (free: number) => [{ ...HIGH[0], y: HOST.height - free }, HIGH[1]];
 		const compactAt = (free: number) =>
 			offersCompact({ driverCounts: THREE, blocks: at(free), panel: COMMITTED_PANEL, host: HOST });
 
-		expect(compactAt(556)).toBe(false);
-		expect(compactAt(555)).toBe(true);
+		expect(compactAt(562)).toBe(false);
+		expect(compactAt(561)).toBe(true);
 	});
 
 	/** A 720 CSS px host — native 1280×720, 1080p at 150 %, 1440p at 200 % —
@@ -792,7 +810,7 @@ describe('offersCompact', () => {
 	const HIGH_720 = [{ ...HIGH[0], y: 133 / 1.5 }, HIGH[1]];
 
 	it('keeps a 720 px host full', () => {
-		// 631.3 px against the 274-based pair's 556.
+		// 631.3 px against the 277-based pair's 562.
 		expect(
 			offersCompact({
 				driverCounts: THREE,

@@ -183,7 +183,7 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// never used — `overlay-geometry.ts`'s `offerStackPlacement` decides it
 		// per read, in the sheet's left margin — but the registry's own
 		// invariant is that every default is a real rectangle, so `h` is the
-		// at least the tallest a FULL box can be (`FULL_BOX_MAX_CSS`, 274,
+		// at least the tallest a FULL box can be (`FULL_BOX_MAX_CSS`, 277,
 		// summed from the component's own row heights). It stays at the 323
 		// px owner budget (`FULL_BOX_BUDGET_CSS`) the borrowed-price box
 		// needed until POE-366 removed vials, because a stored rect shorter
