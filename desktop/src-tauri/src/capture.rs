@@ -109,13 +109,58 @@ pub fn get_game_monitor(state: tauri::State<crate::AppState>) -> Option<GameMoni
     *state.game_monitor.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Per-window count of overlapping grabs holding the exclude-from-capture
+/// affinity, keyed by the raw window handle. Grabs run on several threads (lab
+/// scan, loot hotkey, merc and temple loops, debug commands); without the count
+/// one grab finishing cleared the flag while another was still copying the
+/// screen, and the overlay landed in that frame (desktop M1, 2026-11-12).
+///
+/// The platform call runs under the lock, so set and clear happen in the order
+/// the count changes. Callers resolve the handle before calling in and never
+/// hold the ledger across the grab itself.
+#[cfg(any(windows, test))]
+#[derive(Default)]
+struct AffinityLedger {
+    counts: std::sync::Mutex<std::collections::HashMap<isize, usize>>,
+}
+
+#[cfg(any(windows, test))]
+impl AffinityLedger {
+    /// Holds `hwnd` excluded. Only the first holder calls `set`; a failed
+    /// `set` returns false and leaves no count.
+    fn acquire(&self, hwnd: isize, set: impl FnOnce() -> bool) -> bool {
+        let mut counts = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = counts.get_mut(&hwnd) {
+            *n += 1;
+            return true;
+        }
+        if !set() {
+            return false;
+        }
+        counts.insert(hwnd, 1);
+        true
+    }
+
+    /// Drops one hold on `hwnd`; only the last holder calls `clear`.
+    fn release(&self, hwnd: isize, clear: impl FnOnce()) {
+        let mut counts = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(n) = counts.get_mut(&hwnd) else { return };
+        *n -= 1;
+        if *n == 0 {
+            counts.remove(&hwnd);
+            clear();
+        }
+    }
+}
+
 #[cfg(windows)]
 mod platform {
-    use super::{Capture, GameMonitor, GrabTiming};
+    use super::{AffinityLedger, Capture, GameMonitor, GrabTiming};
     use std::time::Instant;
     use image::DynamicImage;
     use tauri::{AppHandle, Emitter, Manager};
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::LazyLock;
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -136,7 +181,9 @@ mod platform {
     /// same flag: the strip vanished from the reader's dump AND from the
     /// player's own screenshots. The second half is the cost, so the flag is
     /// not held permanently: [`ExcludedFromCapture`] sets it just before a
-    /// grab and clears it right after, on every grab in the app. Between grabs
+    /// grab and clears it right after; per window handle, the first of any
+    /// overlapping grabs sets it and the last one clears it
+    /// ([`AffinityLedger`]). Between grabs
     /// — at the reader's 2 s live / 10 s paused cadence, nearly always — a
     /// screenshot tool sees the listed window.
     ///
@@ -144,9 +191,9 @@ mod platform {
     /// skipped, and one rebuilt later is picked up by the next grab.
     const EXCLUDED_WHILE_GRABBING: &[&str] = &["mercenary", "overlay-preview", "loot"];
 
-    /// The affinity held for one grab. `Drop` clears it, so an error between
-    /// `hold` and the end of the grab cannot leave a listed window out of
-    /// screenshots.
+    /// The affinity held for one grab. `Drop` releases this guard's hold and
+    /// the last holder clears it, so an error between `hold` and the end of
+    /// the grab cannot leave a listed window out of screenshots.
     struct ExcludedFromCapture {
         hwnds: Vec<HWND>,
     }
@@ -159,6 +206,8 @@ mod platform {
     /// first successful hold. A troubled session with no `capture:` line at
     /// all never had a listed window to exclude (module off, preview not built).
     static AFFINITY_ARMED_REPORTED: AtomicBool = AtomicBool::new(false);
+
+    static LEDGER: LazyLock<AffinityLedger> = LazyLock::new(AffinityLedger::default);
 
     impl ExcludedFromCapture {
         fn hold(app: &AppHandle) -> Self {
@@ -175,20 +224,28 @@ mod platform {
                         continue;
                     }
                 };
-                match unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) } {
-                    Ok(()) => {
-                        if !AFFINITY_ARMED_REPORTED.swap(true, Ordering::Relaxed) {
-                            crate::app_log(
-                                app,
-                                format!("capture: overlay '{label}' is excluded from each grab while it is taken"),
-                            );
+                let held = LEDGER.acquire(hwnd.0 as isize, || {
+                    match unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) } {
+                        Ok(()) => {
+                            if !AFFINITY_ARMED_REPORTED.swap(true, Ordering::Relaxed) {
+                                crate::app_log(
+                                    app,
+                                    format!("capture: overlay '{label}' is excluded from each grab while it is taken"),
+                                );
+                            }
+                            true
                         }
-                        hwnds.push(hwnd)
+                        Err(e) => {
+                            report_once(
+                                app,
+                                format!("overlay '{label}' could not be excluded from capture: {e}"),
+                            );
+                            false
+                        }
                     }
-                    Err(e) => report_once(
-                        app,
-                        format!("overlay '{label}' could not be excluded from capture: {e}"),
-                    ),
+                });
+                if held {
+                    hwnds.push(hwnd)
                 }
             }
             Self { hwnds }
@@ -201,7 +258,9 @@ mod platform {
                 // A clear that fails leaves the window out of screenshots until
                 // the next grab's clear; there is no `app` here to log with,
                 // and the set half of the same call already reports.
-                let _ = unsafe { SetWindowDisplayAffinity(*hwnd, WDA_NONE) };
+                LEDGER.release(hwnd.0 as isize, || {
+                    let _ = unsafe { SetWindowDisplayAffinity(*hwnd, WDA_NONE) };
+                });
             }
         }
     }
@@ -684,5 +743,122 @@ mod tests {
     #[test]
     fn an_unknown_limit_leaves_the_full_2x() {
         assert_eq!(ocr_upscaled_size(6880, 96, None), (13_760, 192));
+    }
+}
+
+#[cfg(test)]
+mod affinity_ledger_tests {
+    use super::AffinityLedger;
+    use std::sync::{Arc, Barrier, Mutex};
+    use std::thread;
+
+    type Log = Arc<Mutex<Vec<(isize, &'static str)>>>;
+
+    fn acquire(ledger: &AffinityLedger, log: &Log, hwnd: isize, ok: bool) -> bool {
+        ledger.acquire(hwnd, || {
+            log.lock().unwrap().push((hwnd, "set"));
+            ok
+        })
+    }
+
+    fn release(ledger: &AffinityLedger, log: &Log, hwnd: isize) {
+        ledger.release(hwnd, || log.lock().unwrap().push((hwnd, "clear")));
+    }
+
+    fn entries(log: &Log) -> Vec<(isize, &'static str)> {
+        log.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn an_overlapping_grab_keeps_the_window_excluded_when_the_first_releases() {
+        let (ledger, log) = (AffinityLedger::default(), Log::default());
+        acquire(&ledger, &log, 1, true);
+        acquire(&ledger, &log, 1, true);
+        release(&ledger, &log, 1);
+        assert_eq!(entries(&log), vec![(1, "set")], "cleared while a second grab still held the window");
+    }
+
+    #[test]
+    fn the_last_release_clears_the_window_once() {
+        let (ledger, log) = (AffinityLedger::default(), Log::default());
+        acquire(&ledger, &log, 1, true);
+        acquire(&ledger, &log, 1, true);
+        release(&ledger, &log, 1);
+        release(&ledger, &log, 1);
+        assert_eq!(entries(&log), vec![(1, "set"), (1, "clear")]);
+    }
+
+    #[test]
+    fn window_handles_are_counted_independently() {
+        let (ledger, log) = (AffinityLedger::default(), Log::default());
+        acquire(&ledger, &log, 1, true);
+        acquire(&ledger, &log, 2, true);
+        release(&ledger, &log, 1);
+        assert_eq!(entries(&log), vec![(1, "set"), (2, "set"), (1, "clear")]);
+    }
+
+    #[test]
+    fn a_failed_set_is_refused() {
+        let (ledger, log) = (AffinityLedger::default(), Log::default());
+        assert!(!acquire(&ledger, &log, 1, false));
+    }
+
+    #[test]
+    fn a_failed_set_leaves_no_count_behind() {
+        let (ledger, log) = (AffinityLedger::default(), Log::default());
+        acquire(&ledger, &log, 1, false);
+        acquire(&ledger, &log, 1, true);
+        release(&ledger, &log, 1);
+        assert_eq!(entries(&log), vec![(1, "set"), (1, "set"), (1, "clear")]);
+    }
+
+    /// A acquires; B acquires; A releases and is joined; B is parked on the
+    /// third barrier. Returns the log as seen while B was parked and the final
+    /// log after B released and was joined.
+    fn two_threads_overlapping() -> (Vec<(isize, &'static str)>, Vec<(isize, &'static str)>) {
+        let ledger = Arc::new(AffinityLedger::default());
+        let log = Log::default();
+        let barriers: Vec<_> = (0..3).map(|_| Arc::new(Barrier::new(2))).collect();
+        let a = {
+            let (ledger, log, b1, b2) = (ledger.clone(), log.clone(), barriers[0].clone(), barriers[1].clone());
+            thread::spawn(move || {
+                acquire(&ledger, &log, 1, true);
+                b1.wait();
+                b2.wait();
+                release(&ledger, &log, 1);
+            })
+        };
+        let b = {
+            let (ledger, log, b1, b2, b3) =
+                (ledger.clone(), log.clone(), barriers[0].clone(), barriers[1].clone(), barriers[2].clone());
+            thread::spawn(move || {
+                b1.wait();
+                acquire(&ledger, &log, 1, true);
+                b2.wait();
+                b3.wait();
+                release(&ledger, &log, 1);
+            })
+        };
+        a.join().unwrap();
+        let while_b_holds = entries(&log);
+        barriers[2].wait();
+        b.join().unwrap();
+        (while_b_holds, entries(&log))
+    }
+
+    #[test]
+    fn a_grab_on_another_thread_keeps_the_window_excluded_when_the_first_releases() {
+        let (while_b_holds, _) = two_threads_overlapping();
+        assert!(
+            !while_b_holds.contains(&(1, "clear")),
+            "cleared while thread B still held the window: {while_b_holds:?}"
+        );
+    }
+
+    #[test]
+    fn the_last_thread_to_release_clears_the_window_once() {
+        let (_, after) = two_threads_overlapping();
+        assert_eq!(after.iter().filter(|e| **e == (1, "clear")).count(), 1, "{after:?}");
+        assert_eq!(after.last(), Some(&(1, "clear")), "{after:?}");
     }
 }

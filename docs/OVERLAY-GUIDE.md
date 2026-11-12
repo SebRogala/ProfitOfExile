@@ -845,7 +845,10 @@ runtime failure mode:
   single grab it produced no visible flicker on that machine at the 2 s / 10 s
   cadence. One machine: a flicker report from elsewhere is new evidence, not a
   contradiction, and the status-gated hold in ADR-023's alternatives is the
-  fallback that keeps the design.
+  fallback that keeps the design. Overlapping grabs from different threads
+  share the exclusion through a per-handle count in `capture.rs`
+  (`AffinityLedger`), so one grab finishing cannot clear it under another
+  (desktop M1, 2026-11-12).
 
 Do not delete these observations merely because a future code path appears
 simpler; reproduce the Windows behavior first or supersede them with a dated
