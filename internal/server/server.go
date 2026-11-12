@@ -28,13 +28,6 @@ import (
 	"profitofexile/internal/trade"
 )
 
-// DefaultIconCacheDir is the icon cache root used when RouterConfig.IconCacheDir
-// is empty. In production it is a persistent volume (ICON_CACHE_DIR in
-// cmd/server); an ephemeral one there is not a slow first request but a
-// permanent 502, because poewiki 403s the VPS and the cache can only be
-// pre-seeded — see docs/ICONS.md and ADR-012.
-const DefaultIconCacheDir = "./data/icons-cache"
-
 // RouterConfig holds optional configuration for the server router.
 type RouterConfig struct {
 	// MercureURL is the Mercure hub URL for the debug trigger endpoint.
@@ -108,13 +101,9 @@ type RouterConfig struct {
 	// TODO(POE-118): cancel the writer lifecycle on fence loss so a demoted server
 	// stops writing without waiting for an external restart.
 	FenceChecker handlers.LivenessChecker
-	// IconCacheDir is the ROOT of the persistent on-disk icon cache, not a
-	// cache directory itself: each icon set is served out of its own
-	// sub-directory beneath it, for the collision reason documented in
-	// internal/icons and ADR-012. Empty falls back to DefaultIconCacheDir, so the
-	// typed and compatibility icon routes are
-	// registered whenever the sets can be constructed.
-	IconCacheDir string
+	// IconSets serves /api/icon/{type}/{name} and /api/gem-icon/{name}; build it
+	// with BuildIconSets. Nil leaves both icon routes unregistered.
+	IconSets *icons.Sets
 	// MercTemplateRepo is the shared mercenary icon-template pool (POE-200).
 	// May be nil — the /api/desktop/merc-templates routes are then not
 	// registered, which the desktop's pull already treats as "keep the local
@@ -176,25 +165,10 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 
 	r.Get("/api/health", handlers.Health(pinger, cfg.FenceChecker))
 
-	// Icons: public, static, no league scope or auth. Each embedded source map is
-	// one typed cache under the configured root. A malformed category is allowed
-	// to degrade independently; NewSets returns the valid partial registry and
-	// logs the construction error, so the typed route can still serve its peers.
-	iconRoot := cfg.IconCacheDir
-	if iconRoot == "" {
-		iconRoot = DefaultIconCacheDir
-	}
-
-	iconSets, iconSetsErr := icons.NewSets(iconRoot)
-	if iconSetsErr != nil {
-		slog.Error("icon set initialization degraded", "root", iconRoot, "error", iconSetsErr)
-	}
-	if iconSets != nil {
-		if addErr := iconSets.Add("currency-exchange", exchange.IconURLs(), iconRoot); addErr != nil {
-			slog.Error("currency-exchange icon set initialization degraded", "root", iconRoot, "error", addErr)
-		}
-		r.Get("/api/icon/{type}/{name}", iconSets.Handler())
-		r.Get("/api/gem-icon/{name}", iconSets.AliasHandler())
+	// Icons: public, static, no league scope or auth.
+	if cfg.IconSets != nil {
+		r.Get("/api/icon/{type}/{name}", cfg.IconSets.Handler())
+		r.Get("/api/gem-icon/{name}", cfg.IconSets.AliasHandler())
 	}
 
 	// The whole /api/snapshots/* family is gone. /stats went first (POE-150):

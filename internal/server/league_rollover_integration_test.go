@@ -163,7 +163,7 @@ func TestCommittedRolloverRejectsStaleSubmits(t *testing.T) {
 		rolloverMust(t, err)
 		cache.Warm(warm)
 		labRepo := lab.NewRepository(pool)
-		router := NewRouter(pool, nil, RouterConfig{Pool: pool, LabRepo: labRepo, LabCache: lab.NewCache(serverScope), TradeCache: cache, TradeRepo: tradeRepo, KnownGem: tradeRepo.KnownGem, League: serverScope, FenceChecker: serverLock, IconCacheDir: t.TempDir()})
+		router := NewRouter(pool, nil, RouterConfig{Pool: pool, LabRepo: labRepo, LabCache: lab.NewCache(serverScope), TradeCache: cache, TradeRepo: tradeRepo, KnownGem: tradeRepo.KnownGem, League: serverScope, FenceChecker: serverLock})
 		t.Logf("BOOT: server and fixture collector resolved %s revision %d with actual process fences", wantID, wantRevision)
 		return serverScope, collectorScope, router, cache, collector.NewRepository(pool), labRepo, NewLeagueEventGuard(serverScope)
 	}

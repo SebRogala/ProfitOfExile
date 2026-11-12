@@ -32,6 +32,9 @@ Amended 2026-09-08 (icon-route-and-layout) — the fifth amendment at the end
 supersedes the earlier current-route and current-layout claims. The
 content-addressed filename decision and seed-before-deploy ordering remain.
 
+Amended 2026-11-12 (POE-344) — the sixth amendment at the end moves where the
+empty-root substitution sits. Every decision and the safety property are unchanged.
+
 ## Enforcement
 
 Tier: required
@@ -437,3 +440,18 @@ change does not decide which icon shape they should use.
 Mercenary icons remain separate: merc_icon_templates in PostgreSQL, device
 signatures, and /api/desktop/merc-templates; they do not use this cache or
 ICON_CACHE_DIR.
+
+## Amended 2026-11-12 (POE-344): icon sets built outside the router
+
+Status of this section: current. It records where an unchanged property now
+lives; no decision changes.
+
+The empty-root → `DefaultIconCacheDir` substitution that the POE-221 amendment
+places in `NewRouter` now sits in `server.BuildIconSets`
+(`internal/server/icon_sets.go`), which `cmd/server` calls with
+`ICON_CACHE_DIR`. `NewRouter` registers `/api/icon/{type}/{name}` and
+`/api/gem-icon/{name}` only for a non-nil `RouterConfig.IconSets`. An unset root
+still resolves to a real per-set directory under the default root, never to the
+working directory; the evidence is
+`TestNewRouter_CurrencyExchangeIconRouteServesFromTheDefaultRootWhenNoneIsConfigured`
+(`internal/server/server_test.go`).

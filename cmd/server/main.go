@@ -293,7 +293,7 @@ func main() {
 		// cache-filename scheme and one flat directory would let a gem name and
 		// an item id reduce to the same file — and only if they also share a
 		// source URL, since the filename carries a hash of that URL too.
-		IconCacheDir: serviceCfg.IconCacheDir,
+		IconSets: server.BuildIconSets(serviceCfg.IconCacheDir),
 	}
 
 	deps := newRouterDeps(pool, scope, mercureURL, mercureSecret, tradeRepo)

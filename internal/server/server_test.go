@@ -239,7 +239,7 @@ const currencyExchangeIconPath = "/api/icon/currency-exchange/Metadata%2FItems%2
 func TestNewRouter_CurrencyExchangeIconRouteIsRegisteredWhenACacheRootIsConfigured(t *testing.T) {
 	frontend := fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("<html>SPA shell</html>")}}
 	router := NewRouter(handlers.NopPinger{}, frontend, RouterConfig{
-		IconCacheDir: t.TempDir(),
+		IconSets: BuildIconSets(t.TempDir()),
 	})
 
 	req := httptest.NewRequest(http.MethodGet, currencyExchangeIconPath, nil)
@@ -254,6 +254,20 @@ func TestNewRouter_CurrencyExchangeIconRouteIsRegisteredWhenACacheRootIsConfigur
 	if got := w.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q — the icon handler answered this 404, chi's NotFound would not have set it",
 			got, "no-store")
+	}
+}
+
+// Without IconSets the icon routes are not registered: the request falls through
+// to the JSON 404, which carries none of the icon handler's no-store stamp.
+func TestNewRouter_IconRoutesAreAbsentWithoutIconSets(t *testing.T) {
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/icon/gems/Absolution", nil))
+
+	assertAPINotFound(t, w)
+	if got := w.Header().Get("Cache-Control"); got != "" {
+		t.Errorf("Cache-Control = %q, want none — the icon handler answered, so the route is registered", got)
 	}
 }
 
@@ -364,7 +378,7 @@ func assertAPINotFound(t *testing.T, w *httptest.ResponseRecorder) {
 // one icon under the default root's currency-exchange sub-directory, so a 200
 // carrying those exact bytes can only have been read from that root.
 //
-// Delete the `iconRoot == ""` branch in NewRouter and this fails — but not the
+// Delete the `root == ""` branch in BuildIconSets and this fails — but not the
 // way a missing route fails, which is why the assertion is on the bytes and not
 // on a status or a header. filepath.Join("", "currency-exchange") is
 // "currency-exchange": non-empty, so no constructor rejects it and the route is
@@ -386,7 +400,7 @@ func TestNewRouter_CurrencyExchangeIconRouteServesFromTheDefaultRootWhenNoneIsCo
 		"Metadata_Items_Currency_CurrencyRerollRare-41db757a2f323113.png")
 	writeIconFile(t, seedPath, itemBytes)
 
-	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{IconSets: BuildIconSets("")})
 
 	itemURL := "/api/icon/currency-exchange/" + url.PathEscape(itemID)
 	req := httptest.NewRequest(http.MethodGet, itemURL, nil)
@@ -470,7 +484,7 @@ func TestNewRouter_EachIconRouteServesFromItsOwnSubdirectoryOfTheCacheRoot(t *te
 	// sha256("https://www.poewiki.net/images/9/9c/Chaos_Orb_inventory_icon.png")[:8]
 	writeIconFile(t, filepath.Join(itemDir, "Metadata_Items_Currency_CurrencyRerollRare-41db757a2f323113.png"), itemBytes)
 
-	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{IconCacheDir: root})
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{IconSets: BuildIconSets(root)})
 
 	gemW := httptest.NewRecorder()
 	router.ServeHTTP(gemW, httptest.NewRequest(http.MethodGet, "/api/icon/gems/"+gemName, nil))
