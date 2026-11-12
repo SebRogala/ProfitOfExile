@@ -723,3 +723,57 @@ func TestQueryCollective_StatementCountIsIndependentOfPageSize(t *testing.T) {
 		t.Errorf("statements = %d (pageSize 10) and %d (pageSize 50), want %d for both", small, large, collectivePageStatementBudget)
 	}
 }
+
+// seedRankedCorpus bulk-inserts n eligible rows "Bulk 0000".. ranked by
+// descending ROI, each with a sellability-100 signal, plus extra.
+func seedRankedCorpus(t *testing.T, pool *pgxpool.Pool, scope league.Scope, n int) {
+	t.Helper()
+	ctx := context.Background()
+	at := time.Now()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO transfigure_results
+			(league, time, base_name, transfigured_name, variant, base_price, transfigured_price,
+			 roi, roi_pct, base_listings, transfigured_listings, gem_color, confidence)
+		SELECT $1, $2, 'Bulk Base', 'Bulk ' || lpad(i::text, 4, '0'), '20/20', 10, 10 + 5000 - i,
+		       5000 - i, 100, 20, 20, 'BLUE', 'OK'
+		FROM generate_series(0, $3::int - 1) AS i`, scope.ID(), at, n); err != nil {
+		t.Fatalf("bulk seed transfigure: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO gem_signals (league, time, name, variant, signal, sellability)
+		SELECT $1, $2, 'Bulk ' || lpad(i::text, 4, '0'), '20/20', 'STABLE', 100
+		FROM generate_series(0, $3::int - 1) AS i`, scope.ID(), at, n); err != nil {
+		t.Fatalf("bulk seed signals: %v", err)
+	}
+}
+
+// Legacy search keeps today's operation: rank, keep the top 1000, then match.
+// Bulk 1000 ranks 1001st, so only a paged search finds it.
+func TestCollectivePage_LegacySearchMatchesOnlyWithinTheTop1000Ranked(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := collectiveLeague(t, pool, "ADR030-LegacySearchCap")
+	seedRankedCorpus(t, pool, scope, 1001)
+	repo := NewRepository(pool)
+
+	legacy := CollectiveQuery{Page: 1, PageSize: 20, Sort: CollectiveSortLegacyWeightedChaos, Legacy: true, Search: "Bulk 1000"}
+	if got := collectivePage(t, repo, scope, legacy); len(got.Rows) != 0 || got.Total != 0 {
+		t.Errorf("legacy search = %v (total %d), want no match beyond the ranked top 1000", pageNames(got), got.Total)
+	}
+	legacy.Search = "Bulk 0999"
+	assertNames(t, pageNames(collectivePage(t, repo, scope, legacy)), "Bulk 0999")
+
+	paged := CollectiveQuery{Page: 1, PageSize: 20, Sort: CollectiveSortWeightedROI, Search: "Bulk 1000"}
+	assertNames(t, pageNames(collectivePage(t, repo, scope, paged)), "Bulk 1000")
+}
+
+func TestCollectivePage_HugePageIsEmptyWithTotal(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := collectiveLeague(t, pool, "ADR030-HugePage")
+	rows := numberedRows(3)
+	seedCollective(t, pool, scope, time.Now(), rows, fullSellability(rows), nil)
+
+	got := collectivePage(t, NewRepository(pool), scope, pagedQuery(4611686018427387905, 2, CollectiveSortPrice))
+	if len(got.Rows) != 0 || got.Total != 3 {
+		t.Errorf("rows = %v, total = %d; want no rows and total 3", pageNames(got), got.Total)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 
 	"profitofexile/internal/league"
 )
@@ -69,10 +70,14 @@ func (q CollectiveQuery) Validate() error {
 	if q.Budget < 0 {
 		return errors.New("budget must be a non-negative number")
 	}
+	// Legacy requests keep their old acceptance: any parsed budget, any variant.
+	if !q.Legacy && (math.IsNaN(q.Budget) || math.IsInf(q.Budget, 0)) {
+		return errors.New("budget must be a finite non-negative number")
+	}
 	if q.Color != "" && !collectiveColors[q.Color] {
 		return errors.New("color must be RED, GREEN, BLUE or ALL")
 	}
-	if q.Variant != "" && !collectiveVariants[q.Variant] {
+	if !q.Legacy && q.Variant != "" && !collectiveVariants[q.Variant] {
 		return errors.New("variant must be one of 1/0, 1/20, 20/0, 20/20")
 	}
 	return nil

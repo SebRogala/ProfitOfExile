@@ -115,6 +115,8 @@ func TestCollectiveAnalysis_PagedRequestRejectsBadParams(t *testing.T) {
 		{"pageSize=10&pool=skill", "pool"},
 		{"pageSize=10&color=PURPLE", "color"},
 		{"pageSize=10&budget=-1", "budget"},
+		{"pageSize=10&budget=NaN", "budget"},
+		{"pageSize=10&budget=Inf", "budget"},
 		{"pageSize=10&hideLowConfidence=maybe", "hideLowConfidence"},
 		{"pageSize=10&variant=21/23", "variant"},
 	} {
@@ -215,5 +217,26 @@ func TestCollectiveAnalysis_PagerFailureReturnsQueryFailed(t *testing.T) {
 	w := servePaged(t, pager, "/api/analysis/collective?pageSize=10")
 	if w.Code != http.StatusInternalServerError || w.Body.String() != "{\"error\":\"query failed\"}\n" {
 		t.Errorf("status = %d, body = %q; want 500 query failed", w.Code, w.Body.String())
+	}
+}
+
+func TestCollectiveAnalysis_LegacyUnknownVariantReachesTheSourceAndAnswersEmpty(t *testing.T) {
+	pager := &fakeCollectivePager{}
+	w := servePaged(t, pager, "/api/analysis/collective?variant=unknown")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s; want 200", w.Code, w.Body.String())
+	}
+	if len(pager.queries) != 1 || pager.queries[0].Variant != "unknown" {
+		t.Errorf("pager queries = %+v, want one with variant \"unknown\"", pager.queries)
+	}
+	var resp struct {
+		Count int               `json:"count"`
+		Data  []json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Count != 0 || resp.Data == nil || len(resp.Data) != 0 {
+		t.Errorf("count = %d, data = %v; want the empty success envelope", resp.Count, resp.Data)
 	}
 }

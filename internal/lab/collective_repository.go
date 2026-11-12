@@ -3,6 +3,7 @@ package lab
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -26,12 +27,12 @@ type CollectivePage struct {
 //   - weighted = value × sellability/100 × (1 − DUMPING penalty), where the
 //     penalty is 0.5 under 15 transfigured listings and 0.15 otherwise.
 //
-// Sellability falls back to 50 only when the stored signal is ” — a gem with
+// Sellability falls back to 50 only when the stored signal is empty — a gem with
 // no signal row reads as STABLE and so scores 0. That is today's behaviour,
 // kept knowingly (ADR030 D5).
 //
-// Params: $1 league, $2 variant (” = all), $3 colour (” = all), $4 budget
-// (<= 0 = off), $5 hide low confidence, $6 escaped ILIKE search (” = none).
+// Params: $1 league, $2 variant (empty = all), $3 colour (empty = all), $4 budget
+// (<= 0 = off), $5 hide low confidence, $6 escaped ILIKE search (empty = none).
 const collectiveRankedCTE = `
 WITH tr AS (
 	SELECT * FROM transfigure_results
@@ -76,7 +77,6 @@ WITH tr AS (
 	  AND ($3::text = '' OR tr.gem_color = $3::text)
 	  AND ($4::float8 <= 0 OR (tr.confidence <> 'NO_BASE' AND tr.base_price::float8 <= $4::float8))
 	  AND (NOT $5::boolean OR NOT (COALESCE(f.low_confidence, false) OR tr.confidence = 'LOW'))
-	  AND ($6::text = '' OR tr.transfigured_name ILIKE '%' || $6::text || '%')
 ), factored AS (
 	SELECT joined.*,
 		(CASE WHEN sellability = 0 AND signal = '' THEN 50 ELSE sellability END)::float8 / 100.0::float8 AS liquidity_score,
@@ -110,6 +110,20 @@ const collectivePageColumns = `
 	has_feature, vel_long_price, vel_long_listing, cv, hist_position, low_7d, high_7d, market_depth,
 	low_confidence`
 
+// collectiveSearchPredicate matches $6, an escaped ILIKE pattern (empty = none).
+const collectiveSearchPredicate = `($6::text = '' OR transfigured_name ILIKE '%' || $6::text || '%')`
+
+// collectiveMatched appends the search stage. A paged search matches every
+// ranked row; a legacy search keeps today's operation and matches only within
+// the top CollectiveSearchLimit rows of its order.
+func collectiveMatched(q CollectiveQuery) string {
+	if q.Legacy && q.Search != "" {
+		return fmt.Sprintf(`, matched AS (SELECT * FROM (SELECT * FROM ranked ORDER BY %s LIMIT %d) top WHERE %s)`,
+			collectiveOrderBy[q.Sort], CollectiveSearchLimit, collectiveSearchPredicate)
+	}
+	return `, matched AS (SELECT * FROM ranked WHERE ` + collectiveSearchPredicate + `)`
+}
+
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // CollectivePage counts and pages the Normal collective ranking in one
@@ -123,7 +137,11 @@ func (r *Repository) CollectivePage(ctx context.Context, scope league.Scope, q C
 	if err := q.Validate(); err != nil {
 		return CollectivePage{}, fmt.Errorf("lab repo: collective page: %w", err)
 	}
-	limit, offset := q.PageSize, (q.Page-1)*q.PageSize
+	limit, offset := q.PageSize, math.MaxInt64
+	// A page whose offset overflows lies past any representable row count.
+	if q.Page-1 <= math.MaxInt64/q.PageSize {
+		offset = (q.Page - 1) * q.PageSize
+	}
 	if q.Search != "" {
 		limit, offset = CollectiveSearchLimit, 0
 	}
@@ -140,11 +158,11 @@ func (r *Repository) CollectivePage(ctx context.Context, scope league.Scope, q C
 	defer tx.Rollback(ctx)
 
 	var out CollectivePage
-	if err := tx.QueryRow(ctx, collectiveRankedCTE+` SELECT COUNT(*) FROM ranked`, args...).Scan(&out.Total); err != nil {
+	if err := tx.QueryRow(ctx, collectiveRankedCTE+collectiveMatched(q)+` SELECT COUNT(*) FROM matched`, args...).Scan(&out.Total); err != nil {
 		return CollectivePage{}, fmt.Errorf("lab repo: collective count: %w", err)
 	}
 	rows, err := tx.Query(ctx,
-		collectiveRankedCTE+` SELECT `+collectivePageColumns+` FROM ranked ORDER BY `+collectiveOrderBy[q.Sort]+` LIMIT $7 OFFSET $8`,
+		collectiveRankedCTE+collectiveMatched(q)+` SELECT `+collectivePageColumns+` FROM matched ORDER BY `+collectiveOrderBy[q.Sort]+` LIMIT $7 OFFSET $8`,
 		append(args, limit, offset)...)
 	if err != nil {
 		return CollectivePage{}, fmt.Errorf("lab repo: collective page query: %w", err)
