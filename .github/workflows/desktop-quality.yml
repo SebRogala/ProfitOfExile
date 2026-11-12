@@ -6,9 +6,10 @@ name: Desktop Quality
 # docker-compose.yml and Makefile are inputs (compose build desktop,
 # make merc-seed-art), and so are the internal/ test-data directories
 # docker-compose.yml mounts into the desktop container: desktop tests read
-# them, so a change there alone must run these jobs. The Rust cache warmer is
-# desktop-cache.yml, not here — these jobs build inside a Linux container and
-# cannot share its cache.
+# them, so a change there alone must run these jobs. frontend/src/ is an
+# input for the same reason: the mirror-identity guard reads the web copies.
+# The Rust cache warmer is desktop-cache.yml, not here — these jobs build
+# inside a Linux container and cannot share its cache.
 
 on:
   pull_request:
@@ -20,6 +21,7 @@ on:
       - 'internal/trade/testdata/**'
       - 'internal/mercenary/testdata/merc-sig-v2/**'
       - 'internal/icons/urls/**'
+      - 'frontend/src/**'
       - '.github/workflows/desktop-quality.yml'
   push:
     branches: [main]
@@ -31,6 +33,7 @@ on:
       - 'internal/trade/testdata/**'
       - 'internal/mercenary/testdata/merc-sig-v2/**'
       - 'internal/icons/urls/**'
+      - 'frontend/src/**'
       - '.github/workflows/desktop-quality.yml'
 
 jobs:
