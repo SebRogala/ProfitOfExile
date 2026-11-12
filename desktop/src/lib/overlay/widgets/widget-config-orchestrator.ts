@@ -31,6 +31,9 @@ export interface WidgetConfigTarget {
 export type TimerHandle = unknown;
 
 export type WidgetConfigPorts = {
+	/** Loads the window API before each lookup. NOT caught: a rejection here
+	 *  propagates out of `start`/`end`, as the layout's dynamic import did. */
+	loadWindowApi: () => Promise<void>;
 	/** May reject; a rejection is logged and read as "no window". */
 	getWindowByLabel: (label: string) => Promise<ConfigWindow | null>;
 	invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -137,6 +140,7 @@ export function createWidgetConfigOrchestrator(ports: WidgetConfigPorts): Widget
 	}
 
 	async function widgetConfigWindow(label: string): Promise<ConfigWindow | null> {
+		await ports.loadWindowApi();
 		return await ports.getWindowByLabel(label).catch((e) => {
 			logWidgetConfig(label, `window lookup failed: ${e}`);
 			return null;

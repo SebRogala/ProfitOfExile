@@ -325,6 +325,7 @@
 
 	/** The production ports for the widget-config flow (POE-346 D1): Tauri lives here, the flow does not. */
 	const widgetConfig = createWidgetConfigOrchestrator({
+		loadWindowApi: async () => { await import('@tauri-apps/api/webviewWindow'); },
 		getWindowByLabel: async (label) => {
 			const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 			return await WebviewWindow.getByLabel(label);

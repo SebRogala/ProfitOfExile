@@ -32,19 +32,22 @@ interface Harness {
 		visible: boolean;
 		gameFocused: boolean;
 		lookupRejects: boolean;
+		importRejects: boolean;
 		reject: Partial<Record<string, unknown>>;
 	};
 }
 
 /** `reject` keys: 'show', 'hide', 'isVisible', 'get_status', 'app_log',
  *  'set_overlay_config_mode:on', 'set_overlay_config_mode:off',
- *  'emitTo:on', 'emitTo:off', and any `emitToMain` event name. */
+ *  'emitTo:on', 'emitTo:off' (both off sends), 'emitTo:off#1' / 'emitTo:off#2'
+ *  (first / repeated off send only), and any `emitToMain` event name. */
 function harness(init: Partial<Harness['world']> = {}): Harness {
 	const world: Harness['world'] = {
 		built: true,
 		visible: false,
 		gameFocused: false,
 		lookupRejects: false,
+		importRejects: false,
 		reject: {},
 		...init
 	};
@@ -53,6 +56,7 @@ function harness(init: Partial<Harness['world']> = {}): Harness {
 	const errors: unknown[][] = [];
 	const appLogs: string[] = [];
 	let sessions = widgetConfigSessionsInit();
+	let offSends = 0;
 	const fail = (key: string) =>
 		key in world.reject ? Promise.reject(world.reject[key]) : Promise.resolve();
 
@@ -73,6 +77,9 @@ function harness(init: Partial<Harness['world']> = {}): Harness {
 	};
 
 	const ports: WidgetConfigPorts = {
+		loadWindowApi: async () => {
+			if (world.importRejects) throw 'import boom';
+		},
 		getWindowByLabel: async (label) => {
 			calls.push(['getWindowByLabel', label]);
 			if (world.lookupRejects) throw 'lookup boom';
@@ -95,7 +102,12 @@ function harness(init: Partial<Harness['world']> = {}): Harness {
 		},
 		emitTo: async (label, event, payload) => {
 			calls.push(['emitTo', label, event, payload]);
-			await fail(`emitTo:${(payload as { on: boolean }).on ? 'on' : 'off'}`);
+			const on = (payload as { on: boolean }).on;
+			if (!on) {
+				offSends += 1;
+				await fail(`emitTo:off#${offSends}`);
+			}
+			await fail(`emitTo:${on ? 'on' : 'off'}`);
 		},
 		emitToMain: async (event, payload) => {
 			calls.push(['emitToMain', event, payload]);
@@ -495,28 +507,34 @@ describe('non-fatal failures', () => {
 		expect(h.calls.slice(before)).toEqual(ABANDON_WITH_HIDE);
 	});
 
-	it('rejecting abandon steps are each logged and the abandon completes', async () => {
-		const h = harness({
-			built: false,
-			reject: { 'emitTo:off': 'e', 'set_overlay_config_mode:off': 'm', 'widget-config-end': 'z' }
+	describe.each([
+		['the first leave request', { 'emitTo:off#1': 'e' }, 'could not ask the window to leave config mode: e'],
+		['the direct config-mode clear', { 'set_overlay_config_mode:off': 'm' }, 'direct config-mode clear did not apply: m'],
+		['the repeated leave request', { 'emitTo:off#2': 'e' }, 'could not repeat the leave request: e'],
+		['the end report', { 'widget-config-end': 'z' }, 'could not report the failure to Settings: z']
+	])('a rejecting abandon step: %s', (_name, reject, line) => {
+		async function abandoned() {
+			const h = harness({ built: false, reject });
+			void opened(h).start(MODULE);
+			await vi.advanceTimersByTimeAsync(10_050);
+			return h;
+		}
+
+		it('is logged', async () => {
+			const h = await abandoned();
+			expect(h.warnings).toContain(`[widget-config] temple: ${line}`);
 		});
-		void opened(h).start(MODULE);
-		await vi.advanceTimersByTimeAsync(10_050);
-		const at = h.calls.findIndex((c) => c[0] === 'emitTo');
-		expect(h.calls.slice(at)).toEqual([
-			...ABANDON_HEAD,
-			['getWindowByLabel', LABEL],
-			DROPPED,
-			['emitToMain', 'widget-config-end', { module: MODULE }]
-		]);
-		expect(h.warnings).toEqual(
-			expect.arrayContaining([
-				'[widget-config] temple: could not ask the window to leave config mode: e',
-				'[widget-config] temple: direct config-mode clear did not apply: m',
-				'[widget-config] temple: could not repeat the leave request: e',
-				'[widget-config] temple: could not report the failure to Settings: z'
-			])
-		);
+
+		it('does not stop the abandon sequence', async () => {
+			const h = await abandoned();
+			const at = h.calls.findIndex((c) => c[0] === 'emitTo');
+			expect(h.calls.slice(at)).toEqual([
+				...ABANDON_HEAD,
+				['getWindowByLabel', LABEL],
+				DROPPED,
+				['emitToMain', 'widget-config-end', { module: MODULE }]
+			]);
+		});
 	});
 
 	it('a rejecting hide is logged and the session is still dropped', async () => {
@@ -551,5 +569,32 @@ describe('non-fatal failures', () => {
 		await vi.advanceTimersByTimeAsync(0);
 		expect(h.errors).toContainEqual(['[widget-config] app log unreachable:', 'down']);
 		expect(h.calls.at(-1)).toEqual(['emitToMain', 'widget-config-end', { module: 'nope' }]);
+	});
+});
+
+describe('a rejecting window-API load', () => {
+	it('rejects start before any session is recorded', async () => {
+		const h = harness({ importRejects: true });
+		await expect(opened(h).start(MODULE)).rejects.toBe('import boom');
+		expect(h.sessions()).toEqual({});
+		expect(h.warnings).toEqual([]);
+	});
+
+	it('rejects end before the session is dropped', async () => {
+		const h = harness();
+		const o = opened(h);
+		await o.start(MODULE);
+		h.world.importRejects = true;
+		await expect(o.end(MODULE)).rejects.toBe('import boom');
+		expect(h.sessions()).toEqual({ [MODULE]: { shown: true } });
+	});
+
+	it('releases the in-flight guard so the next start proceeds', async () => {
+		const h = harness({ importRejects: true });
+		const o = opened(h);
+		await o.start(MODULE).catch(() => {});
+		h.world.importRejects = false;
+		await o.start(MODULE);
+		expect(h.calls.at(-1)).toEqual(['emitToMain', 'widget-config-open', { module: MODULE }]);
 	});
 });
