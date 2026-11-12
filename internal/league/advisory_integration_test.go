@@ -264,3 +264,82 @@ func TestCheckHeldReportsLivenessAndRelease(t *testing.T) {
 		t.Fatalf("CheckHeld after Release = %v, want ErrLockReleased", err)
 	}
 }
+
+// TestSuperviseCancelsWithErrFenceLostWhenFenceBackendTerminated kills the
+// fence's Postgres backend from a second session, the server-side view of a
+// dropped connection, and expects the watcher to report fence loss.
+func TestSuperviseCancelsWithErrFenceLostWhenFenceBackendTerminated(t *testing.T) {
+	requireDatabase(t)
+	ctx := context.Background()
+
+	key := testLockKey(t)
+	poolA := newTestPool(t, os.Getenv("DATABASE_URL"))
+	poolB := newTestPool(t, os.Getenv("DATABASE_URL"))
+	lock, err := AcquireProcessLock(ctx, poolA, key)
+	if err != nil {
+		t.Fatalf("AcquireProcessLock: %v", err)
+	}
+	t.Cleanup(lock.Release)
+
+	supervised := lock.Supervise(ctx, 100*time.Millisecond, time.Second)
+	pid := lock.conn.Conn().PgConn().PID()
+	var terminated bool
+	if err := poolB.QueryRow(ctx, `SELECT pg_terminate_backend($1)`, pid).Scan(&terminated); err != nil {
+		t.Fatalf("pg_terminate_backend: %v", err)
+	}
+	if !terminated {
+		t.Fatalf("pg_terminate_backend(%d) = false, want true (single-role lane DB)", pid)
+	}
+
+	select {
+	case <-supervised.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("supervised context not Done within 5s of backend termination")
+	}
+	if cause := context.Cause(supervised); !errors.Is(cause, ErrFenceLost) {
+		t.Fatalf("cause = %v, want ErrFenceLost", cause)
+	}
+	if err := lock.CheckHeld(ctx); err == nil {
+		t.Fatal("CheckHeld after fence loss = nil, want error (health must stay 503)")
+	}
+
+	peer, err := AcquireProcessLock(ctx, poolB, key)
+	if err != nil {
+		t.Fatalf("peer AcquireProcessLock after fence loss: %v, want the key free", err)
+	}
+	peer.Release()
+}
+
+// TestSuperviseParentCancelKeepsFenceHeld proves that stopping the watcher via
+// its parent leaves the fence held: Supervise never releases the lock.
+func TestSuperviseParentCancelKeepsFenceHeld(t *testing.T) {
+	requireDatabase(t)
+	ctx := context.Background()
+
+	key := testLockKey(t)
+	poolA := newTestPool(t, os.Getenv("DATABASE_URL"))
+	poolB := newTestPool(t, os.Getenv("DATABASE_URL"))
+	lock, err := AcquireProcessLock(ctx, poolA, key)
+	if err != nil {
+		t.Fatalf("AcquireProcessLock: %v", err)
+	}
+	t.Cleanup(lock.Release)
+
+	parent, cancel := context.WithCancel(ctx)
+	supervised := lock.Supervise(parent, 50*time.Millisecond, time.Second)
+	cancel()
+	select {
+	case <-supervised.Done():
+	case <-time.After(time.Second):
+		t.Fatal("supervised context not Done within 1s of parent cancel")
+	}
+	// Give a watcher that wrongly released on exit time to do so.
+	time.Sleep(200 * time.Millisecond)
+
+	if err := lock.CheckHeld(ctx); err != nil {
+		t.Fatalf("CheckHeld after parent cancel = %v, want nil", err)
+	}
+	if _, err := AcquireProcessLock(ctx, poolB, key); !errors.Is(err, ErrLockHeld) {
+		t.Fatalf("peer AcquireProcessLock = %v, want ErrLockHeld", err)
+	}
+}

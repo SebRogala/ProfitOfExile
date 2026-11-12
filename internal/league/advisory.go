@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,6 +24,10 @@ var ErrLockHeld = errors.New("league advisory lock is held by another session")
 // dropped connection, which surfaces as a query error instead.
 var ErrLockReleased = errors.New("league advisory lock was already released")
 
+// ErrFenceLost is the cancellation cause Supervise reports when a liveness
+// check fails. It wraps the failing check's error.
+var ErrFenceLost = errors.New("league advisory lock fence lost")
+
 // ProcessLock is a session-level Postgres advisory lock held for the lifetime
 // of a process fence. It owns a dedicated pooled connection: a session advisory
 // lock is bound to the connection that took it, so the connection must stay out
@@ -35,7 +38,10 @@ type ProcessLock struct {
 	conn *pgxpool.Conn
 	key  int64
 
-	mu       sync.Mutex
+	// sem is a one-slot semaphore serialising use of conn. Unlike a mutex,
+	// CheckHeld's wait for it observes ctx, so a holder stalled on a half-open
+	// connection cannot park the fence watcher past its check timeout.
+	sem      chan struct{}
 	released bool
 }
 
@@ -59,7 +65,7 @@ func AcquireProcessLock(ctx context.Context, pool *pgxpool.Pool, key int64) (*Pr
 		return nil, ErrLockHeld
 	}
 
-	return &ProcessLock{conn: conn, key: key}, nil
+	return &ProcessLock{conn: conn, key: key, sem: make(chan struct{}, 1)}, nil
 }
 
 // AcquireProcessLockWait is the bounded-retry variant of AcquireProcessLock for
@@ -106,8 +112,12 @@ func AcquireProcessLockWait(ctx context.Context, pool *pgxpool.Pool, key int64, 
 // letting a peer silently acquire it, so callers poll this on their health path
 // and fail readiness when it errors. It returns ErrLockReleased after Release.
 func (l *ProcessLock) CheckHeld(ctx context.Context) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	select {
+	case l.sem <- struct{}{}:
+	case <-ctx.Done():
+		return fmt.Errorf("advisory lock liveness check: wait for fence connection: %w", ctx.Err())
+	}
+	defer func() { <-l.sem }()
 	if l.released {
 		return ErrLockReleased
 	}
@@ -124,8 +134,8 @@ func (l *ProcessLock) CheckHeld(ctx context.Context) error {
 // best-effort: a dropped connection has already auto-released the lock in
 // Postgres, so a failing unlock is not an error worth propagating.
 func (l *ProcessLock) Release() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.sem <- struct{}{}
+	defer func() { <-l.sem }()
 	if l.released {
 		return
 	}
@@ -135,6 +145,43 @@ func (l *ProcessLock) Release() {
 	// caller's context is already cancelled (the common shutdown path).
 	_, _ = l.conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, l.key)
 	l.conn.Release()
+}
+
+// Supervise returns a child of parent that is cancelled with cause ErrFenceLost
+// (wrapping the check error) on the first failing CheckHeld, run every `every`
+// under a checkTimeout deadline. A timed-out check counts as loss: a healthy
+// SELECT 1 takes milliseconds, so a stall that long means a half-open
+// connection. Parent cancellation ends the watcher without reporting loss.
+// Supervise never calls Release: Release's unlock uses a background context and
+// could block on the same dead connection.
+func (l *ProcessLock) Supervise(parent context.Context, every, checkTimeout time.Duration) context.Context {
+	return superviseLiveness(parent, every, checkTimeout, l.CheckHeld)
+}
+
+func superviseLiveness(parent context.Context, every, checkTimeout time.Duration, check func(context.Context) error) context.Context {
+	ctx, cancel := context.WithCancelCause(parent)
+	go func() {
+		ticker := time.NewTicker(every)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			checkCtx, cancelCheck := context.WithTimeout(parent, checkTimeout)
+			err := check(checkCtx)
+			cancelCheck()
+			if parent.Err() != nil {
+				return
+			}
+			if err != nil {
+				cancel(fmt.Errorf("%w: %w", ErrFenceLost, err))
+				return
+			}
+		}
+	}()
+	return ctx
 }
 
 // AcquireFencedScope takes the process fence on key, then resolves the runtime
