@@ -13,7 +13,28 @@ export default defineConfig({
 		// which also blanks a `?raw` import of a stylesheet. `overlay-tokens.test.ts`
 		// reads `tokens.css` that way to prove the overlay window's palette is
 		// actually declared, so it needs the real text.
-		css: true
+		css: true,
+		projects: [
+			{
+				extends: true,
+				test: {
+					name: 'unit',
+					exclude: ['**/node_modules/**', '**/*.effect.svelte.test.ts']
+				}
+			},
+			{
+				// Effect-wiring tests need Svelte's client runtime: the client-compiled
+				// module and the browser-condition `svelte` import (FE-M3b D2).
+				extends: true,
+				resolve: { conditions: ['browser'] },
+				ssr: { resolve: { conditions: ['browser'], externalConditions: ['browser'] } },
+				test: {
+					name: 'rune-effect',
+					environment: './vitest.client-env.ts',
+					include: ['src/**/*.effect.svelte.test.ts']
+				}
+			}
+		]
 	},
 	clearScreen: false,
 	server: {
