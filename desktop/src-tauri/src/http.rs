@@ -35,7 +35,7 @@ impl ProxyUrl {
             return Err("Proxy URL has no host".to_string());
         }
         if !url.username().is_empty() || url.password().is_some() {
-            return Err("Credentials in the proxy URL are not supported — use socks5://host:port or http://host:port".to_string());
+            return Err("Proxy credentials are not supported: the app window (WebView2) cannot use them. Use socks5://host:port or http://host:port.".to_string());
         }
         reqwest::Proxy::all(trimmed).map_err(|e| format!("Proxy URL rejected: {e}"))?;
         Ok(Some(ProxyUrl(trimmed.to_string())))
@@ -129,7 +129,7 @@ mod tests {
             "http://:pass@proxy.example:3128",
         ] {
             let err = ProxyUrl::parse(raw).expect_err(raw);
-            assert!(err.contains("Credentials in the proxy URL are not supported"), "{raw}: {err}");
+            assert!(err.contains("Proxy credentials are not supported: the app window (WebView2) cannot use them."), "{raw}: {err}");
         }
     }
 
