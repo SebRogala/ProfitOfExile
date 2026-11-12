@@ -1045,6 +1045,23 @@ fn forget_screen_scale(existing: &Settings, target: &mut Settings) {
     persist_overlay_settings(existing, target);
 }
 
+/// The merge every whole-file rebuild from `from_state` applies against the
+/// stored file: the remembered screen scale, then the rows no AppState mutex
+/// owns.
+pub fn merge_stored_rows(existing: &Settings, target: &mut Settings) {
+    preserve_screen_scale(existing, target);
+    persist_overlay_settings(existing, target);
+}
+
+/// The window-close save: the stored-row merge, then this session's window,
+/// set last so the merge cannot restore the stored one.
+pub fn close_save_settings(existing: &Settings, from_state: Settings, window: WindowSettings) -> Settings {
+    let mut target = from_state;
+    merge_stored_rows(existing, &mut target);
+    target.window = Some(window);
+    target
+}
+
 /// Copy overlay/window settings from existing file into the new settings struct.
 /// These fields are not owned by AppState and must survive unrelated saves.
 pub fn persist_overlay_settings(existing: &Settings, target: &mut Settings) {
@@ -3504,6 +3521,68 @@ mod tests {
     /// Regression guard: if persist_overlay_settings were ever called AFTER
     /// s.window = Some(...), it would overwrite the freshly set window settings
     /// with the file's stale version. Correct order: persist_overlay THEN set window.
+    fn stored_frame_measurement() -> ScreenScaleSetting {
+        ScreenScaleSetting {
+            width: 1920,
+            height: 1200,
+            ui_scale: 1.0,
+            measured_at_ms: 1_724_000_000_000,
+            monitor_id: 0,
+            origin: (0, 0),
+            client: [0, 0, 1920, 1200],
+            anchors: None,
+        }
+    }
+
+    fn closing_window() -> WindowSettings {
+        WindowSettings { x: 200, y: 300, width: 1024, height: 768, maximized: false }
+    }
+
+    /// N2: the close save used to skip the screen-scale merge, so closing after
+    /// an OCR-only session erased the remembered measurement.
+    #[test]
+    fn close_save_keeps_the_stored_measurement_when_this_session_only_ocr_fitted() {
+        let state = test_app_state();
+        *state.screen.lock().unwrap() =
+            Some(measured_screen(crate::ssot::ScreenScaleSource::MercOcr));
+        let existing = Settings { screen_scale: Some(stored_frame_measurement()), ..Settings::default() };
+        let session = from_state(&state);
+        assert_eq!(session.screen_scale, None, "precondition: the OCR estimate is not persistable");
+
+        let saved = close_save_settings(&existing, session, closing_window());
+
+        assert_eq!(saved.screen_scale, existing.screen_scale);
+    }
+
+    #[test]
+    fn close_save_carries_the_stored_overlay_rows() {
+        let compass = OverlaySettings { x: 50, y: 60, width: 400, height: 350, enabled: true };
+        let existing = Settings {
+            compass_overlay: Some(compass.clone()),
+            proxy_url: "socks5h://127.0.0.1:1080".into(),
+            ..Settings::default()
+        };
+
+        let saved = close_save_settings(&existing, Settings::default(), closing_window());
+
+        let kept = saved.compass_overlay.expect("compass_overlay lost");
+        assert_eq!((kept.x, kept.y, kept.width, kept.height), (compass.x, compass.y, compass.width, compass.height));
+        assert_eq!(saved.proxy_url, existing.proxy_url);
+    }
+
+    #[test]
+    fn close_save_writes_this_sessions_window_over_the_stored_one() {
+        let existing = Settings {
+            window: Some(WindowSettings { x: 0, y: 0, width: 800, height: 600, maximized: true }),
+            ..Settings::default()
+        };
+
+        let saved = close_save_settings(&existing, Settings::default(), closing_window());
+
+        let win = saved.window.expect("window row lost");
+        assert_eq!((win.x, win.y, win.width, win.height, win.maximized), (200, 300, 1024, 768, false));
+    }
+
     #[test]
     fn test_window_settings_not_overwritten_by_overlay_persist() {
         let existing = Settings {

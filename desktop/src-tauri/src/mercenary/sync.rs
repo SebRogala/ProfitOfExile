@@ -420,7 +420,7 @@ impl SyncFile {
 
     /// Write the file whole, through a temporary.
     ///
-    /// Write-temp-then-rename, the same shape as `settings::save`: a plain
+    /// Write-temp-then-rename, the same shape as `settings::save_to`: a plain
     /// `fs::write` truncates first, so a process that dies mid-write leaves a
     /// `pool-sync.json` that [`SyncFile::load`] discards — taking the ETag and
     /// every owed tombstone with it. The rename is what makes a reader see one

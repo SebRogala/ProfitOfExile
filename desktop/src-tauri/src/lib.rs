@@ -664,22 +664,14 @@ fn persist_settings(app: &AppHandle) {
         // Keep the remembered screen scale when this session has nothing to replace
         // it with. `from_state`'s screen-scale projection is lossy — a `MercOcr`
         // slice maps to `None` — so without this every one of the call sites below
-        // would null a stored measurement after the first OCR-only tick. Its own
-        // statement, NOT folded into `persist_overlay_settings`: that function's
-        // contract is fields no AppState mutex owns, and `state.screen` owns this
-        // one. `preserve_screen_scale` states the rest of the rule, including why a
-        // `MercFrame` measurement at different dimensions still overwrites.
-        settings::preserve_screen_scale(existing, &mut s);
-        // Preserve fields that are not owned by AppState:
-        // the window position and legacy overlay settings.
-        // This is DRY — from_state handles AppState fields, persist_overlay_settings handles the rest.
-        persist_overlay_settings(existing, &mut s);
+        // would null a stored measurement after the first OCR-only tick.
+        // `preserve_screen_scale` states the rest of the rule, including why a
+        // `MercFrame` measurement at different dimensions still overwrites. The
+        // same merge keeps the window position and the overlay rows, which no
+        // AppState mutex owns.
+        settings::merge_stored_rows(existing, &mut s);
         s
     });
-}
-
-fn persist_overlay_settings(existing: &settings::Settings, target: &mut settings::Settings) {
-    settings::persist_overlay_settings(existing, target);
 }
 
 /// Emit the full app status to all frontend listeners.
@@ -3740,10 +3732,7 @@ pub fn run() {
                     };
                     settings::update(app, |existing| {
                         let state = app.state::<AppState>();
-                        let mut s = settings::from_state(&state);
-                        persist_overlay_settings(existing, &mut s);
-                        s.window = Some(win_settings); // AFTER persist_overlay, so it's not overwritten
-                        s
+                        settings::close_save_settings(existing, settings::from_state(&state), win_settings)
                     });
 
                     // Force exit — background threads (focus poller, mouse hook, scan loops)
