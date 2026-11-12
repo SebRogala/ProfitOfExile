@@ -392,16 +392,8 @@ pub struct AppState {
     pub shrine_warn_corner: Mutex<String>,
     pub shrine_warn_on_take: Mutex<String>,
     pub lab_overlays_enabled: Mutex<bool>,
-    /// Lab mode: "Normal" or "Dedication". Controls OCR vocabulary and comparator
-    /// behaviour. The selection is persisted; manual override lasts until Plaza.
-    pub lab_mode: Mutex<String>,
-    pub autoclear_minutes: Mutex<u32>,
-    pub dedication_pool: Mutex<String>,
-    /// Dedication corrupted variant: "21/23" or "21/20". Selects which corrupted
-    /// market the Dedication views read. Persisted to settings.
-    pub dedication_variant: Mutex<String>,
-    pub normal_variant: Mutex<String>,
-    pub show_low_confidence: Mutex<bool>,
+    /// The lab selections — see `settings::LabSettings`. Taken alone.
+    pub lab_settings: Mutex<crate::settings::LabSettings>,
     /// Schema-less UI view preferences (sort mode, colour filter, row limit…).
     /// The frontend owns the keys; Rust only stores and persists the map. A
     /// typed Settings field is warranted only when Rust itself reads the value.
@@ -2093,7 +2085,7 @@ fn set_lab_overlays_enabled(enabled: bool, app: AppHandle) {
 #[tauri::command]
 fn get_lab_mode(app: AppHandle) -> String {
     let state = app.state::<AppState>();
-    let val = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let val = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).lab_mode.clone();
     val
 }
 
@@ -2136,11 +2128,11 @@ fn apply_manual_lab_mode(state: &AppState, mode: &str, mut emit: impl FnMut(&str
 
 /// Called under the detection lock so a manual override cannot race an auto-switch.
 fn change_lab_mode(state: &AppState, mode: &str) -> Option<String> {
-    let mut current = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner());
-    if current.as_str() == mode {
+    let mut lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner());
+    if lab.lab_mode == mode {
         return None;
     }
-    let previous = std::mem::replace(&mut *current, mode.to_string());
+    let previous = std::mem::replace(&mut lab.lab_mode, mode.to_string());
     // GemProcessingState::reset_for_generation drops the old matcher and any
     // pending dictionary response, then fetches vocabulary for the new mode.
     state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
@@ -2198,70 +2190,70 @@ fn publish_lab_detection(app: &AppHandle, update: LabDetectionUpdate) {
 #[tauri::command]
 fn get_autoclear_minutes(app: AppHandle) -> u32 {
     let state = app.state::<AppState>();
-    let value = *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner());
+    let value = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).autoclear_minutes;
     value
 }
 
 #[tauri::command]
 fn set_autoclear_minutes(minutes: u32, app: AppHandle) {
     let state = app.state::<AppState>();
-    *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner()) = minutes;
+    state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).autoclear_minutes = minutes;
     persist_settings(&app);
 }
 
 #[tauri::command]
 fn get_dedication_pool(app: AppHandle) -> String {
     let state = app.state::<AppState>();
-    let value = state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let value = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).dedication_pool.clone();
     value
 }
 
 #[tauri::command]
 fn set_dedication_pool(pool: String, app: AppHandle) {
     let state = app.state::<AppState>();
-    *state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()) = pool;
+    state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).dedication_pool = pool;
     persist_settings(&app);
 }
 
 #[tauri::command]
 fn get_dedication_variant(app: AppHandle) -> String {
     let state = app.state::<AppState>();
-    let value = state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let value = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).dedication_variant.clone();
     value
 }
 
 #[tauri::command]
 fn set_dedication_variant(variant: String, app: AppHandle) {
     let state = app.state::<AppState>();
-    *state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()) = variant;
+    state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).dedication_variant = variant;
     persist_settings(&app);
 }
 
 #[tauri::command]
 fn get_normal_variant(app: AppHandle) -> String {
     let state = app.state::<AppState>();
-    let value = state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let value = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).normal_variant.clone();
     value
 }
 
 #[tauri::command]
 fn set_normal_variant(variant: String, app: AppHandle) {
     let state = app.state::<AppState>();
-    *state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()) = variant;
+    state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).normal_variant = variant;
     persist_settings(&app);
 }
 
 #[tauri::command]
 fn get_show_low_confidence(app: AppHandle) -> bool {
     let state = app.state::<AppState>();
-    let value = *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner());
+    let value = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).show_low_confidence;
     value
 }
 
 #[tauri::command]
 fn set_show_low_confidence(show: bool, app: AppHandle) {
     let state = app.state::<AppState>();
-    *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()) = show;
+    state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).show_low_confidence = show;
     persist_settings(&app);
 }
 
@@ -2358,7 +2350,7 @@ async fn send_test_gems(app: AppHandle) -> Result<String, String> {
 /// view only knows its OWN mode's markets, so a market from the other mode fails
 /// its check and — before this — was dropped without a word.
 fn current_lab_mode_tag(state: &tauri::State<'_, AppState>) -> &'static str {
-    let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let lab_mode = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).lab_mode.clone();
     if lab_mode == "Dedication" { "dedication" } else { "normal" }
 }
 
@@ -2371,11 +2363,11 @@ fn current_lab_mode_tag(state: &tauri::State<'_, AppState>) -> &'static str {
 /// markets — the web view took it, failed to match it, and silently priced
 /// corrupted gems against the uncorrupted market.
 fn current_gem_variant(state: &tauri::State<'_, AppState>) -> String {
-    let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    if lab_mode == "Dedication" {
-        state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    let lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner());
+    if lab.lab_mode == "Dedication" {
+        lab.dedication_variant.clone()
     } else {
-        state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        lab.normal_variant.clone()
     }
 }
 
@@ -2451,7 +2443,7 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
 
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let http = state.server_http.clone();
-    let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let lab_mode = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).lab_mode.clone();
     let gem_names = fetch_gem_names(&app, &server, &http, &lab_mode).await;
     let matcher = gem_matcher::GemMatcher::new(gem_names);
 
@@ -2582,7 +2574,7 @@ fn send_font_session_data(app: &AppHandle) {
 
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let lab_mode = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).lab_mode.clone();
 
     let device_id = state.device_id.clone();
 
@@ -3409,12 +3401,7 @@ pub fn run() {
         shrine_warn_corner: Mutex::new(String::from("bottom-right")),
         shrine_warn_on_take: Mutex::new(String::from("green")),
         lab_overlays_enabled: Mutex::new(true),
-        lab_mode: Mutex::new(String::from("Normal")),
-        autoclear_minutes: Mutex::new(2),
-        dedication_pool: Mutex::new(String::from("skill")),
-        dedication_variant: Mutex::new(String::from("21/23")),
-        normal_variant: Mutex::new(String::from("20/20")),
-        show_low_confidence: Mutex::new(false),
+        lab_settings: Mutex::new(settings::LabSettings::default()),
         ui_prefs: Mutex::new(std::collections::HashMap::new()),
         ssot: Mutex::new(ssot::AppSsotSnapshot::default()),
         modules_enabled: Mutex::new(std::collections::HashMap::new()),

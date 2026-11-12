@@ -12,6 +12,50 @@ use tauri::Manager;
 
 const SETTINGS_FILENAME: &str = "settings.json";
 
+/// The lab page's persisted selections, owned by `AppState.lab_settings`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LabSettings {
+    /// Lab mode: "Normal" (default) or "Dedication".
+    /// Controls OCR vocabulary, font session metadata, and comparator behaviour.
+    /// The selection is persisted; a manual override lasts until Plaza.
+    pub lab_mode: String,
+    /// Session queue auto-clear timer in minutes (default: 2).
+    pub autoclear_minutes: u32,
+    /// Dedication rankings pool selector: "skill" (default) or "transfigured".
+    pub dedication_pool: String,
+    /// Dedication corrupted variant selector: "21/23" (default) or "21/20".
+    /// Each variant is its own market, so it selects the EV table, the rankings
+    /// and the comparator the Dedication views read, together.
+    pub dedication_variant: String,
+    /// Normal-mode market selector: "20/20" (default), "20/0", "1/20" or "1/0".
+    /// The Normal counterpart of `dedication_variant`, and read for the same
+    /// reason: it is the market OCR'd gems are priced against, on this window
+    /// and on any paired web view.
+    pub normal_variant: String,
+    /// Show low-confidence gems in rankings. Absent from the file → `false`
+    /// (this field-level default); fresh install or reset → `true`
+    /// (`LabSettings::default`).
+    #[serde(default)]
+    pub show_low_confidence: bool,
+}
+
+impl Default for LabSettings {
+    fn default() -> Self {
+        Self {
+            lab_mode: "Normal".to_string(),
+            autoclear_minutes: 2,
+            dedication_pool: "skill".to_string(),
+            dedication_variant: "21/23".to_string(),
+            normal_variant: "20/20".to_string(),
+            // Default ON — see the note in the web BestPlays component: at
+            // 20-level variants a thin market is normal, so hiding flagged gems
+            // by default reproduces the POE-131 ranking gap.
+            show_low_confidence: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -51,30 +95,10 @@ pub struct Settings {
     pub timer_bg_opacity: Option<f32>,
     /// Timer overlay text stroke/outline enabled (default true).
     pub timer_text_stroke: Option<bool>,
-    /// Lab mode: "Normal" (default) or "Dedication".
-    /// Controls OCR vocabulary, font session metadata, and comparator behaviour.
-    #[serde(default = "default_lab_mode")]
-    pub lab_mode: String,
-    /// Session queue auto-clear timer in minutes (default: 2).
-    #[serde(default = "default_autoclear_minutes")]
-    pub autoclear_minutes: u32,
-    /// Dedication rankings pool selector: "skill" (default) or "transfigured".
-    #[serde(default = "default_dedication_pool")]
-    pub dedication_pool: String,
-    /// Dedication corrupted variant selector: "21/23" (default) or "21/20".
-    /// Each variant is its own market, so it selects the EV table, the rankings
-    /// and the comparator together.
-    #[serde(default = "default_dedication_variant")]
-    pub dedication_variant: String,
-    /// Normal-mode market selector: "20/20" (default), "20/0", "1/20" or "1/0".
-    /// The Normal counterpart of `dedication_variant`, and read for the same
-    /// reason: it is the market OCR'd gems are priced against, on this window
-    /// and on any paired web view.
-    #[serde(default = "default_normal_variant")]
-    pub normal_variant: String,
-    /// Show low-confidence gems in rankings (default: false).
-    #[serde(default)]
-    pub show_low_confidence: bool,
+    /// The lab selections, flattened so the file keeps their flat keys at this
+    /// position — see `LabSettings`.
+    #[serde(flatten)]
+    pub lab: LabSettings,
     /// Schema-less UI view preferences (sort mode, colour filter, row limit…).
     /// The frontend owns the keys and values; Rust stores and persists the map
     /// blindly. Add a typed field here only when Rust itself reads the value.
@@ -622,26 +646,6 @@ impl<'de, T: serde::de::DeserializeOwned + Default> Deserialize<'de> for Salvage
     }
 }
 
-fn default_lab_mode() -> String {
-    "Normal".to_string()
-}
-
-fn default_autoclear_minutes() -> u32 {
-    2
-}
-
-fn default_dedication_pool() -> String {
-    "skill".to_string()
-}
-
-fn default_dedication_variant() -> String {
-    "21/23".to_string()
-}
-
-fn default_normal_variant() -> String {
-    "20/20".to_string()
-}
-
 pub const DEFAULT_TRADE_STALE_WARN_SECS: u32 = 120;
 pub const DEFAULT_TRADE_STALE_CRITICAL_SECS: u32 = 600;
 pub const DEFAULT_TRADE_AUTO_REFRESH_SECS: u32 = 900;
@@ -693,15 +697,7 @@ impl Default for Settings {
             shrine_warn_on_take: String::from("green"),
             timer_bg_opacity: None,
             timer_text_stroke: None,
-            lab_mode: default_lab_mode(),
-            autoclear_minutes: default_autoclear_minutes(),
-            dedication_pool: default_dedication_pool(),
-            dedication_variant: default_dedication_variant(),
-            normal_variant: default_normal_variant(),
-            // Default ON — see the note in the web BestPlays component: at
-            // 20-level variants a thin market is normal, so hiding flagged gems
-            // by default reproduces the POE-131 ranking gap.
-            show_low_confidence: true,
+            lab: LabSettings::default(),
             ui_prefs: std::collections::HashMap::new(),
             modules: std::collections::HashMap::new(),
             temple_profile: Default::default(),
@@ -890,6 +886,8 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     // the whole statement, and this one is taken alone (modules.rs "Lock
     // order").
     let owner_modules = state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    // Bound here for the same reason; taken alone.
+    let lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     Settings {
         boss_loot,
         number_format: Some(number_format),
@@ -916,12 +914,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         shrine_warn_on_take: state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         timer_bg_opacity: None,    // Appearance settings saved separately, not from AppState
         timer_text_stroke: None,   // Appearance settings saved separately, not from AppState
-        lab_mode: state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        autoclear_minutes: *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner()),
-        dedication_pool: state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        dedication_variant: state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        normal_variant: state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        show_low_confidence: *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()),
+        lab,
         ui_prefs: state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         // Delta only — the owner map holds every registry id, but persisting
         // unchosen defaults would pin them forever (see modules.rs).
@@ -999,12 +992,7 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     *state.shrine_warn_corner.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_corner.clone();
     *state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_on_take.clone();
     *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab_overlays_enabled;
-    *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab_mode.clone();
-    *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner()) = settings.autoclear_minutes;
-    *state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()) = settings.dedication_pool.clone();
-    *state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.dedication_variant.clone();
-    *state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.normal_variant.clone();
-    *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()) = settings.show_low_confidence;
+    *state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab.clone();
     *state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()) = settings.ui_prefs.clone();
     // Widget placements, straight through: unlike `modules` there is no
     // registry default to overlay here — a widget with no entry renders at the
@@ -1409,7 +1397,7 @@ pub(crate) mod tests {
         let dir = fresh_test_dir("settings_concurrent_updates");
         let path = dir.join(SETTINGS_FILENAME);
         let mut start = Settings::default();
-        start.autoclear_minutes = 0;
+        start.lab.autoclear_minutes = 0;
         save_to(&path, &start).unwrap();
         let handles: Vec<_> = (0..THREADS)
             .map(|_| {
@@ -1421,7 +1409,7 @@ pub(crate) mod tests {
                             |loaded| loaded.expect("settings file must stay readable and valid"),
                             |s| {
                                 let mut next = s.clone();
-                                next.autoclear_minutes += 1;
+                                next.lab.autoclear_minutes += 1;
                                 next
                             },
                         )
@@ -1434,7 +1422,7 @@ pub(crate) mod tests {
             h.join().unwrap();
         }
         let stored = load_from(&path).expect("final settings file parses");
-        assert_eq!(stored.autoclear_minutes, THREADS * ITERATIONS);
+        assert_eq!(stored.lab.autoclear_minutes, THREADS * ITERATIONS);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1443,10 +1431,10 @@ pub(crate) mod tests {
         let dir = fresh_test_dir("settings_save_to_clean");
         let path = dir.join(SETTINGS_FILENAME);
         let mut s = Settings::default();
-        s.autoclear_minutes = 17;
+        s.lab.autoclear_minutes = 17;
         save_to(&path, &s).unwrap();
         assert_eq!(dir_entries(&dir), vec![SETTINGS_FILENAME.to_string()]);
-        assert_eq!(load_from(&path).unwrap().autoclear_minutes, 17);
+        assert_eq!(load_from(&path).unwrap().lab.autoclear_minutes, 17);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1608,12 +1596,7 @@ pub(crate) mod tests {
             shrine_warn_corner: Mutex::new(String::new()),
             shrine_warn_on_take: Mutex::new(String::new()),
             lab_overlays_enabled: Mutex::new(true),
-            lab_mode: Mutex::new(String::new()),
-            autoclear_minutes: Mutex::new(2),
-            dedication_pool: Mutex::new(String::new()),
-            dedication_variant: Mutex::new(String::new()),
-            normal_variant: Mutex::new(String::new()),
-            show_low_confidence: Mutex::new(false),
+            lab_settings: Mutex::new(crate::settings::LabSettings::default()),
             ui_prefs: Mutex::new(std::collections::HashMap::new()),
             ssot: Mutex::new(crate::ssot::AppSsotSnapshot::default()),
             modules_enabled: Mutex::new(std::collections::HashMap::new()),
@@ -1646,7 +1629,7 @@ pub(crate) mod tests {
     #[test]
     fn manual_lab_mode_correction_keeps_completed_gems() {
         let state = test_app_state();
-        *state.lab_mode.lock().unwrap() = "Normal".to_string();
+        state.lab_settings.lock().unwrap().lab_mode = "Normal".to_string();
         *state.lab_scan.detected_gems.lock().unwrap() = vec![
             "Fireball".to_string(),
             "Arc".to_string(),
@@ -1665,7 +1648,7 @@ pub(crate) mod tests {
     #[test]
     fn manual_lab_mode_correction_notifies_without_clearing_selection() {
         let state = test_app_state();
-        *state.lab_mode.lock().unwrap() = "Dedication".to_string();
+        state.lab_settings.lock().unwrap().lab_mode = "Dedication".to_string();
         *state.lab_scan.detected_gems.lock().unwrap() = vec![
             "Fireball".to_string(),
             "Arc".to_string(),
@@ -1683,7 +1666,7 @@ pub(crate) mod tests {
     #[test]
     fn manual_lab_mode_correction_discards_partial_scan_gems() {
         let state = test_app_state();
-        *state.lab_mode.lock().unwrap() = "Normal".to_string();
+        state.lab_settings.lock().unwrap().lab_mode = "Normal".to_string();
         *state.lab_state.lock().unwrap() = crate::lab_state::LabState::PickingGems;
         *state.lab_scan.detected_gems.lock().unwrap() = vec!["Arc".to_string()];
 
@@ -1695,31 +1678,31 @@ pub(crate) mod tests {
     #[test]
     fn lab_detection_area_switches_selected_mode() {
         let state = test_app_state();
-        *state.lab_mode.lock().unwrap() = "Dedication".to_string();
+        state.lab_settings.lock().unwrap().lab_mode = "Dedication".to_string();
         crate::record_lab_detection(&state, |detection| {
             detection.observe_area(75, "EndGame_Labyrinth_boss_1");
         });
-        assert_eq!(*state.lab_mode.lock().unwrap(), "Normal");
+        assert_eq!(state.lab_settings.lock().unwrap().lab_mode, "Normal");
     }
 
     #[test]
     fn lab_detection_font_switches_selected_mode() {
         let state = test_app_state();
-        *state.lab_mode.lock().unwrap() = "Normal".to_string();
+        state.lab_settings.lock().unwrap().lab_mode = "Normal".to_string();
         crate::record_lab_detection(&state, |detection| {
             detection.observe_area(83, "EndGame_Labyrinth_boss_3");
         });
         crate::record_lab_detection(&state, |detection| {
             detection.observe_font(["corrupted_gem_reroll"], Some(2));
         });
-        assert_eq!(*state.lab_mode.lock().unwrap(), "Dedication");
+        assert_eq!(state.lab_settings.lock().unwrap().lab_mode, "Dedication");
     }
 
     #[test]
     fn lab_detection_mode_flip_invalidates_dictionary_generation() {
         use std::sync::atomic::Ordering;
         let state = test_app_state();
-        *state.lab_mode.lock().unwrap() = "Dedication".to_string();
+        state.lab_settings.lock().unwrap().lab_mode = "Dedication".to_string();
         state.lab_scan.gem_scan_generation.store(7, Ordering::SeqCst);
         crate::record_lab_detection(&state, |detection| {
             detection.observe_area(75, "EndGame_Labyrinth_boss_1");
@@ -1731,7 +1714,7 @@ pub(crate) mod tests {
     fn lab_detection_unchanged_mode_keeps_dictionary_generation() {
         use std::sync::atomic::Ordering;
         let state = test_app_state();
-        *state.lab_mode.lock().unwrap() = "Normal".to_string();
+        state.lab_settings.lock().unwrap().lab_mode = "Normal".to_string();
         state.lab_scan.gem_scan_generation.store(7, Ordering::SeqCst);
         crate::record_lab_detection(&state, |detection| {
             detection.observe_area(75, "EndGame_Labyrinth_boss_1");
@@ -1742,18 +1725,18 @@ pub(crate) mod tests {
     #[test]
     fn lab_detection_manual_override_keeps_selected_mode() {
         let state = test_app_state();
-        *state.lab_mode.lock().unwrap() = "Dedication".to_string();
+        state.lab_settings.lock().unwrap().lab_mode = "Dedication".to_string();
         state.lab_scan.detection.lock().unwrap().override_mode();
         crate::record_lab_detection(&state, |detection| {
             detection.observe_area(75, "EndGame_Labyrinth_boss_1");
         });
-        assert_eq!(*state.lab_mode.lock().unwrap(), "Dedication");
+        assert_eq!(state.lab_settings.lock().unwrap().lab_mode, "Dedication");
     }
 
     #[test]
     fn lab_detection_mode_flip_reports_auto_switch() {
         let state = test_app_state();
-        *state.lab_mode.lock().unwrap() = "Dedication".to_string();
+        state.lab_settings.lock().unwrap().lab_mode = "Dedication".to_string();
         let update = crate::record_lab_detection(&state, |detection| {
             detection.observe_area(75, "EndGame_Labyrinth_boss_1");
         });
@@ -1765,7 +1748,7 @@ pub(crate) mod tests {
         use std::sync::{mpsc, Arc};
         use std::time::Duration;
         let state = Arc::new(test_app_state());
-        *state.lab_mode.lock().unwrap() = "Dedication".to_string();
+        state.lab_settings.lock().unwrap().lab_mode = "Dedication".to_string();
         let gems_guard = state.lab_scan.detected_gems.lock().unwrap();
         let (tx, rx) = mpsc::channel();
         let worker_state = Arc::clone(&state);
@@ -3864,12 +3847,12 @@ pub(crate) mod tests {
         s.shrine_warn_size = "fixture-size".into();
         s.shrine_warn_corner = "fixture-corner".into();
         s.shrine_warn_on_take = "fixture-on-take".into();
-        s.lab_mode = "Dedication".into();
-        s.autoclear_minutes = 7;
-        s.dedication_pool = "transfigured".into();
-        s.dedication_variant = "21/20".into();
-        s.normal_variant = "1/0".into();
-        s.show_low_confidence = false;
+        s.lab.lab_mode = "Dedication".into();
+        s.lab.autoclear_minutes = 7;
+        s.lab.dedication_pool = "transfigured".into();
+        s.lab.dedication_variant = "21/20".into();
+        s.lab.normal_variant = "1/0".into();
+        s.lab.show_low_confidence = false;
         s
     }
 
@@ -3888,21 +3871,21 @@ pub(crate) mod tests {
     }
 
     macro_rules! absent_key_loads {
-        ($($name:ident: $field:ident == $literal:expr;)*) => {$(
+        ($($name:ident: $($field:ident).+ == $literal:expr;)*) => {$(
             #[test]
             fn $name() {
-                assert_eq!(settings_file_without_grouped_fields().$field, $literal);
+                assert_eq!(settings_file_without_grouped_fields().$($field).+, $literal);
             }
         )*};
     }
 
     absent_key_loads! {
-        a_settings_file_without_lab_mode_loads_normal: lab_mode == "Normal";
-        a_settings_file_without_autoclear_minutes_loads_2: autoclear_minutes == 2;
-        a_settings_file_without_dedication_pool_loads_skill: dedication_pool == "skill";
-        a_settings_file_without_dedication_variant_loads_21_23: dedication_variant == "21/23";
-        a_settings_file_without_normal_variant_loads_20_20: normal_variant == "20/20";
-        a_settings_file_without_show_low_confidence_loads_false: show_low_confidence == false;
+        a_settings_file_without_lab_mode_loads_normal: lab.lab_mode == "Normal";
+        a_settings_file_without_autoclear_minutes_loads_2: lab.autoclear_minutes == 2;
+        a_settings_file_without_dedication_pool_loads_skill: lab.dedication_pool == "skill";
+        a_settings_file_without_dedication_variant_loads_21_23: lab.dedication_variant == "21/23";
+        a_settings_file_without_normal_variant_loads_20_20: lab.normal_variant == "20/20";
+        a_settings_file_without_show_low_confidence_loads_false: lab.show_low_confidence == false;
         a_settings_file_without_compass_mode_loads_minimap: compass_mode == "minimap";
         a_settings_file_without_compass_strategy_loads_darkshrines_on_route: compass_strategy == "darkshrines-on-route";
         a_settings_file_without_compass_difficulty_loads_uber: compass_difficulty == "Uber";
@@ -3938,15 +3921,9 @@ pub(crate) mod tests {
         )*};
     }
 
-    // `show_low_confidence` and `shrine_warn_enabled` use the value that differs
-    // from `test_app_state`'s, so a dropped mapping line cannot pass by accident.
+    // `shrine_warn_enabled` uses the value that differs from `test_app_state`'s,
+    // so a dropped mapping line cannot pass by accident.
     state_round_trip! {
-        lab_mode_survives_a_restart: lab_mode = "Dedication";
-        autoclear_minutes_survives_a_restart: autoclear_minutes = 7u32;
-        dedication_pool_survives_a_restart: dedication_pool = "transfigured";
-        dedication_variant_survives_a_restart: dedication_variant = "21/20";
-        normal_variant_survives_a_restart: normal_variant = "1/0";
-        show_low_confidence_survives_a_restart: show_low_confidence = true;
         compass_mode_survives_a_restart: compass_mode = "fixture-mode";
         compass_strategy_survives_a_restart: compass_strategy = "fixture-strategy";
         compass_difficulty_survives_a_restart: compass_difficulty = "fixture-difficulty";
@@ -3958,6 +3935,27 @@ pub(crate) mod tests {
         trade_stale_critical_secs_survives_a_restart: trade_stale_critical_secs = 601u32;
         trade_auto_refresh_secs_survives_a_restart: trade_auto_refresh_secs = 901u32;
         auto_trade_enabled_survives_a_restart: auto_trade_enabled = true;
+    }
+
+    macro_rules! lab_round_trip {
+        ($($name:ident: $field:ident = $value:expr;)*) => {$(
+            #[test]
+            fn $name() {
+                let state = test_app_state();
+                state.lab_settings.lock().unwrap().$field = $value.into();
+                let restarted = restarted_from(&state);
+                assert_eq!(restarted.lab_settings.lock().unwrap().$field, $value);
+            }
+        )*};
+    }
+
+    lab_round_trip! {
+        lab_mode_survives_a_restart: lab_mode = "Dedication";
+        autoclear_minutes_survives_a_restart: autoclear_minutes = 7u32;
+        dedication_pool_survives_a_restart: dedication_pool = "transfigured";
+        dedication_variant_survives_a_restart: dedication_variant = "21/20";
+        normal_variant_survives_a_restart: normal_variant = "1/0";
+        show_low_confidence_survives_a_restart: show_low_confidence = false;
     }
 
 }

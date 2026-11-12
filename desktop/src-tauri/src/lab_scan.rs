@@ -151,9 +151,10 @@ impl GemProcessingState {
                 .clone();
             let http = state.server_http.clone();
             let lab_mode = state
-                .lab_mode
+                .lab_settings
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
+                .lab_mode
                 .clone();
             let app_for_fetch = app.clone();
             let (tx, rx) = tokio::sync::oneshot::channel();

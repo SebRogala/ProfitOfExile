@@ -524,20 +524,20 @@ pub struct AppSsotSnapshot {
     pub unreachable: bool,
     /// The selected Normal-mode market ("20/20", "20/0", "1/20", "1/0").
     ///
-    /// Composed at read time from `AppState.normal_variant`, which stays the
+    /// Composed at read time from `AppState.lab_settings`, which stays the
     /// owner — this field is NOT stored in `AppState.ssot`, so there is no
     /// second copy to keep in sync on every `set_normal_variant`. `Default` is
     /// the empty string, which the webview must reject as "unknown".
     pub normal_variant: String,
     /// The selected Dedication corrupted market ("21/23", "21/20").
     ///
-    /// Composed at read time from `AppState.dedication_variant`, which stays
+    /// Composed at read time from `AppState.lab_settings`, which stays
     /// the owner — not stored in `AppState.ssot`. `Default` is the empty
     /// string, which the webview must reject as "unknown".
     pub dedication_variant: String,
     /// The selected Dedication rankings pool ("skill", "transfigured").
     ///
-    /// Composed at read time from `AppState.dedication_pool`, which stays the
+    /// Composed at read time from `AppState.lab_settings`, which stays the
     /// owner — not stored in `AppState.ssot`. `Default` is the empty string,
     /// which the webview must reject as "unknown".
     pub dedication_pool: String,
@@ -576,7 +576,7 @@ pub struct AppSsotSnapshot {
 ///
 /// The enabled-guide set (`merc_sources_off`, POE-199) is composed onto the
 /// mercenary slice here rather than stored in it — the owner is
-/// `AppState.merc_sources_off`, exactly as `normal_variant` owns its market.
+/// `AppState.merc_sources_off`, exactly as `lab_settings` owns the markets.
 ///
 /// The mercenary slice's `status` is forced to `Off` when the module is
 /// disabled. This is the single place module enablement reaches that slice, so
@@ -658,9 +658,10 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         guard.clone()
     };
     base.boss_loot = crate::loot_capture::snapshot(state);
-    let normal_variant = state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let dedication_variant = state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let dedication_pool = state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let (normal_variant, dedication_variant, dedication_pool) = {
+        let lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner());
+        (lab.normal_variant.clone(), lab.dedication_variant.clone(), lab.dedication_pool.clone())
+    };
     // Lone acquisition of `modules_enabled` — `module_handles` is not held here
     // (lock order, see src/modules.rs).
     let modules = state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -3525,7 +3526,7 @@ mod tests {
             #[test]
             fn $name() {
                 let state = crate::settings::tests::test_app_state();
-                *state.$field.lock().unwrap() = $value.into();
+                state.lab_settings.lock().unwrap().$field = $value.into();
                 assert_eq!(build_snapshot(&state).$field, $value);
             }
         )*};
