@@ -97,6 +97,7 @@ tier does not promote a proposal or restore a superseded clause.
 - [Development setup](DEV-SETUP.md) — current WSL + Windows dev-machine procedure and the daily edit/sync/run loop.
 - [Analysis Cache Guide](ANALYSIS-CACHE.md) — current `lab.Cache` topology, tick chain, tenancy and concurrency contract, cold start, the sparkline series cache, and the shared signal-history seed and cold-read retention window.
 - [Game facts](GAME-FACTS.md) — current game-side invariants with dates and sources, separate from codebase facts.
+- [Patch-notes impact pass](PATCH-NOTES-IMPACT.md) — current procedure for turning a league's patch notes into an impact report and a tracker epic with one task per change; verified 2026-11-12.
 - [Currency Exchange row invariant](CURRENCY-EXCHANGE-ROW-INVARIANT.md) — current normative spec for the exchange row: the invariant equations, the rendering rules, the re-affirmed exemptions, and the closure-test enforcement tiers.
 - [Server trade gate hardening review — 2026-10-23](history/2026-10-23-trade-gate-hardening.md) — POE-297 timeout mechanisms, dedup event review catch, regression locations and pending runtime gates.
 - [Temple advisor feedback investigation — 2026-10-23](history/2026-10-23-temple-advisor-feedback.md) — seven reported choices, bounded fixes, verification limits and an unimplemented R4 policy proposal.

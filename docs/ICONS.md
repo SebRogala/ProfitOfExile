@@ -119,6 +119,42 @@ python3 scripts/download-gem-icons.py prune icons-cache/currency-exchange \
 
 Use --force only when the map really dropped most of that category.
 
+### A new gem poewiki does not have yet
+
+Owner decision, 2026-11-12. Map a new gem that poewiki lacks to its GGG
+announcement icon in `internal/icons/urls/gems.json`. Take the URL from the
+`icon_url` column of `gems.tsv`, which `scripts/fetch-patch-notes.py` writes
+for a "New and Changed Gems" thread. The URL has the form
+`https://web.poecdn.com/public/news/<date>/gems/<file>.png`.
+
+The poecdn icon is interim. Measured 2026-11-12: it is the same artwork at
+47×47, against 78×78 on poewiki. Icons render at up to 40 CSS px, so the
+poecdn copy is soft on HiDPI and 4K screens.
+
+Check whether poewiki has the icon by requesting its image URL directly, from
+a non-datacenter IP (poewiki 403s datacenter addresses):
+
+1. Build the file name: the gem name with spaces as `_`, plus
+   `_inventory_icon.png`.
+2. Take `h` = the MD5 hex digest of that file name.
+3. Request `https://www.poewiki.net/images/<h[0]>/<h[0:2]>/<file name>` and
+   read the response's content type.
+
+Judge by the content type, not the status code. `image/png` means poewiki has
+the icon. Anything else means the file is absent or misnamed: observed
+2026-11-12 from the owner's machine, a missing file returned HTTP 200 with
+`text/html` (Arcane Link, Fireball of Radiation), and an existing one returned
+`image/png` (Flame Link). Confirm the gem's name before you rely on an absence.
+
+Use only the image URL. The wiki's HTML file pages sit behind a bot challenge.
+
+Once poewiki has the icon, switch the map entry to the poewiki URL. The cache
+filename hashes the URL, so the next pull and seed fetch the new icon fresh.
+
+Every `web.poecdn.com` entry in `gems.json` is a pending swap. Check each one
+in the next league's patch-notes impact pass and in every icon pull. Example
+from 3.30: Arcane Link and Fireball of Radiation (`c3c5eb23`).
+
 ## Production seeding and migration
 
 This section is an owner-run procedure. It was not executed by the route/layout
