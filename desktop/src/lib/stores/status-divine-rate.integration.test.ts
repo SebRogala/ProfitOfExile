@@ -25,6 +25,12 @@ vi.mock('@tauri-apps/api/event', () => ({
 	})
 }));
 
+// Static imports: the stores' module state (status.svelte.ts knownServerUrl,
+// divine-rate.svelte.ts rate/generation) lives for the whole file, so a second
+// test needs vi.resetModules + dynamic imports or its own file.
+import { initStatusStore } from './status.svelte';
+import { currentDivineRate } from './divine-rate.svelte';
+
 const DIVINE_PATH = '/currency-exchange/divine-rate';
 
 /** A promise the test settles by hand. */
@@ -36,9 +42,9 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 	return { promise, resolve };
 }
 
-/** Let queued promise callbacks run. */
+/** Let queued promise callbacks run; advances only zero-delay timers, never the stores' intervals. */
 async function flush() {
-	await new Promise((r) => setTimeout(r, 0));
+	await vi.advanceTimersByTimeAsync(0);
 }
 
 let cleanup: (() => void) | null = null;
@@ -46,7 +52,7 @@ let divineRead: ReturnType<typeof deferred<Response>>;
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
-	vi.resetModules();
+	vi.useFakeTimers();
 	mocks.handlers = {};
 	// `get_status` and `get_logs` come back empty; the store then waits for an event.
 	mocks.invoke.mockReset();
@@ -63,13 +69,12 @@ beforeEach(() => {
 afterEach(() => {
 	cleanup?.();
 	cleanup = null;
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 });
 
 describe('the divine rate follows the saved server', () => {
 	it('asks the saved server for the divine rate once the status names it', async () => {
-		const { initStatusStore } = await import('./status.svelte');
-		const { currentDivineRate } = await import('./divine-rate.svelte');
 		cleanup = await initStatusStore();
 
 		mocks.handlers['status-changed']({
