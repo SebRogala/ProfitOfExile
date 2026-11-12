@@ -80,6 +80,13 @@ is not mistaken for a fact.
   either (Operator ruling, 2026-10-10). Consequence: the read the temple
   module takes is the board for the whole encounter
   (`desktop/src-tauri/src/temple/run.rs`, `BoardRead::locked`).
+- **A map holds 3 incursions, 4 with Artefacts of the Vaal.** Confirmed by
+  the Operator, 2026-11-12. Still true in 3.30, where incursions no longer spawn
+  in maps at random (03 Endgame Changes: "The following league mechanics no
+  longer have a random chance to spawn in Map areas: Abyss, Bestiary, Betrayal,
+  Breach, Blight, Expedition, Incursion, Legion, Ritual, and Ultimatum.") and
+  come from Incursion Threads. The advisor reads it from
+  `TempleConfig::entrances_per_map` (`desktop/src-tauri/src/temple/strategy.rs`).
 
 ### Vial recipes: nine vials, eleven transformations
 

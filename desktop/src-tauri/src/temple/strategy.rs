@@ -651,6 +651,10 @@ fn highest_tier_per_line(rooms: &[(Line, Tier)]) -> BTreeMap<Line, Tier> {
 #[serde(default, rename_all = "camelCase")]
 pub struct TempleConfig {
     /// Atlas passive: *"Your Maps with Incursions always have four Incursions"*.
+    /// Since 3.30, incursions no longer spawn in maps on their own: they come
+    /// from Incursion Threads. The per-map count (4 with it, 3 without) is
+    /// confirmed (Operator, 2026-11-12) — see docs/GAME-FACTS.md § Temple of
+    /// Atzoatl.
     pub artefacts_of_the_vaal: bool,
     /// The Incursion Scarab of Timelines drops an itemised copy of the temple
     /// when the **final** architect in the area is slain, which means every
@@ -670,7 +674,8 @@ impl Default for TempleConfig {
 impl TempleConfig {
     /// Incursion entrances per map — how many incursions share one map, i.e.
     /// where the rollout's next-incursion slot block resets. The temple budget
-    /// drops by one per incursion either way.
+    /// drops by one per incursion either way. The 4 / 3 values are confirmed
+    /// (Operator, 2026-11-12; docs/GAME-FACTS.md § Temple of Atzoatl).
     pub fn entrances_per_map(&self) -> u8 {
         if self.artefacts_of_the_vaal {
             4

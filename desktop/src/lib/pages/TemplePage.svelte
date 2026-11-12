@@ -639,7 +639,7 @@
 					<span>Artefacts of the Vaal</span>
 				</label>
 				<InfoTooltip
-					text="<b>What this changes</b><br><br>Only the odds in the advisor's simulation of the rest of the temple: within one map, the next incursion never drops you into the spot you just ran, and a new map clears that. With four incursions per map the block covers 3 of 4 incursions instead of 2 of 3, so the same spot comes back a little less often. A small shift, not measured — tick it if your atlas has the passive."
+					text="<b>What this changes</b><br><br>Only the odds in the advisor's simulation of the rest of the temple: within one map, the next incursion never drops you into the spot you just ran, and a new map clears that. With four incursions per map the block covers 3 of 4 incursions instead of 2 of 3 and the same spot comes back a little less often. A small shift, not measured — tick it if your atlas has the passive.<br><br>In 3.30, incursions come from Incursion Threads rather than appearing in maps on their own; a map still holds three, four with the passive."
 				/>
 				<span class="meta">Atlas passive — four incursions per map instead of three.</span>
 			</div>
