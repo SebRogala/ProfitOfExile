@@ -836,7 +836,7 @@ pub struct ReadStages {
     /// The door markers (`read_markers`).
     pub markers: Duration,
     /// Getting the 25 x 3 valuation table — a LOOKUP when nothing it depends
-    /// on has moved (`ssot::temple_valuation_now`), the build when something
+    /// on has moved (`valuation::temple_valuation_now`), the build when something
     /// has. Split off `advise` by POE-257 WI-3 (2026-09-07) because the two
     /// were one number and the owner's question — is the table cached? — could
     /// not be answered from the log: the pair measured 193-245 ms on the PC's
@@ -4174,7 +4174,7 @@ fn full_read(
     // boxes below (POE-257 D6). Two calls would let the number on screen come
     // from a market read the recommendation never saw.
     //
-    // LOOKED UP, not built (POE-257 WI-3): `ssot::temple_valuation_now` hands
+    // LOOKED UP, not built (POE-257 WI-3): `valuation::temple_valuation_now` hands
     // back the table already computed for the preset, the Custom rates and this
     // market read, and only builds one when one of those has moved — the
     // owner's "computed on update, and the module uses already computed
@@ -4182,7 +4182,7 @@ fn full_read(
     // makes for the preset in force, so the page and this board are one object.
     //
     // The market arrives as STATE, never as a fetch: `crate::ssot` polls it
-    // every `ssot::TEMPLE_MARKET_POLL` and this reads what it stored, because
+    // every `market::TEMPLE_MARKET_POLL` and this reads what it stored, because
     // `docs/TEMPLE-LIFECYCLE.md` forbids network work on this tick. It comes
     // back FROM the accessor rather than being read again here, so the table
     // and the `market_view` under the offer boxes can never be about two
@@ -4196,7 +4196,7 @@ fn full_read(
     // about the same preset and Custom table the projection echoes below and
     // `advise_read` ranks with, or a setter landing mid-read would publish one
     // preset's numbers under the other preset's name for a tick.
-    let (valuation, market, valuation_source) = crate::ssot::temple_valuation_now(app, settings);
+    let (valuation, market, valuation_source) = crate::temple::valuation::temple_valuation_now(app, settings);
     stages.valuation = valuing.elapsed();
     stages.valuation_source = valuation_source;
     let advising = Instant::now();
@@ -4226,7 +4226,7 @@ fn full_read(
             // setters' own `rearm` forces the next read, which restores it.
             //
             // The VALUATION above is from this same snapshot (POE-257 WI-3
-            // fix round, 2026-09-07): `ssot::temple_valuation_now` is handed
+            // fix round, 2026-09-07): `valuation::temple_valuation_now` is handed
             // `settings` rather than re-reading the live mutex, so the numbers
             // and the echo beside them are always the same preset's.
             config: settings.config.clone(),

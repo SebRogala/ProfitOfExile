@@ -560,7 +560,7 @@ pub fn value_table(preset: Preset, custom: &TempleCustomSettings, market: &Marke
 /// stored table safe to hand back without recomputing it.
 ///
 /// **The whole `MarketInput` and not a digest of it.** The staleness verdict
-/// (`stale`, judged per read against the clock by `ssot::temple_market_now`),
+/// (`stale`, judged per read against the clock by `market::temple_market_now`),
 /// the league and `as_of` are all fields of it, and so are the room quotes,
 /// the item quotes and the floor the formula actually sums — a key that named
 /// only the first three would serve a table computed from other prices to a
@@ -576,7 +576,7 @@ pub struct ValuationKey {
     /// cloned into the key whether or not Custom is in force, because
     /// switching to Custom must miss.
     pub custom: TempleCustomSettings,
-    /// The market read as `ssot::temple_market_now` answered it: the stored
+    /// The market read as `market::temple_market_now` answered it: the stored
     /// payload with `stale` judged against THIS tick's clock.
     pub market: MarketInput,
 }
@@ -627,15 +627,15 @@ pub struct CachedValuation {
 // shared with every read: a read arriving while a warm-up computed would block on
 // it and then report `cached` for a wait it did not spend, and in the interleaving
 // where the market moved between the warm's lookup and its store it would block
-// AND then miss AND then pay the build again. `ssot::temple_valuation_now`
+// AND then miss AND then pay the build again. `valuation::temple_valuation_now`
 // therefore calls `cached_valuation` under the lock, drops the guard, calls
 // `compute_valuation` with NOTHING held, and re-takes the lock only to
 // `store_valuation`. A lost race costs one wasted build; it can never cost a
 // blocked read.
 //
 // All three take the slot or the key rather than the `AppHandle` so the rule is
-// unit-testable without a running app — the same extraction `ssot::store_market`
-// and `ssot::drop_market` make, and for the same reason.
+// unit-testable without a running app — the same extraction `market::store_market`
+// and `market::drop_market` make, and for the same reason.
 
 /// The stored table when its key equals this read's, and `None` otherwise.
 ///
@@ -1301,7 +1301,7 @@ mod tests {
         })
     }
 
-    /// The three halves in the order `ssot::temple_valuation_now` runs them:
+    /// The three halves in the order `valuation::temple_valuation_now` runs them:
     /// look up, and on a miss compute and store. The accessor puts a lock
     /// take/drop around the first and the third and holds nothing across the
     /// second; the ORDER is what these tests pin, and it is the only thing this
@@ -1347,7 +1347,7 @@ mod tests {
 
     /// A key that misses comes back as `None` and leaves the slot ALONE.
     ///
-    /// This is the property that lets `ssot::temple_valuation_now` drop the
+    /// This is the property that lets `valuation::temple_valuation_now` drop the
     /// `AppState.temple_valuation` guard before it builds anything: a lookup
     /// that computed on a miss would put the 193-245 ms build back under the
     /// lock, where every concurrent read waits behind it.

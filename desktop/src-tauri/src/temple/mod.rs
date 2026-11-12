@@ -42,7 +42,7 @@
 //!   one compute, and (POE-257 WI-3) the cache in front of it —
 //!   [`preset::ValuationKey`], [`preset::cached_valuation`],
 //!   [`preset::compute_valuation`], [`preset::store_valuation`] — which is why
-//!   a read LOOKS the table up (`crate::ssot::temple_valuation_now`) instead of
+//!   a read LOOKS the table up (`crate::temple::valuation::temple_valuation_now`) instead of
 //!   building one. The three are separate so the accessor can build with the
 //!   slot mutex DROPPED.
 //!

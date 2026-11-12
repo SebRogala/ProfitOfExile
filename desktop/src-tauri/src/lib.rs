@@ -508,8 +508,8 @@ pub struct AppState {
     pub temple_settings: Mutex<temple::slice::TempleSettings>,
     /// The market read the temple valuation prices a board against (POE-258).
     ///
-    /// Written ONLY by `ssot::spawn_temple_market_poll` and by
-    /// `ssot::on_server_url_changed`; read through `ssot::temple_market_now`,
+    /// Written ONLY by `temple::market::spawn_temple_market_poll` and by
+    /// `temple::market::on_server_url_changed`; read through `temple::market::temple_market_now`,
     /// which is what applies the staleness judgement. Nothing reads this field
     /// directly — the raw payload carries `stale: false` as it arrived from the
     /// wire, and a board priced off it would be priced off a market of any age.
@@ -523,12 +523,12 @@ pub struct AppState {
     /// it (POE-257 WI-3, 2026-09-07; the owner's "computed on update, and the
     /// module uses already computed weightings each time").
     ///
-    /// Written and read through `ssot::temple_valuation_now` alone, which is
+    /// Written and read through `temple::valuation::temple_valuation_now` alone, which is
     /// the total guard: it rebuilds the `temple::preset::ValuationKey` from the
     /// CALLER'S settings and the market on every call and hands back what is
     /// stored only when the two keys are equal. The five warm-up callers
-    /// (`ssot::warm_temple_valuation` from the market poll, from
-    /// `ssot::on_server_url_changed`, from `temple_set_preset` /
+    /// (`temple::valuation::warm_temple_valuation` from the market poll, from
+    /// `temple::market::on_server_url_changed`, from `temple_set_preset` /
     /// `temple_set_custom` and from `reset_all_settings`) are what make a read's
     /// lookup a HIT; a missed one costs that read a recompute, never a wrong
     /// table.
@@ -930,7 +930,7 @@ fn reset_all_settings(app: AppHandle) {
     // Warm it here for the same reason `temple_set_preset` and
     // `temple_set_custom` do: without it the next board read pays the 193-245 ms
     // rebuild itself. Nothing depends on it landing — the key is the guard.
-    ssot::warm_temple_valuation(&app);
+    temple::valuation::warm_temple_valuation(&app);
     // Re-detect Client.txt
     let detected = detect_client_txt_path();
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = detected;
@@ -1032,7 +1032,14 @@ fn set_server_url(url: String, app: AppHandle) {
     // an actual change — the guard above is scoped so this reads the url just
     // written.
     if changed {
-        ssot::on_server_url_changed(&app);
+        // The league is resolved again. The name standing was read from the
+        // other server, and the market poll keys on it: without this a payload from
+        // the new server would be discarded as `WrongLeague` on every poll for the
+        // life of the session. The resolver's success wakes the poller, so the new
+        // league's prices land as soon as the league does.
+        ssot::supersede_league_fetches();
+        temple::market::on_server_url_changed(&app);
+        ssot::rearm_league(app.clone());
     }
     emit_status(&app);
 }
@@ -3628,7 +3635,7 @@ pub fn run() {
             // Temple page states the age of the prices its board was valued at
             // whether or not the capture loop is running, and the poll's first
             // attempt waits on the league fetch above rather than on a timer.
-            ssot::spawn_temple_market_poll(handle.clone());
+            temple::market::spawn_temple_market_poll(handle.clone());
             emit_status(&handle);
             emit_logs(&handle);
             // Modules start LAST: the owner map is effective by now

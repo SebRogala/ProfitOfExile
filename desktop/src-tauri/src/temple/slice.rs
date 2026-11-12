@@ -1168,13 +1168,13 @@ pub struct TempleSlice {
     /// The prices the NEXT read will be valued against — the latest poll's
     /// view of the stored [`MarketInput`] (POE-258, corrected here).
     ///
-    /// **Written by `ssot::publish_market_view` alone**, on every poll and on
+    /// **Written by `market::publish_market_view` alone**, on every poll and on
     /// a server-URL change, which is what lets it move with nobody looking at a
     /// temple. [`project`] seeds it from the read's own market for the one
     /// reason [`Self::config`] is echoed: a read replaces the whole slice, and
     /// a field the projection did not set would be blanked by every board. That
     /// seed is not a second source — `run::full_read` builds the read's
-    /// [`MarketInput`] by calling `ssot::temple_market_now`, so at the instant
+    /// [`MarketInput`] by calling `market::temple_market_now`, so at the instant
     /// of a read the read's market IS the latest poll's.
     ///
     /// Named `pollMarket` on the wire rather than `poll`, because `poll` alone
@@ -1247,7 +1247,7 @@ pub struct ReadResult<'a> {
     ///
     /// A borrow and not a value so the "one table per read" rule is visible at
     /// the call site: `run` looks ONE [`Valued`] up — since POE-257 WI-3
-    /// through `ssot::temple_valuation_now`, which is where the table is built
+    /// through `valuation::temple_valuation_now`, which is where the table is built
     /// and stored — and hands it to both, so the offer boxes cannot be showing
     /// a number the recommendation did not use.
     pub valuation: &'a Valued,
@@ -1264,8 +1264,8 @@ pub struct ReadResult<'a> {
     /// field it did not set would be blanked by every board until the next poll
     /// five minutes later. Seeding it with this view is exact rather than
     /// approximate — `run::full_read` takes the read's market from the same
-    /// `ssot::temple_valuation_now` call that gave it [`Self::valuation`] (and
-    /// that call reads `ssot::temple_market_now`), so the read's market and the
+    /// `valuation::temple_valuation_now` call that gave it [`Self::valuation`] (and
+    /// that call reads `market::temple_market_now`), so the read's market and the
     /// poll's are the same object at the moment of a read; they only diverge
     /// afterwards, which is precisely what the two fields exist to record.
     pub market: MarketView,
@@ -1830,7 +1830,7 @@ pub fn project(read: &ReadResult<'_>, calibration: Option<AnchorCalibration>) ->
         market: read.market.clone(),
         // The same view in both fields, and only here: at the moment of a read
         // the read's market IS the latest poll's (`run::full_read` asks
-        // `ssot::temple_market_now` for it). Afterwards `market` stands still
+        // `market::temple_market_now` for it). Afterwards `market` stands still
         // with the board it describes while the poll moves `poll` on its own.
         poll: read.market.clone(),
         unknown_rooms: unknown_rooms(read.rooms),
@@ -1891,7 +1891,7 @@ pub fn advise_read(
 ///
 /// **`#[cfg(test)]` since POE-257 WI-3 (2026-09-07), and that is the point.**
 /// It used to be the read's own call, one per read (POE-257 D6). The read now
-/// LOOKS THE TABLE UP — `ssot::temple_valuation_now`, which computes only when
+/// LOOKS THE TABLE UP — `valuation::temple_valuation_now`, which computes only when
 /// the preset, the Custom table or the market read has moved — so a production
 /// caller here would rebuild a table the app already holds, 193-245 ms at a
 /// time. The attribute is what makes that unreachable rather than merely
@@ -5341,9 +5341,9 @@ mod tests {
     ///
     /// `project` writes the WHOLE slice, so without the echo every board would
     /// blank the price line and leave it blank for up to
-    /// `ssot::TEMPLE_MARKET_POLL`. `poll` takes the same view because at the
+    /// `market::TEMPLE_MARKET_POLL`. `poll` takes the same view because at the
     /// moment of a read it IS the same view — `run::full_read` asks
-    /// `ssot::temple_market_now` for the market it prices with. Fails if either
+    /// `market::temple_market_now` for the market it prices with. Fails if either
     /// field is dropped from `project`.
     #[test]
     fn a_read_republishes_the_market_it_was_valued_against() {
@@ -6640,7 +6640,7 @@ mod tests {
     ///
     /// `value_read` with the Default preset is the one compute
     /// `run::full_read`'s lookup resolves to (`preset::value_table` via
-    /// `ssot::temple_valuation_now`), and
+    /// `valuation::temple_valuation_now`), and
     /// this is the ordering the advisor inherits from it. Every other bridge
     /// test here asserts a mechanism; this one asserts the answer, so a change
     /// that quietly re-ranks the board — a drop count edited, a rate moved, the

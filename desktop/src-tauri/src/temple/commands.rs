@@ -160,7 +160,7 @@ pub fn temple_set_preset(preset: Preset, app: AppHandle) -> Result<(), String> {
     // "Computed on update" (POE-257 WI-3): the preset is one of the three
     // inputs the valuation is a function of, so the new table is built here —
     // off this thread — rather than by the read `rearm` is about to force.
-    crate::ssot::warm_temple_valuation(&app);
+    crate::temple::valuation::warm_temple_valuation(&app);
     rearm(&app);
     Ok(())
 }
@@ -225,7 +225,7 @@ pub fn temple_set_custom(
     }
     // Same as `temple_set_preset` — see the note there. The editor writes on a
     // 300 ms debounce, which is why the warm must not run on this thread.
-    crate::ssot::warm_temple_valuation(&app);
+    crate::temple::valuation::warm_temple_valuation(&app);
     rearm(&app);
     Ok(notes)
 }
@@ -249,7 +249,7 @@ pub fn temple_set_custom(
 ///
 /// # The two questions take two paths (POE-257 WI-3, 2026-09-07)
 ///
-/// *What is on screen now* is answered from `ssot::temple_valuation_now`, the
+/// *What is on screen now* is answered from `valuation::temple_valuation_now`, the
 /// same lookup `run::full_read` makes — so the page and the board are one
 /// object and not two equal ones, which is POE-257 D6 held across reads.
 ///
@@ -278,12 +278,12 @@ pub fn temple_value_table(
         settings.clone()
     };
     let valued = if preset == settings.preset {
-        crate::ssot::temple_valuation_now(&app, &settings).0
+        crate::temple::valuation::temple_valuation_now(&app, &settings).0
     } else {
         super::preset::value_table(
             preset,
             &settings.custom,
-            &crate::ssot::temple_market_now(&app),
+            &crate::temple::market::temple_market_now(&app),
         )
     };
     Ok(slice::value_rows(&valued))
