@@ -10,6 +10,8 @@
 //! RePoE's `dat-export … IncursionRooms.csv` (2026-08-18). The T1→T2→T3 chains
 //! are the game's own `RoomUpgrade` keys rather than anyone's memory of them,
 //! and the tier-3 room rankings are Vertolka's ranking matrix, 2026-10-17.
+//! Three names follow the 3.30 patch notes (POE-365): Cradle of Creation,
+//! Royal Forge and Grand Reactor.
 //! Sheet spellings that differ from game data are
 //! carried as explicit [`ALIASES`] rather than left to the fuzzy matcher, so a
 //! sheet import resolves deterministically instead of depending on a threshold.
@@ -136,7 +138,10 @@ impl RoomLine {
     /// Canonical key. For the four mechanically relevant lines this is
     /// POE-167's key, so [`RoomLine::mechanical_line`] round-trips through
     /// [`Line::named`]; for the other 21 it is a snake_case slug of the tier-3
-    /// name, which is the name the strategy layer talks about.
+    /// name as it was when the line was added. Keys are persisted (settings
+    /// overrides) and on the wire, so they never follow a game rename:
+    /// `throne_of_atziri` keeps its key after 3.30 named the room Cradle of
+    /// Creation.
     pub fn key(self) -> &'static str {
         self.key
     }
@@ -232,7 +237,7 @@ pub const LINES: [RoomLine; 25] = [
         key: "conduit_of_lightning",
         tiers: [
             "Lightning Workshop",
-            "Omnitect Reactor Plant",
+            "Grand Reactor",
             "Conduit of Lightning",
         ],
         rank: RoomRank {
@@ -254,7 +259,7 @@ pub const LINES: [RoomLine; 25] = [
     },
     RoomLine {
         key: "crucible_of_flame",
-        tiers: ["Flame Workshop", "Omnitect Forge", "Crucible of Flame"],
+        tiers: ["Flame Workshop", "Royal Forge", "Crucible of Flame"],
         rank: RoomRank {
             tier: RankingTier::A,
             pos: 3,
@@ -414,7 +419,7 @@ pub const LINES: [RoomLine; 25] = [
     },
     RoomLine {
         key: "throne_of_atziri",
-        tiers: ["Royal Meeting Room", "Hall of Lords", "Throne of Atziri"],
+        tiers: ["Royal Meeting Room", "Hall of Lords", "Cradle of Creation"],
         rank: RoomRank {
             tier: RankingTier::D,
             pos: 1,
@@ -530,8 +535,8 @@ fn vocabulary() -> impl Iterator<Item = (&'static str, RoomIdentity)> {
 ///
 /// Lower-cases, deletes apostrophes of every shape (so `Sadists Den` and
 /// `Sadist's Den` are the same key), turns every other non-alphanumeric into a
-/// space, and collapses runs of whitespace. Digits survive: `0mnitect` has to
-/// stay a near-miss of `Omnitect` rather than becoming a different length.
+/// space, and collapses runs of whitespace. Digits survive: `0ffice` has to
+/// stay a near-miss of `Office` rather than becoming a different length.
 ///
 /// A comma **between two letters** is deleted too, because no name in the
 /// vocabulary prints one: it is a fragment of a letter. **MEASURED**
@@ -1266,6 +1271,79 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------ 3.30 renames (POE-365) --
+
+    fn assert_room(got: Option<RoomIdentity>, key: &str, want: Tier, read: &str) {
+        match got {
+            Some(RoomIdentity::Room { line, tier: t }) => {
+                assert_eq!(line.key(), key, "{read} resolved to the wrong line");
+                assert_eq!(t, want, "{read} resolved to the wrong tier");
+            }
+            other => panic!("{read} resolved to {other:?}, not a Room"),
+        }
+    }
+
+    // The 3.30 patch notes rename three rooms; each new name must land on
+    // the line whose persisted key is unchanged. Fails if a rename is
+    // misspelled, put in the wrong row or the wrong tier, or if a key follows
+    // the rename.
+    #[test]
+    fn the_three_renamed_rooms_resolve_to_their_unchanged_lines() {
+        for read in ["Cradle of Creation", "CRADLE OF CREATION"] {
+            assert_room(resolve_name(read), "throne_of_atziri", Tier::T3, read);
+        }
+        assert_room(resolve_name("Royal Forge"), "crucible_of_flame", Tier::T2, "Royal Forge");
+        assert_room(resolve_name("ROYAL FORGE"), "crucible_of_flame", Tier::T2, "ROYAL FORGE");
+        assert_room(
+            resolve_name("Grand Reactor"),
+            "conduit_of_lightning",
+            Tier::T2,
+            "Grand Reactor",
+        );
+        assert_room(
+            resolve_name("GRAND REACTOR"),
+            "conduit_of_lightning",
+            Tier::T2,
+            "GRAND REACTOR",
+        );
+    }
+
+    // An architect printing a renamed tier-2 name builds the next tier of
+    // that line. Fails if the renamed name stops resolving or lands on
+    // another line.
+    #[test]
+    fn an_offer_naming_grand_reactor_on_a_tier_2_room_builds_conduit_of_lightning() {
+        let got = resolve_offer("Grand Reactor", tier(2)).expect("a real offer");
+        assert_eq!(got.line.key(), "conduit_of_lightning");
+        assert_eq!(got.built_tier, Tier::T3);
+        assert_eq!(got.display_name, "Conduit of Lightning");
+    }
+
+    #[test]
+    fn an_offer_naming_royal_forge_on_a_tier_1_room_builds_royal_forge() {
+        let got = resolve_offer("Royal Forge", tier(1)).expect("a real offer");
+        assert_eq!(got.line.key(), "crucible_of_flame");
+        assert_eq!(got.built_tier, Tier::T2);
+        assert_eq!(got.display_name, "Royal Forge");
+    }
+
+    // `Royal Forge` shares the Jaro-Winkler-boosted prefix with `Royal
+    // Meeting Room`. MEASURED with the crate: `royal fonge` scores 0.9636
+    // against `royal forge` and 0.8729 against `royal meeting room`, a lead
+    // over LEAD. Fails if the rename is reverted or the rival wins.
+    #[test]
+    fn a_one_letter_misread_of_royal_forge_is_not_royal_meeting_room() {
+        let want = resolve_name("Royal Forge").expect("in vocabulary");
+        match match_room_name("Royal Fonge") {
+            Match::Fuzzy(got, score) => {
+                assert_eq!(got, want);
+                assert!(score >= MATCH, "score {score} under MATCH");
+            }
+            other => panic!("expected a fuzzy read of Royal Forge, got {other:?}"),
+        }
+        assert_eq!(match_room_name("Royal"), Match::Unknown);
+    }
+
     // ------------------------------------------------- bridge to POE-167 --
 
     // The four mechanically relevant lines must land on their Line variants,
@@ -1625,4 +1703,3 @@ mod tests {
         assert_eq!(match_plate_name("Hall of Lorks", Some(Tier::T2)), Match::Unknown);
     }
 }
-

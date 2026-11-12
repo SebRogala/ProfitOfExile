@@ -3684,12 +3684,12 @@ mod tests {
     }
 
     /// A line with no tier-3 chest publishes the prose the box draws in place
-    /// of the chest row. Throne of Atziri is the case that also carries a vial,
+    /// of the chest row. Cradle of Creation is the case that also carries a vial,
     /// so the content cell has to reach the wire beside a drop rather than
     /// instead of one.
     #[test]
     fn a_content_line_publishes_its_kind_and_the_rooms_own_prose() {
-        let input = offer("Quipolatl", "Throne of Atziri", OfferKind::Upgrade);
+        let input = offer("Quipolatl", "Cradle of Creation", OfferKind::Upgrade);
         let view = offer_view(0, &input, None, &valued());
         let line = view.line.expect("a resolved offer carries line facts");
 
@@ -6508,9 +6508,9 @@ mod tests {
     #[test]
     fn an_offer_publishes_the_vial_upgrade_for_the_unique_its_line_drops() {
         let layout = layout(Some(Slot::B0), &[], &[]);
-        let rooms = board_rooms(&[(Slot::B0, "Omnitect Forge")]);
+        let rooms = board_rooms(&[(Slot::B0, "Royal Forge")]);
         let panel = panel(
-            "Omnitect Forge",
+            "Royal Forge",
             Some(6),
             vec![offer("Puhuarte", "Crucible of Flame", OfferKind::Upgrade)],
         );

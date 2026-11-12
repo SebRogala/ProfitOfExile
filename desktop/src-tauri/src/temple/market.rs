@@ -777,7 +777,13 @@ pub const ALLFLAME_CAPTURE: &str = include_str!("assets/temple-market-allflame-2
 /// rather than one written to make it pass.
 #[cfg(test)]
 pub fn allflame() -> MarketInput {
-    serde_json::from_str(ALLFLAME_CAPTURE).expect("the committed capture parses as a MarketInput")
+    // The capture predates the 3.30 renames (POE-365); the asset stays
+    // byte-for-byte and its old names are mapped onto the current vocabulary.
+    let renamed = ALLFLAME_CAPTURE
+        .replace("\"Throne of Atziri\"", "\"Cradle of Creation\"")
+        .replace("\"Omnitect Forge\"", "\"Royal Forge\"")
+        .replace("\"Omnitect Reactor Plant\"", "\"Grand Reactor\"");
+    serde_json::from_str(&renamed).expect("the committed capture parses as a MarketInput")
 }
 
 #[cfg(test)]

@@ -357,7 +357,7 @@ pub fn case_8_lightning_workshop() -> Case {
             3,
         ),
         offers: vec![
-            offer("Hayoxi", Upgrade, "Omnitect Reactor Plant"),
+            offer("Hayoxi", Upgrade, "Grand Reactor"),
             offer("Xopec", Change, "Explosives Room"),
         ],
         keys: 1,

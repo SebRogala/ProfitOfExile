@@ -29,7 +29,7 @@
 //! - both architects, each as `<name>, <title> (Kill to change|upgrade to
 //!   <ROOM>)`, wrapped over two or three OCR lines. The title is **not**
 //!   always `Architect of <X>` — `Xipocado, Royal Architect` appears on two
-//!   of the eight boards;
+//!   of the eight boards (3.30 renames it `Xipocado, Architect to the Queen`);
 //! - a diamond with one door marker per lattice neighbour ([`super::markers`]).
 //!
 //! `N Incursions Remaining` is printed at the bottom of the *layout* panel, not
@@ -475,8 +475,8 @@ fn continues(prev: [i32; 4], next: [i32; 4]) -> bool {
 /// eight measured boards print `Royal Architect` with no `of <X>` tail, so
 /// keying on `Architect of` would drop them. Nothing else is required of the
 /// line — a wrapped offer whose comma the OCR missed
-/// (`Xipocado Royal Architect` / `(Kill to upgrade to` / `Omnitect Reactor
-/// Plant)`) carries neither the comma nor the kill clause on its *first* line,
+/// (`Xipocado Architect to the Queen` / `(Kill to upgrade to` / `Grand
+/// Reactor)`) carries neither the comma nor the kill clause on its *first* line,
 /// and demanding either here drops the whole offer.
 ///
 /// That leaves the word doing the work alone, which is why
@@ -812,9 +812,11 @@ pub fn parse_architect_block(block: &str) -> Option<PrintedOffer> {
 
     // The name is everything before the first comma, and failing that the
     // words before `Architect`. The comma is what separates the name from the
-    // title, so only the first form isolates it: `Xipocado, Royal Architect`
-    // yields `Xipocado`, and a comma-less read of the same line yields
-    // `Xipocado Royal`. Keeping the title in is the deliberate trade — the
+    // title, so only the first form isolates it. A comma-less read keeps any
+    // title words that precede `Architect`; under the 3.30 title `Xipocado,
+    // Architect to the Queen` there are none, so both reads yield `Xipocado`
+    // and this fallback needs no Xipocado-specific case. Keeping such title
+    // words in is the deliberate trade — the
     // alternative, guessing that the last word before `Architect` is part of
     // the title, would eat a two-word architect name.
     let name = match block.find(',') {
@@ -1456,6 +1458,16 @@ mod tests {
     use super::super::strategy::Tier;
     use super::*;
 
+    fn assert_room(got: Option<RoomIdentity>, key: &str, want: Tier) {
+        match got {
+            Some(RoomIdentity::Room { line, tier }) => {
+                assert_eq!(line.key(), key, "wrong line");
+                assert_eq!(tier, want, "wrong tier");
+            }
+            other => panic!("expected a room of {key}, got {other:?}"),
+        }
+    }
+
     /// The side panel of `2026-08-02_22-22-38` (TEMPLE-CORE-RULES §5 Case 1),
     /// transcribed line by line as the panel wraps it: Tombs at D3, two junk
     /// `change` offers.
@@ -1473,9 +1485,9 @@ mod tests {
     /// `of <X>` tail.
     const LIVE: [&str; 5] = [
         "Lightning Workshop",
-        "Xipocado, Royal Architect",
+        "Xipocado, Architect to the Queen",
         "(Kill to upgrade to",
-        "Omnitect Reactor Plant)",
+        "Grand Reactor)",
         "Xopec, Architect of Power (Kill to change to Royal Meeting Room)",
     ];
 
@@ -1560,8 +1572,8 @@ mod tests {
             line("Hayoxi, Architect of", X, 115),
             line("Destruction", X, 128),
             line("Area Level: 68", 1659, 130),
-            line("(Kill to upgrade to Omnitect", X, 141),
-            line("Reactor Plant)", X, 154),
+            line("(Kill to upgrade to Grand", X, 141),
+            line("Reactor)", X, 154),
             line("Xopec, Architect of Power (Kill to change to Royal Meeting Room)", X, 200),
         ]
     }
@@ -1672,8 +1684,8 @@ mod tests {
         let got = offer(&LIVE[1..4]);
         assert_eq!(got.architect_name, "Xipocado");
         assert_eq!(got.kind, OfferKind::Upgrade);
-        assert_eq!(got.printed_target, "Omnitect Reactor Plant");
-        assert!(got.target.is_known());
+        assert_eq!(got.printed_target, "Grand Reactor");
+        assert_room(got.target.identity(), "conduit_of_lightning", Tier::T2);
     }
 
     // One offer, one line, and the block still closes on its bracket.
@@ -1712,7 +1724,7 @@ mod tests {
         );
     }
 
-    // The `Royal Architect` offer with its comma lost to OCR: the first line
+    // The Xipocado offer with its comma lost to OCR: the first line
     // then carries neither the comma nor the kill clause, so `starts_architect`
     // has only the word to go on and must open the block on that alone. Fails
     // if a comma-or-kill-clause guard is put back on `starts_architect` — the
@@ -1720,13 +1732,14 @@ mod tests {
     #[test]
     fn a_wrapped_offer_whose_comma_was_missed_still_parses() {
         let got = offer(&[
-            "Xipocado Royal Architect",
+            "Xipocado Architect to the Queen",
             "(Kill to upgrade to",
-            "Omnitect Reactor Plant)",
+            "Grand Reactor)",
         ]);
-        assert_eq!(got.architect_name, "Xipocado Royal");
+        assert_eq!(got.architect_name, "Xipocado");
         assert_eq!(got.kind, OfferKind::Upgrade);
-        assert_eq!(got.printed_target, "Omnitect Reactor Plant");
+        assert_eq!(got.printed_target, "Grand Reactor");
+        assert_room(got.target.identity(), "conduit_of_lightning", Tier::T2);
     }
 
     // An architect line whose offer never arrived — the OCR pass cut the panel
@@ -1744,18 +1757,18 @@ mod tests {
 
     // The other half: a run that DID close its bracket is block text even
     // though it failed to parse — here the offer's middle line was dropped, so
-    // there is no kill clause to parse but `Omnitect Reactor Plant` is still
+    // there is no kill clause to parse but `Grand Reactor` is still
     // the offer's target and must not be read as the room the player is in.
     // Fails if only parsed blocks are skipped.
     #[test]
     fn a_closed_block_that_failed_to_parse_still_hides_its_target() {
         let lines = [
-            "Xipocado, Royal Architect",
-            "Omnitect Reactor Plant)",
+            "Xipocado, Architect to the Queen",
+            "Grand Reactor)",
             "Lightning Workshop",
         ];
         assert_eq!(parse_architects(&lines).len(), 0, "no kill clause to parse");
-        assert_eq!(read_panel(&lines).identity_name(), Some("Lightning Workshop"));
+        assert_room(read_panel(&lines).room.identity(), "conduit_of_lightning", Tier::T1);
     }
 
     // …and the bracket only counts while the run is still offer-shaped. A
@@ -1939,7 +1952,7 @@ mod tests {
         assert_eq!(got.len(), 2, "the fragment costs no offer: {got:?}");
         assert_eq!(got[0].architect_name, "Hayoxi");
         assert_eq!(
-            got[0].printed_target, "Omnitect Reactor Plant",
+            got[0].printed_target, "Grand Reactor",
             "the clause below the fragment still belongs to Hayoxi's block",
         );
         assert_eq!(got[1].architect_name, "Xopec");
@@ -1978,13 +1991,13 @@ mod tests {
         assert_eq!(got.len(), 2, "the fragment's bracket costs no offer: {got:?}");
         assert_eq!(got[0].architect_name, "Hayoxi");
         assert_eq!(
-            got[0].printed_target, "Omnitect Reactor Plant",
+            got[0].printed_target, "Grand Reactor",
             "the clause below the bracket still belongs to Hayoxi's block",
         );
     }
 
     // …and the skipped line is not in the block either: the rect stops at the
-    // panel column, 1704, and does not reach the fragment's far edge at 1771.
+    // panel column, 1680, and does not reach the fragment's far edge at 1771.
     // A surface pointing at this block would otherwise cover a strip of the
     // map's info block as well.
     //
@@ -1997,8 +2010,8 @@ mod tests {
 
         let got = parse_architects(&lines);
 
-        // The four attached lines: tops 115..154, the widest right edge 1704.
-        assert_eq!(got[0].rect, Some([1480, 115, 224, 51]));
+        // The four attached lines: tops 115..154, the widest right edge 1680.
+        assert_eq!(got[0].rect, Some([1480, 115, 200, 51]));
     }
 
     // Two boxes on ONE visual row are ordered left to right even when their
@@ -2570,16 +2583,19 @@ mod tests {
         // wrapped tail is a bare vocabulary name on its own line, and taking
         // the first match without skipping blocks would return it.
         let reordered = [
-            "Xipocado, Royal Architect",
+            "Xipocado, Architect to the Queen",
             "(Kill to upgrade to",
-            "Omnitect Reactor Plant)",
+            "Grand Reactor)",
             "Tombs",
         ];
+        let got = read_panel(&reordered);
         assert_eq!(
-            read_panel(&reordered).identity_name(),
-            Some("Tombs"),
+            got.room.identity(),
+            Some(RoomIdentity::Filler("Tombs")),
             "an architect's target must not be mistaken for the panel title"
         );
+        assert_eq!(got.architects.len(), 1);
+        assert_room(got.architects[0].target.identity(), "conduit_of_lightning", Tier::T2);
     }
 
     #[test]

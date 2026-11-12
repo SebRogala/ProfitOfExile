@@ -1122,7 +1122,7 @@ mod tests {
         let mut state = board(&[(D1, "museum_of_artefacts", 2)], &[(D1, E1)], D1, 5);
         state.current_tier = Some(Tier::T2);
         let offers = [offer("fixture", Change, "Cultivar Chamber"),
-            offer("fixture", Change, "Omnitect Reactor Plant")];
+            offer("fixture", Change, "Grand Reactor")];
         let advice = advise(&state, &offers, 0, &rush(), &TempleConfig::default(), 0, SEED);
         assert_eq!(advice.recommendations.len(), 2);
         assert!(advice.recommendations.iter().all(|option| option.reasons.contains(&Reason::R4)));
