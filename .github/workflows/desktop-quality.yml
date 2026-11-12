@@ -17,6 +17,7 @@ on:
       - 'desktop/**'
       - 'docker-compose.yml'
       - 'Makefile'
+      - 'scripts/rust-size-gate.sh'
       - 'internal/exchange/testdata/wire/**'
       - 'internal/trade/testdata/**'
       - 'internal/mercenary/testdata/merc-sig-v2/**'
@@ -29,6 +30,7 @@ on:
       - 'desktop/**'
       - 'docker-compose.yml'
       - 'Makefile'
+      - 'scripts/rust-size-gate.sh'
       - 'internal/exchange/testdata/wire/**'
       - 'internal/trade/testdata/**'
       - 'internal/mercenary/testdata/merc-sig-v2/**'
@@ -54,6 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Rust size and boundary gates
+        run: make desktop-size-gate
       - name: Build desktop image
         run: docker compose build desktop
       # The merc seed-art fixture is NOT committed (GPL-3 repo, CC-BY-NC-SA
