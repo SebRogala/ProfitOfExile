@@ -3517,10 +3517,6 @@ mod tests {
         assert!(mercenary.enabled);
     }
 
-    /// Window settings must not overwrite overlay settings in the save cycle.
-    /// Regression guard: if persist_overlay_settings were ever called AFTER
-    /// s.window = Some(...), it would overwrite the freshly set window settings
-    /// with the file's stale version. Correct order: persist_overlay THEN set window.
     fn stored_frame_measurement() -> ScreenScaleSetting {
         ScreenScaleSetting {
             width: 1920,
@@ -3583,6 +3579,10 @@ mod tests {
         assert_eq!((win.x, win.y, win.width, win.height, win.maximized), (200, 300, 1024, 768, false));
     }
 
+    /// Window settings must not overwrite overlay settings in the save cycle.
+    /// Regression guard: if persist_overlay_settings were ever called AFTER
+    /// s.window = Some(...), it would overwrite the freshly set window settings
+    /// with the file's stale version. Correct order: persist_overlay THEN set window.
     #[test]
     fn test_window_settings_not_overwritten_by_overlay_persist() {
         let existing = Settings {
