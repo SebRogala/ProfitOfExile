@@ -261,6 +261,18 @@ it('an in-flight search from the previous league is dropped', async () => {
 	expect(search.state.results).toBeNull();
 });
 
+it('a failed search after a tab/pool change shows no previous-tab rows', async () => {
+	const { search, calls } = leagueSearch();
+	const browse = [{ name: '20/20 browse row', variant: '20/20' } as GemPlay];
+	void search.search(searchQuery);
+	calls[0].reply.resolve([{ name: 'Arc of Surging', variant: '20/20' } as GemPlay]);
+	await settle();
+	void search.search({ ...searchQuery, tab: '1/0' });
+	calls[1].reply.reject(new Error('offline'));
+	await settle();
+	expect(search.rows(browse)).toEqual([]);
+});
+
 it.each(['failed', 'cold'] as const)('withdraws every outgoing consumer while B is %s', async (replacement) => {
 	const compareA = deferred<CompareGem[]>();
 	const cxCalls: ReturnType<typeof deferred<CurrencyExchangeResponse>>[] = [];

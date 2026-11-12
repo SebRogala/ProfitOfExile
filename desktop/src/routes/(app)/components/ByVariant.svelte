@@ -269,20 +269,32 @@
 	}
 
 	// A search returns its gem across every market; each tab keeps only its own.
-	// Browsing shows the server's page as returned.
+	// While a gem is selected the table shows only that search (gemSearch.rows),
+	// never the retained browse page. Browsing shows the server's page as returned.
 	function playsForVariant(variant: string): GemPlay[] {
-		return searchResults ? searchResults.filter(g => g.variant === variant) : allPlays;
+		const rows = gemSearch.rows(allPlays);
+		return gemSearch.state.active ? rows.filter(g => g.variant === variant) : rows;
 	}
 
 	function playsForAll(): GemPlay[] {
-		return searchResults ?? allPlays;
+		return gemSearch.rows(allPlays);
 	}
 
 	// baseName holds "skill" or "transfigured" for Dedication gems, and the
 	// server stamps each row with the market it was ranked in, so both halves of
 	// a search result's tab filter.
 	function playsForPool(poolType: string, variant: string): GemPlay[] {
-		return searchResults ? searchResults.filter(g => g.baseName === poolType && g.variant === variant) : allPlays;
+		const rows = gemSearch.rows(allPlays);
+		return gemSearch.state.active ? rows.filter(g => g.baseName === poolType && g.variant === variant) : rows;
+	}
+
+	// The empty-table text: the search's own state while a gem is selected.
+	function emptyText(browseEmpty: string): string {
+		if (gemSearch.state.active) {
+			if (gemSearch.state.pending) return 'Loading…';
+			return searchResults ? searchMissReason() : '';
+		}
+		return rankingsPending ? 'Loading…' : browseEmpty;
 	}
 
 	function setSort(sort: RankingsSort) {
@@ -396,13 +408,13 @@
 	{#if isDedication}
 		{@const tab = activeDedTabInfo}
 		{@const vd = playsForPool(tab.pool, tab.variant)}
-		<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool] || tab.pool}) — {tab.variant}" showVariantColumn={false} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} emptyText={searchResults ? searchMissReason() : rankingsPending ? 'Loading…' : 'No data for this pool'} />
+		<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool] || tab.pool}) — {tab.variant}" showVariantColumn={false} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} emptyText={emptyText('No data for this pool')} />
 	{:else if activeTab === 'ALL'}
 		{@const vd = playsForAll()}
-		<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} emptyText={searchResults ? searchMissReason() : rankingsPending ? 'Loading…' : 'No data available'} />
+		<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} emptyText={emptyText('No data available')} />
 	{:else}
 		{@const vd = playsForVariant(activeTab)}
-		<BestPlays plays={vd} title="Best Plays ({activeTab})" showVariantColumn={false} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} emptyText={searchResults ? searchMissReason() : rankingsPending ? 'Loading…' : 'No data for this variant'} />
+		<BestPlays plays={vd} title="Best Plays ({activeTab})" showVariantColumn={false} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} emptyText={emptyText('No data for this variant')} />
 	{/if}
 </section>
 

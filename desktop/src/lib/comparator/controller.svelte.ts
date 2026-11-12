@@ -429,7 +429,9 @@ export function createLabController(dependencies: {
  * in flight, and refetches the selected gem for the new league.
  */
 export function createRankingsSearch(fetchRows: (q: RankingsQuery) => Promise<GemPlay[]>) {
-	const state = $state({ results: null as GemPlay[] | null, error: '' });
+	// active: a gem is selected; while it is, the table shows only this search's
+	// rows or its own loading/error/empty state, never the retained browse page.
+	const state = $state({ results: null as GemPlay[] | null, error: '', active: false, pending: false });
 	let query: RankingsQuery | null = null;
 	let generation = 0;
 	async function run() {
@@ -437,19 +439,24 @@ export function createRankingsSearch(fetchRows: (q: RankingsQuery) => Promise<Ge
 		const mine = ++generation;
 		state.error = '';
 		if (!q) return;
+		state.pending = true;
 		try {
 			const rows = await fetchRows(q);
-			if (mine === generation) state.results = rows;
+			if (mine !== generation) return;
+			state.results = rows;
+			state.pending = false;
 		} catch (error) {
 			// Without this the rejection was silent and the UI simply never changed.
 			console.warn('[ByVariant] gem search failed:', error);
 			if (mine !== generation) return;
 			state.results = null;
+			state.pending = false;
 			state.error = `Search for "${q.search}" failed \u2014 check the connection and try again.`;
 		}
 	}
 	function search(q: RankingsQuery) {
 		query = q;
+		state.active = true;
 		return run();
 	}
 	function clear() {
@@ -457,6 +464,8 @@ export function createRankingsSearch(fetchRows: (q: RankingsQuery) => Promise<Ge
 		generation++;
 		state.results = null;
 		state.error = '';
+		state.active = false;
+		state.pending = false;
 	}
 	function start() {
 		return onLeagueChange(() => {
@@ -464,5 +473,9 @@ export function createRankingsSearch(fetchRows: (q: RankingsQuery) => Promise<Ge
 			void run();
 		});
 	}
-	return { state, search, clear, start };
+	/** The rows the table shows: this search's while a gem is selected, else the browse page. */
+	function rows(browse: GemPlay[]): GemPlay[] {
+		return state.active ? state.results ?? [] : browse;
+	}
+	return { state, search, clear, start, rows };
 }
