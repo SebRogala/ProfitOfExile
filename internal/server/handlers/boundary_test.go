@@ -25,10 +25,9 @@ var forbiddenImportPrefixes = []string{
 // the task that removes it. The baseline ratchets: an entry whose file no longer
 // imports a forbidden path fails the build until it is removed.
 var importBaseline = map[string]string{
-	"analysis.go":     "POE-339: divine-rate fallback query in AnalysisStatus",
-	"boss_loot.go":    "POE-344: NewBossLoot builds its repository from the pool",
-	"debug.go":        "server audit L1: debug endpoints read collector state",
-	"font_session.go": "POE-344: font-session insert transaction",
+	"analysis.go":  "POE-339: divine-rate fallback query in AnalysisStatus",
+	"boss_loot.go": "POE-344: NewBossLoot builds its repository from the pool",
+	"debug.go":     "server audit L1: debug endpoints read collector state",
 }
 
 // guardFiles must be among the parsed files so the walk cannot pass vacuously.

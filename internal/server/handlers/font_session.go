@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"profitofexile/internal/lab"
 	"profitofexile/internal/server/middleware"
 )
 
@@ -22,22 +22,16 @@ type fontSessionRequest struct {
 }
 
 type fontRound struct {
-	CraftOptions    []craftOption `json:"craft_options"`
-	OptionChosen    string        `json:"option_chosen"`
-	GemsOffered     []string      `json:"gems_offered"`
-	GemPicked       string        `json:"gem_picked"`
-	CraftsRemaining *int          `json:"crafts_remaining"`
-}
-
-type craftOption struct {
-	Type  string `json:"type"`
-	Text  string `json:"text"`
-	Value *int   `json:"value,omitempty"`
+	CraftOptions    []lab.FontCraftOption `json:"craft_options"`
+	OptionChosen    string                `json:"option_chosen"`
+	GemsOffered     []string              `json:"gems_offered"`
+	GemPicked       string                `json:"gem_picked"`
+	CraftsRemaining *int                  `json:"crafts_remaining"`
 }
 
 // FontSession handles POST /api/desktop/font-session. Stores crowd-sourced
 // font crafting data from the desktop app's OCR pipeline.
-func FontSession(pool *pgxpool.Pool) http.HandlerFunc {
+func FontSession(repo *lab.FontSessionRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 32768) // 32KB max
 
@@ -78,65 +72,31 @@ func FontSession(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 		deviceID := dev.Fingerprint
 
-		ctx := r.Context()
-
-		// Use transaction — all rounds succeed or none do (prevents partial data)
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			slog.Error("font session: begin tx", "error", err)
-			jsonError(w, http.StatusInternalServerError, "failed to store session")
-			return
+		session := lab.FontSession{
+			LabType:     body.LabType,
+			TotalCrafts: body.TotalCrafts,
+			Variant:     coalesce(body.Variant, "20/20"),
+			PairCode:    body.PairCode,
+			Rounds:      make([]lab.FontRound, len(body.Rounds)),
 		}
-		defer tx.Rollback(ctx)
-
-		// Insert session
-		var sessionID int64
-		err = tx.QueryRow(ctx,
-			`INSERT INTO font_sessions (lab_type, total_crafts, variant, device_id, pair_code)
-			 VALUES ($1, $2, $3, $4, $5)
-			 RETURNING id`,
-			body.LabType,
-			body.TotalCrafts,
-			coalesce(body.Variant, "20/20"),
-			deviceID,
-			body.PairCode,
-		).Scan(&sessionID)
-		if err != nil {
-			slog.Error("font session: insert session", "error", err)
-			jsonError(w, http.StatusInternalServerError, "failed to store session")
-			return
-		}
-
-		// Insert rounds
 		for i, round := range body.Rounds {
-			optionsJSON, err := json.Marshal(round.CraftOptions)
-			if err != nil {
-				slog.Error("font session: marshal options", "error", err, "round", i)
-				jsonError(w, http.StatusInternalServerError, "failed to serialize round options")
-				return
-			}
-
-			_, err = tx.Exec(ctx,
-				`INSERT INTO font_rounds (session_id, round_number, craft_options, option_chosen, gems_offered, gem_picked, crafts_remaining)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-				sessionID,
-				i+1,
-				optionsJSON,
-				nilIfEmpty(round.OptionChosen),
-				pgStringArray(round.GemsOffered),
-				nilIfEmpty(round.GemPicked),
-				round.CraftsRemaining,
-			)
-			if err != nil {
-				slog.Error("font session: insert round", "error", err, "round", i, "session", sessionID)
-				jsonError(w, http.StatusInternalServerError, "failed to store round")
-				return
+			session.Rounds[i] = lab.FontRound{
+				CraftOptions:    round.CraftOptions,
+				OptionChosen:    round.OptionChosen,
+				GemsOffered:     round.GemsOffered,
+				GemPicked:       round.GemPicked,
+				CraftsRemaining: round.CraftsRemaining,
 			}
 		}
 
-		if err := tx.Commit(ctx); err != nil {
-			slog.Error("font session: commit", "error", err)
-			jsonError(w, http.StatusInternalServerError, "failed to commit session")
+		sessionID, err := repo.Store(r.Context(), deviceID, session)
+		if err != nil {
+			var storeErr *lab.FontSessionStoreError
+			if !errors.As(err, &storeErr) {
+				storeErr = &lab.FontSessionStoreError{Stage: lab.FontSessionStageInsertSession, Err: err}
+			}
+			logFontSessionStoreError(storeErr)
+			jsonError(w, http.StatusInternalServerError, fontSessionStoreErrorMessage(storeErr.Stage))
 			return
 		}
 
@@ -168,16 +128,33 @@ func coalesce(s, fallback string) string {
 	return s
 }
 
-func nilIfEmpty(s string) *string {
-	if s == "" {
-		return nil
+// logFontSessionStoreError logs a failed store stage with the handler's
+// original message texts and attributes.
+func logFontSessionStoreError(e *lab.FontSessionStoreError) {
+	switch e.Stage {
+	case lab.FontSessionStageBegin:
+		slog.Error("font session: begin tx", "error", e.Err)
+	case lab.FontSessionStageMarshalOptions:
+		slog.Error("font session: marshal options", "error", e.Err, "round", e.RoundIndex)
+	case lab.FontSessionStageInsertRound:
+		slog.Error("font session: insert round", "error", e.Err, "round", e.RoundIndex, "session", e.SessionID)
+	case lab.FontSessionStageCommit:
+		slog.Error("font session: commit", "error", e.Err)
+	default:
+		slog.Error("font session: insert session", "error", e.Err)
 	}
-	return &s
 }
 
-func pgStringArray(ss []string) any {
-	if len(ss) == 0 {
-		return nil
+// fontSessionStoreErrorMessage is the 500 body text for a failed store stage.
+func fontSessionStoreErrorMessage(stage lab.FontSessionStage) string {
+	switch stage {
+	case lab.FontSessionStageMarshalOptions:
+		return "failed to serialize round options"
+	case lab.FontSessionStageInsertRound:
+		return "failed to store round"
+	case lab.FontSessionStageCommit:
+		return "failed to commit session"
+	default:
+		return "failed to store session"
 	}
-	return ss
 }

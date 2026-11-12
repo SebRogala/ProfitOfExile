@@ -72,6 +72,9 @@ type RouterConfig struct {
 	// LabRunRepo stores and lists desktop lab-run timings; nil leaves
 	// /api/lab/runs unregistered.
 	LabRunRepo *lab.LabRunRepository
+	// FontSessionRepo stores desktop font sessions; nil leaves
+	// /api/desktop/font-session unregistered.
+	FontSessionRepo *lab.FontSessionRepository
 	// ExchangeCache holds the newest currency-exchange ranking, refreshed by
 	// exchange.Service in cmd/server. May be nil — the handler then reads as
 	// COLD and answers 200 with no plays rather than failing.
@@ -287,7 +290,10 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Patch("/api/boss-loot/runs/{id}", bossLoot.Edit)
 		r.Post("/api/boss-loot/runs/{id}/delete", bossLoot.Delete)
 		r.Get("/api/boss-loot/stats", bossLoot.Stats)
-		r.Post("/api/desktop/font-session", handlers.FontSession(cfg.Pool))
+	}
+
+	if cfg.FontSessionRepo != nil {
+		r.Post("/api/desktop/font-session", handlers.FontSession(cfg.FontSessionRepo))
 	}
 
 	if cfg.LabRunRepo != nil {

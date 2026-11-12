@@ -273,6 +273,7 @@ func main() {
 		LabRepo:              labRepo,
 		LayoutRepo:           layoutRepo,
 		LabRunRepo:           lab.NewLabRunRepository(pool),
+		FontSessionRepo:      lab.NewFontSessionRepository(pool),
 		LabCache:             labCache,
 		ExchangeCache:        exchangeCache,
 		HarvestCache:         harvestCache,
