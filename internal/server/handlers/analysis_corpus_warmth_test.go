@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -196,6 +198,81 @@ func TestTrendAnalysis_WarmCorpusUnknownVariantAnswersWithoutQuerying(t *testing
 		"/api/analysis/trends?variant=1/20")
 	if count := decodeCount(t, w); count != 0 {
 		t.Errorf("count = %d, want 0 for a variant absent from the warm corpus", count)
+	}
+}
+
+// limitFilterCorpus is a warm trend corpus whose first signal fails the
+// ?signal=STABLE filter, so a limit counted before filtering would cut a match.
+func limitFilterCorpus(t *testing.T) *lab.Cache {
+	t.Helper()
+	cache := lab.NewCache(corpusScope)
+	cache.For(corpusScope).SetGemSignals([]lab.GemSignal{
+		{Name: "A", Variant: "20/20", Signal: "TRAP"},
+		{Name: "B", Variant: "20/20", Signal: "STABLE"},
+		{Name: "C", Variant: "20/20", Signal: "STABLE"},
+		{Name: "D", Variant: "20/20", Signal: "STABLE"},
+	})
+	cache.For(corpusScope).SetGemFeatures(nil)
+	cache.For(corpusScope).SetSparklinesByName(nil, nil, time.Now())
+	return cache
+}
+
+func decodeTrendNames(t *testing.T, w *httptest.ResponseRecorder) []string {
+	t.Helper()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data []struct {
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	names := make([]string, 0, len(resp.Data))
+	for _, row := range resp.Data {
+		names = append(names, row.Name)
+	}
+	return names
+}
+
+func TestTrendAnalysis_LimitCountsOnlySignalsThatPassTheFilters(t *testing.T) {
+	w := serveWithoutRepository(t, TrendAnalysis(nil, limitFilterCorpus(t), corpusScope),
+		"/api/analysis/trends?signal=STABLE&limit=2")
+
+	if got := decodeTrendNames(t, w); !slices.Equal(got, []string{"B", "C"}) {
+		t.Errorf("names = %v, want [B C]", got)
+	}
+}
+
+func TestTrendAnalysis_LimitLargerThanMatchesReturnsEveryMatch(t *testing.T) {
+	w := serveWithoutRepository(t, TrendAnalysis(nil, limitFilterCorpus(t), corpusScope),
+		"/api/analysis/trends?signal=STABLE&limit=10")
+
+	if got := decodeTrendNames(t, w); !slices.Equal(got, []string{"B", "C", "D"}) {
+		t.Errorf("names = %v, want [B C D]", got)
+	}
+}
+
+// An unscoped league.Scope fails LatestGemSignals' Validate before the nil
+// pool is touched, so the corpus-query failure path runs without a database.
+func TestTrendAnalysis_CorpusQueryFailureReturnsQueryFailed(t *testing.T) {
+	w := httptest.NewRecorder()
+	TrendAnalysis(nil, nil, league.Scope{}).ServeHTTP(w,
+		httptest.NewRequest(http.MethodGet, "/api/analysis/trends", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+	if got := w.Body.String(); got != "{\"error\":\"query failed\"}\n" {
+		t.Errorf("body = %q, want the query-failed error", got)
+	}
+	if got := w.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want text/plain; charset=utf-8", got)
+	}
+	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
 	}
 }
 

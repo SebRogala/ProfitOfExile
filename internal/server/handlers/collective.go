@@ -62,42 +62,6 @@ type collectiveRow struct {
 // constant so the served window and the populated window cannot drift apart.
 const sparklineWindowHours = lab.SparklineWindowHours
 
-// trimSparkline returns the suffix of pts newer than hours ago. Points are
-// stored ascending by time, so the first point inside the window starts the
-// suffix. hours <= 0 means "no trim" (the caller serves the full cached series).
-func trimSparkline(pts []lab.SparklinePoint, hours int) []lab.SparklinePoint {
-	if hours <= 0 || len(pts) == 0 {
-		return pts
-	}
-	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
-	for i, p := range pts {
-		t, err := time.Parse(time.RFC3339, p.Time)
-		if err != nil {
-			continue
-		}
-		if t.After(cutoff) {
-			return pts[i:]
-		}
-	}
-	return nil
-}
-
-// cachedSparklines collects the cached non-corrupted series for names at a
-// single variant, keyed by name so the result is a drop-in for what
-// Repository.SparklineData returns. Names with no cached points are omitted:
-// on a warm cache that means the gem genuinely has no recent points, which is
-// the same empty series the query would have produced.
-func cachedSparklines(cache *lab.Cache, scope league.Scope, names []string, variant string, hours int) map[string][]lab.SparklinePoint {
-	c := cache.For(scope)
-	out := make(map[string][]lab.SparklinePoint, len(names))
-	for _, n := range names {
-		if pts := trimSparkline(c.Sparklines(n, variant), hours); len(pts) > 0 {
-			out[n] = pts
-		}
-	}
-	return out
-}
-
 // nonNilSparkline returns pts, or an empty slice when pts is nil.
 //
 // collectiveRow.Sparkline carries no omitempty, so a nil slice marshals as
@@ -130,7 +94,7 @@ func cachedCorruptedSparklines(cache *lab.Cache, scope league.Scope, names []str
 	}
 	out := make(map[string][]lab.SparklinePoint, len(names))
 	for _, n := range names {
-		if pts := trimSparkline(c.SparklinesCorrupted(n, variant), hours); len(pts) > 0 {
+		if pts := lab.TrimSparkline(c.SparklinesCorrupted(n, variant), hours); len(pts) > 0 {
 			out[n] = pts
 		}
 	}
@@ -454,7 +418,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 		// the mixed-variant series an empty variant returns today — that case
 		// stays on the query.
 		if variant != "" && cache != nil && cache.For(scope).HasSparklines() {
-			sparklines = cachedSparklines(cache, scope, names, variant, sparklineWindowHours)
+			sparklines = lab.CachedSparklines(cache, scope, names, variant, sparklineWindowHours)
 		} else {
 			sp, err := repo.SparklineData(r.Context(), scope, names, variant, sparklineWindowHours)
 			if err != nil {

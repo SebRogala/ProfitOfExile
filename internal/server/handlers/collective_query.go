@@ -136,7 +136,7 @@ func loadCollectiveSparklines(ctx context.Context, repo *lab.Repository, cache *
 				variant = result.Variant
 			}
 			// Raw prices — normalization creates edge artifacts.
-			if points := trimSparkline(c.Sparklines(result.TransfiguredName, variant), sparklineWindowHours); len(points) > 0 {
+			if points := lab.TrimSparkline(c.Sparklines(result.TransfiguredName, variant), sparklineWindowHours); len(points) > 0 {
 				sparklines[collectiveSparklineKey{name: result.TransfiguredName, variant: result.Variant}] = points
 			}
 		}

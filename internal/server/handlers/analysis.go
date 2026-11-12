@@ -511,7 +511,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 		if !ok {
 			return
 		}
-		input := trendQueryInput{
+		input := lab.TrendQuery{
 			Variant:  normalizeVariant(r.URL.Query().Get("variant")),
 			Signal:   r.URL.Query().Get("signal"),
 			Window:   r.URL.Query().Get("window"),
@@ -519,11 +519,11 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 			Tier:     r.URL.Query().Get("tier"),
 			Limit:    limit,
 		}
-		query, err := queryTrend(r.Context(), repo, cache, scope, input)
+		query, err := lab.QueryTrend(r.Context(), repo, cache, scope, input)
 		if err != nil {
-			var queryErr *trendQueryError
+			var queryErr *lab.QueryError
 			if errors.As(err, &queryErr) {
-				slog.Error("trend analysis: "+queryErr.operation+" query failed", "error", queryErr.err)
+				slog.Error("trend analysis: "+queryErr.Operation+" query failed", "error", queryErr.Err)
 			} else {
 				slog.Error("trend analysis: query failed", "error", err)
 			}

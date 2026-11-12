@@ -579,37 +579,6 @@ func TestTrendAnalysis_WarmCacheServesLastFourPointsWithoutQuerying(t *testing.T
 	}
 }
 
-func TestTrimSparkline(t *testing.T) {
-	now := time.Now()
-	old := sparkAt(now, 20*time.Hour, 60, 40)
-	recent := sparkAt(now, time.Hour, 125, 26)
-
-	tests := []struct {
-		name  string
-		pts   []lab.SparklinePoint
-		hours int
-		want  []lab.SparklinePoint
-	}{
-		{"keeps points inside the window", []lab.SparklinePoint{old, recent}, 12, []lab.SparklinePoint{recent}},
-		{"drops everything older than the window", []lab.SparklinePoint{old}, 12, nil},
-		{"no window keeps the whole series", []lab.SparklinePoint{old, recent}, 0, []lab.SparklinePoint{old, recent}},
-		{"unparseable times are skipped, not kept", []lab.SparklinePoint{{Time: "not-a-time", Price: 1}, recent}, 12, []lab.SparklinePoint{recent}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := trimSparkline(tt.pts, tt.hours)
-			if len(got) != len(tt.want) {
-				t.Fatalf("got %d points %+v, want %d", len(got), got, len(tt.want))
-			}
-			for i := range tt.want {
-				if got[i] != tt.want[i] {
-					t.Errorf("point[%d] = %+v, want %+v", i, got[i], tt.want[i])
-				}
-			}
-		})
-	}
-}
-
 // serveDedicationCompare queries corrupted gem prices before it ever reaches a
 // sparkline, so its cache read is covered here at the function it delegates to.
 func TestCachedCorruptedSparklines_DedicationVariantReadsTheCorruptedCache(t *testing.T) {

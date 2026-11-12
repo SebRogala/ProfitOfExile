@@ -18,9 +18,9 @@ import (
 
 func TestAssembleTrendRows_EnrichesSignalWithMatchingFeatureAndTrend(t *testing.T) {
 	when := time.Date(2026, time.September, 24, 12, 34, 56, 0, time.UTC)
-	query := trendQueryResult{
-		filtered: []trendSignalWithFeature{{
-			signal: &lab.GemSignal{
+	query := lab.TrendQueryResult{
+		Filtered: []lab.TrendSignalWithFeature{{
+			Signal: &lab.GemSignal{
 				Time:             when,
 				Name:             "Spark of Nova",
 				Variant:          "20/20",
@@ -33,7 +33,7 @@ func TestAssembleTrendRows_EnrichesSignalWithMatchingFeatureAndTrend(t *testing.
 				Sellability:      91,
 				SellabilityLabel: "SAFE",
 			},
-			feature: &lab.GemFeature{
+			Feature: &lab.GemFeature{
 				Name:             "Spark of Nova",
 				Variant:          "20/20",
 				Chaos:            123.5,
@@ -49,11 +49,11 @@ func TestAssembleTrendRows_EnrichesSignalWithMatchingFeatureAndTrend(t *testing.
 				MarketDepth:      0.2,
 			},
 		}},
-		trends: map[trendGemKey]trendData{
-			{name: "Spark of Nova", variant: "20/20"}: {
-				prices:       []int{110, 120, 123},
-				listings:     []int{22, 19, 17},
-				baseListings: []int{30, 28, 25},
+		Trends: map[lab.TrendGemKey]lab.TrendData{
+			{Name: "Spark of Nova", Variant: "20/20"}: {
+				Prices:       []int{110, 120, 123},
+				Listings:     []int{22, 19, 17},
+				BaseListings: []int{30, 28, 25},
 			},
 		},
 	}
