@@ -23,7 +23,7 @@ const mercureTopicPrefix = "poe/collector/"
 
 // RoomCategory is the item_snapshots category carrying the 86 temple room-tier
 // lines. It is the only category whose lines are rooms; the other six carry the
-// uniques and vials the recipe table names.
+// uniques the upgrade table names (and the Vial feed, still read).
 const RoomCategory = "IncursionTemple"
 
 // Feed binds one poe.ninja item-overview category to the collector's endpoint

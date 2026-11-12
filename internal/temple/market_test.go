@@ -197,31 +197,32 @@ func TestBuild_roomsAreSortedByNameSoThePayloadIsDeterministic(t *testing.T) {
 
 func TestBuild_lowConfidenceIsRelativeToTheLinesOwnCategory(t *testing.T) {
 	// Two markets of very different depth, as the real feed has them: five
-	// UniqueArmour lines around 1000 listings against four Vial lines around 10.
+	// UniqueArmour lines around 1000 listings against four UniqueJewel lines
+	// around 10.
 	//
-	// Vial of Awakening at 100 listings is TEN TIMES its own market's median and
+	// Tempered Flesh at 100 listings is TEN TIMES its own market's median and
 	// plainly confident. Pool the two categories into one median and the
-	// threshold becomes 400, which flags it. Vial of the Ghost at 3 is thin
-	// either way, so it is the flag firing at all; Awakening is the flag firing
-	// against the right market.
+	// threshold becomes 400, which flags it. Transcendent Flesh at 3 is thin
+	// either way, so it is the flag firing at all; Tempered Flesh is the flag
+	// firing against the right market.
 	m := Build("Allflame", []Line{
 		item("UniqueArmour", "Apep's Slumber", 8, 1000),
 		item("UniqueArmour", "Apep's Supremacy", 51, 1000),
 		item("UniqueArmour", "Architect's Hand", 75.4, 1000),
 		item("UniqueArmour", "Slavedriver's Hand", 89.6, 1000),
 		item("UniqueArmour", "Omeyocan", 424.3, 1000),
-		item("Vial", "Vial of Awakening", 9, 100),
-		item("Vial", "Vial of Fate", 1, 10),
-		item("Vial", "Vial of Dominance", 1, 10),
-		item("Vial", "Vial of the Ghost", 1689, 3),
+		item("UniqueJewel", "Tempered Flesh", 9, 100),
+		item("UniqueJewel", "Tempered Mind", 1, 10),
+		item("UniqueJewel", "Tempered Spirit", 1, 10),
+		item("UniqueJewel", "Transcendent Flesh", 1689, 3),
 	}, nil, nil)
 
 	items := itemsByName(m)
-	if !items["Vial of the Ghost"].Price.LowConfidence {
-		t.Errorf("Vial of the Ghost (3 of a 10 median) reported lowConfidence = false")
+	if !items["Transcendent Flesh"].Price.LowConfidence {
+		t.Errorf("Transcendent Flesh (3 of a 10 median) reported lowConfidence = false")
 	}
-	if items["Vial of Awakening"].Price.LowConfidence {
-		t.Errorf("Vial of Awakening (100 against its own market's median of 10) reported lowConfidence = true; the threshold was pooled across categories")
+	if items["Tempered Flesh"].Price.LowConfidence {
+		t.Errorf("Tempered Flesh (100 against its own market's median of 10) reported lowConfidence = true; the threshold was pooled across categories")
 	}
 }
 
@@ -255,23 +256,23 @@ func TestBuild_lineJustBelowFortyPercentOfTheMedianIsThin(t *testing.T) {
 
 func TestBuild_thinLineIsPricedFromTheWindowMedianNotTheNewestPrint(t *testing.T) {
 	newest := []Line{
-		item("Vial", "Vial of the Ghost", 1689, 7),
-		item("Vial", "Vial of Fate", 1, 343),
-		item("Vial", "Vial of Dominance", 1, 107),
+		item("UniqueAccessory", "Coward's Legacy", 1689, 7),
+		item("UniqueAccessory", "Coward's Chains", 1, 343),
+		item("UniqueAccessory", "Sacrificial Heart", 1, 107),
 	}
 	// The divine axis is deliberately NOT ordered with the chaos axis: sorted on
 	// its own it medians to 5, and only the print that carries the median chaos
 	// carries 3.8. That is what separates "one print, both axes" from two
 	// independent medians.
 	window := map[string][]WindowPrice{
-		"Vial|Vial of the Ghost": {
+		"UniqueAccessory|Coward's Legacy": {
 			{Chaos: 1500, Divine: 9},
 			{Chaos: 1600, Divine: 3.8},
 			{Chaos: 1689, Divine: 5},
 		},
 	}
 
-	got := itemsByName(Build("Allflame", newest, window, nil))["Vial of the Ghost"].Price
+	got := itemsByName(Build("Allflame", newest, window, nil))["Coward's Legacy"].Price
 	if got.Chaos != 1600 {
 		t.Errorf("chaos = %v, want the window median 1600 rather than the newest print 1689", got.Chaos)
 	}
@@ -289,15 +290,15 @@ func TestBuild_thinLineIsPricedFromTheWindowMedianNotTheNewestPrint(t *testing.T
 
 func TestBuild_confidentLineKeepsItsNewestPrintEvenWhenAWindowIsSupplied(t *testing.T) {
 	newest := []Line{
-		item("Vial", "Vial of Fate", 1, 343),
-		item("Vial", "Vial of Dominance", 1, 300),
-		item("Vial", "Vial of Awakening", 9, 250),
+		item("UniqueAccessory", "Coward's Chains", 1, 343),
+		item("UniqueAccessory", "Sacrificial Heart", 1, 300),
+		item("UniqueAccessory", "Story of the Vaal", 9, 250),
 	}
 	window := map[string][]WindowPrice{
-		"Vial|Vial of Fate": {{Chaos: 99}, {Chaos: 99}, {Chaos: 99}},
+		"UniqueAccessory|Coward's Chains": {{Chaos: 99}, {Chaos: 99}, {Chaos: 99}},
 	}
 
-	got := itemsByName(Build("Allflame", newest, window, nil))["Vial of Fate"].Price
+	got := itemsByName(Build("Allflame", newest, window, nil))["Coward's Chains"].Price
 	if got.WindowPriced {
 		t.Errorf("a confident line reported windowPriced = true")
 	}
@@ -309,12 +310,12 @@ func TestBuild_confidentLineKeepsItsNewestPrintEvenWhenAWindowIsSupplied(t *test
 func TestBuild_thinLineWithNoWindowRowsKeepsItsNewestPrint(t *testing.T) {
 	// A window read that came back empty must not price the item at zero.
 	newest := []Line{
-		item("Vial", "Vial of the Ghost", 1689, 7),
-		item("Vial", "Vial of Fate", 1, 343),
-		item("Vial", "Vial of Dominance", 1, 107),
+		item("UniqueAccessory", "Coward's Legacy", 1689, 7),
+		item("UniqueAccessory", "Coward's Chains", 1, 343),
+		item("UniqueAccessory", "Sacrificial Heart", 1, 107),
 	}
 
-	got := itemsByName(Build("Allflame", newest, nil, nil))["Vial of the Ghost"].Price
+	got := itemsByName(Build("Allflame", newest, nil, nil))["Coward's Legacy"].Price
 	if got.Chaos != 1689 {
 		t.Errorf("chaos = %v, want the newest print 1689 when the window read returned nothing", got.Chaos)
 	}
@@ -327,7 +328,7 @@ func TestBuild_thinLineWithNoWindowRowsKeepsItsNewestPrint(t *testing.T) {
 }
 
 func TestBuild_itemAbsentFromTheSnapshotIsUnpricedNotZero(t *testing.T) {
-	m := Build("Allflame", []Line{item("Vial", "Vial of Fate", 1, 343)}, nil, nil)
+	m := Build("Allflame", []Line{item("UniqueAccessory", "Coward's Chains", 1, 343)}, nil, nil)
 
 	got := itemsByName(m)["Zerphi's Heart"]
 	if !got.Unpriced {
@@ -348,21 +349,21 @@ func TestBuild_itemWithZeroListingsIsUnpriced(t *testing.T) {
 	// poe.ninja keeps serving a price for a line nobody lists. That is a stale
 	// estimate, not a market.
 	m := Build("Allflame", []Line{
-		item("Vial", "Vial of Sacrifice", 422.3, 0),
-		item("Vial", "Vial of Fate", 1, 343),
+		item("UniqueAccessory", "Fate of the Vaal", 422.3, 0),
+		item("UniqueAccessory", "Coward's Chains", 1, 343),
 	}, nil, nil)
 
-	got := itemsByName(m)["Vial of Sacrifice"]
+	got := itemsByName(m)["Fate of the Vaal"]
 	if !got.Unpriced || got.Price != nil {
-		t.Errorf("Vial of Sacrifice = %+v, want unpriced with a null price despite the feed's 422.3", got)
+		t.Errorf("Fate of the Vaal = %+v, want unpriced with a null price despite the feed's 422.3", got)
 	}
 }
 
-func TestBuild_servesEveryRecipeMemberEvenWhenTheFeedIsEmpty(t *testing.T) {
+func TestBuild_servesEveryUpgradeMemberEvenWhenTheFeedIsEmpty(t *testing.T) {
 	m := Build("Allflame", nil, nil, nil)
 
 	if len(m.Items) != len(ItemNames()) {
-		t.Errorf("items = %d, want all %d recipe members served as unpriced", len(m.Items), len(ItemNames()))
+		t.Errorf("items = %d, want all %d served uniques served as unpriced", len(m.Items), len(ItemNames()))
 	}
 	for _, i := range m.Items {
 		if !i.Unpriced {
@@ -374,10 +375,10 @@ func TestBuild_servesEveryRecipeMemberEvenWhenTheFeedIsEmpty(t *testing.T) {
 func TestBuild_categoriesSeenListsOnlyTheCategoriesThatStoredLines(t *testing.T) {
 	m := Build("Allflame", []Line{
 		room("A (Tier 1)", 10, 700),
-		item("Vial", "Vial of Fate", 1, 343),
+		item("UniqueAccessory", "Coward's Chains", 1, 343),
 	}, nil, nil)
 
-	want := []string{RoomCategory, "Vial"}
+	want := []string{RoomCategory, "UniqueAccessory"}
 	if !reflect.DeepEqual(m.CategoriesSeen, want) {
 		t.Errorf("categoriesSeen = %v, want %v — a category with no snapshot must not be claimed", m.CategoriesSeen, want)
 	}
@@ -389,7 +390,7 @@ func TestBuild_asOfIsTheNewestTimeAcrossEveryCategory(t *testing.T) {
 
 	m := Build("Allflame", []Line{
 		{Category: RoomCategory, Time: older, Name: "A (Tier 1)", Chaos: 10, Listings: 700},
-		{Category: "Vial", Time: newer, Name: "Vial of Fate", Chaos: 1, Listings: 343},
+		{Category: "UniqueAccessory", Time: newer, Name: "Coward's Chains", Chaos: 1, Listings: 343},
 	}, nil, nil)
 
 	if m.AsOf == nil {
@@ -409,9 +410,6 @@ func TestBuild_carriesTheLeagueAndTheFloorRule(t *testing.T) {
 	if m.FloorRule != FloorRule {
 		t.Errorf("floorRule = %q, want %q so the client can show the rule it is reading", m.FloorRule, FloorRule)
 	}
-	if len(m.Recipes) != 11 {
-		t.Errorf("recipes = %d, want the 11-row table on every response", len(m.Recipes))
-	}
 }
 
 func TestEmptyMarket_hasNoObservationsButKeepsTheStaticAnswer(t *testing.T) {
@@ -426,8 +424,8 @@ func TestEmptyMarket_hasNoObservationsButKeepsTheStaticAnswer(t *testing.T) {
 	if m.Rooms == nil || m.Items == nil || m.CategoriesSeen == nil {
 		t.Errorf("cold market has a nil slice; it would marshal as null rather than []")
 	}
-	if len(m.Recipes) != 11 || m.League != "Allflame" || m.FloorRule != FloorRule {
-		t.Errorf("cold market dropped the static answer: league %q, floorRule %q, %d recipes", m.League, m.FloorRule, len(m.Recipes))
+	if m.League != "Allflame" || m.FloorRule != FloorRule {
+		t.Errorf("cold market dropped the static answer: league %q, floorRule %q", m.League, m.FloorRule)
 	}
 }
 
@@ -439,17 +437,17 @@ func TestThinLines_namesOnlyThePricedServedLinesThatAreThin(t *testing.T) {
 		room("A (Tier 1)", 10, 700),
 		room("B (Tier 1)", 10, 40),
 		// Items: one thin, one confident, one unpriced.
-		item("Vial", "Vial of the Ghost", 1689, 7),
-		item("Vial", "Vial of Fate", 1, 343),
-		item("Vial", "Vial of Dominance", 1, 300),
+		item("UniqueAccessory", "Coward's Legacy", 1689, 7),
+		item("UniqueAccessory", "Coward's Chains", 1, 343),
+		item("UniqueAccessory", "Sacrificial Heart", 1, 300),
 	}
 
 	got := ThinLines(newest)
 	if len(got) != 1 {
 		t.Fatalf("ThinLines = %+v, want exactly the one thin priced item line", got)
 	}
-	if got[0].Name != "Vial of the Ghost" || got[0].Category != "Vial" {
-		t.Errorf("ThinLines[0] = %+v, want the Vial of the Ghost line", got[0])
+	if got[0].Name != "Coward's Legacy" || got[0].Category != "UniqueAccessory" {
+		t.Errorf("ThinLines[0] = %+v, want the Coward's Legacy line", got[0])
 	}
 }
 
@@ -457,9 +455,9 @@ func TestThinLines_skipsAnItemWithZeroListings(t *testing.T) {
 	// A zero-listing line is unpriced, so window-pricing it would query for a
 	// price nothing serves.
 	newest := []Line{
-		item("Vial", "Vial of Sacrifice", 422.3, 0),
-		item("Vial", "Vial of Fate", 1, 343),
-		item("Vial", "Vial of Dominance", 1, 300),
+		item("UniqueAccessory", "Fate of the Vaal", 422.3, 0),
+		item("UniqueAccessory", "Coward's Chains", 1, 343),
+		item("UniqueAccessory", "Sacrificial Heart", 1, 300),
 	}
 
 	if got := ThinLines(newest); len(got) != 0 {
@@ -552,12 +550,29 @@ func TestMedianOf_isZeroForNoLines(t *testing.T) {
 func TestBuild_noRoomsMeansNoFloorAndNoSales(t *testing.T) {
 	// A zero floor must not make every item-only snapshot report every room-less
 	// payload as above floor; there are no rooms to report on at all.
-	m := Build("Allflame", []Line{item("Vial", "Vial of Fate", 1, 343)}, nil, nil)
+	m := Build("Allflame", []Line{item("UniqueAccessory", "Coward's Chains", 1, 343)}, nil, nil)
 
 	if m.Floor != 0 {
 		t.Errorf("floor = %v, want 0 with no room lines", m.Floor)
 	}
 	if len(m.Rooms) != 0 {
 		t.Errorf("rooms = %d, want none", len(m.Rooms))
+	}
+}
+
+func TestBuild_aStoredVialLineIsNotServed(t *testing.T) {
+	// 3.30 removed vials. The collector still stores the Vial feed, so its lines
+	// reach Build; the served item set must leave them out.
+	m := Build("Allflame", []Line{
+		item("Vial", "Vial of Fate", 1, 343),
+		item("UniqueAccessory", "Coward's Chains", 5, 200),
+	}, nil, nil)
+
+	items := itemsByName(m)
+	if _, served := items["Vial of Fate"]; served {
+		t.Errorf("items carry Vial of Fate; a stored vial line must not be served")
+	}
+	if got := items["Coward's Chains"]; got.Unpriced || got.Price == nil || got.Price.Chaos != 5 {
+		t.Errorf("Coward's Chains = %+v, want it served at its newest print of 5", got)
 	}
 }

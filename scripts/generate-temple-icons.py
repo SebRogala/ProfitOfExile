@@ -2,7 +2,7 @@
 """Generate the temple icon map, ``internal/icons/urls/temple.json``.
 
 The temple endpoint (``GET /api/analysis/temple-market``, POE-255) serves an
-icon path per room-tier and per recipe member. Icons are served by the existing
+icon path per room-tier and per served unique. Icons are served by the existing
 cache (``GET /api/icon/temple/{name}``, ADR-012): it needs a committed
 name-to-upstream-URL map, and adding one is a new ``*.json`` file under
 ``internal/icons/urls/`` with no Go change.
@@ -11,16 +11,16 @@ Unlike the gem and currency-exchange maps, whose URLs come from poewiki, these
 come from poe.ninja's own ``icon`` field on the item-overview lines the
 collector already polls (``web.poecdn.com/gen/image/...``). That URL is
 content-addressed and stable per artwork, so the map only needs regenerating
-when an item's art changes or a name is added to the recipe table.
+when an item's art changes or a name is added to the upgrade table.
 
-The names are read from ``internal/temple/recipes.go`` rather than restated
+The names are read from ``internal/temple/upgrades.go`` rather than restated
 here, so this script cannot drift from the served item set. All 86 room-tier
 lines share one artwork (the Chronicle of Atzoatl / TempleMap image), so they
 get the single entry ``ROOM_ICON_NAME``, which must equal
 ``temple.RoomIconName``. ``TestIconMap_coversTheServedSetAndTheRoomArtwork``
 re-checks both halves against the committed file on every test run.
 
-Run it from the repository root, once per league or after editing the recipe
+Run it from the repository root, once per league or after editing the upgrade
 table::
 
     python3 scripts/generate-temple-icons.py --league Allflame
@@ -68,19 +68,19 @@ ITEM_CATEGORIES = [
 ROOM_ICON_NAME = "Chronicle of Atzoatl"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-RECIPES_GO = REPO_ROOT / "internal" / "temple" / "recipes.go"
+UPGRADES_GO = REPO_ROOT / "internal" / "temple" / "upgrades.go"
 OUTPUT = REPO_ROOT / "internal" / "icons" / "urls" / "temple.json"
 
-RECIPE_LINE = re.compile(
-    r'\{Vial: "([^"]+)", Base: "([^"]+)", Upgraded: "([^"]+)"\}'
+UPGRADE_LINE = re.compile(
+    r'\{Base: "([^"]+)", Upgraded: "([^"]+)"\}'
 )
 
 
-def served_item_names(recipes_go: Path) -> list[str]:
-    """The union of every recipe's three members, sorted — temple.ItemNames()."""
-    matches = RECIPE_LINE.findall(recipes_go.read_text(encoding="utf-8"))
+def served_item_names(upgrades_go: Path) -> list[str]:
+    """The union of every pair's two members, sorted — temple.ItemNames()."""
+    matches = UPGRADE_LINE.findall(upgrades_go.read_text(encoding="utf-8"))
     if not matches:
-        sys.exit(f"error: no recipe rows parsed from {recipes_go}")
+        sys.exit(f"error: no upgrade rows parsed from {upgrades_go}")
     names = {name for row in matches for name in row}
     return sorted(names)
 
@@ -105,7 +105,7 @@ def main() -> int:
     parser.add_argument("--league", default="Allflame", help="poe.ninja league name")
     args = parser.parse_args()
 
-    wanted = served_item_names(RECIPES_GO)
+    wanted = served_item_names(UPGRADES_GO)
     icons: dict[str, str] = {}
 
     rooms = fetch(args.league, ROOM_CATEGORY)

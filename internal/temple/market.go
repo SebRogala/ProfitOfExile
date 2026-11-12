@@ -9,8 +9,8 @@ import (
 // THE SERVED OBJECT
 //
 // One aggregated, league-keyed object the desktop temple module polls (POE-258):
-// every room-tier's sale delta, every recipe member's price, and the recipe
-// table that ties them together. It is computed off the collector's item ticks
+// every room-tier's sale delta and every served unique's price (the upgrade
+// table's bases and upgrades). It is computed off the collector's item ticks
 // and served from memory — see Cache and Service — so the request path never
 // queries Postgres.
 //
@@ -26,7 +26,7 @@ import (
 //     says so.
 //
 // Both are FLAGS. Nothing here hides, reorders or partitions on them (ADR-015,
-// ADR-017, ADR-018): every room-tier and every recipe member is served on every
+// ADR-017, ADR-018): every room-tier and every served unique is served on every
 // response, and the client decides what to dim.
 
 // WindowHours is the trailing span a thin line is priced over and a room-tier's
@@ -112,7 +112,7 @@ type Room struct {
 	Icon          string  `json:"icon"`
 }
 
-// Price is a recipe member's current price.
+// Price is a served unique's current price.
 //
 // When WindowPriced is true, Chaos and Divine come from the line's MEDIAN-CHAOS
 // print over the trailing WindowHours rather than from its newest print, and
@@ -130,7 +130,7 @@ type Price struct {
 	WindowSamples int     `json:"windowSamples"`
 }
 
-// Item is one recipe member — a vial, a base unique or an upgraded unique.
+// Item is one served unique — a base unique or an upgraded unique.
 //
 // Price is nil and Unpriced true when the newest snapshot carries no usable line
 // for the name: either no line at all, or a line with zero listings, which is a
@@ -156,10 +156,6 @@ type Item struct {
 // nothing; CategoriesSeen then holds none of them. The client decides what
 // staleness means (POE-258) — this package reports the age and never withholds
 // on it.
-//
-// Recipes carry names only. Their prices live in Items and the client resolves
-// them by name, so a member that appears in two recipes is priced once and the
-// two readings cannot disagree.
 type Market struct {
 	League         string     `json:"league"`
 	AsOf           *time.Time `json:"asOf"`
@@ -168,11 +164,10 @@ type Market struct {
 	CategoriesSeen []string   `json:"categoriesSeen"`
 	Rooms          []Room     `json:"rooms"`
 	Items          []Item     `json:"items"`
-	Recipes        []Recipe   `json:"recipes"`
 }
 
-// EmptyMarket is the COLD answer: the league, the static recipe table and the
-// rule, with no observations.
+// EmptyMarket is the COLD answer: the league and the rule, with no
+// observations.
 //
 // It is a real answer rather than an error because the server accepts traffic
 // against a cold cache after every deploy (docs/ANALYSIS-CACHE.md, the
@@ -186,7 +181,6 @@ func EmptyMarket(leagueID string) Market {
 		CategoriesSeen: []string{},
 		Rooms:          []Room{},
 		Items:          []Item{},
-		Recipes:        Recipes(),
 	}
 }
 
@@ -303,7 +297,7 @@ func thinLines(byCategory map[string][]Line) map[string]bool {
 // pickLines resolves each served item name to the one line that prices it.
 //
 // poe.ninja serves some names on more than one line (Precursor's Emblem appears
-// five times in UniqueAccessory, once per ring base), and none of the 31 names
+// five times in UniqueAccessory, once per ring base), and none of the 22 names
 // here did on the 2026-09-06 Allflame feed — but "did not on one snapshot" is
 // not a guarantee, so the tie is broken rather than left to row or map order.
 // The deepest market wins; see betterLine for how an exact tie resolves.

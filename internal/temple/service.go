@@ -83,7 +83,7 @@ func (c *Cache) Set(m Market) {
 // the Market is authoritative INCLUDING when it carries no rooms and no priced
 // items.
 //
-// The returned Market carries fresh Rooms, Items and Recipes slices, and a fresh
+// The returned Market carries fresh Rooms and Items slices, and a fresh
 // Price behind every priced item, so a caller that sorts or rewrites what it was
 // given cannot reach what the next reader sees. A nil *Cache reads as COLD
 // rather than panicking, so a server started without the temple pillar can still
@@ -114,7 +114,6 @@ func copyMarket(m Market) Market {
 	// non-nullable list (the desktop's Rust Vec, POE-258).
 	out.CategoriesSeen = append(make([]string, 0, len(m.CategoriesSeen)), m.CategoriesSeen...)
 	out.Rooms = append(make([]Room, 0, len(m.Rooms)), m.Rooms...)
-	out.Recipes = append(make([]Recipe, 0, len(m.Recipes)), m.Recipes...)
 	out.Items = make([]Item, len(m.Items))
 	for i, item := range m.Items {
 		out.Items[i] = item

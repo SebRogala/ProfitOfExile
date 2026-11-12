@@ -41,7 +41,7 @@ func warmTempleCache(t *testing.T) *temple.Cache {
 		{Category: temple.RoomCategory, Name: "A (Tier 1)", Chaos: 10, Listings: 700},
 		{Category: temple.RoomCategory, Name: "B (Tier 1)", Chaos: 10, Listings: 700},
 		{Category: temple.RoomCategory, Name: "Locus of Corruption (Tier 3)", Chaos: 853.6, Listings: 2489},
-		{Category: "Vial", Name: "Vial of Fate", Chaos: 1, Divine: 0.002, Listings: 343},
+		{Category: "UniqueAccessory", Name: "Coward's Chains", Chaos: 1, Divine: 0.002, Listings: 343},
 	}, nil, nil))
 	return cache
 }
@@ -64,7 +64,7 @@ func TestTempleMarket_servesTheWarmMarketFromMemory(t *testing.T) {
 
 func TestTempleMarket_coldCacheServesTheStaticAnswerWithNoObservations(t *testing.T) {
 	// The server accepts traffic against a cold cache after every deploy. The
-	// answer is 200 with the recipe table and a null asOf — the same shape
+	// answer is 200 with the league, the rule and a null asOf — the same shape
 	// MarketOverview beside it takes — not an error the client has to special-case.
 	body := templeRequest(t, temple.NewCache(templeScope))
 
@@ -73,9 +73,6 @@ func TestTempleMarket_coldCacheServesTheStaticAnswerWithNoObservations(t *testin
 	}
 	if rooms, _ := body["rooms"].([]any); len(rooms) != 0 {
 		t.Errorf("rooms = %d on a cold cache, want none", len(rooms))
-	}
-	if recipes, _ := body["recipes"].([]any); len(recipes) != 11 {
-		t.Errorf("recipes = %d on a cold cache, want the 11-row table (it needs no data)", len(recipes))
 	}
 	if body["floorRule"] != temple.FloorRule {
 		t.Errorf("floorRule = %v, want %q", body["floorRule"], temple.FloorRule)
@@ -132,13 +129,9 @@ func TestTempleMarket_warmButEmptyMarketServesArraysNotNull(t *testing.T) {
 		}
 	}
 	// The static half of the answer survives an empty observation set: every
-	// recipe member is still served, unpriced, and the recipe table is still
-	// there for the client to resolve names against.
-	if items, _ := body["items"].([]any); len(items) != 31 {
-		t.Errorf("items = %d on a warm-and-empty market, want all 31 recipe members served unpriced", len(items))
-	}
-	if recipes, _ := body["recipes"].([]any); len(recipes) != 11 {
-		t.Errorf("recipes = %d on a warm-and-empty market, want the 11-row table (it needs no data)", len(recipes))
+	// served unique is still served, unpriced.
+	if items, _ := body["items"].([]any); len(items) != 22 {
+		t.Errorf("items = %d on a warm-and-empty market, want all 22 served uniques served unpriced", len(items))
 	}
 }
 
@@ -165,11 +158,14 @@ func TestTempleMarket_aLeagueQueryParameterDoesNotChangeTheLeagueServed(t *testi
 // TestTempleMarket_wireShape pins the field names the desktop reads (POE-256,
 // POE-258). Renaming one is a silent client breakage: the desktop would read
 // undefined and render an unpriced, floor-less temple with no error anywhere.
+//
+// There is no "recipes" key (POE-366): an old desktop defaults a missing key to
+// an empty table, but a recipe object without "vial" would fail its decode.
 func TestTempleMarket_wireShape(t *testing.T) {
 	body := templeRequest(t, warmTempleCache(t))
 
 	assertTempleKeys(t, "payload", body, []string{
-		"league", "asOf", "floor", "floorRule", "categoriesSeen", "rooms", "items", "recipes",
+		"league", "asOf", "floor", "floorRule", "categoriesSeen", "rooms", "items",
 	})
 
 	rooms, _ := body["rooms"].([]any)
@@ -181,20 +177,17 @@ func TestTempleMarket_wireShape(t *testing.T) {
 	var priced map[string]any
 	for _, raw := range items {
 		entry := raw.(map[string]any)
-		if entry["name"] == "Vial of Fate" {
+		if entry["name"] == "Coward's Chains" {
 			priced = entry
 		}
 	}
 	if priced == nil {
-		t.Fatalf("no Vial of Fate in items")
+		t.Fatalf("no Coward's Chains in items")
 	}
 	assertTempleKeys(t, "item", priced, []string{"name", "category", "price", "unpriced", "icon"})
 	assertTempleKeys(t, "price", priced["price"].(map[string]any), []string{
 		"chaos", "divine", "listings", "lowConfidence", "windowPriced", "windowHours", "windowSamples",
 	})
-
-	recipes, _ := body["recipes"].([]any)
-	assertTempleKeys(t, "recipe", recipes[0].(map[string]any), []string{"vial", "base", "upgraded"})
 }
 
 func TestTempleMarket_unpricedItemCarriesANullPrice(t *testing.T) {
@@ -216,7 +209,7 @@ func TestTempleMarket_unpricedItemCarriesANullPrice(t *testing.T) {
 		}
 		return
 	}
-	t.Fatalf("Zerphi's Heart is not in items; every recipe member is served whether priced or not")
+	t.Fatalf("Zerphi's Heart is not in items; every served unique is served whether priced or not")
 }
 
 func assertTempleKeys(t *testing.T, what string, got map[string]any, want []string) {

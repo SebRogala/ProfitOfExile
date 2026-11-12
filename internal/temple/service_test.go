@@ -94,10 +94,10 @@ func TestServiceRecompute_asksForAWindowOnlyForTheThinLines(t *testing.T) {
 	// The window read is the second query, and its cost is the number of names it
 	// carries. Handing it every served line would query 31 names on every tick.
 	source := &fakeSource{newest: []Line{
-		item("Vial", "Vial of the Ghost", 1689, 3),
-		item("Vial", "Vial of Fate", 1, 10),
-		item("Vial", "Vial of Dominance", 1, 10),
-		item("Vial", "Vial of Awakening", 9, 100),
+		item("UniqueAccessory", "Coward's Legacy", 1689, 3),
+		item("UniqueAccessory", "Coward's Chains", 1, 10),
+		item("UniqueAccessory", "Sacrificial Heart", 1, 10),
+		item("UniqueAccessory", "Story of the Vaal", 9, 100),
 	}}
 	svc := NewService(source, NewCache(testScope), testScope, quietLogger())
 
@@ -109,8 +109,8 @@ func TestServiceRecompute_asksForAWindowOnlyForTheThinLines(t *testing.T) {
 		t.Fatalf("WindowPrices called %d times, want once", len(source.windowedBy))
 	}
 	asked := source.windowedBy[0]
-	if len(asked) != 1 || asked[0].Name != "Vial of the Ghost" {
-		t.Errorf("window read asked for %+v, want only the thin Vial of the Ghost line", asked)
+	if len(asked) != 1 || asked[0].Name != "Coward's Legacy" {
+		t.Errorf("window read asked for %+v, want only the thin Coward's Legacy line", asked)
 	}
 }
 
@@ -132,7 +132,7 @@ func TestServiceRecompute_failedNewestReadLeavesTheCacheCold(t *testing.T) {
 
 func TestServiceRecompute_failedWindowReadLeavesTheCacheCold(t *testing.T) {
 	source := &fakeSource{
-		newest:    []Line{item("Vial", "Vial of the Ghost", 1689, 3), item("Vial", "Vial of Fate", 1, 10), item("Vial", "Vial of Dominance", 1, 10)},
+		newest:    []Line{item("UniqueAccessory", "Coward's Legacy", 1689, 3), item("UniqueAccessory", "Coward's Chains", 1, 10), item("UniqueAccessory", "Sacrificial Heart", 1, 10)},
 		windowErr: errors.New("statement timeout"),
 	}
 	cache := NewCache(testScope)
@@ -219,7 +219,7 @@ func TestServiceTrigger_coalescesABurstIntoOneRerun(t *testing.T) {
 	entered := make(chan struct{}, 1)
 	var once sync.Once
 
-	source := &fakeSource{newest: []Line{item("Vial", "Vial of Fate", 1, 343)}}
+	source := &fakeSource{newest: []Line{item("UniqueAccessory", "Coward's Chains", 1, 343)}}
 	source.beforeNewest = func() {
 		once.Do(func() {
 			entered <- struct{}{}
@@ -255,7 +255,7 @@ func TestServiceTrigger_coalescesABurstIntoOneRerun(t *testing.T) {
 }
 
 func TestServiceTrigger_recomputesOnceWhenNothingIsInFlight(t *testing.T) {
-	source := &fakeSource{newest: []Line{item("Vial", "Vial of Fate", 1, 343)}}
+	source := &fakeSource{newest: []Line{item("UniqueAccessory", "Coward's Chains", 1, 343)}}
 	svc := NewService(source, NewCache(testScope), testScope, quietLogger())
 
 	svc.Trigger(context.Background())
@@ -270,7 +270,7 @@ func TestServiceHandleEvent_recomputesRegardlessOfWhatThePayloadReports(t *testi
 	// A replayed tick publishes inserted: 0 while the snapshot is fully
 	// populated, so a content check would skip exactly the recompute a catch-up
 	// needs.
-	source := &fakeSource{newest: []Line{item("Vial", "Vial of Fate", 1, 343)}}
+	source := &fakeSource{newest: []Line{item("UniqueAccessory", "Coward's Chains", 1, 343)}}
 	svc := NewService(source, NewCache(testScope), testScope, quietLogger())
 
 	svc.HandleEvent(context.Background(), []byte(`{"endpoint":"ninja-vial","inserted":0}`))
@@ -347,7 +347,7 @@ func TestCacheSnapshot_returnsACopyTheCallerCannotWriteThrough(t *testing.T) {
 	cache := NewCache(testScope)
 	cache.Set(Build("Allflame", []Line{
 		room("A (Tier 1)", 10, 700),
-		item("Vial", "Vial of Fate", 1, 343),
+		item("UniqueAccessory", "Coward's Chains", 1, 343),
 	}, nil, nil))
 
 	first, _ := cache.Snapshot()
