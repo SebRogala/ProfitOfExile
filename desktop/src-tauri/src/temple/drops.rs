@@ -2,8 +2,7 @@
 //!
 //! [`rooms`](super::rooms) owns the closed name vocabulary and Vertolka's letter
 //! grade. This module owns the numbers behind that letter: the tier-3 chest
-//! unique, the vial the line's architect rolls for, the architect's temple-mod
-//! items, and the quantity / rarity / pack-size percentages the room adds.
+//! unique, the architect's temple-mod items, and the quantity / rarity / pack-size percentages the room adds.
 //!
 //! Epic lock L1 (POE-124) is what this table feeds: room value = sale price +
 //! drops (expected count x LIVE price) + bonus (quant/rarity x chaos-per-%).
@@ -25,15 +24,14 @@
 //! Three sources for the NUMBERS, and only three:
 //!
 //! - [`POEDB`] — the room's own page on poedb.tw, read 2026-09-06. This is the
-//!   game's data: the quantity / rarity / pack-size lines, the vial-chance stat
+//!   game's data: the quantity / rarity / pack-size lines, the item-chance stat
 //!   and the unique listed on the room's `Unique` tab. Measured.
 //! - [`VERTOLKA_SHEET`] — Vertolka's room sheet, read 2026-09-06. Used for the
 //!   architect mod-group names and the item hints; every number it states is
 //!   also on poedb, and poedb is cited for those.
 //! - [`VERTOLKA_MSG`] — Vertolka's 2026-09-06 message quoted on POE-124. Every
 //!   number from it is a [`Basis::Guess`], because he said so: "price of unique
-//!   divided by 4 + price of vial divided by 10" (hence 0.25 and 0.1 per run at
-//!   tier 3) and "Crucible of Flames is giving on average 2 temple gloves per
+//!   divided by 4" (hence 0.25 per run at tier 3) and "Crucible of Flames is giving on average 2 temple gloves per
 //!   run and their base price is usually around 30c".
 //!
 //! [`TempleMod::worth`] is the one field here that is a VERDICT rather than a
@@ -42,81 +40,32 @@
 //!
 //! # Uniques drop at tier 3 only
 //!
-//! Vertolka: "only tier 3 rooms can drop unique, but T1 and T2 adding chance to
-//! drop vial and provide smaller quant/rarity bonuses". So
+//! Vertolka: "only tier 3 rooms can drop unique, but T1 and T2 ... provide
+//! smaller quant/rarity bonuses". So
 //! [`TierDrops::uniques_per_run`] is `None` at tiers 1 and 2 for every line, and
 //! his 0.25 sits at tier 3 for the six lines whose sheet row names a unique.
 //!
-//! # One vial rate for the whole table: an anchor, times poedb's ratio
+//! # No vials (POE-366)
 //!
-//! He gave one vial number — 0.1 per run at tier 3 — and no number at all for
-//! tiers 1/2 or for the three lines whose vial he called a "small chance" (Locus
-//! of Corruption, Throne of Atziri) or listed without a unique (Glittering
-//! Halls). The table used to carry that 0.1 on six rows and `None` on the other
-//! three, which priced Glittering Halls' vial — the highest vial chance in the
-//! temple — at zero.
-//!
-//! [`TierDrops::vial_chance_raw`] is what closes the gap: poedb prints a
-//! per-tier stat on all nine vial lines — `map incursion boss chance to drop
-//! <tag> vial % [N]` — and this field is that integer **verbatim** (the values
-//! run 7 to 2815). No page prints its scale, so it stays a `u32` and not an
-//! [`Estimate`]. What POE-262 settles is not that scale but a CONVENTION on top
-//! of it (2026-09-06):
-//!
-//! ```text
-//! vials per run at a tier = anchor_rate x vial_chance_raw / VIAL_RATE_ANCHOR_RAW
-//! ```
-//!
-//! [`VIAL_RATE_ANCHOR_RAW`] is 1689, the tier-3 integer on Conduit of Lightning,
-//! Crucible of Flame and Sanctum of Immortality — three of the six lines
-//! Vertolka's 0.1 was stated for, and the value most of them share. **Raw 1689
-//! means the anchor rate per run**, and the anchor rate is a knob
-//! ([`Knobs::vials_per_run`](super::valuation::Knobs), 0.1 by default), because
-//! it is his estimate and he has proposed doubling it.
-//!
-//! At the default anchor the nine lines derive, at tier 3:
-//!
-//! ```text
-//! Glittering Halls       2815 -> 0.1667    Toxic Grove             201 -> 0.0119
-//! Conduit / Crucible /                     Locus of Corruption      20 -> 0.00118
-//!   Sanctum              1689 -> 0.1       Throne of Atziri         20 -> 0.00118
-//! Hybridisation Chamber  1005 -> 0.0595
-//! Defense Research Lab    804 -> 0.0476
-//! ```
-//!
-//! — and Locus and Throne's 0.00118 is Vertolka's "small chance", now a number
-//! rather than a silence. Tiers 1 and 2 derive by the same rule off their own
-//! integers, so the tier progression the raw stat measures is the progression
-//! the rate carries.
+//! 3.30 removed vials from the temple, so no line carries a vial or a vial
+//! chance and no room value has a vial term.
 //!
 //! [`TierDrops::uniques_per_run`] does NOT scale: no stat on any page states a
 //! per-tier chest-unique chance, so his 0.25 stays a flat tier-3 number on the
 //! six lines whose sheet row names a unique.
 //!
-//! The same pages print a second stat of that family on four of those lines —
+//! The same pages print a per-tier item stat on four of those lines —
 //! `map incursion boss chance to drop <tag> item % [33/66/100]`, on Conduit of
 //! Lightning, Crucible of Flame, Hybridisation Chamber and Sanctum of
 //! Immortality — and [`TierDrops::mod_item_chance_raw`] is that integer,
-//! verbatim, and it keeps the rule the vial stat has now left: raw, unscaled,
-//! never multiplied by a price. Nobody has stated an anchor for it — Vertolka
+//! verbatim: raw, unscaled, never multiplied by a price. Nobody has stated an anchor for it — Vertolka
 //! priced the gloves per RUN, not per point of this stat — so there is no
 //! ratio to hang it off. It is the game's own per-tier handle on how often the
 //! architect's signature rare ([`TempleMod`]) drops, which otherwise carries a
 //! number only where Vertolka guessed one. Defense Research Lab and Toxic Grove
 //! name a temple mod but their pages print no such stat, so both are `None`.
 //!
-//! # Where the two sources disagree, and where they do not
-//!
-//! poedb's per-tier vial tag and Vertolka's sheet agree on all nine room->vial
-//! pairs independently (`fire vial` = Vial of Fate on Crucible of Flame, `amulet
-//! vial` = Vial of Sacrifice on Locus of Corruption, and so on).
-//!
-//! The vial a line rolls for is NOT always the vial that upgrades that line's
-//! own unique. It is on the six chest lines; it is not on Locus of Corruption
-//! (has no chest unique, rolls the amulet vial), Glittering Halls or Throne of
-//! Atziri. The upgrade recipe itself — base unique + vial -> upgraded unique —
-//! is **not stored here**: POE-255 owns it on the server, in `internal/temple`,
-//! as the single normative home for item-level recipe facts.
+//! # Where the two sources disagree
 //!
 //! Two places where Vertolka's sheet claims a bonus and poedb prints no
 //! percentage: Toxic Grove ("increase quantity/rarity") and Storm of Corruption
@@ -125,8 +74,8 @@
 //!
 //! # What this table deliberately does not model
 //!
-//! The schema is numeric — counts per run, percentages, and the two raw poedb
-//! chance stats. Eight further statements on those pages and on the sheet are
+//! The schema is numeric — counts per run, percentages, and the raw poedb
+//! item-chance stat. Eight further statements on those pages and on the sheet are
 //! real drops or real bonuses with no number and no field here. They are
 //! listed rather than passed over in silence, because a reader of this table
 //! would otherwise conclude the rooms state nothing.
@@ -173,29 +122,6 @@ pub const VERTOLKA_SHEET: &str = "Vertolka's sheet, 2026-09-06";
 /// Vertolka's 2026-09-06 message, quoted on epic POE-124. Everything sourced
 /// here is a [`Basis::Guess`]; he offered the numbers as his own estimates.
 pub const VERTOLKA_MSG: &str = "Vertolka, 2026-09-06 message (POE-124)";
-/// [`TierDrops::vials_per_run`], which has TWO parents and neither on its own:
-/// Vertolka's per-run anchor and poedb's per-line ratio. A guess, because the
-/// anchor is one.
-pub const VIAL_RATE_DERIVED: &str =
-    "Vertolka's per-run vial anchor (2026-09-06 message, POE-124) scaled by poedb's \
-     `chance to drop <tag> vial` ratio (poedb.tw room pages, 2026-09-06) — POE-262";
-
-/// The tier-3 `chance to drop <tag> vial` integer the vial rate is anchored on:
-/// **raw 1689 means the anchor rate per run** (POE-262, 2026-09-06).
-///
-/// 1689 is what Conduit of Lightning, Crucible of Flame and Sanctum of
-/// Immortality print at tier 3 — three of the six lines Vertolka stated *"price
-/// of vial divided by 10"* for, and the value shared by most of them (the other
-/// three print 804, 1005 and 201). Anchoring on the shared value is what makes
-/// his number mean what he said it means on the rooms he was talking about.
-///
-/// **The scale of the raw integer is still unknown.** This settles a CONVENTION,
-/// not a unit: one line's rate is another's in the ratio poedb prints, and the
-/// whole ladder moves with [`Knobs::vials_per_run`](super::valuation::Knobs).
-/// [`TierDrops::mod_item_chance_raw`] stays raw and unmultiplied — nobody has
-/// stated an anchor for it.
-pub const VIAL_RATE_ANCHOR_RAW: u32 = 1689;
-
 /// Factory is the one room whose page prints the quantity stat twice: Jiquani's
 /// own `20/40/60% increased Quantity of Items found in this Area` and the
 /// shared room line's `2/4/6%`. Same stat, same scope, and `increased`
@@ -439,7 +365,6 @@ impl TempleMod {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TierDrops {
     uniques_per_run: Option<Estimate>,
-    vial_chance_raw: Option<u32>,
     mod_item_chance_raw: Option<u32>,
     quantity_pct: Option<Estimate>,
     rarity_pct: Option<Estimate>,
@@ -448,10 +373,9 @@ pub struct TierDrops {
 
 impl TierDrops {
     /// A tier that drops nothing anybody has quantified — the explicit "none"
-    /// for the thirteen lines with no chest, no vial and no area bonus.
+    /// for the lines with no chest and no area bonus.
     pub const NONE: TierDrops = TierDrops {
         uniques_per_run: None,
-        vial_chance_raw: None,
         mod_item_chance_raw: None,
         quantity_pct: None,
         rarity_pct: None,
@@ -464,41 +388,12 @@ impl TierDrops {
         self.uniques_per_run
     }
 
-    /// Expected vials per run at this tier, DERIVED (POE-262).
-    ///
-    /// `anchor_rate × vial_chance_raw / `[`VIAL_RATE_ANCHOR_RAW`] — Vertolka's
-    /// per-run number for a standard vial room, scaled by poedb's own per-line,
-    /// per-tier ratio. `None` exactly where [`TierDrops::vial_chance_raw`] is
-    /// `None`: a line poedb prints no vial stat for drops no vial, and that is
-    /// still a different claim from zero.
-    ///
-    /// Always a [`Basis::Guess`] against [`VIAL_RATE_DERIVED`], whatever the
-    /// anchor: the ratio is measured but the number it is anchored on is
-    /// Vertolka's estimate, and half a measurement is not a measurement.
-    pub fn vials_per_run(self, anchor_rate: f64) -> Option<Estimate> {
-        let raw = self.vial_chance_raw?;
-        let scaled = anchor_rate * f64::from(raw) / f64::from(VIAL_RATE_ANCHOR_RAW);
-        Some(Estimate::guess(scaled, VIAL_RATE_DERIVED))
-    }
-
-    /// poedb's `map incursion boss chance to drop <tag> vial % [N]` integer,
-    /// verbatim. **Not a probability** — the page prints no scale, so this is
-    /// not an [`Estimate`] and is never multiplied by a price directly. It is
-    /// read as a RATIO against [`VIAL_RATE_ANCHOR_RAW`] instead, which needs no
-    /// scale: [`TierDrops::vials_per_run`] is what a caller prices against.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
-    pub fn vial_chance_raw(self) -> Option<u32> {
-        self.vial_chance_raw
-    }
-
     /// poedb's `map incursion boss chance to drop <tag> item % [N]` integer,
-    /// verbatim — the sibling stat to [`TierDrops::vial_chance_raw`], on the
-    /// four lines whose page prints it (33 / 66 / 100 across the tiers). It is
+    /// verbatim, on the four lines whose page prints it (33 / 66 / 100 across the tiers). It is
     /// the game's own handle on how often the architect's signature rare
     /// ([`TempleMod`]) actually drops, and the same caveat applies: **raw, the
     /// page prints no scale, not an [`Estimate`]** — no anchor has been stated
-    /// for it (the vial stat got one in POE-262; this one has not), so it
-    /// stays raw and unmultiplied.
+    /// for it, so it stays raw and unmultiplied.
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn mod_item_chance_raw(self) -> Option<u32> {
         self.mod_item_chance_raw
@@ -527,22 +422,14 @@ impl TierDrops {
     }
 
     /// Whether any number on this tier is somebody's estimate.
-    ///
-    /// `vial_chance_raw` counts, and it is the one field here read for its
-    /// PRESENCE rather than its basis: poedb's ratio is measured, but
-    /// [`TierDrops::vials_per_run`] anchors it on Vertolka's number, so every
-    /// tier that names a vial chance produces a guessed count at every anchor.
-    /// Asking [`TierDrops::vials_per_run`] for an anchor to answer with would
-    /// make a provenance question depend on a knob.
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn has_guess(self) -> bool {
-        self.vial_chance_raw.is_some()
-            || any_guess(&[
-                self.uniques_per_run,
-                self.quantity_pct,
-                self.rarity_pct,
-                self.pack_size_pct,
-            ])
+        any_guess(&[
+            self.uniques_per_run,
+            self.quantity_pct,
+            self.rarity_pct,
+            self.pack_size_pct,
+        ])
     }
 }
 
@@ -557,7 +444,6 @@ pub struct LineDrops {
     /// UNCONFIRMED — the owner / Vertolka are to confirm each string. Prose for
     /// the box, never a join key.
     content: Option<&'static str>,
-    vial: Option<&'static str>,
     temple_mod: Option<TempleMod>,
     note: Option<&'static str>,
     tiers: [TierDrops; 3],
@@ -619,13 +505,6 @@ impl LineDrops {
         }
     }
 
-    /// The vial this line's architect rolls for, as **poe.ninja spells it**.
-    /// Not necessarily the vial that upgrades [`LineDrops::unique`] — see the
-    /// module docs.
-    pub fn vial(self) -> Option<&'static str> {
-        self.vial
-    }
-
     /// The architect's signature rare, where the room produces one.
     pub fn temple_mod(self) -> Option<TempleMod> {
         self.temple_mod
@@ -664,7 +543,6 @@ impl LineDrops {
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn is_empty(&self) -> bool {
         self.unique.is_none()
-            && self.vial.is_none()
             && self.temple_mod.is_none()
             && self.tiers.iter().all(|t| t.is_empty())
     }
@@ -699,7 +577,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "apex_of_ascension",
         unique: None,
         content: Some("Sacrifice a unique, get a random one"),
-        vial: None,
         temple_mod: None,
         note: None,
         tiers: [
@@ -712,7 +589,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "atlas_of_worlds",
         unique: None,
         content: Some("Map drops"),
-        vial: None,
         temple_mod: None,
         note: None,
         tiers: [
@@ -725,13 +601,11 @@ pub const DROPS: [LineDrops; 25] = [
         key: "chamber_of_iron",
         unique: None,
         content: Some("Armour drops"),
-        vial: None,
         temple_mod: None,
         note: Some("sometimes can drop temple mod item + fracture/veiled items"),
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -739,7 +613,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
@@ -747,7 +620,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
@@ -759,7 +631,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "conduit_of_lightning",
         unique: Some("Dance of the Offered"),
         content: None,
-        vial: Some("Vial of the Ritual"),
         temple_mod: Some(TempleMod {
             architect: "Xopec",
             item_hint: "jewellery with mana modifiers",
@@ -776,7 +647,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(557),
                 mod_item_chance_raw: Some(33),
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -784,7 +654,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(1131),
                 mod_item_chance_raw: Some(66),
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
@@ -792,7 +661,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                vial_chance_raw: Some(1689),
                 mod_item_chance_raw: Some(100),
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
@@ -804,7 +672,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "court_of_sealed_death",
         unique: None,
         content: Some("Arcanist & Diviner strongboxes"),
-        vial: None,
         temple_mod: None,
         note: Some("In T3 Arcanist and Diviner Stronboxes are quite common"),
         tiers: [
@@ -817,7 +684,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "crucible_of_flame",
         unique: Some("Story of the Vaal"),
         content: None,
-        vial: Some("Vial of Fate"),
         temple_mod: Some(TempleMod {
             architect: "Puhuarte",
             item_hint: "temple gloves",
@@ -834,7 +700,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(557),
                 mod_item_chance_raw: Some(33),
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -842,7 +707,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(1131),
                 mod_item_chance_raw: Some(66),
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
@@ -850,7 +714,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                vial_chance_raw: Some(1689),
                 mod_item_chance_raw: Some(100),
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
@@ -862,7 +725,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "defense_research_lab",
         unique: Some("Architect's Hand"),
         content: None,
-        vial: Some("Vial of Dominance"),
         temple_mod: Some(TempleMod {
             architect: "Matatl",
             // The sheet's tier-3 column names two things, not one: "mine/trap
@@ -882,7 +744,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(265),
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -890,7 +751,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(539),
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
@@ -898,7 +758,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                vial_chance_raw: Some(804),
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
@@ -910,7 +769,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "gem",
         unique: None,
         content: Some("Double-corrupt a gem"),
-        vial: None,
         temple_mod: None,
         note: None,
         tiers: [
@@ -923,13 +781,11 @@ pub const DROPS: [LineDrops; 25] = [
         key: "factory",
         unique: None,
         content: Some("Extra item quantity"),
-        vial: None,
         temple_mod: None,
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(22.0, FACTORY_QUANTITY)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -937,7 +793,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(44.0, FACTORY_QUANTITY)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
@@ -945,7 +800,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(66.0, FACTORY_QUANTITY)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
@@ -957,13 +811,11 @@ pub const DROPS: [LineDrops; 25] = [
         key: "glittering_halls",
         unique: None,
         content: Some("Jewellery drops"),
-        vial: Some("Vial of Transcendence"),
         temple_mod: None,
         note: Some("sometimes can drop fractured item"),
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(929),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: Some(Estimate::measured(20.0, POEDB)),
@@ -971,7 +823,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(1886),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: Some(Estimate::measured(40.0, POEDB)),
@@ -979,7 +830,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(2815),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: Some(Estimate::measured(60.0, POEDB)),
@@ -991,13 +841,11 @@ pub const DROPS: [LineDrops; 25] = [
         key: "hall_of_champions",
         unique: None,
         content: Some("Weapon drops"),
-        vial: None,
         temple_mod: None,
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -1005,7 +853,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
@@ -1013,7 +860,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
@@ -1025,7 +871,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "hall_of_legends",
         unique: None,
         content: Some("Legion encounter"),
-        vial: None,
         temple_mod: None,
         note: Some("there are much better ways how to farm legion"),
         tiers: [
@@ -1038,13 +883,11 @@ pub const DROPS: [LineDrops; 25] = [
         key: "hall_of_war",
         unique: None,
         content: Some("Rare monster packs"),
-        vial: None,
         temple_mod: None,
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
@@ -1052,7 +895,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
@@ -1060,7 +902,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
@@ -1072,7 +913,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "house_of_the_others",
         unique: None,
         content: Some("Breach encounter"),
-        vial: None,
         temple_mod: None,
         note: None,
         tiers: [
@@ -1090,7 +930,6 @@ pub const DROPS: [LineDrops; 25] = [
         // page, 2026-09-06). Legacy is the upgrade, and belongs to POE-255.
         unique: Some("Coward's Chains"),
         content: None,
-        vial: Some("Vial of Consequence"),
         temple_mod: Some(TempleMod {
             architect: "Citaqualotl",
             item_hint: "items with minion modifiers",
@@ -1107,7 +946,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(332),
                 mod_item_chance_raw: Some(33),
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -1115,7 +953,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(674),
                 mod_item_chance_raw: Some(66),
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
@@ -1123,7 +960,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                vial_chance_raw: Some(1005),
                 mod_item_chance_raw: Some(100),
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
@@ -1137,16 +973,14 @@ pub const DROPS: [LineDrops; 25] = [
         // Garb the player brings; it is not a drop. The earlier reading of the
         // poedb.tw `Unique /1` tab (2026-09-06) was the source of that mistake.
         // Vertolka's sheet correctly has no chest unique here: this room has no
-        // chest. The altar still rolls Vial of Sacrifice.
+        // chest.
         unique: None,
         content: Some("Double-corrupt an item"),
-        vial: Some("Vial of Sacrifice"),
         temple_mod: None,
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(7),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
@@ -1154,7 +988,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(13),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
@@ -1162,7 +995,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(20),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
@@ -1174,7 +1006,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "museum_of_artefacts",
         unique: None,
         content: Some("Extra item drops"),
-        vial: None,
         temple_mod: None,
         note: Some("nothing worth much"),
         tiers: [
@@ -1187,7 +1018,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "sadists_den",
         unique: None,
         content: Some("Extra monsters (dangerous)"),
-        vial: None,
         temple_mod: None,
         note: None,
         tiers: [
@@ -1200,7 +1030,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "sanctum_of_immortality",
         unique: Some("Mask of the Spirit Drinker"),
         content: None,
-        vial: Some("Vial of Summoning"),
         temple_mod: Some(TempleMod {
             architect: "Guatelitzi",
             item_hint: "items with life and energy-shield modifiers",
@@ -1217,7 +1046,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(557),
                 mod_item_chance_raw: Some(33),
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -1225,7 +1053,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(1131),
                 mod_item_chance_raw: Some(66),
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
@@ -1233,7 +1060,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                vial_chance_raw: Some(1689),
                 mod_item_chance_raw: Some(100),
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
@@ -1245,7 +1071,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "explosive",
         unique: None,
         content: Some("Destroy rooms / explosives"),
-        vial: None,
         temple_mod: None,
         note: Some("usually you should't need it"),
         tiers: [
@@ -1258,7 +1083,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "storm_of_corruption",
         unique: None,
         content: Some("Corrupting tempest"),
-        vial: None,
         temple_mod: Some(TempleMod {
             architect: "Topotante",
             item_hint: "weapons with elemental offence modifiers, gloves with physical-to-elemental conversion",
@@ -1282,13 +1106,11 @@ pub const DROPS: [LineDrops; 25] = [
         key: "upgrade",
         unique: None,
         content: Some("Upgrade a room"),
-        vial: None,
         temple_mod: None,
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -1296,7 +1118,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
@@ -1304,7 +1125,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
@@ -1316,13 +1136,11 @@ pub const DROPS: [LineDrops; 25] = [
         key: "throne_of_atziri",
         unique: None,
         content: Some("Queen Atziri"),
-        vial: Some("Vial of the Ghost"),
         temple_mod: None,
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(7),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
@@ -1330,7 +1148,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(13),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
@@ -1338,7 +1155,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(20),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
@@ -1350,7 +1166,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "toxic_grove",
         unique: Some("Apep's Slumber"),
         content: None,
-        vial: Some("Vial of Awakening"),
         temple_mod: Some(TempleMod {
             architect: "Tacati",
             // Vertolka's own trailing caveat, kept verbatim: one of the mods he
@@ -1371,7 +1186,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(66),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
@@ -1379,7 +1193,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vial_chance_raw: Some(135),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
@@ -1387,7 +1200,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                vial_chance_raw: Some(201),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
@@ -1399,7 +1211,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "wealth_of_the_vaal",
         unique: None,
         content: Some("Currency drops"),
-        vial: None,
         temple_mod: None,
         note: Some("couple of currency usually max. 10c value - maybe worth in Early League)"),
         tiers: [
@@ -1442,28 +1253,13 @@ mod tests {
     }
 
     /// The six lines whose sheet row names a tier-3 chest unique, and so the
-    /// six that carry his 0.25 unique rate. NOT the six that carry a guess —
-    /// since POE-262 every line naming a vial does, which is nine; see
-    /// [`VIAL_LINES`].
+    /// six that carry his 0.25 unique rate.
     const CHEST_LINES: [&str; 6] = [
         "conduit_of_lightning",
         "crucible_of_flame",
         "defense_research_lab",
         "hybridisation_chamber",
         "sanctum_of_immortality",
-        "toxic_grove",
-    ];
-
-    /// The nine lines poedb prints a `chance to drop <tag> vial` stat on.
-    const VIAL_LINES: [&str; 9] = [
-        "conduit_of_lightning",
-        "crucible_of_flame",
-        "defense_research_lab",
-        "glittering_halls",
-        "hybridisation_chamber",
-        "corruption",
-        "sanctum_of_immortality",
-        "throne_of_atziri",
         "toxic_grove",
     ];
 
@@ -1501,37 +1297,19 @@ mod tests {
         ),
     ];
 
-    /// poedb's two raw chance stats, read a **second** time out of the POE-256
-    /// evidence set (`poedb-pct.json`, the `map incursion boss chance to drop
-    /// <tag> vial % [N]` and `... item % [N]` lines of the 75 fetched pages)
-    /// rather than copied out of [`DROPS`]. Two independent transcriptions of
-    /// the same pages: a slipped digit in either one shows up as a mismatch,
-    /// which is the only way a plausible-looking wrong integer gets caught.
+    /// poedb's raw mod-item chance stat, read a **second** time out of the
+    /// POE-256 evidence set (`poedb-pct.json`, the `map incursion boss chance
+    /// to drop <tag> item % [N]` lines of the 75 fetched pages) rather than
+    /// copied out of [`DROPS`]. Two independent transcriptions of the same
+    /// pages: a slipped digit in either one shows up as a mismatch, which is
+    /// the only way a plausible-looking wrong integer gets caught.
     ///
-    /// Key, then the vial stat at tiers 1/2/3, then the mod-item stat — `None`
-    /// on the five lines whose pages print no item stat at all.
-    const POEDB_RAW_CHANCES: [(&str, [u32; 3], Option<[u32; 3]>); 9] = [
-        (
-            "conduit_of_lightning",
-            [557, 1131, 1689],
-            Some([33, 66, 100]),
-        ),
-        ("crucible_of_flame", [557, 1131, 1689], Some([33, 66, 100])),
-        ("defense_research_lab", [265, 539, 804], None),
-        ("glittering_halls", [929, 1886, 2815], None),
-        (
-            "hybridisation_chamber",
-            [332, 674, 1005],
-            Some([33, 66, 100]),
-        ),
-        ("corruption", [7, 13, 20], None),
-        (
-            "sanctum_of_immortality",
-            [557, 1131, 1689],
-            Some([33, 66, 100]),
-        ),
-        ("throne_of_atziri", [7, 13, 20], None),
-        ("toxic_grove", [66, 135, 201], None),
+    /// Key, then the mod-item stat at tiers 1/2/3.
+    const POEDB_RAW_CHANCES: [(&str, [u32; 3]); 4] = [
+        ("conduit_of_lightning", [33, 66, 100]),
+        ("crucible_of_flame", [33, 66, 100]),
+        ("hybridisation_chamber", [33, 66, 100]),
+        ("sanctum_of_immortality", [33, 66, 100]),
     ];
 
     // ------------------------------------------------------------ shape --
@@ -1722,25 +1500,16 @@ mod tests {
 
     // ------------------------------------------------------------ names --
 
-    // Every unique and vial in the table has to be a string poe.ninja actually
+    // Every unique in the table has to be a string poe.ninja actually
     // publishes, or POE-255/257 join to nothing and the room silently prices at
-    // zero. Fails on any typo — "Vial of Ritual" for "Vial of the Ritual",
-    // "Mask of Spirit Drinker" for "Mask of the Spirit Drinker".
+    // zero. Fails on any typo — "Mask of Spirit Drinker" for "Mask of the
+    // Spirit Drinker".
     #[test]
     fn every_item_name_in_the_table_is_one_poe_ninja_publishes() {
-        let vials = fixture("[vial]");
         let uniques = fixture("[unique]");
         let absent = fixture("[absent]");
-        assert_eq!(vials.len(), 9, "poe.ninja publishes nine vials");
 
         for row in DROPS.iter() {
-            if let Some(vial) = row.vial() {
-                assert!(
-                    vials.contains(&vial),
-                    "{}: {vial:?} is not a poe.ninja vial name",
-                    row.key()
-                );
-            }
             if let Some(unique) = row.unique() {
                 assert!(
                     uniques.contains(&unique) || absent.contains(&unique),
@@ -1909,40 +1678,6 @@ mod tests {
         );
     }
 
-    // poedb states the vial stat on exactly nine lines and it grows with tier.
-    // Fails if two tiers of a line are transposed, if a line's vial name is
-    // dropped while its chance stays, or if a tenth line is given a chance.
-    #[test]
-    fn the_poedb_vial_chance_rises_with_tier_on_every_line_that_names_a_vial() {
-        let named: Vec<&str> = DROPS
-            .iter()
-            .filter(|row| row.vial().is_some())
-            .map(|row| row.key())
-            .collect();
-        assert_eq!(named, VIAL_LINES);
-
-        for row in DROPS.iter() {
-            let chances: Vec<Option<u32>> =
-                row.tiers().iter().map(|t| t.vial_chance_raw()).collect();
-            if row.vial().is_none() {
-                assert_eq!(
-                    chances,
-                    vec![None, None, None],
-                    "{} has a vial chance but names no vial",
-                    row.key()
-                );
-                continue;
-            }
-            let stated: Vec<u32> = chances.into_iter().flatten().collect();
-            assert_eq!(stated.len(), 3, "{} is missing a tier's chance", row.key());
-            assert!(
-                stated[0] < stated[1] && stated[1] < stated[2],
-                "{} vial chance does not rise with tier: {stated:?}",
-                row.key()
-            );
-        }
-    }
-
     // ------------------------------------------------------- provenance --
 
     // The AC's "explicit none": a line nobody has quantified reports nothing
@@ -1955,27 +1690,18 @@ mod tests {
             assert!(row.is_empty(), "{key} is not empty");
             assert!(!row.has_guess(), "{key} has a guess but no drops");
             assert_eq!(row.unique(), None, "{key} names a unique");
-            assert_eq!(row.vial(), None, "{key} names a vial");
             assert_eq!(row.temple_mod(), None, "{key} names a temple mod");
             for drops in row.tiers() {
                 assert!(drops.is_empty(), "{key} has a non-empty tier");
                 assert_eq!(drops.quantity_pct(), None);
-                // "None" survives the POE-262 derivation: a line poedb prints
-                // no vial stat for drops no vial at ANY anchor, and 0.0 is a
-                // different claim. Fails if `vials_per_run` ever answers
-                // `Some(0.0)` on a line with no `vial_chance_raw`.
-                for anchor in [0.0, 0.1, 5.0] {
-                    assert_eq!(drops.vials_per_run(anchor), None, "{key} at {anchor}");
-                }
             }
         }
 
-        // The other side of the same contract: Hall of War names no unique, no
-        // vial and no temple mod, so only its per-tier pack size keeps it off
+        // The other side of the same contract: Hall of War names no unique and
+        // no temple mod, so only its per-tier pack size keeps it off
         // the empty list. A line that drops something is not empty.
         let hall_of_war = drops_for("hall_of_war");
         assert_eq!(hall_of_war.unique(), None);
-        assert_eq!(hall_of_war.vial(), None);
         assert_eq!(hall_of_war.temple_mod(), None);
         assert!(
             !hall_of_war.is_empty(),
@@ -1983,7 +1709,7 @@ mod tests {
         );
 
         // And the temple-mod half of the same clause. Storm of Corruption's
-        // three tiers are all NONE and it names neither unique nor vial, so the
+        // three tiers are all NONE and it names no unique, so the
         // architect's mod group is the only thing keeping it off the empty
         // list. Fails if is_empty stops looking at temple_mod.
         assert!(
@@ -1994,18 +1720,16 @@ mod tests {
 
     // The two rushed lines. Doryani's Institute drops nothing this table
     // prices; Locus of Corruption has no chest unique — its altar makes
-    // Shadowstitch from the Sacrificial Garb the player brings — while its VIAL
-    // rate is derived from poedb's own 7/13/20, which is his "small chance" as
-    // a number. Fails if the 0.25 is applied to Locus by pattern rather than
-    // because his sheet states it.
+    // Shadowstitch from the Sacrificial Garb the player brings. Fails if the
+    // 0.25 is applied to Locus by pattern rather than because his sheet
+    // states it, or if a temple mod or bonus is transcribed onto it.
     #[test]
-    fn the_rushed_lines_name_no_unique_rate_and_derive_the_smallest_vial_rate() {
+    fn the_rushed_lines_name_no_unique_rate() {
         let doryani = drops_for("gem");
         assert!(doryani.is_empty(), "Doryani's Institute is not empty");
 
         let locus = drops_for("corruption");
         assert_eq!(locus.unique(), None);
-        assert_eq!(locus.vial(), Some("Vial of Sacrifice"));
         assert_eq!(locus.temple_mod(), None);
         for (index, drops) in locus.tiers().iter().enumerate() {
             assert_eq!(
@@ -2014,56 +1738,35 @@ mod tests {
                 "Locus tier {} claims a unique rate",
                 index + 1
             );
-        }
-        assert_eq!(locus.tiers()[2].vial_chance_raw(), Some(20));
-        // 0.1 x 20 / 1689 = 0.001184..., the smallest rate in the table and
-        // the whole of what "small chance" now means. Fails if the derivation
-        // is anchored on the line's own raw (which would read 0.1) or on the
-        // table's largest (0.1 x 20 / 2815 = 0.00071).
-        let vial = locus.tiers()[2]
-            .vials_per_run(0.1)
-            .expect("poedb prints a vial chance for Locus");
-        assert!(
-            (vial.value() - 0.1 * 20.0 / 1689.0).abs() < 1e-12,
-            "Locus tier 3 vial rate was {}",
-            vial.value(),
-        );
-        assert!(vial.is_guess(), "the anchor it scales is Vertolka's");
-        // And it is the ONLY guessed number on the line, which `has_guess`
-        // alone does not say — it answers "any", not "only". So the other
-        // three tier fields are pinned empty beside it: the vial chance is the
-        // whole of what poedb prints for Locus, and the temple mod and the
-        // unique rate are already `None` above. Fails if a bonus percentage is
-        // ever transcribed onto this line, which would quietly make its `G`
-        // mark rest on two numbers instead of one.
-        assert!(locus.has_guess(), "the derived vial rate is a guess");
-        for (index, drops) in locus.tiers().iter().enumerate() {
             assert_eq!(drops.quantity_pct(), None, "Locus tier {}", index + 1);
             assert_eq!(drops.rarity_pct(), None, "Locus tier {}", index + 1);
             assert_eq!(drops.pack_size_pct(), None, "Locus tier {}", index + 1);
         }
     }
 
+    // POE-366: 3.30 removed vials, so Glittering Halls — whose only guessed
+    // number was its derived vial rate (its rarity is poedb's) — is measured.
+    #[test]
+    fn a_line_whose_only_guess_was_its_vial_is_not_guessed() {
+        assert!(
+            !drops_for("glittering_halls").has_guess(),
+            "Glittering Halls carries only poedb's rarity"
+        );
+    }
+
     // has_guess is what POE-257/260 read to mark a value as somebody's
-    // estimate, and since POE-262 the set it is true on is exactly the nine
-    // lines poedb prints a vial chance on: each of those scales Vertolka's
-    // anchor, so each derives a guessed rate. The six chest lines carrying his
-    // 0.25 are a SUBSET of the nine, which is why the equality below covers
-    // both his numbers with one assertion rather than two. Fails if a Guess is
-    // stored as Measured, if has_guess stops walking the tiers, or if it goes
-    // back to reading a stored vial rate that only six lines carried. (The
-    // temple-mod half of has_guess is NOT pinned here and cannot be: every line
-    // whose temple mod is guessed also carries guessed tier rates, so the two
-    // arms are indistinguishable on the real table. That arm is pinned by
+    // estimate: the set it is true on is exactly the six chest lines carrying
+    // Vertolka's 0.25. Fails if a Guess is stored as Measured or if has_guess
+    // stops walking the tiers. (The temple-mod arm is pinned by
     // `a_guess_that_sits_only_in_the_temple_mod_still_marks_the_line`.)
     #[test]
-    fn has_guess_marks_every_line_that_names_a_vial_and_no_other() {
+    fn has_guess_marks_every_chest_line_and_no_other() {
         let guessed: Vec<&str> = DROPS
             .iter()
             .filter(|row| row.has_guess())
             .map(|row| row.key())
             .collect();
-        assert_eq!(guessed, VIAL_LINES);
+        assert_eq!(guessed, CHEST_LINES);
 
         // A temple mod is not guessed merely by existing: Crucible's carries
         // Vertolka's two numbers, Storm of Corruption's carries none. Fails if
@@ -2084,38 +1787,15 @@ mod tests {
             "Topotante's mod group has no number to guess at"
         );
 
-        // Every guessed number in the table is attributed by name, and the
-        // two per-run rates cite DIFFERENT sources on purpose: the unique rate
-        // is Vertolka's message alone, the vial rate has two parents and says
-        // so. Fails if the derived rate is attributed to him as though he had
-        // stated it per line, or to poedb as though the anchor were measured.
+        // Every guessed unique rate is attributed to Vertolka's message.
         for row in DROPS.iter() {
             for drops in row.tiers() {
                 if let Some(unique) = drops.uniques_per_run() {
                     assert_eq!(unique.source(), VERTOLKA_MSG, "{}", row.key());
                     assert!(unique.is_guess(), "{}", row.key());
                 }
-                if let Some(vial) = drops.vials_per_run(0.1) {
-                    assert_eq!(vial.source(), VIAL_RATE_DERIVED, "{}", row.key());
-                    assert!(vial.is_guess(), "{}", row.key());
-                }
             }
         }
-
-        // And the lines that only carry poedb percentages are not marked.
-        // Glittering Halls left this list at POE-262 — its vial rate is now
-        // derived off Vertolka's anchor, so the line is no longer purely
-        // measured. Factory names no vial and never was.
-        for key in ["factory", "hall_of_war", "chamber_of_iron"] {
-            assert!(
-                !drops_for(key).has_guess(),
-                "{key} is measured, not guessed"
-            );
-        }
-        assert!(
-            drops_for("glittering_halls").has_guess(),
-            "its vial rate rests on Vertolka's anchor",
-        );
     }
 
     // Vertolka's unique ratio is a flat number on the six chest lines: 1/4 of
@@ -2134,77 +1814,6 @@ mod tests {
         }
     }
 
-    // The POE-262 convention, stated as the number each line actually gets:
-    // raw 1689 IS the anchor rate, and every other line is that rate times its
-    // own raw over 1689. Three lines print 1689 at tier 3 and must read the
-    // anchor back EXACTLY — that is what makes the convention a convention
-    // rather than an approximation.
-    //
-    // Fails if the anchor constant moves (2815 would put Glittering Halls at
-    // 0.1 and Conduit at 0.06), if the ratio is inverted (Glittering Halls
-    // would read 0.06), and if the anchor stops being applied per tier.
-    #[test]
-    fn every_vial_line_derives_its_tier_three_rate_from_the_anchor() {
-        // Vertolka's anchor and the nine lines' tier-3 rates under it.
-        const EXPECTED: [(&str, f64); 9] = [
-            ("conduit_of_lightning", 0.1),
-            ("crucible_of_flame", 0.1),
-            ("defense_research_lab", 0.1 * 804.0 / 1689.0),
-            ("glittering_halls", 0.1 * 2815.0 / 1689.0),
-            ("hybridisation_chamber", 0.1 * 1005.0 / 1689.0),
-            ("corruption", 0.1 * 20.0 / 1689.0),
-            ("sanctum_of_immortality", 0.1 * 1689.0 / 1689.0),
-            ("throne_of_atziri", 0.1 * 20.0 / 1689.0),
-            ("toxic_grove", 0.1 * 201.0 / 1689.0),
-        ];
-        // Same lines, same order: the table below is the whole vial set, so a
-        // tenth line gaining a rate is caught rather than skipped over.
-        let keys: Vec<&str> = EXPECTED.iter().map(|(key, _)| *key).collect();
-        assert_eq!(keys, VIAL_LINES);
-
-        for (key, expected) in EXPECTED {
-            let value = drops_for(key)
-                .tier(Tier::T3)
-                .expect("tier 3 exists")
-                .vials_per_run(0.1)
-                .unwrap_or_else(|| panic!("{key} names a vial and derives a rate"))
-                .value();
-            assert!(
-                (value - expected).abs() < 1e-12,
-                "{key} tier 3 derived {value}, not {expected}",
-            );
-        }
-
-        // The three lines the anchor was READ OFF answer it exactly — not
-        // 0.09999999. Fails the moment the derivation stops being an identity
-        // at the anchor.
-        for key in [
-            "conduit_of_lightning",
-            "crucible_of_flame",
-            "sanctum_of_immortality",
-        ] {
-            let t3 = drops_for(key).tier(Tier::T3).expect("tier 3 exists");
-            assert_eq!(t3.vial_chance_raw(), Some(VIAL_RATE_ANCHOR_RAW));
-            assert_eq!(
-                t3.vials_per_run(0.1).map(Estimate::value),
-                Some(0.1),
-                "{key} is an anchor line and must read the anchor back",
-            );
-            // And the anchor is the knob, not the constant 0.1: Vertolka's
-            // proposed 0.2 comes straight back out.
-            assert_eq!(
-                t3.vials_per_run(0.2).map(Estimate::value),
-                Some(0.2),
-                "{key}"
-            );
-            assert_eq!(
-                t3.vials_per_run(0.0).map(Estimate::value),
-                Some(0.0),
-                "{key}"
-            );
-        }
-    }
-
     // The arm of LineDrops::has_guess that the real table cannot exercise: a
     // line whose ONLY guessed number sits in its temple mod. Every DROPS row
     // with a guessed temple mod also has guessed tier rates, so deleting the
@@ -2216,7 +1825,6 @@ mod tests {
             key: "not_a_real_line",
             unique: None,
             content: None,
-            vial: None,
             temple_mod: Some(TempleMod {
                 architect: "Puhuarte",
                 item_hint: "temple gloves",
@@ -2300,40 +1908,24 @@ mod tests {
         }
     }
 
-    // The two raw poedb integers have no internal shape to check them against
-    // — 1131 and 1113 are equally believable — so the check is a second
-    // transcription of the same pages, made from the evidence set rather than
-    // from this file. Fails on a single wrong digit anywhere in the 27 vial
-    // values or the 12 mod-item ones, and on a stat given to a tenth line.
+    // The raw poedb integers have no internal shape to check them against, so
+    // the check is a second transcription of the same pages, made from the
+    // evidence set rather than from this file. Fails on a single wrong digit
+    // in the 12 mod-item values, and on the stat given to a fifth line.
     #[test]
     fn the_raw_poedb_chances_match_a_second_transcription_of_the_pages() {
-        for (key, vial, item) in POEDB_RAW_CHANCES {
-            let row = drops_for(key);
-            let stored_vial: Vec<Option<u32>> =
-                row.tiers().iter().map(|t| t.vial_chance_raw()).collect();
-            assert_eq!(stored_vial, vial.map(Some).to_vec(), "{key} vial chance");
-
-            let stored_item: Vec<Option<u32>> = row
+        for (key, item) in POEDB_RAW_CHANCES {
+            let stored_item: Vec<Option<u32>> = drops_for(key)
                 .tiers()
                 .iter()
                 .map(|t| t.mod_item_chance_raw())
                 .collect();
-            let expected_item = match item {
-                Some(values) => values.map(Some).to_vec(),
-                None => vec![None; 3],
-            };
-            assert_eq!(stored_item, expected_item, "{key} mod-item chance");
+            assert_eq!(stored_item, item.map(Some).to_vec(), "{key} mod-item chance");
         }
 
-        let transcribed: Vec<&str> = POEDB_RAW_CHANCES.iter().map(|(key, ..)| *key).collect();
+        let transcribed: Vec<&str> = POEDB_RAW_CHANCES.iter().map(|(key, _)| *key).collect();
         for row in DROPS.iter().filter(|row| !transcribed.contains(&row.key())) {
             for drops in row.tiers() {
-                assert_eq!(
-                    drops.vial_chance_raw(),
-                    None,
-                    "{} carries an untranscribed vial chance",
-                    row.key()
-                );
                 assert_eq!(
                     drops.mod_item_chance_raw(),
                     None,

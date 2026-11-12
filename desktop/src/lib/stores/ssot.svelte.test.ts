@@ -1316,7 +1316,6 @@ describe('temple slice', () => {
 				tierFraction: 0.8,
 				cPerQuantity: 0.5,
 				cPerRarity: 0.25,
-				vialsPerRun: 0.1,
 				dropsWeight: 1,
 				comboPremium: 0,
 				rooms: {},

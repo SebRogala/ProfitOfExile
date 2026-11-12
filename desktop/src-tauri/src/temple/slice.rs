@@ -760,7 +760,7 @@ pub struct RoomValueRowView {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DriverView {
-    /// `"sale"`, `"unique_drop"`, `"vial_drop"`, `"mod_item"`,
+    /// `"sale"`, `"unique_drop"`, `"mod_item"`,
     /// `"quantity_bonus"`, `"rarity_bonus"`, `"tier_fraction"`,
     /// `"grade_fallback"`, `"instrumental"` or `"custom_override"`
     /// ([`DriverKind`](super::valuation::DriverKind)). `snake_case`, this
@@ -5620,7 +5620,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"status":"idle","waitingForPanel":false,"readRetry":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":false},"preset":"default","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"vialsPerRun":0.1,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"market":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
+            r#"{"status":"idle","waitingForPanel":false,"readRetry":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":false},"preset":"default","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"market":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
         );
     }
 
@@ -5924,7 +5924,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true,"standIn":null},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false,"standIn":null}]},"recipe":{"base":{"name":"Story of the Vaal","chaos":5.0},"vial":{"name":"Vial of Fate","chaos":1.0},"upgraded":{"name":"Fate of the Vaal","chaos":null}},"line":{"kind":"content","content":"Extra monsters (dangerous)","modArchitect":null,"modHint":null,"modSlots":[],"modWorth":null,"quantityPct":null,"rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"vialsPerRun":0.1,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true,"standIn":null},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false,"standIn":null}]},"recipe":{"base":{"name":"Story of the Vaal","chaos":5.0},"vial":{"name":"Vial of Fate","chaos":1.0},"upgraded":{"name":"Fate of the Vaal","chaos":null}},"line":{"kind":"content","content":"Extra monsters (dangerous)","modArchitect":null,"modHint":null,"modSlots":[],"modWorth":null,"quantityPct":null,"rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///
@@ -6013,14 +6013,9 @@ mod tests {
     }
 
     /// Locus of Corruption's tier-3 total on the committed capture, and the
-    /// board's top room: its 846 c sale delta plus the vial term POE-262 gave
-    /// it — a derived rate of 0.1 x 20/1689 against Vial of Sacrifice at 428 c.
-    ///
-    /// Written as the arithmetic in the formula's own operand order, so it is
-    /// bit-identical to the total the table computes; `the_bridge_prices_all_
-    /// twenty_five_lines_in_chaos` pins that. It was a flat 846.0 before WI-2,
-    /// when Locus carried no vial rate at all.
-    const LOCUS_T3: f64 = 846.0 + 0.1 * 20.0 / 1689.0 * 428.0;
+    /// board's top room: its 846 c sale delta. POE-366 removed the vial term
+    /// that once sat on top of it.
+    const LOCUS_T3: f64 = 846.0;
 
     /// The valuation the bridge tests price against: the committed Allflame
     /// capture under the Default preset, whose top tier-3 room is Locus of
@@ -6171,7 +6166,7 @@ mod tests {
         let dropped: f64 = before
             .drivers
             .iter()
-            .filter(|d| d.kind == "mod_item" || d.kind == "unique_drop" || d.kind == "vial_drop")
+            .filter(|d| d.kind == "mod_item" || d.kind == "unique_drop")
             .filter_map(|d| d.chaos)
             .sum();
 
@@ -6231,12 +6226,8 @@ mod tests {
             }
         }
         // The two the feed actually printed, at the numbers it printed —
-        // Locus with the derived vial term POE-262 added on top of its sale.
+        // Locus at its sale delta alone.
         assert_eq!(profile.room_values[&Line::Corruption][2], LOCUS_T3);
-        assert!(
-            (LOCUS_T3 - 846.506_808_762_581).abs() < 1e-9,
-            "LOCUS_T3 was {LOCUS_T3}",
-        );
         assert_eq!(profile.room_values[&Line::Gem][2], 390.0);
         // And a line the rusher never named, priced by its bonus rather than
         // sitting at the zero an absent key would have scored.
@@ -6648,8 +6639,8 @@ mod tests {
     /// that moved named.
     ///
     /// With the 2026-10-17 C-tier rung, Temple Nexus takes 21.15 and
-    /// leaves the top five. Glittering Halls is third through its derived vial
-    /// rate, then Crucible of Flame and Sanctum of Immortality.
+    /// leaves the top five. Since POE-366 removed vials, Crucible of Flame,
+    /// Sanctum of Immortality and Conduit of Lightning follow the two sales.
     #[test]
     fn the_live_captures_five_best_rooms_are_these_in_this_order() {
         let valued = value_read(&TempleSettings::default(), &crate::temple::market::allflame());
@@ -6666,23 +6657,17 @@ mod tests {
             vec![
                 "corruption",
                 "gem",
-                "glittering_halls",
                 "crucible_of_flame",
                 "sanctum_of_immortality",
+                "conduit_of_lightning",
             ],
         );
-        assert_eq!(ranked[0].1, LOCUS_T3, "Locus of Corruption, sale + vial");
+        assert_eq!(ranked[0].1, LOCUS_T3, "Locus of Corruption, its sale delta");
         assert_eq!(ranked[1].1, 390.0, "Doryani's Institute, its sale delta");
-        // 0.1 x 2815/1689 x 428 c of vial, plus 60 % rarity at 0.25 c a point.
-        assert!(
-            close(ranked[2].1, 0.1 * 2815.0 / 1689.0 * 428.0 + 15.0),
-            "Glittering Halls was {}",
-            ranked[2].1,
-        );
-        assert!(close(ranked[2].1, 86.333_333_333_333), "{}", ranked[2].1);
-        assert!(close(ranked[3].1, 67.35), "Crucible of Flame");
-        assert!(close(ranked[4].1, 60.75), "Sanctum of Immortality is fifth");
-        assert!(close(ranked[5].1, 56.125), "and Conduit of Lightning sixth");
+        assert!(close(ranked[2].1, 67.25), "Crucible of Flame");
+        assert!(close(ranked[3].1, 54.75), "Sanctum of Immortality");
+        assert!(close(ranked[4].1, 53.625), "Conduit of Lightning is fifth");
+        assert!(close(ranked[5].1, 36.0), "and Factory sixth");
     }
 
     /// An offer whose printed target did not resolve publishes no value —
@@ -6738,11 +6723,11 @@ mod tests {
     /// offers, the advice is to switch — and to switch onto the corruption
     /// line rather than the gem one.
     ///
-    /// The board is Pools of Restoration (the vial line at tier 1, worth 48.60
+    /// The board is Pools of Restoration (the Sanctum of Immortality line at tier 1, worth 43.80
     /// on the committed capture) against Corruption Chamber (676.80) and
     /// Gemcutter's Workshop (312.00). Under the shipped rusher fixture all
     /// three of those rooms score ZERO — it prices tiers 1 and 2 at nothing
-    /// and the vial line not at all — so the kill would be a free choice and
+    /// and the Sanctum line not at all — so the kill would be a free choice and
     /// the door chain would decide it. That is exactly the regression this
     /// pins: it fails if `to_profile` stops pricing the board in chaos, and it
     /// fails if the two switches stop being ordered by what the feed pays.
@@ -6794,11 +6779,11 @@ mod tests {
         // up is worth a fraction of either, on the same table the ranking used.
         let staying = valued
             .get("sanctum_of_immortality", Tier::T1)
-            .expect("the vial line is valued")
+            .expect("the Sanctum line is valued")
             .total;
         let corruption = valued.get("corruption", Tier::T2).expect("valued").total;
         let gem = valued.get("gem", Tier::T2).expect("valued").total;
-        assert!(close(staying, 48.6), "the vial room is worth {staying}");
+        assert!(close(staying, 43.8), "the room left is worth {staying}");
         assert!(close(corruption, LOCUS_T3 * 0.8), "the corruption switch is {corruption}");
         assert!(close(gem, 312.0), "the gem switch is {gem}");
         assert!(staying < gem && gem < corruption, "switching wins either way");

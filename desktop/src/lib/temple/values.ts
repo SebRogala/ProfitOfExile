@@ -218,26 +218,19 @@ export function formatChaos(chaos: number): string {
  *
  * - **Two SIGNIFICANT digits, trailing zeros trimmed**, which is the whole
  *   rule and the reason a whole number comes out whole: `2` and not `2.00`,
- *   `0` and not `0.00`. POE-262 is why it is significant digits rather than
- *   decimals: a vial rate is derived per line off poedb's chance stat, so the
- *   counts a box prints are now `0.1 × 2815/1689` and `0.1 × 20/1689` —
- *   raw, they render as `×0.16666666666666666` and `×0.0011841326228537595`,
- *   seventeen digits of float noise in a cell. Two significant digits keep
- *   the magnitude at every scale a rate reaches (`0.25`, `0.17`, `0.06`,
- *   `0.048`, `0.012`, `0.0012`) where a fixed two decimals would round the
- *   small ones to `0.00`. The trim is confined to the fraction — see the
+ *   `0` and not `0.00`. Significant digits rather than decimals because a
+ *   count can sit two or three decimals deep: two significant digits keep
+ *   the magnitude at every scale (`0.25`, `0.048`, `0.0012`) where a fixed
+ *   two decimals would round the small ones to `0.00`. The trim is confined to the fraction — see the
  *   comment on it.
- * - **At 99.5 and up the count is rounded whole.** Only the knob reaches here
- *   — the shipped table's largest count is 2 — but `vialsPerRun` has no
- *   maximum, and `toPrecision(2)` switches to exponential the moment two
- *   significant digits cannot hold the integer part, so a rate of 100 would
- *   print `×1.7e+2`.
+ * - **At 99.5 and up the count is rounded whole.** `toPrecision(2)` switches to
+ *   exponential the moment two significant digits cannot hold the integer
+ *   part, so a count of 166 would print `×1.7e+2`.
  * - **Below 0.0001 the literal `<0.0001` is printed**, for the same reason
  *   [`formatChaos`] does it: `toPrecision(2)` goes exponential under 1e-6, and
  *   `×1.2e-7` is not a cell. The `<` form keeps the one claim that
  *   matters — the room does roll for the item. Zero itself is NOT in this
- *   band: at a `vialsPerRun` of 0 the row is still listed, and `×0` is the
- *   honest rendering of what it is now worth.
+ *   band: `×0` is the honest rendering of a zero count.
  */
 export function formatCount(count: number): string {
 	if (count >= 99.5) return Math.round(count).toString();
@@ -585,7 +578,7 @@ export function overrideCount(custom: TempleCustom): number {
 
 /** One editable rate of the Custom preset. */
 export interface KnobSpec {
-	field: 'tierFraction' | 'cPerQuantity' | 'cPerRarity' | 'vialsPerRun' | 'dropsWeight' | 'comboPremium';
+	field: 'tierFraction' | 'cPerQuantity' | 'cPerRarity' | 'dropsWeight' | 'comboPremium';
 	label: string;
 	/** The unit, spelled out — every one of these is chaos or a fraction, and
 	 *  a control that does not say which is a control nobody can set. */
@@ -596,7 +589,7 @@ export interface KnobSpec {
 	max: number | null;
 }
 
-/** The six rates, in the order the editor lays them out. */
+/** The five rates, in the order the editor lays them out. */
 export const KNOBS: KnobSpec[] = [
 	{
 		field: 'tierFraction',
@@ -616,13 +609,6 @@ export const KNOBS: KnobSpec[] = [
 		field: 'cPerRarity',
 		label: 'Chaos per rarity %',
 		hint: 'Chaos per point of increased Rarity. Unmeasured — Vertolka’s proposed rate.',
-		step: 0.05,
-		max: null
-	},
-	{
-		field: 'vialsPerRun',
-		label: 'Vials per run',
-		hint: 'Expected vials per run at tier 3 on a standard vial room (Conduit, Crucible, Sanctum); other rooms scale by poedb’s chance stat — Glittering Halls ×1.67, Locus and Throne ×0.012. Vertolka’s proposed 0.1.',
 		step: 0.05,
 		max: null
 	},

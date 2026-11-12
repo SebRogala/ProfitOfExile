@@ -29,7 +29,7 @@
 //!
 //! [`Knobs`] lives in [`super::valuation`] and is re-exported, never
 //! redefined: the formula owns its own parameters, and a second declaration of
-//! the same six numbers is a second set of defaults to drift.
+//! the same five numbers is a second set of defaults to drift.
 
 use std::collections::BTreeMap;
 
@@ -85,8 +85,6 @@ pub struct TempleCustomSettings {
     pub c_per_quantity: f64,
     /// [`Knobs::c_per_rarity`].
     pub c_per_rarity: f64,
-    /// [`Knobs::vials_per_run`]. `0` removes every vial term.
-    pub vials_per_run: f64,
     /// [`Knobs::drops_weight`]. A rusher sets this to `0`, which reduces the
     /// ranking to sale value alone.
     pub drops_weight: f64,
@@ -107,7 +105,6 @@ impl Default for TempleCustomSettings {
             tier_fraction: knobs.tier_fraction,
             c_per_quantity: knobs.c_per_quantity,
             c_per_rarity: knobs.c_per_rarity,
-            vials_per_run: knobs.vials_per_run,
             drops_weight: knobs.drops_weight,
             combo_premium: knobs.combo_premium,
             rooms: BTreeMap::new(),
@@ -120,10 +117,10 @@ impl Default for TempleCustomSettings {
 const OVERRIDE_TIERS: usize = 3;
 
 impl TempleCustomSettings {
-    /// The six rates as the formula takes them.
+    /// The five rates as the formula takes them.
     ///
-    /// No validation here, and the reason differs per knob. The five the
-    /// FORMULA reads — `tier_fraction` and the four rate-like ones — are
+    /// No validation here, and the reason differs per knob. The four the
+    /// FORMULA reads — `tier_fraction` and the three rate-like ones — are
     /// floored where they are read (`valuation::rate`, `valuation::tier_fraction`),
     /// which is one place rather than two. `combo_premium` is the odd one out:
     /// the formula never reads it, so its only reader is
@@ -134,7 +131,6 @@ impl TempleCustomSettings {
             tier_fraction: self.tier_fraction,
             c_per_quantity: self.c_per_quantity,
             c_per_rarity: self.c_per_rarity,
-            vials_per_run: self.vials_per_run,
             drops_weight: self.drops_weight,
             combo_premium: self.combo_premium,
         }
@@ -249,12 +245,6 @@ impl TempleCustomSettings {
                 self.c_per_rarity,
                 shipped.c_per_rarity,
             ),
-            vials_per_run: salvage_knob(
-                &mut refused,
-                VIALS_PER_RUN,
-                self.vials_per_run,
-                shipped.vials_per_run,
-            ),
             drops_weight: salvage_knob(
                 &mut refused,
                 DROPS_WEIGHT,
@@ -311,7 +301,6 @@ impl TempleCustomSettings {
             (TIER_FRACTION, self.tier_fraction),
             (C_PER_QUANTITY, self.c_per_quantity),
             (C_PER_RARITY, self.c_per_rarity),
-            (VIALS_PER_RUN, self.vials_per_run),
             (DROPS_WEIGHT, self.drops_weight),
             (COMBO_PREMIUM, self.combo_premium),
         ] {
@@ -357,13 +346,13 @@ struct KnobRule {
     label: &'static str,
     /// The ceiling, where there is one. `tier_fraction` alone has one, because
     /// `valuation::tier_fraction` clamps to 1.0 — so a stored 2.5 would show a
-    /// fraction nothing in the app ever applies. The other five have no upper
+    /// fraction nothing in the app ever applies. The other four have no upper
     /// bound to state: a rate is chaos (or a count) per point, and any amount
     /// of either is a rate somebody can hold.
     max: Option<f64>,
 }
 
-/// The six rates. Named constants rather than an array so each use site says
+/// The five rates. Named constants rather than an array so each use site says
 /// which knob it is about.
 const TIER_FRACTION: KnobRule = KnobRule {
     label: "tier fraction",
@@ -375,10 +364,6 @@ const C_PER_QUANTITY: KnobRule = KnobRule {
 };
 const C_PER_RARITY: KnobRule = KnobRule {
     label: "chaos per rarity %",
-    max: None,
-};
-const VIALS_PER_RUN: KnobRule = KnobRule {
-    label: "vials per run",
     max: None,
 };
 const DROPS_WEIGHT: KnobRule = KnobRule {
@@ -719,42 +704,6 @@ mod tests {
         );
     }
 
-    /// A Custom vial rate reaches the table it is typed for (POE-262).
-    ///
-    /// `knobs()` is the one bridge between the persisted table and the formula,
-    /// and a knob that reaches `validate` and `salvaged` but not `knobs()` is a
-    /// control that refuses bad values and then does nothing with the good one.
-    /// Glittering Halls is the room to see it on: nothing else prices it, so
-    /// its whole tier-3 total is the vial term plus its fixed 15 c rarity
-    /// bonus, and the rate falls straight out of the number.
-    ///
-    /// Fails if `knobs()` forwards `Knobs::default().vials_per_run` instead of
-    /// the field — the shipped 86.33 would come back for every rate typed.
-    #[test]
-    fn a_custom_vial_rate_reaches_the_value_table() {
-        for (rate, expected) in [
-            (0.0, 15.0),
-            (0.1, 86.333_333_333_333),
-            (0.2, 157.666_666_666_667),
-        ] {
-            let custom = TempleCustomSettings {
-                vials_per_run: rate,
-                ..Default::default()
-            };
-
-            let valued = value_table(Preset::Custom, &custom, &allflame());
-
-            // rate x 2815/1689 x Vial of Transcendence at 428 c, + 60 % rarity
-            // at 0.25 c a point.
-            let total = total(&valued, "glittering_halls", 3);
-            assert!(
-                (total - (rate * 2815.0 / 1689.0 * 428.0 + 15.0)).abs() < 1e-9,
-                "at {rate} the room was worth {total}",
-            );
-            assert!((total - expected).abs() < 1e-9, "at {rate}: {total}");
-        }
-    }
-
     #[test]
     fn a_custom_override_replaces_the_formula_for_the_tier_it_names() {
         let custom = TempleCustomSettings {
@@ -896,11 +845,8 @@ mod tests {
         // on the formula rather than at zero.
         let valued = value_table(Preset::Custom, &custom, &allflame());
         assert_eq!(total(&valued, "gem", 3), 50.0);
-        // Its formula value on the capture: the 846 c sale delta plus the vial
-        // term POE-262 derived for it (0.1 x 20/1689 x 428 c).
-        let formula = 846.0 + 0.1 * 20.0 / 1689.0 * 428.0;
-        assert_eq!(total(&valued, "corruption", 3), formula);
-        assert!((formula - 846.506_808_762_581).abs() < 1e-9, "{formula}");
+        // Its formula value on the capture: the 846 c sale delta alone.
+        assert_eq!(total(&valued, "corruption", 3), 846.0);
     }
 
     #[test]
@@ -1128,11 +1074,10 @@ mod tests {
     /// shipped number.
     ///
     /// `KnobRule` owns the predicate, but `validate` and `salvaged` still each
-    /// name the six fields, and that is where a seventh rate can reach one
+    /// name the five fields, and that is where a sixth rate can reach one
     /// list and not the other — a knob nobody lists is a knob nobody bounds.
-    /// Walking all six is what refuses that: drop one from either side and it
-    /// fails here, naming the rate. POE-262's `vials per run` is the knob that
-    /// arrived after this test was written, and it is on the list.
+    /// Walking all five is what refuses that: drop one from either side and it
+    /// fails here, naming the rate.
     ///
     /// -1 is outside every bound there is at once — below zero for the five
     /// rates, outside 0..=1 for the fraction — so one value exercises the pair
@@ -1146,7 +1091,7 @@ mod tests {
         let shipped = TempleCustomSettings::default();
         type Set = fn(&mut TempleCustomSettings, f64);
         type Get = fn(&TempleCustomSettings) -> f64;
-        let rates: [(&str, Set, Get); 6] = [
+        let rates: [(&str, Set, Get); 5] = [
             (
                 "tier fraction",
                 |c, v| c.tier_fraction = v,
@@ -1161,11 +1106,6 @@ mod tests {
                 "chaos per rarity %",
                 |c, v| c.c_per_rarity = v,
                 |c| c.c_per_rarity,
-            ),
-            (
-                "vials per run",
-                |c, v| c.vials_per_run = v,
-                |c| c.vials_per_run,
             ),
             (
                 "drops weight",
@@ -1205,6 +1145,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// POE-366: 3.30 removed vials and the vial knob with them. A file still
+    /// carrying a malformed `vialsPerRun` loads with no warning about it, and
+    /// the knobs it does carry are kept.
+    #[test]
+    fn a_stored_negative_vials_per_run_loads_without_a_warning() {
+        let stored: TempleCustomSettings =
+            serde_json::from_str(r#"{"vialsPerRun": -0.1, "tierFraction": 0.5}"#)
+                .expect("a stored vialsPerRun still deserialises");
+
+        let (salvaged, lines) = stored.salvaged();
+
+        assert_eq!(stored.validate(), Ok(()));
+        assert!(lines.is_empty(), "no line for a retired knob: {lines:?}");
+        assert_eq!(salvaged.tier_fraction, 0.5);
     }
 
     /// Zero is a setting, not a malformation — including the rusher's.
