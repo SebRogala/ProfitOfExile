@@ -5,7 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use tauri::Manager;
 
 const SETTINGS_FILENAME: &str = "settings.json";
@@ -744,71 +746,132 @@ fn settings_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     Some(dir.join(SETTINGS_FILENAME))
 }
 
-/// Load settings from disk. Returns defaults if file doesn't exist or is invalid.
-pub fn load(app: &tauri::AppHandle) -> Settings {
-    let path = match settings_path(app) {
-        Some(p) => p,
-        None => return Settings::default(),
-    };
-    match fs::read_to_string(&path) {
-        Ok(contents) => {
-            match serde_json::from_str::<Settings>(&contents) {
-                Ok(s) => {
-                    log::info!("Settings loaded from {:?}", path);
-                    s
-                }
-                Err(e) => {
-                    log::warn!("Settings file invalid, using defaults: {}", e);
-                    // `log::` is unreachable in a shipped build; this discards
-                    // every stored preference, so it must reach the app log.
-                    crate::app_log(
-                        app,
-                        format!("Settings file invalid — ALL settings reset to defaults: {}", e),
-                    );
-                    Settings::default()
-                }
+/// Serialises every read-modify-write of the settings file in this process.
+/// Unlocked reads stay safe because `save_to` replaces the file by rename.
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Why `load_from` produced no settings.
+#[derive(Debug)]
+pub enum LoadError {
+    NotFound,
+    Read(std::io::Error),
+    Parse(serde_json::Error),
+}
+
+/// Why `save_to` left the file unchanged; `Display` is the logged message.
+#[derive(Debug)]
+pub enum SaveError {
+    Serialize(serde_json::Error),
+    Write(PathBuf, std::io::Error),
+    Rename(PathBuf, std::io::Error),
+}
+
+impl std::fmt::Display for SaveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SaveError::Serialize(e) => write!(f, "Failed to serialize settings: {}", e),
+            SaveError::Write(tmp, e) => write!(f, "Failed to write settings to {:?}: {}", tmp, e),
+            SaveError::Rename(path, e) => {
+                write!(f, "Failed to move settings into place at {:?}: {}", path, e)
             }
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+    }
+}
+
+fn load_from(path: &Path) -> Result<Settings, LoadError> {
+    match fs::read_to_string(path) {
+        Ok(contents) => serde_json::from_str::<Settings>(&contents).map_err(LoadError::Parse),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(LoadError::NotFound),
+        Err(e) => Err(LoadError::Read(e)),
+    }
+}
+
+/// A temp name no other call in any process shares, so concurrent saves never
+/// write into each other's temp file.
+fn temp_path_for(path: &Path) -> PathBuf {
+    let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    path.with_file_name(format!("{}.{}.{}.tmp", name, std::process::id(), seq))
+}
+
+fn save_to(path: &Path, settings: &Settings) -> Result<(), SaveError> {
+    let json = serde_json::to_string_pretty(settings).map_err(SaveError::Serialize)?;
+    // Write-temp-then-rename: a plain fs::write leaves a truncated
+    // settings file if the process dies mid-write, and this path runs
+    // on every persisted preference change, not just discrete toggles.
+    let tmp = temp_path_for(path);
+    if let Err(e) = fs::write(&tmp, &json) {
+        let _ = fs::remove_file(&tmp);
+        return Err(SaveError::Write(tmp, e));
+    }
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(SaveError::Rename(path.to_path_buf(), e));
+    }
+    Ok(())
+}
+
+/// Locked read-modify-write: `resolve` turns the load result into the current
+/// settings, `f` returns the settings to store.
+fn update_at(
+    path: &Path,
+    resolve: impl FnOnce(Result<Settings, LoadError>) -> Settings,
+    f: impl FnOnce(&Settings) -> Settings,
+) -> Result<(), SaveError> {
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let existing = resolve(load_from(path));
+    save_to(path, &f(&existing))
+}
+
+/// The AppHandle layer's reading of a load result, with its log lines.
+fn resolve_loaded(app: &tauri::AppHandle, path: &Path, loaded: Result<Settings, LoadError>) -> Settings {
+    match loaded {
+        Ok(s) => {
+            log::info!("Settings loaded from {:?}", path);
+            s
+        }
+        Err(LoadError::Parse(e)) => {
+            log::warn!("Settings file invalid, using defaults: {}", e);
+            // `log::` is unreachable in a shipped build; this discards
+            // every stored preference, so it must reach the app log.
+            crate::app_log(
+                app,
+                format!("Settings file invalid — ALL settings reset to defaults: {}", e),
+            );
+            Settings::default()
+        }
+        Err(LoadError::NotFound) => {
             log::info!("No settings file found, using defaults");
             Settings::default()
         }
-        Err(e) => {
+        Err(LoadError::Read(e)) => {
             log::error!("Failed to read settings file {:?}: {} — using defaults", path, e);
             Settings::default()
         }
     }
 }
 
-/// Save current settings to disk.
-pub fn save(app: &tauri::AppHandle, settings: &Settings) {
+/// Load settings from disk. Returns defaults if file doesn't exist or is invalid.
+pub fn load(app: &tauri::AppHandle) -> Settings {
+    let path = match settings_path(app) {
+        Some(p) => p,
+        None => return Settings::default(),
+    };
+    resolve_loaded(app, &path, load_from(&path))
+}
+
+/// The only way to write the settings file: `f` gets the stored settings and
+/// returns what to store, under a process-wide lock. The lock is not
+/// reentrant, so `f` must not call `load`, `update` or `persist_settings`.
+pub fn update(app: &tauri::AppHandle, f: impl FnOnce(&Settings) -> Settings) {
     let path = match settings_path(app) {
         Some(p) => p,
         None => return,
     };
-    match serde_json::to_string_pretty(settings) {
-        Ok(json) => {
-            // Write-temp-then-rename: a plain fs::write leaves a truncated
-            // settings file if the process dies mid-write, and this path runs
-            // on every persisted preference change, not just discrete toggles.
-            let tmp = path.with_extension("json.tmp");
-            if let Err(e) = fs::write(&tmp, &json) {
-                log::error!("Failed to write settings to {:?}: {}", tmp, e);
-                crate::app_log(app, format!("Failed to write settings to {:?}: {}", tmp, e));
-                return;
-            }
-            if let Err(e) = fs::rename(&tmp, &path) {
-                log::error!("Failed to move settings into place at {:?}: {}", path, e);
-                crate::app_log(
-                    app,
-                    format!("Failed to move settings into place at {:?}: {}", path, e),
-                );
-            }
-        }
-        Err(e) => {
-            log::error!("Failed to serialize settings: {}", e);
-            crate::app_log(app, format!("Failed to serialize settings: {}", e));
-        }
+    if let Err(e) = update_at(&path, |loaded| resolve_loaded(app, &path, loaded), f) {
+        log::error!("{}", e);
+        crate::app_log(app, e.to_string());
     }
 }
 
@@ -953,13 +1016,14 @@ pub fn preserve_screen_scale(existing: &Settings, target: &mut Settings) {
 /// [`crate::ssot::geometry_recalibrate`]) keep the lock-then-drop-then-write
 /// shape the rest of the module uses.
 pub fn persist_forgetting_screen_scale(app: &tauri::AppHandle) {
-    let existing = load(app);
-    let mut target = {
-        let state = app.state::<crate::AppState>();
-        from_state(&state)
-    };
-    forget_screen_scale(&existing, &mut target);
-    save(app, &target);
+    update(app, |existing| {
+        let mut target = {
+            let state = app.state::<crate::AppState>();
+            from_state(&state)
+        };
+        forget_screen_scale(existing, &mut target);
+        target
+    });
 }
 
 /// The save-time composition a deliberate drop uses — [`preserve_screen_scale`]'s
@@ -1102,6 +1166,98 @@ mod tests {
         fs::write(&path, written).unwrap();
         assert!(webview_gpu_disabled_in(&path));
         let _ = fs::remove_file(&path);
+    }
+
+    fn fresh_test_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("poe_test_{}_{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn dir_entries(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Without the write lock two writers read the same file and the later
+    /// rename drops the earlier increment, or a reader sees no file mid-swap.
+    #[test]
+    fn concurrent_updates_lose_no_increment() {
+        const THREADS: u32 = 8;
+        const ITERATIONS: u32 = 50;
+        let dir = fresh_test_dir("settings_concurrent_updates");
+        let path = dir.join(SETTINGS_FILENAME);
+        let mut start = Settings::default();
+        start.autoclear_minutes = 0;
+        save_to(&path, &start).unwrap();
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..ITERATIONS {
+                        update_at(
+                            &path,
+                            |loaded| loaded.expect("settings file must stay readable and valid"),
+                            |s| {
+                                let mut next = s.clone();
+                                next.autoclear_minutes += 1;
+                                next
+                            },
+                        )
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let stored = load_from(&path).expect("final settings file parses");
+        assert_eq!(stored.autoclear_minutes, THREADS * ITERATIONS);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_to_leaves_only_the_settings_file() {
+        let dir = fresh_test_dir("settings_save_to_clean");
+        let path = dir.join(SETTINGS_FILENAME);
+        let mut s = Settings::default();
+        s.autoclear_minutes = 17;
+        save_to(&path, &s).unwrap();
+        assert_eq!(dir_entries(&dir), vec![SETTINGS_FILENAME.to_string()]);
+        assert_eq!(load_from(&path).unwrap().autoclear_minutes, 17);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn temp_path_differs_per_call_and_is_never_the_fixed_name() {
+        let path = Path::new("/x").join(SETTINGS_FILENAME);
+        let first = temp_path_for(&path);
+        let second = temp_path_for(&path);
+        assert_ne!(first, second);
+        for p in [&first, &second] {
+            assert_ne!(p.file_name().unwrap(), "settings.json.tmp");
+            assert_eq!(p.parent(), path.parent());
+        }
+    }
+
+    /// A directory at the destination lets the temp write succeed and makes
+    /// the rename fail on every platform.
+    #[test]
+    fn save_to_failed_rename_returns_err_and_removes_the_temp() {
+        let dir = fresh_test_dir("settings_save_to_rename_fails");
+        let path = dir.join(SETTINGS_FILENAME);
+        fs::create_dir(&path).unwrap();
+        let result = save_to(&path, &Settings::default());
+        assert!(matches!(result, Err(SaveError::Rename(..))), "got {:?}", result);
+        assert!(path.is_dir());
+        assert_eq!(dir_entries(&dir), vec![SETTINGS_FILENAME.to_string()]);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// The startup read: only an explicit `true` turns the GPU off; a file

@@ -658,23 +658,24 @@ fn build_status(state: &AppState) -> AppStatus {
 /// Save current settings to disk. Call after any persistent state change.
 /// Preserves window and legacy overlay settings from the existing file.
 fn persist_settings(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let existing = settings::load(app);
-    let mut s = settings::from_state(&state);
-    // Keep the remembered screen scale when this session has nothing to replace
-    // it with. `from_state`'s screen-scale projection is lossy — a `MercOcr`
-    // slice maps to `None` — so without this every one of the call sites below
-    // would null a stored measurement after the first OCR-only tick. Its own
-    // statement, NOT folded into `persist_overlay_settings`: that function's
-    // contract is fields no AppState mutex owns, and `state.screen` owns this
-    // one. `preserve_screen_scale` states the rest of the rule, including why a
-    // `MercFrame` measurement at different dimensions still overwrites.
-    settings::preserve_screen_scale(&existing, &mut s);
-    // Preserve fields that are not owned by AppState:
-    // the window position and legacy overlay settings.
-    // This is DRY — from_state handles AppState fields, persist_overlay_settings handles the rest.
-    persist_overlay_settings(&existing, &mut s);
-    settings::save(app, &s);
+    settings::update(app, |existing| {
+        let state = app.state::<AppState>();
+        let mut s = settings::from_state(&state);
+        // Keep the remembered screen scale when this session has nothing to replace
+        // it with. `from_state`'s screen-scale projection is lossy — a `MercOcr`
+        // slice maps to `None` — so without this every one of the call sites below
+        // would null a stored measurement after the first OCR-only tick. Its own
+        // statement, NOT folded into `persist_overlay_settings`: that function's
+        // contract is fields no AppState mutex owns, and `state.screen` owns this
+        // one. `preserve_screen_scale` states the rest of the rule, including why a
+        // `MercFrame` measurement at different dimensions still overwrites.
+        settings::preserve_screen_scale(existing, &mut s);
+        // Preserve fields that are not owned by AppState:
+        // the window position and legacy overlay settings.
+        // This is DRY — from_state handles AppState fields, persist_overlay_settings handles the rest.
+        persist_overlay_settings(existing, &mut s);
+        s
+    });
 }
 
 fn persist_overlay_settings(existing: &settings::Settings, target: &mut settings::Settings) {
@@ -1986,10 +1987,12 @@ fn get_timer_appearance(app: AppHandle) -> serde_json::Value {
 
 #[tauri::command]
 fn set_timer_appearance(bg_opacity: f32, text_stroke: bool, app: AppHandle) {
-    let mut s = settings::load(&app);
-    s.timer_bg_opacity = Some(bg_opacity.clamp(0.0, 1.0));
-    s.timer_text_stroke = Some(text_stroke);
-    settings::save(&app, &s);
+    settings::update(&app, |existing| {
+        let mut s = existing.clone();
+        s.timer_bg_opacity = Some(bg_opacity.clamp(0.0, 1.0));
+        s.timer_text_stroke = Some(text_stroke);
+        s
+    });
     if let Err(e) = app.emit("timer-appearance-changed", serde_json::json!({
         "bg_opacity": bg_opacity.clamp(0.0, 1.0),
         "text_stroke": text_stroke,
@@ -2038,9 +2041,11 @@ fn get_proxy_settings(app: AppHandle) -> ProxySettings {
 /// Stores whether trade requests use the proxy; applies after a restart.
 #[tauri::command]
 fn set_proxy_trade(enabled: bool, app: AppHandle) {
-    let mut s = settings::load(&app);
-    s.proxy_trade = enabled;
-    settings::save(&app, &s);
+    settings::update(&app, |existing| {
+        let mut s = existing.clone();
+        s.proxy_trade = enabled;
+        s
+    });
     app_log(&app, format!("Proxy for trade requests {} — applies after restart", if enabled { "on" } else { "off" }));
 }
 
@@ -2048,9 +2053,11 @@ fn set_proxy_trade(enabled: bool, app: AppHandle) {
 #[tauri::command]
 fn set_proxy_url(url: String, app: AppHandle) -> Result<(), String> {
     let proxy = http::ProxyUrl::parse(&url)?;
-    let mut s = settings::load(&app);
-    s.proxy_url = proxy.as_ref().map(|p| p.as_str().to_string()).unwrap_or_default();
-    settings::save(&app, &s);
+    settings::update(&app, |existing| {
+        let mut s = existing.clone();
+        s.proxy_url = proxy.as_ref().map(|p| p.as_str().to_string()).unwrap_or_default();
+        s
+    });
     let shown = proxy.as_ref().map_or("none", |p| p.as_str());
     app_log(&app, format!("Proxy set to {shown} — applies after restart"));
     Ok(())
@@ -2058,9 +2065,11 @@ fn set_proxy_url(url: String, app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn set_webview_gpu_disabled(disabled: bool, app: AppHandle) {
-    let mut s = settings::load(&app);
-    s.webview_gpu_disabled = disabled;
-    settings::save(&app, &s);
+    settings::update(&app, |existing| {
+        let mut s = existing.clone();
+        s.webview_gpu_disabled = disabled;
+        s
+    });
     app_log(&app, format!("GPU-free webview rendering {} — applies after restart", if disabled { "on" } else { "off" }));
 }
 
@@ -3729,12 +3738,13 @@ pub fn run() {
                             maximized: false,
                         }
                     };
-                    let state = app.state::<AppState>();
-                    let existing = settings::load(app);
-                    let mut s = settings::from_state(&state);
-                    persist_overlay_settings(&existing, &mut s);
-                    s.window = Some(win_settings); // AFTER persist_overlay, so it's not overwritten
-                    settings::save(app, &s);
+                    settings::update(app, |existing| {
+                        let state = app.state::<AppState>();
+                        let mut s = settings::from_state(&state);
+                        persist_overlay_settings(existing, &mut s);
+                        s.window = Some(win_settings); // AFTER persist_overlay, so it's not overwritten
+                        s
+                    });
 
                     // Force exit — background threads (focus poller, mouse hook, scan loops)
                     // may still be mid-sleep and keeping the process alive.
