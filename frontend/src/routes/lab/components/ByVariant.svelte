@@ -88,6 +88,10 @@
 	const budgetChaos = $derived(parseInt(budgetPref.value) > 0 ? parseInt(budgetPref.value) : 0);
 	let rankedRows = $state<GemPlay[]>([]);
 	let rankingsError = $state('');
+	// Rows are shown only under the query they were fetched for: a control change
+	// clears them until its own page arrives. A refresh of the same query keeps them.
+	let rankingsPending = $state(true);
+	let shownQueryKey = '';
 	let selectedGem = $state('');
 	let fetchGeneration = 0;
 	$effect(() => {
@@ -104,6 +108,12 @@
 			search: selectedGem || undefined,
 		};
 		const generation = ++fetchGeneration;
+		const queryKey = JSON.stringify({ ...q, search: undefined });
+		if (!q.search && queryKey !== shownQueryKey) {
+			shownQueryKey = queryKey;
+			rankedRows = [];
+			rankingsPending = true;
+		}
 		// Debounced: the budget box is a text input.
 		const timer = setTimeout(async () => {
 			if (q.search) {
@@ -129,10 +139,16 @@
 				const page = await fetchRankingsPage(q);
 				if (generation !== fetchGeneration) return;
 				rankedRows = page.rows;
+				rankingsPending = false;
 				rankingsError = '';
 			} catch (err) {
 				console.warn('[ByVariant] rankings fetch failed:', err);
-				if (generation === fetchGeneration) rankingsError = 'Rankings failed to load \u2014 check the connection and try again.';
+				if (generation !== fetchGeneration) return;
+				rankedRows = [];
+				rankingsPending = false;
+				// The next control change or refresh must fetch again.
+				shownQueryKey = '';
+				rankingsError = 'Rankings failed to load \u2014 check the connection and try again.';
 			}
 		}, 300);
 		return () => clearTimeout(timer);
@@ -371,37 +387,19 @@
 		{@const vd = playsForPool(tab.pool, tab.variant)}
 		<div class="variant-block">
 			<div class="variant-label">{tab.label}</div>
-			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool]}) — {tab.variant}" showVariantColumn={false} {league} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} />
-			{:else if searchResults}
-				<div class="loading">{searchMissReason()}</div>
-			{:else}
-				<div class="loading">No data for this pool</div>
-			{/if}
+			<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool]}) — {tab.variant}" showVariantColumn={false} {league} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} emptyText={searchResults ? searchMissReason() : rankingsPending ? 'Loading…' : 'No data for this pool'} />
 		</div>
 	{:else if activeTab.value === 'ALL'}
 		{@const vd = playsForAll()}
 		<div class="variant-block">
 			<div class="variant-label">All markets</div>
-			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} {league} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} />
-			{:else if searchResults}
-				<div class="loading">{searchMissReason()}</div>
-			{:else}
-				<div class="loading">No data available</div>
-			{/if}
+			<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} {league} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} emptyText={searchResults ? searchMissReason() : rankingsPending ? 'Loading…' : 'No data available'} />
 		</div>
 	{:else}
 		{@const vd = playsForVariant(activeTab.value)}
 		<div class="variant-block">
 			<div class="variant-label">{activeTab.value}</div>
-			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Best Plays ({activeTab.value})" showVariantColumn={false} {league} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} />
-			{:else if searchResults}
-				<div class="loading">{searchMissReason()}</div>
-			{:else}
-				<div class="loading">No data for this variant</div>
-			{/if}
+			<BestPlays plays={vd} title="Best Plays ({activeTab.value})" showVariantColumn={false} {league} sort={sortBy} onSortChange={setSort} {showLowConf} onShowLowConfChange={setShowLowConf} emptyText={searchResults ? searchMissReason() : rankingsPending ? 'Loading…' : 'No data for this variant'} />
 		</div>
 	{/if}
 </section>
@@ -592,10 +590,5 @@
 		margin-bottom: 14px;
 		border-bottom: 1px solid var(--color-lab-border);
 		padding-bottom: 6px;
-	}
-	.loading {
-		color: var(--color-lab-text-secondary);
-		font-size: 0.9375rem;
-		padding: 16px 0;
 	}
 </style>

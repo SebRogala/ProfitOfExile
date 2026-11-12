@@ -28,6 +28,7 @@
 		onSortChange = () => {},
 		showLowConf = true,
 		onShowLowConfChange = () => {},
+		emptyText = '',
 	}: {
 		plays: GemPlay[];
 		title?: string;
@@ -37,6 +38,8 @@
 		onSortChange?: (sort: RankingsSort) => void;
 		showLowConf?: boolean;
 		onShowLowConfChange?: (show: boolean) => void;
+		/** Shown under the controls when `plays` is empty; the controls stay mounted. */
+		emptyText?: string;
 	} = $props();
 
 	let expandedRow = $state<number | null>(null);
@@ -88,6 +91,7 @@
 	</div>
 </div>
 
+{#if plays.length > 0}
 <div class="table-scroll">
 <table class="plays-table">
 	<thead>
@@ -226,11 +230,19 @@
 	</tbody>
 </table>
 </div>
+{:else}
+<div class="plays-empty">{emptyText}</div>
+{/if}
 
 <style>
 	.buy-base-disabled {
 		opacity: 0.4;
 		cursor: not-allowed;
+	}
+	.plays-empty {
+		color: var(--color-lab-text-secondary);
+		font-size: 0.9375rem;
+		padding: 16px 0;
 	}
 	.plays-header {
 		display: flex;
