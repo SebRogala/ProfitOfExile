@@ -7,9 +7,7 @@
 //! Epic lock L1 (POE-124) is what this table feeds: room value = sale price +
 //! drops (expected count x LIVE price) + bonus (quant/rarity x chaos-per-%).
 //! **No price lives here.** Prices are always fetched; a name in this table is a
-//! join key, not a value. The only exception is
-//! [`TempleMod::base_price_chaos`], which exists precisely because poe.ninja
-//! publishes no price for a mod-rolled rare, and it is a guess (see below).
+//! join key, not a value.
 //!
 //! # Every number carries where it came from
 //!
@@ -31,8 +29,7 @@
 //!   also on poedb, and poedb is cited for those.
 //! - [`VERTOLKA_MSG`] — Vertolka's 2026-09-06 message quoted on POE-124. Every
 //!   number from it is a [`Basis::Guess`], because he said so: "price of unique
-//!   divided by 4" (hence 0.25 per run at tier 3) and "Crucible of Flames is giving on average 2 temple gloves per
-//!   run and their base price is usually around 30c".
+//!   divided by 4" (hence 0.25 per run at tier 3).
 //!
 //! [`TempleMod::worth`] is the one field here that is a VERDICT rather than a
 //! number, and it has its own source — Vertolka's 2026-09-10 Discord message.
@@ -58,11 +55,10 @@
 //! `map incursion boss chance to drop <tag> item % [33/66/100]`, on Conduit of
 //! Lightning, Crucible of Flame, Hybridisation Chamber and Sanctum of
 //! Immortality — and [`TierDrops::mod_item_chance_raw`] is that integer,
-//! verbatim: raw, unscaled, never multiplied by a price. Nobody has stated an anchor for it — Vertolka
-//! priced the gloves per RUN, not per point of this stat — so there is no
-//! ratio to hang it off. It is the game's own per-tier handle on how often the
-//! architect's signature rare ([`TempleMod`]) drops, which otherwise carries a
-//! number only where Vertolka guessed one. Defense Research Lab and Toxic Grove
+//! verbatim: raw, unscaled, never multiplied by a price. Nobody has stated an
+//! anchor for it, so there is no ratio to hang it off. It is the game's own
+//! per-tier handle on how often the architect's signature rare
+//! ([`TempleMod`]) drops. Defense Research Lab and Toxic Grove
 //! name a temple mod but their pages print no such stat, so both are `None`.
 //!
 //! # Where the two sources disagree
@@ -257,9 +253,8 @@ impl Slot {
 /// Whether a mod family is one to chase, one to ignore, or neither.
 ///
 /// A VERDICT on the family itself and not on this read's prices — which is why
-/// it lives beside the name here rather than being derived from
-/// [`TempleMod::base_price_chaos`]. Only one mod in the table has a price at
-/// all, so a price-derived rule would grade one row and shrug at six.
+/// it lives beside the name here: this table carries no price for a mod
+/// family, so there is nothing a price-derived rule could grade.
 ///
 /// Source: Vertolka's verdict on the mod family itself, 2026-09-10 Discord:
 /// *"make Puhuarte green and Matatl red"*. Everything he did not name is
@@ -288,9 +283,8 @@ impl Worth {
 /// The architect's signature rare — items that roll a mod group only this room
 /// can produce.
 ///
-/// poe.ninja prices no such item: it is a rare, and its worth is the mod, not
-/// the base. That is why [`TempleMod::base_price_chaos`] exists at all, and why
-/// it is the one price in this file.
+/// No room value carries a term for it: 3.30 removed every source of these
+/// items (POE-367), and poe.ninja prices no mod-rolled rare anyway.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TempleMod {
     architect: &'static str,
@@ -300,8 +294,6 @@ pub struct TempleMod {
     /// Vertolka's verdict on the mod family itself (2026-09-10, see [`Worth`]).
     worth: Worth,
     source: &'static str,
-    per_run: Option<Estimate>,
-    base_price_chaos: Option<Estimate>,
 }
 
 impl TempleMod {
@@ -329,17 +321,6 @@ impl TempleMod {
         self.worth
     }
 
-    /// Expected items per finished-temple run, where anyone has said. Only
-    /// Crucible of Flame has a number, and it is a guess.
-    pub fn per_run(self) -> Option<Estimate> {
-        self.per_run
-    }
-
-    /// What one such item is worth in chaos when poe.ninja cannot price it.
-    pub fn base_price_chaos(self) -> Option<Estimate> {
-        self.base_price_chaos
-    }
-
     /// Who named the mod group and the item hint. Always [`VERTOLKA_SHEET`]:
     /// the sheet's `temple mod` column is the only place either is written
     /// down. The architect's spelling is normalised to the boss name on the
@@ -347,12 +328,6 @@ impl TempleMod {
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn source(self) -> &'static str {
         self.source
-    }
-
-    /// Whether either of this mod's two numbers is a guess.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
-    pub fn has_guess(self) -> bool {
-        any_guess(&[self.per_run, self.base_price_chaos])
     }
 }
 
@@ -551,8 +526,7 @@ impl LineDrops {
     /// the number down; POE-260 reads it to mark the overlay.
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn has_guess(&self) -> bool {
-        self.temple_mod.is_some_and(TempleMod::has_guess)
-            || self.tiers.iter().any(|t| t.has_guess())
+        self.tiers.iter().any(|t| t.has_guess())
     }
 }
 
@@ -640,8 +614,6 @@ pub const DROPS: [LineDrops; 25] = [
             slots: &[Slot::Helmet, Slot::Gloves, Slot::Boots, Slot::Amulet, Slot::Ring],
             worth: Worth::Neutral,
             source: VERTOLKA_SHEET,
-            per_run: None,
-            base_price_chaos: None,
         }),
         note: None,
         tiers: [
@@ -693,8 +665,6 @@ pub const DROPS: [LineDrops; 25] = [
             slots: &[Slot::Helmet, Slot::Gloves, Slot::Amulet],
             worth: Worth::Good,
             source: VERTOLKA_SHEET,
-            per_run: Some(Estimate::guess(2.0, VERTOLKA_MSG)),
-            base_price_chaos: Some(Estimate::guess(30.0, VERTOLKA_MSG)),
         }),
         note: None,
         tiers: [
@@ -737,8 +707,6 @@ pub const DROPS: [LineDrops; 25] = [
             slots: &[Slot::Boots, Slot::Weapon],
             worth: Worth::Junk,
             source: VERTOLKA_SHEET,
-            per_run: None,
-            base_price_chaos: None,
         }),
         note: None,
         tiers: [
@@ -939,8 +907,6 @@ pub const DROPS: [LineDrops; 25] = [
             slots: &[Slot::Weapon],
             worth: Worth::Neutral,
             source: VERTOLKA_SHEET,
-            per_run: None,
-            base_price_chaos: None,
         }),
         note: None,
         tiers: [
@@ -1039,8 +1005,6 @@ pub const DROPS: [LineDrops; 25] = [
             slots: &[Slot::BodyArmour, Slot::Amulet, Slot::Ring, Slot::Belt],
             worth: Worth::Neutral,
             source: VERTOLKA_SHEET,
-            per_run: None,
-            base_price_chaos: None,
         }),
         note: None,
         tiers: [
@@ -1092,8 +1056,6 @@ pub const DROPS: [LineDrops; 25] = [
             slots: &[Slot::Gloves, Slot::Shield, Slot::Weapon],
             worth: Worth::Neutral,
             source: VERTOLKA_SHEET,
-            per_run: None,
-            base_price_chaos: None,
         }),
         note: Some("corrupting tempest can be good in early league for corrupted 6-links"),
         tiers: [
@@ -1179,8 +1141,6 @@ pub const DROPS: [LineDrops; 25] = [
             slots: &[Slot::BodyArmour, Slot::Shield, Slot::Weapon],
             worth: Worth::Neutral,
             source: VERTOLKA_SHEET,
-            per_run: None,
-            base_price_chaos: None,
         }),
         note: Some("can be good with corrupting tempest for 6-link farming"),
         tiers: [
@@ -1619,30 +1579,11 @@ mod tests {
         assert_eq!(rated, CHEST_LINES);
     }
 
-    // Vertolka's numbers are his estimates and poedb's are the game's; the two
-    // must never be stored as the same kind of fact. Fails if Crucible's gloves
-    // are promoted to Measured, or a poedb percentage demoted to Guess.
+    // poedb's numbers are the game's and must never be stored as a guess.
+    // Fails if a poedb percentage is demoted to Guess.
     #[test]
-    fn crucible_gloves_are_guessed_while_its_percentages_are_measured() {
+    fn crucibles_percentages_are_measured_not_guessed() {
         let crucible = drops_for("crucible_of_flame");
-        let temple_mod = crucible.temple_mod().expect("Crucible has a temple mod");
-        assert_eq!(temple_mod.architect(), "Puhuarte");
-
-        let per_run = temple_mod.per_run().expect("Vertolka gave a rate");
-        assert_eq!(per_run.value(), 2.0);
-        assert_eq!(
-            per_run.basis(),
-            Basis::Guess {
-                source: VERTOLKA_MSG
-            }
-        );
-
-        let price = temple_mod
-            .base_price_chaos()
-            .expect("Vertolka gave a base price");
-        assert_eq!(price.value(), 30.0);
-        assert!(price.is_guess(), "a base price nobody measured is a guess");
-
         let t3 = crucible.tier(Tier::T3).expect("tier 3 exists");
         let quantity = t3.quantity_pct().expect("poedb states the percentage");
         assert_eq!(quantity.value(), 6.0);
@@ -1757,8 +1698,7 @@ mod tests {
     // has_guess is what POE-257/260 read to mark a value as somebody's
     // estimate: the set it is true on is exactly the six chest lines carrying
     // Vertolka's 0.25. Fails if a Guess is stored as Measured or if has_guess
-    // stops walking the tiers. (The temple-mod arm is pinned by
-    // `a_guess_that_sits_only_in_the_temple_mod_still_marks_the_line`.)
+    // stops walking the tiers.
     #[test]
     fn has_guess_marks_every_chest_line_and_no_other() {
         let guessed: Vec<&str> = DROPS
@@ -1767,25 +1707,6 @@ mod tests {
             .map(|row| row.key())
             .collect();
         assert_eq!(guessed, CHEST_LINES);
-
-        // A temple mod is not guessed merely by existing: Crucible's carries
-        // Vertolka's two numbers, Storm of Corruption's carries none. Fails if
-        // TempleMod::has_guess stops reading either field, or starts reporting
-        // true for a mod with no numbers at all.
-        let crucible = drops_for("crucible_of_flame")
-            .temple_mod()
-            .expect("Crucible names a temple mod");
-        assert!(
-            crucible.has_guess(),
-            "Crucible's gloves are Vertolka's guess"
-        );
-        let storm = drops_for("storm_of_corruption")
-            .temple_mod()
-            .expect("Storm of Corruption names a temple mod");
-        assert!(
-            !storm.has_guess(),
-            "Topotante's mod group has no number to guess at"
-        );
 
         // Every guessed unique rate is attributed to Vertolka's message.
         for row in DROPS.iter() {
@@ -1812,36 +1733,6 @@ mod tests {
                 "{key} unique rate"
             );
         }
-    }
-
-    // The arm of LineDrops::has_guess that the real table cannot exercise: a
-    // line whose ONLY guessed number sits in its temple mod. Every DROPS row
-    // with a guessed temple mod also has guessed tier rates, so deleting the
-    // `temple_mod` arm changes no answer on the shipped data. Fails the moment
-    // it is deleted.
-    #[test]
-    fn a_guess_that_sits_only_in_the_temple_mod_still_marks_the_line() {
-        let mod_guessed_only = LineDrops {
-            key: "not_a_real_line",
-            unique: None,
-            content: None,
-            temple_mod: Some(TempleMod {
-                architect: "Puhuarte",
-                item_hint: "temple gloves",
-                slots: &[Slot::Helmet, Slot::Gloves, Slot::Amulet],
-                worth: Worth::Good,
-                source: VERTOLKA_SHEET,
-                per_run: Some(Estimate::guess(2.0, VERTOLKA_MSG)),
-                base_price_chaos: None,
-            }),
-            note: None,
-            tiers: [TierDrops::NONE, TierDrops::NONE, TierDrops::NONE],
-        };
-        assert!(
-            mod_guessed_only.tiers().iter().all(|t| !t.has_guess()),
-            "the guess must sit in the temple mod alone or this proves nothing"
-        );
-        assert!(mod_guessed_only.has_guess());
     }
 
     // ------------------------------------------------------- commentary --

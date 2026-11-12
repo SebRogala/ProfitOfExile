@@ -36,7 +36,8 @@
 //! - **The raw poedb mod-item chance integer.**
 //!   [`mod_item_chance_raw`](super::drops::TierDrops::mod_item_chance_raw) is 33
 //!   / 66 / 100 with no scale printed anywhere, and nobody has stated a per-run
-//!   rate to anchor it on. It is never multiplied here.
+//!   rate to anchor it on. It is never multiplied here, and 3.30 removed the
+//!   items it described (POE-367), so no term prices them.
 //! - **A term with no count or no price** contributes nothing and is still
 //!   listed as a [`Driver`] with `chaos: None`, so the explanation box shows
 //!   what was left out instead of quietly showing a smaller total.
@@ -54,9 +55,8 @@
 //! answers, a stale payload, or one with an unusable floor — prices EVERY room
 //! at [`RoomRank::fallback_chaos`](super::rooms::RoomRank::fallback_chaos), the cold
 //! ladder, and nothing else. Those five tier rungs ARE the preset's base-value table
-//! that L4 names. Mixing them with the terms that survive a cold market — a
-//! poedb quantity bonus, `drops.rs`'s manually priced temple-mod item — is
-//! what this module used to do: a bonus-priced room could sit below a cold
+//! that L4 names. Mixing them with the one term that survives a cold market — a
+//! poedb quantity / rarity bonus — is what this module used to do: a bonus-priced room could sit below a cold
 //! fallback. Half a formula and half a ladder is not a ranking in either unit. A Custom
 //! override still wins over the rung: the player stating a number outright is
 //! not a missing price.
@@ -233,9 +233,6 @@ pub enum DriverKind {
     Sale,
     /// The tier-3 chest unique.
     UniqueDrop,
-    /// The architect's signature rare, priced from its manual base price
-    /// because poe.ninja prices no rare.
-    ModItem,
     /// `increased Quantity of Items` x [`Knobs::c_per_quantity`].
     QuantityBonus,
     /// `increased Rarity of Items` x [`Knobs::c_per_rarity`].
@@ -273,7 +270,6 @@ impl DriverKind {
         match self {
             DriverKind::Sale => "sale",
             DriverKind::UniqueDrop => "unique_drop",
-            DriverKind::ModItem => "mod_item",
             DriverKind::QuantityBonus => "quantity_bonus",
             DriverKind::RarityBonus => "rarity_bonus",
             DriverKind::TierFraction => "tier_fraction",
@@ -423,9 +419,8 @@ impl Valued {
         let measured_floor = lowest_summed_room_total(market, knobs);
         // The one branch the whole fallback rule turns on (epic lock L4). A
         // read that prices nothing — cold before the first poll, or stale —
-        // still has terms that would survive it: a poedb quantity bonus and
-        // `drops.rs`'s manually priced temple-mod item owe the feed nothing.
-        // Summing those and letting the ladder stand in for the rest ranks half
+        // still has a term that would survive it: a poedb quantity / rarity
+        // bonus owes the feed nothing. Summing it and letting the ladder stand in for the rest ranks half
         // the board in one unit and half in another, which is how a grade-A
         // room ended up under a grade-C one at 6 c against 10 c.
         let live = market.prices_anything();
@@ -864,26 +859,6 @@ fn value_tier3(
             weight,
         );
     }
-    if let Some(temple_mod) = drops_row.temple_mod() {
-        // The one price that does not come from the feed: poe.ninja publishes
-        // no line for a mod-rolled rare, so drops.rs carries a manual base
-        // price and it is Vertolka's guess.
-        let price = temple_mod.base_price_chaos().map(|base| UnitPrice {
-            chaos: base.value(),
-            guessed: base.is_guess(),
-            low_confidence: false,
-            window_priced: false,
-        });
-        drops += push_drop(
-            &mut drivers,
-            DriverKind::ModItem,
-            temple_mod.item_hint(),
-            temple_mod.per_run(),
-            price,
-            weight,
-        );
-    }
-
     // --- bonus ---
     let mut bonus = 0.0;
     bonus += push_bonus(
@@ -970,7 +945,7 @@ fn value_tier3(
 fn is_sum_term(kind: DriverKind) -> bool {
     matches!(
         kind,
-        DriverKind::Sale | DriverKind::UniqueDrop | DriverKind::ModItem
+        DriverKind::Sale | DriverKind::UniqueDrop
     )
 }
 
@@ -1256,7 +1231,7 @@ mod tests {
         ("conduit_of_lightning", [42.9, 42.9, 53.625]),
         ("corruption", [676.8, 676.8, 846.0]),
         ("court_of_sealed_death", [0.0035, 0.0035, 0.004375]),
-        ("crucible_of_flame", [53.8, 53.8, 67.25]),
+        ("crucible_of_flame", [5.8, 5.8, 7.25]),
         ("defense_research_lab", [19.88, 19.88, 24.85]),
         ("explosive", [1.692, 1.692, 2.115]),
         ("factory", [28.8, 28.8, 36.0]),
@@ -1278,7 +1253,7 @@ mod tests {
     ];
 
     #[test]
-    fn removing_vials_leaves_the_vials_per_run_zero_table() {
+    fn the_capture_values_every_room_tier_at_these_totals() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
         assert_eq!(valued.lines().count(), VIALS_PER_RUN_ZERO_TOTALS.len());
         for (key, expected) in VIALS_PER_RUN_ZERO_TOTALS {
@@ -1287,6 +1262,62 @@ mod tests {
                 assert!(close(got, *want), "{key} tier {}: {got} != {want}", index + 1);
             }
         }
+    }
+
+    /// POE-367 (T12): 3.30 removed the temple-mod items, NOT the room uniques.
+    /// Every line that drops a chest unique keeps the same `UniqueDrop` driver
+    /// at every tier — name, Vertolka's 0.25, the capture's feed price, its
+    /// chaos and its guess flag. Captured on the post-POE-366 table before the
+    /// mod term was deleted; a lower tier carries its tier-3 driver unscaled.
+    const UNIQUE_DRIVERS: [(&str, &str, f64, f64); 6] = [
+        ("conduit_of_lightning", "Dance of the Offered", 190.5, 47.625),
+        ("crucible_of_flame", "Story of the Vaal", 5.0, 1.25),
+        ("defense_research_lab", "Architect's Hand", 75.4, 18.85),
+        ("hybridisation_chamber", "Coward's Chains", 10.0, 2.5),
+        ("sanctum_of_immortality", "Mask of the Spirit Drinker", 195.0, 48.75),
+        ("toxic_grove", "Apep's Slumber", 7.0, 1.75),
+    ];
+
+    #[test]
+    fn the_unique_drivers_are_untouched_by_the_mod_removal() {
+        let valued = Valued::compute(&allflame(), &Knobs::default());
+        for (key, tiers) in valued.lines() {
+            let want = UNIQUE_DRIVERS.iter().find(|(k, ..)| *k == key);
+            for (index, value) in tiers.iter().enumerate() {
+                let got: Vec<&Driver> = value
+                    .drivers
+                    .iter()
+                    .filter(|d| d.kind == DriverKind::UniqueDrop)
+                    .collect();
+                match want {
+                    Some((_, name, unit, chaos)) => {
+                        assert_eq!(got.len(), 1, "{key} tier {}", index + 1);
+                        let d = got[0];
+                        assert_eq!(d.name, *name, "{key} tier {}", index + 1);
+                        assert_eq!(d.count, Some(0.25), "{key} tier {}", index + 1);
+                        assert_eq!(d.unit_price, Some(*unit), "{key} tier {}", index + 1);
+                        assert!(
+                            d.chaos.is_some_and(|c| close(c, *chaos)),
+                            "{key} tier {}: {:?} != {chaos}",
+                            index + 1,
+                            d.chaos
+                        );
+                        assert!(d.guessed, "{key} tier {}: 0.25 is a guess", index + 1);
+                    }
+                    None => assert!(got.is_empty(), "{key} tier {} has a unique", index + 1),
+                }
+            }
+        }
+    }
+
+    /// Toxic Grove's only unpriced term was Tacati's temple-mod item. With the
+    /// term gone the unique is the room's whole drop accounting, and it is
+    /// priced, so the room reads `Market` at the same 1.75 it summed before.
+    #[test]
+    fn a_room_whose_only_unpriced_term_was_its_temple_mod_is_market_priced() {
+        let grove = value_of(&Valued::compute(&allflame(), &Knobs::default()), "toxic_grove", 3);
+        assert_eq!(grove.priced, Priced::Market);
+        assert_eq!(grove.total, 1.75);
     }
 
     #[test]
@@ -1323,24 +1354,6 @@ mod tests {
     }
 
     #[test]
-    fn the_manual_base_price_of_an_architects_rare_is_the_mod_item_term() {
-        // Crucible of Flame is the one line anybody priced a temple-mod item
-        // on: 2 temple gloves per run at 30 c, both Vertolka's guesses.
-        let value = value_of(
-            &Valued::compute(&allflame(), &Knobs::default()),
-            "crucible_of_flame",
-            3,
-        );
-
-        let mod_item = driver(&value, DriverKind::ModItem);
-        assert_eq!(mod_item.count, Some(2.0));
-        assert_eq!(mod_item.unit_price, Some(30.0));
-        assert_eq!(mod_item.chaos, Some(60.0));
-        // 0.25 x Story of the Vaal 5 c + 60.
-        assert!(close(value.drops, 61.25), "drops was {}", value.drops);
-    }
-
-    #[test]
     fn a_term_with_no_price_contributes_nothing_and_is_still_listed() {
         // Remove a chest unique from the committed market fixture so the
         // valuation sees a real drop term with no price, without changing the
@@ -1361,9 +1374,8 @@ mod tests {
         assert_eq!(unique.unit_price, None);
         assert_eq!(unique.chaos, None);
         assert_eq!(value.priced, Priced::Partial);
-        // The unpriced unique adds NOTHING: the remaining manual mod term is
-        // 2 x gloves at 30 c.
-        assert!(close(value.drops, 60.0), "drops were {}", value.drops);
+        // The unpriced unique adds NOTHING, and it was the room's only drop.
+        assert_eq!(value.drops, 0.0, "drops were {}", value.drops);
     }
 
     #[test]
@@ -1534,7 +1546,7 @@ mod tests {
         let valued = Valued::compute(&allflame(), &knobs);
         let rushed = value_of(&valued, "crucible_of_flame", 3);
 
-        assert!(close(priced.drops, 61.25), "drops was {}", priced.drops);
+        assert!(close(priced.drops, 1.25), "drops was {}", priced.drops);
         assert_eq!(rushed.drops, 0.0);
         // And what is left is still the market's ranking: Crucible keeps its
         // 6 c quantity bonus: summing something bypasses its A-tier fallback.
@@ -1622,7 +1634,7 @@ mod tests {
         // at the floor, drops nothing, and its two percentages now price at 0,
         // so its C2 rung stands in. The terms stay listed — the percentages are
         // real — but one still carrying `Some(0)` would make the lines the box
-        // prints disagree with the 0.04375 c the advisor ranked on.
+        // prints disagree with the 0.03125 c the advisor ranked on.
         let knobs = Knobs {
             c_per_quantity: 0.0,
             c_per_rarity: 0.0,
@@ -1634,15 +1646,17 @@ mod tests {
         // The C2 rung on the LIVE ladder, stated as a number as well as as an
         // expression: an assertion written only in terms of
         // `fallback_chaos_scaled` moves with any change to that function and
-        // could not fail. Zeroing the two rates does not move the anchor —
-        // Toxic Grove's 1.75 is a DROP, not a bonus — so tier C is
-        // 20 x 1.75/800 = 0.04375.
+        // could not fail. Zeroing the two rates moves the anchor off Toxic
+        // Grove's 1.75 onto Crucible of Flame's one remaining drop, 0.25 x
+        // Story of the Vaal at 5 c = 1.25 (its bonus is gone and, since
+        // POE-367, so is its temple-mod term), so tier C is
+        // 20 x 1.25/800 = 0.03125.
         assert_eq!(
             value.total,
-            rank_of("chamber_of_iron").fallback_chaos_scaled(ANCHOR)
+            rank_of("chamber_of_iron").fallback_chaos_scaled(0.25 * 5.0)
         );
         assert!(
-            close(value.total, 0.043_75),
+            close(value.total, 0.031_25),
             "total was {}",
             value.total
         );
@@ -1663,7 +1677,7 @@ mod tests {
             carried,
             vec![(
                 DriverKind::GradeFallback,
-                Some(rank_of("chamber_of_iron").fallback_chaos_scaled(ANCHOR))
+                Some(rank_of("chamber_of_iron").fallback_chaos_scaled(0.25 * 5.0))
             )],
         );
     }
@@ -1671,13 +1685,12 @@ mod tests {
     /// A read that prices nothing prices the WHOLE board off the cold ladder.
     ///
     /// Epic lock L4's "base value" is those five tier rungs, and it is all of them:
-    /// the terms that survive a cold market — poedb's area bonuses, Crucible of
-    /// Flame's manually priced temple-mod item — are deliberately NOT summed
-    /// alongside a rung. Mixing those paths used to put a bonus-priced room
+    /// the term that survives a cold market — poedb's area bonuses — is
+    /// deliberately NOT summed alongside a rung. Mixing those paths used to put a bonus-priced room
     /// below a cold fallback. Every cold room now reads the same tier ladder.
     ///
     /// Fails the moment the bonus term is summed on a cold read again: Sanctum
-    /// reads 6 instead of 100, and Crucible reads 66 instead of 800.
+    /// reads 6 instead of 100, and Crucible reads 6 instead of 800.
     #[test]
     fn a_read_that_prices_nothing_reads_the_whole_board_off_the_cold_ladder() {
         let valued = Valued::compute(&MarketInput::none(), &Knobs::default());
@@ -1739,7 +1752,7 @@ mod tests {
         assert_eq!(
             value_of(&valued, "crucible_of_flame", 3).total,
             800.0,
-            "Crucible A3, and NOT the 66 its mod item plus bonus would sum to",
+            "Crucible A3, and NOT the 6 its bonus would sum to",
         );
         assert_eq!(
             value_of(&valued, "sanctum_of_immortality", 3).total,
@@ -1759,17 +1772,14 @@ mod tests {
         );
     }
 
-    /// A manually priced drop is not a market, and does not stand in for one.
+    /// A bonus term is not a market, and does not stand in for one.
     ///
-    /// Crucible of Flame's temple-mod item is the one drop in the table priced
-    /// from `drops.rs`'s own base price rather than from poe.ninja, which
-    /// prices no mod-rolled rare. Two gloves a run at 30 c is a real number and
-    /// the box still shows it once a read arrives — but on a COLD read it is
-    /// the only number on the board, and 66 c of it would rank Crucible below
-    /// eleven rooms whose letters say it outranks them. Fails if the cold path
-    /// starts summing terms again.
+    /// Crucible of Flame's poedb quantity / rarity bonus owes the feed nothing,
+    /// so on a COLD read it is the only number the room could sum — and 6 c of
+    /// it would rank Crucible below rooms whose letters say it outranks them.
+    /// Fails if the cold path starts summing terms again.
     #[test]
-    fn a_manually_priced_term_does_not_stand_in_for_a_cold_market() {
+    fn a_bonus_term_does_not_stand_in_for_a_cold_market() {
         let value = value_of(
             &Valued::compute(&MarketInput::none(), &Knobs::default()),
             "crucible_of_flame",
@@ -1777,9 +1787,9 @@ mod tests {
         );
 
         assert_eq!(value.priced, Priced::Fallback);
-        assert_eq!(value.total, 800.0, "the A3 rung, not the 66 it can sum");
+        assert_eq!(value.total, 800.0, "the A3 rung alone, not the rung plus its bonus");
         assert!(
-            !value.drivers.iter().any(|d| d.kind == DriverKind::ModItem),
+            !value.drivers.iter().any(|d| d.kind == DriverKind::QuantityBonus),
             "and nothing was tried, so nothing is listed: {:?}",
             value.drivers,
         );
@@ -1792,10 +1802,11 @@ mod tests {
                     "crucible_of_flame",
                     3
                 ),
-                DriverKind::ModItem
+                DriverKind::QuantityBonus
             )
             .chaos,
-            Some(60.0),
+            Some(3.0),
+            "6 % quantity x 0.5 c",
         );
     }
 
@@ -1825,7 +1836,9 @@ mod tests {
             "{}",
             measured.total
         );
-        assert_eq!(measured.priced, Priced::Partial, "it summed a real drop");
+        // Market since POE-367: Citaqualotl's unpriced temple-mod item was its
+        // only unpriced term.
+        assert_eq!(measured.priced, Priced::Market, "it summed every drop it names");
         assert_eq!(sadists.priced, Priced::Fallback, "D2, and it sums nothing");
         assert_eq!(
             war.priced,
@@ -1910,7 +1923,7 @@ mod tests {
         let grove = value_of(&valued, "toxic_grove", 3);
         assert_eq!(
             grove.priced,
-            Priced::Partial,
+            Priced::Market,
             "its unique is priced, at 7 c"
         );
         assert_eq!(grove.total, ANCHOR, "bit-identical, not merely close");

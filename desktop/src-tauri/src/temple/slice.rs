@@ -720,7 +720,7 @@ pub struct RoomValueRowView {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DriverView {
-    /// `"sale"`, `"unique_drop"`, `"mod_item"`,
+    /// `"sale"`, `"unique_drop"`,
     /// `"quantity_bonus"`, `"rarity_bonus"`, `"tier_fraction"`,
     /// `"grade_fallback"`, `"instrumental"` or `"custom_override"`
     /// ([`DriverKind`](super::valuation::DriverKind)). `snake_case`, this
@@ -6073,7 +6073,7 @@ mod tests {
         let dropped: f64 = before
             .drivers
             .iter()
-            .filter(|d| d.kind == "mod_item" || d.kind == "unique_drop")
+            .filter(|d| d.kind == "unique_drop")
             .filter_map(|d| d.chaos)
             .sum();
 
@@ -6483,8 +6483,9 @@ mod tests {
     /// that moved named.
     ///
     /// With the 2026-10-17 C-tier rung, Temple Nexus takes 21.15 and
-    /// leaves the top five. Since POE-366 removed vials, Crucible of Flame,
-    /// Sanctum of Immortality and Conduit of Lightning follow the two sales.
+    /// leaves the top five. Since POE-367 removed Crucible of Flame's 60 c
+    /// temple-mod term it reads 7.25 and leaves too, so Sanctum of
+    /// Immortality, Conduit of Lightning and Factory follow the two sales.
     #[test]
     fn the_live_captures_five_best_rooms_are_these_in_this_order() {
         let valued = value_read(&TempleSettings::default(), &crate::temple::market::allflame());
@@ -6501,17 +6502,18 @@ mod tests {
             vec![
                 "corruption",
                 "gem",
-                "crucible_of_flame",
                 "sanctum_of_immortality",
                 "conduit_of_lightning",
+                "factory",
             ],
         );
         assert_eq!(ranked[0].1, LOCUS_T3, "Locus of Corruption, its sale delta");
         assert_eq!(ranked[1].1, 390.0, "Doryani's Institute, its sale delta");
-        assert!(close(ranked[2].1, 67.25), "Crucible of Flame");
-        assert!(close(ranked[3].1, 54.75), "Sanctum of Immortality");
-        assert!(close(ranked[4].1, 53.625), "Conduit of Lightning is fifth");
-        assert!(close(ranked[5].1, 36.0), "and Factory sixth");
+        assert!(close(ranked[2].1, 54.75), "Sanctum of Immortality");
+        assert!(close(ranked[3].1, 53.625), "Conduit of Lightning");
+        assert!(close(ranked[4].1, 36.0), "Factory is fifth");
+        assert_eq!(ranked[5].0, "defense_research_lab", "and Defense Research Lab sixth");
+        assert!(close(ranked[5].1, 24.85), "Defense Research Lab");
     }
 
     /// An offer whose printed target did not resolve publishes no value —

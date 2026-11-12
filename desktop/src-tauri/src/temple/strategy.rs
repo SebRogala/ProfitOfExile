@@ -144,8 +144,9 @@ impl Line {
 /// recorded miss, reproduced. The two architects fell inside one noise band
 /// and R4 broke the tie the wrong way; the instrumental rung retains the
 /// recorded Sanctum choice. At the 2026-10-17 C-tier rung, Temple Nexus takes
-/// 21.15 on the capture and is below Glittering Halls, Crucible of Flame and
-/// Sanctum of Immortality rather than third. The better model — valuing a
+/// 21.15 on the capture and ranks seventh — below Locus of Corruption,
+/// Doryani's Institute, Sanctum of Immortality, Conduit of Lightning, Factory
+/// and Defense Research Lab — rather than third. The better model — valuing a
 /// `change` onto one of these lines by its own downstream effect — needs the
 /// board's upgrade-reachable
 /// set at scoring time, which `room_values` has no shape for.
