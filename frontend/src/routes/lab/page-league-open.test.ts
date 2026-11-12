@@ -35,6 +35,7 @@ function serve() {
 	}));
 }
 
+let log: ReturnType<typeof vi.spyOn>;
 let mounted: ReturnType<typeof mount> | null = null;
 async function attach() {
 	const target = document.createElement('div');
@@ -54,7 +55,7 @@ beforeEach(() => {
 	vi.stubGlobal('EventSource', FakeEventSource);
 	vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 	vi.spyOn(Math, 'random').mockReturnValue(0);
-	vi.spyOn(console, 'log').mockImplementation(() => {});
+	log = vi.spyOn(console, 'log').mockImplementation(() => {});
 	serve();
 });
 
@@ -78,6 +79,7 @@ describe('lab page league check on stream open', () => {
 		answer(Response.json({ league: served }));
 		await pastReloadWindow();
 		expect(statusReads).toBe(1);
+		expect(log).not.toHaveBeenCalled();
 	});
 
 	it('schedules no reload when the served league is still the held one', async () => {
@@ -86,6 +88,7 @@ describe('lab page league check on stream open', () => {
 		streams[0].onopen!();
 		await pastReloadWindow();
 		expect(statusReads).toBe(2);
+		expect(log).not.toHaveBeenCalled();
 	});
 
 	it('schedules exactly one reload when the server now serves another league', async () => {
@@ -97,5 +100,6 @@ describe('lab page league check on stream open', () => {
 		expect(statusReads).toBe(3);
 		await pastReloadWindow();
 		expect(statusReads).toBe(3);
+		expect(log.mock.calls).toEqual([['[Dashboard] active league changed while disconnected — scheduling reload']]);
 	});
 });
