@@ -300,12 +300,17 @@ func TestHarvest_familyWireShape_carriesStaticDataAndTiersByFamily(t *testing.T)
 	if !ok {
 		t.Fatal("no delirium family in the response")
 	}
-	note, present := delirium["note"]
-	if !present || note != nil {
-		t.Errorf("delirium note = %v (present %t), want an explicit null", note, present)
-	}
 	if delirium["tiers"] != nil {
 		t.Errorf("delirium tiers = %v, want null: the snapshot has no delirium entry", delirium["tiers"])
+	}
+
+	essence, ok := byID["essence"]
+	if !ok {
+		t.Fatal("no essence family in the response")
+	}
+	note, present := essence["note"]
+	if !present || note != nil {
+		t.Errorf("essence note = %v (present %t), want an explicit null", note, present)
 	}
 }
 
