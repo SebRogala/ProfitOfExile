@@ -1,4 +1,4 @@
-.PHONY: help build test test-integration qa up up-collector down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-test desktop-test-js desktop-build desktop-deploy desktop-sync desktop-release-windows desktop-watch merc-seed-art
+.PHONY: help build test test-integration qa up up-collector down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-size-gate desktop-test desktop-test-js desktop-build desktop-deploy desktop-sync desktop-release-windows desktop-watch merc-seed-art
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' Makefile | sed 's/:.*## /\t/' | awk -F '\t' '{printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -132,6 +132,9 @@ merc-seed-art: ## Fetch the merc seed gem art fixture (see its README; honours P
 
 desktop-check: ## Cargo check desktop (Rust)
 	docker compose run --rm -w /app/desktop/src-tauri desktop cargo check
+
+desktop-size-gate: ## Rust production-line ceilings and boundary greps
+	@sh scripts/rust-size-gate.sh
 
 desktop-check-windows: ## Cargo check desktop for the Windows target (type-checks the cfg(windows) half: overlay hook, click-through, capture)
 	docker compose run --rm -w /app/desktop/src-tauri desktop sh -c 'rustup target add x86_64-pc-windows-gnu >/dev/null 2>&1; cargo check --target x86_64-pc-windows-gnu'
