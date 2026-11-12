@@ -83,11 +83,41 @@ const ROOTS: MirrorRoot[] = [
 	},
 ];
 
+const WEB_TREE = 'frontend/src';
+
+type MirrorCheckPlan = { run: true } | { run: false; reason: string };
+
+/**
+ * A desktop-only tree (e.g. the Windows rsync of `desktop/`) has no web copies
+ * at all; that is an absent tree, not a stale list, so the guard skips there.
+ * Any web file present means the tree exists and every rule runs.
+ */
+function mirrorCheckPlan(webSides: Side[]): MirrorCheckPlan {
+	if (webSides.some((side) => side.size > 0)) return { run: true };
+	return { run: false, reason: `mirror identity check did not run: no web files found under ${WEB_TREE}` };
+}
+
+describe('mirrorCheckPlan', () => {
+	it('skips with a reason naming the web tree when no web file is discovered', () => {
+		expect(mirrorCheckPlan([new Map(), new Map()])).toEqual({
+			run: false,
+			reason: 'mirror identity check did not run: no web files found under frontend/src',
+		});
+	});
+
+	it('runs when any web root has a file', () => {
+		expect(mirrorCheckPlan([new Map(), new Map([['api.ts', '']])])).toEqual({ run: true });
+	});
+});
+
+const plan = mirrorCheckPlan(ROOTS.map((root) => root.web));
+if (!plan.run) console.warn(plan.reason);
+
 function pairsOf(root: MirrorRoot): string[] {
 	return [...root.desktop.keys()].filter((key) => root.web.has(key)).sort();
 }
 
-describe.each(ROOTS)('mirror identity: $name', (root) => {
+describe.skipIf(!plan.run).each(ROOTS)('mirror identity: $name', (root) => {
 	const listed = [...root.identical, ...Object.keys(root.divergent)];
 
 	it.each(root.identical)('IDENTICAL %s is byte-identical across the two copies', (key) => {

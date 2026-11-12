@@ -123,7 +123,7 @@ services:
       # The web fork's sources, read-only (POE-345): `src/lib/mirror-identity.test.ts`
       # reads the web copies of the mirrored files from their canonical path to
       # check each pair is identical or listed as divergent. Mounting `./desktop`
-      # alone would leave every web copy missing and the guard red.
+      # alone would leave every web copy missing and the guard skipped.
       - ./frontend/src:/app/frontend/src:ro
       - desktop_cargo_registry:/usr/local/cargo/registry
       - desktop_cargo_git:/usr/local/cargo/git
