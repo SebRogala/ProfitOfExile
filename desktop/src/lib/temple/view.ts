@@ -14,7 +14,7 @@
  *
  * `offerBoxes()` is the overlay's advice surface: ONE box per architect block
  * on the panel, in the panel's own order, carrying the resolved room and kind,
- * the line's bonus ladder and temple mod, the value explanation and the
+ * the line's bonus ladder and architect, the value explanation and the
  * advisor's pointer. `killCallout()`, `KillCallout` and `killTitle()` are GONE
  * with it — they said one thing about one block and left the block the player
  * is choosing against unnamed. The Temple page keeps its own `offerHeadline`
@@ -36,10 +36,8 @@ import type {
 	DriverView,
 	EdgeId,
 	ExitLabelView,
-	ItemSlotId,
 	LayoutView,
 	MarketView,
-	ModWorth,
 	OfferView,
 	RankedView,
 	RoomValueView,
@@ -555,7 +553,8 @@ export function chosenOffer(slice: TempleSlice): OfferView | null {
  * cyan frame — that frame IS the pointer; no arrows anywhere."*
  *
  * POE-277 replaced the rating and reason lines with the tier ladder and the
- * temple-mod block, and led the header with the room.
+ * temple-mod block, and led the header with the room. POE-367 cut that block
+ * to the architect's name when 3.30 removed the temple-mod items.
  *
  * This replaces the single kill callout, which said one thing about ONE block
  * and left the other block — the one the player is choosing against — unnamed
@@ -567,8 +566,9 @@ export interface OfferBox {
 	offer: OfferView;
 	/** The three-tier area bonus ladder for this line, or null when absent. */
 	ladder: OfferLadder | null;
-	/** The architect mod line, when the box has one. */
-	mod: OfferMod | null;
+	/** The panel read's architect name for this block, or null when the read
+	 *  is blank — the box's neutral architect line (POE-367). */
+	architect: string | null;
 	/** The resolved room, or the printed target when resolution failed. */
 	headline: string;
 	/** The kind and tier the resolved block builds, or the honest refusal when
@@ -674,22 +674,6 @@ export interface OfferLadder {
 	tier: number;
 }
 
-/** An architect mod line projected for an offer box. */
-export interface OfferMod {
-	name: string;
-	hint: string | null;
-	/** Item classes this mod family can roll on; empty when the sheet names none. */
-	slots: ItemSlotId[];
-	price: string;
-	perRun: string | null;
-	/** Vertolka's verdict on the family, and the only grade left on the box:
-	 *  since POE-277's v5 the mod NAME carries it as a colour — green for
-	 *  `good`, red for `junk`, the box's own text colour for `neutral`. Always
-	 *  a verdict and never null, because `neutral` already IS "nobody said". */
-	worth: ModWorth;
-	marks: DriverMark[];
-}
-
 /** How complete the sum behind a box's number is — `RoomValueView.priced`. */
 export type OfferValueState = 'market' | 'partial' | 'fallback' | 'instrumental' | 'override';
 
@@ -703,13 +687,13 @@ export type BoxMark = 'F' | 'G';
 export type DriverMark = 'W' | 'L' | 'G';
 
 /** Which term of the value a driver row is — it decides the icon's frame. */
-export type OfferDriverKind = 'sale' | 'unique' | 'mod';
+export type OfferDriverKind = 'sale' | 'unique';
 
 /** One row under the value: what the room drops, and what it goes for. */
 export interface OfferDriver {
 	kind: OfferDriverKind;
-	/** The row's label — the poe.ninja item name, the temple mod's item hint,
-	 *  or the sale row's own wording. */
+	/** The row's label — the poe.ninja item name or the sale row's own
+	 *  wording. */
 	name: string;
 	/** The poe.ninja name to fetch an icon for, or null where there is no item
 	 *  (the sale row is a coin glyph). NOT a URL: `view.ts` is pure and
@@ -800,8 +784,7 @@ function offerState(priced: string): OfferValueState {
 /** The wire driver kinds that become a ROW, in the order they are drawn. */
 const ROW_KINDS: Record<string, OfferDriverKind> = {
 	sale: 'sale',
-	unique_drop: 'unique',
-	mod_item: 'mod'
+	unique_drop: 'unique'
 };
 
 /** What the sale row calls itself — the room's own name is already the box's
@@ -872,7 +855,7 @@ interface DriverTerm {
 /**
  * The rows under the value: the sale delta, then what the room drops.
  *
- * Wire order is kept — `valuation.rs` pushes sale, unique, mod in that
+ * Wire order is kept — `valuation.rs` pushes sale, then unique, in that
  * order — so the sale leads and the drops follow it, which is the order the
  * design draws.
  *
@@ -1153,14 +1136,6 @@ function offerStripPrices(terms: DriverTerm[]): string | null {
  * caption presence is present because the rare-caption threshold is a
  * row-height change.
  *
- * `mod.slots.length` is present and is the one COUNT here that is not a row
- * count: the `Appears on:` chips wrap once the row passes 272 px — five
- * (Xopec) always, and four or even three when BODY ARMOUR is among them
- * (Guatelitzi, Tacati). Two rows is the worst case at any count, which the
- * budget carries, and the COUNT is in this string as the cheap proxy for that
- * shape: it is not the wrap rule, but nothing changes the wrap without
- * changing it.
- *
  * Here rather than in the component because a `.svelte` file has no unit-test
  * harness in this app: the one thing that must be provable about this string is
  * that changing a rendered word does not change it.
@@ -1180,8 +1155,7 @@ export function offerBoxSignature(box: OfferBox, compact: boolean): string {
 		box.ladder?.rarity ? 'r' : '-',
 		box.uniqueDrop ? 'unique' : '-',
 		box.uniqueDrop?.caption ? 'caption' : '-',
-		box.mod ? 1 : 0,
-		box.mod?.slots.length ?? 0,
+		box.architect !== null ? 'architect' : '-',
 		box.ageLine ? 'age' : '-'
 	].join(' ');
 }
@@ -1223,39 +1197,6 @@ function offerLadder(offer: OfferView): OfferBox['ladder'] {
 }
 
 /**
- * The wire's mod verdict as this file's union, guarded rather than cast.
- *
- * Same rule as [`offerState`]: `LineView.modWorth` is a plain string on the
- * wire and `serde(default)` lets an older payload omit it entirely, so a
- * spelling this file has not been taught would otherwise reach the markup's
- * class list and colour a mod name off a word nobody chose. `neutral` is the
- * fallback because it is the one answer that claims nothing — which is exactly
- * what an unrecognised verdict is.
- */
-function modWorth(worth: string | null): ModWorth {
-	return worth === 'good' || worth === 'junk' ? worth : 'neutral';
-}
-
-function offerMod(
-	line: NonNullable<OfferView['line']> | null,
-	terms: DriverTerm[],
-	state: OfferValueState | null
-): OfferMod | null {
-	const term = terms.find((candidate) => candidate.row.kind === 'mod');
-	const named = line?.modArchitect ?? term?.row.name ?? null;
-	if (named === null) return null;
-	return {
-		name: named,
-		hint: line?.modHint ?? null,
-		slots: line?.modSlots ?? [],
-		price: term?.row.price ?? (state === 'fallback' ? '—' : 'no price'),
-		perRun: term?.row.perRun ?? null,
-		worth: modWorth(line?.modWorth ?? null),
-		marks: term?.row.marks ?? []
-	};
-}
-
-/**
  * One box per architect block on the panel, in the panel's own order.
  *
  * **Panel order, not "upgrade first".** `PanelView.offers` is reading order
@@ -1292,19 +1233,16 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 		// The five-state classification, made ONCE — see [`offerState`] for why
 		// nothing below may re-read `value.priced` instead.
 		const state = value === null ? null : offerState(value.priced);
-		const allTerms = value === null || state === null ? [] : offerDriverTerms(value, state);
-		const mod = offerMod(offer.line ?? null, allTerms, state);
-		const terms = allTerms.filter((term) => term.row.kind !== 'mod');
+		const terms = value === null || state === null ? [] : offerDriverTerms(value, state);
 		// EVERY term, and the three the full form draws. The chip and box marks
 		// read the first: they describe the number, which is the whole sum, and a
 		// fact hidden by the fold is still a fact about it.
-		const allRows = allTerms.map((term) => term.row);
-		const rows = terms.map((term) => term.row);
-		const drivers = rows.slice(0, FULL_DRIVER_ROWS);
+		const allRows = terms.map((term) => term.row);
+		const drivers = allRows.slice(0, FULL_DRIVER_ROWS);
 		return {
 			offer,
 			ladder: offerLadder(offer),
-			mod,
+			architect: offer.architectName.trim() === '' ? null : offer.architectName,
 			headline: offerBoxHeadline(offer),
 			builds: offerBoxBuilds(offer),
 			content,

@@ -93,43 +93,6 @@ export type SlotId =
 	| 'E1'
 	| 'E2';
 
-/** Item classes a temple architect's mod family can roll on. */
-export type ItemSlotId =
-	| 'helmet'
-	| 'body_armour'
-	| 'gloves'
-	| 'boots'
-	| 'amulet'
-	| 'ring'
-	| 'belt'
-	| 'shield'
-	| 'weapon';
-
-/** English names for the nine item classes, for any surface that spells a slot
- *  out rather than drawing it.
- *
- *  Beside the union it is keyed on, and not inside `SlotIcon.svelte`, which
- *  held the only copy until POE-277 gave the offer box word CHIPS in place of
- *  glyphs: two surfaces naming the same nine classes must not be able to name
- *  them differently, and a `.svelte` file has no unit-test harness in this
- *  app. `Record<ItemSlotId, string>` means a tenth class added to the wire
- *  fails `npm run check` here. */
-export const SLOT_NAMES: Record<ItemSlotId, string> = {
-	helmet: 'helmet',
-	body_armour: 'body armour',
-	gloves: 'gloves',
-	boots: 'boots',
-	amulet: 'amulet',
-	ring: 'ring',
-	belt: 'belt',
-	shield: 'shield',
-	weapon: 'weapon'
-};
-
-/** Vertolka's verdict on a mod family — Rust's `drops::Worth` on the wire.
- *  `'neutral'` is the absence of a verdict, not a middling one. */
-export type ModWorth = 'good' | 'junk' | 'neutral';
-
 /** `"C1-C2"` — a corridor, endpoints in `SlotId` order, joined by a hyphen. */
 export type EdgeId = string;
 
@@ -376,15 +339,6 @@ export interface LineView {
 	kind: LineKind;
 	/** Draft prose for a content line, or null for a chest line. */
 	content: string | null;
-	modArchitect: string | null;
-	modHint: string | null;
-	/** Item classes this mod family can roll on, in the verified table order. */
-	modSlots: ItemSlotId[];
-	/** Vertolka's verdict on the mod family itself — `'good'`, `'junk'` or
-	 *  `'neutral'`, and null where the line has no mod. It is what COLOURS the
-	 *  offer box's mod name (POE-277); Rust's `drops::Worth` is the source and
-	 *  its `serde(default)` means an older payload reads as "nobody said". */
-	modWorth: ModWorth | null;
 	quantityPct: [number, number, number] | null;
 	rarityPct: [number, number, number] | null;
 }
@@ -431,7 +385,7 @@ export interface RoomValueView {
 
 /** One term of a `RoomValueView`'s sum. */
 export interface DriverView {
-	/** `"sale"`, `"unique_drop"`, `"mod_item"`,
+	/** `"sale"`, `"unique_drop"`,
 	 *  `"quantity_bonus"`, `"rarity_bonus"`, `"tier_fraction"`,
 	 *  `"grade_fallback"`, `"instrumental"` or `"custom_override"`.
 	 *  `snake_case`, this app's convention for enum variants on the wire.

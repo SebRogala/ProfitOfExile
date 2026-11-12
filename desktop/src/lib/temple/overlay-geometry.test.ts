@@ -589,14 +589,14 @@ describe('offerStackPlacement', () => {
 	 * `TempleOfferBoxes.svelte`'s full form, section by section, in CSS px —
 	 * each entry is that rule's own `height`/`line-height` plus its stated
 	 * `margin-top`, for the tallest box POE-277's v5 wording can build: a sale
-	 * row above an item row carrying the upgrade, the room-bonus row, the
-	 * temple mod with slot chips wrapped to two rows, the market warning line,
-	 * and the four hairlines those five sections put between themselves.
+	 * row above an item row carrying a rare unique's caption, the room-bonus
+	 * row, the architect line, the market warning line, and the four hairlines
+	 * those five sections put between themselves.
 	 *
 	 * What it guards is `FULL_BOX_MAX_CSS` against this table. It cannot see a
 	 * row ADDED to the component — nothing here reads the stylesheet — so a new
 	 * row has to land in both places or the budget is quietly short. It also rests
-	 * on `terms` filtering the three-entry `ROW_KINDS`, so `offerFold` is null
+	 * on the two-entry `ROW_KINDS`, so `offerFold` is null
 	 * today, and on `offerNote` firing only when there are zero rows.
 	 */
 	const FULL_BOX_ROWS = {
@@ -612,22 +612,18 @@ describe('offerStackPlacement', () => {
 		items: 8 + (39 + 3 + 15 + 12),
 		// The label inline, both ladders as a value over its word, the amount.
 		bonuses: 18 + 13,
-		// Mod line, then slot chips wrapped to two 14 px rows.
-		mod: 18 + 5 + (14 + 4 + 14),
+		// The architect's name, one 18 px row (POE-367).
+		architect: 18,
 		age: 13
 	};
 	const WORST_FULL_BOX = Object.values(FULL_BOX_ROWS).reduce((sum, row) => sum + row, 0);
 
 	it('budgets the pair against the tallest box the wording can build, not the design\'s typical one', () => {
-		// POE-277's v5 full WARN form is 311 px, leaving 5 px inside the 316 px
-		// diagonal budget where v4's 269 px box left 47. The restyle spent that
-		// slack on air, a price under every icon, a word under every ladder,
-		// word chips for the slot list and four section hairlines, so a row
-		// added to the component now has to come out of content rather than out
-		// of headroom.
-		expect(WORST_FULL_BOX).toBe(311);
+		// The full WARN form is 274 px since POE-367 cut the temple-mod block
+		// (55 px with its two chip rows) to the architect's 18 px name.
+		expect(WORST_FULL_BOX).toBe(274);
 		expect(FULL_BOX_MAX_CSS).toBe(WORST_FULL_BOX);
-		expect(FULL_PAIR_CSS).toBe(630);
+		expect(FULL_PAIR_CSS).toBe(2 * 274 + STACK_GAP_CSS);
 		expect(FULL_BOX_MAX_CSS).toBeLessThanOrEqual(DIAGONAL_BUDGET_CSS);
 	});
 
@@ -734,7 +730,7 @@ describe('offersCompact', () => {
 
 	it('keeps the full form where the host has room for two of them', () => {
 		// 1080 - 133 is 947, and two full boxes plus the stack gap need
-		// FULL_PAIR_CSS = 311 * 2 + 8 = 630.
+		// FULL_PAIR_CSS = 274 * 2 + 8 = 556.
 		expect(
 			offersCompact({
 				driverCounts: THREE,
@@ -777,6 +773,18 @@ describe('offersCompact', () => {
 		).toBe(false);
 	});
 
+	it('draws the pair full from 556 px of free height and compact one px less', () => {
+		// The POE-367 budget as numbers, not as the constant: two 274 px boxes
+		// and the 8 px gap. Fails if FULL_PAIR_CSS keeps the 630 of the
+		// temple-mod box.
+		const at = (free: number) => [{ ...HIGH[0], y: HOST.height - free }, HIGH[1]];
+		const compactAt = (free: number) =>
+			offersCompact({ driverCounts: THREE, blocks: at(free), panel: COMMITTED_PANEL, host: HOST });
+
+		expect(compactAt(556)).toBe(false);
+		expect(compactAt(555)).toBe(true);
+	});
+
 	/** A 720 CSS px host — native 1280×720, 1080p at 150 %, 1440p at 200 % —
 	 *  with the committed first block (y 133) scaled by 1080/720 to 88.7,
 	 *  which leaves 631.3 px under it. */
@@ -784,7 +792,7 @@ describe('offersCompact', () => {
 	const HIGH_720 = [{ ...HIGH[0], y: 133 / 1.5 }, HIGH[1]];
 
 	it('keeps a 720 px host full', () => {
-		// 631.3 px against the 311-based pair's 630.
+		// 631.3 px against the 274-based pair's 556.
 		expect(
 			offersCompact({
 				driverCounts: THREE,

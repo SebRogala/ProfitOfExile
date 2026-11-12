@@ -51,7 +51,7 @@ import {
 	formatDropRate,
 	type OfferBox
 } from './view';
-import { templeSliceDefault, type AdviceView, type DriverView, type ItemSlotId, type LayoutView, type MarketView, type ModWorth, type OfferView, type RankedView, type RoomValueView, type SlotId, type SlotView, type TempleStatus } from './slice';
+import { templeSliceDefault, type AdviceView, type DriverView, type LayoutView, type MarketView, type OfferView, type RankedView, type RoomValueView, type SlotId, type SlotView, type TempleStatus } from './slice';
 
 /** A fixed clock, so every age below is the difference the test states. */
 const NOW = 1_788_665_199_649;
@@ -894,10 +894,6 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
 					quantityPct: [2, 4, 6],
 					rarityPct: [4, 8, 12]
 				},
@@ -926,10 +922,6 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				}
@@ -945,10 +937,6 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
 					quantityPct: [2, 4, 6],
 					rarityPct: null
 				}
@@ -970,10 +958,6 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
 					quantityPct: [2, 4, 22.5],
 					rarityPct: null
 				}
@@ -991,10 +975,6 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
 					quantityPct: [2, 4, 6],
 					rarityPct: null
 				}
@@ -1013,10 +993,6 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'content',
 					content: 'Queen Atziri',
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				}
@@ -1036,10 +1012,6 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: 'Double-corrupt an item',
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				}
@@ -1058,10 +1030,6 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'content',
 					content: null,
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				}
@@ -1276,16 +1244,6 @@ const secondUniqueTerm = (over: Partial<DriverView> = {}) =>
 		guessed: true,
 		...over
 	});
-const modTerm = (over: Partial<DriverView> = {}) =>
-	term({
-		kind: 'mod_item',
-		name: 'temple gloves',
-		count: 2,
-		unitPrice: 30,
-		chaos: 60,
-		guessed: true,
-		...over
-	});
 const quantityTerm = (over: Partial<DriverView> = {}) =>
 	term({
 		kind: 'quantity_bonus',
@@ -1331,302 +1289,72 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 	const only = (offer: OfferView, market?: MarketView) =>
 		offerBoxes(slice([offer], market), NOW)[0];
 
-	it('projects the temple mod identity and priced marks', () => {
+	// POE-367: 3.30 removed the temple-mod items. An older payload can still
+	// carry the line's mod facts and a `mod_item` term; neither may reach the
+	// box. Fails if `ROW_KINDS` keeps `mod_item` or the box keeps a mod block.
+	it('a box draws no temple-mod block for a payload that still carries one', () => {
+		const oldLine = {
+			kind: 'chest',
+			content: null,
+			modArchitect: 'Puhuarte',
+			modHint: 'temple gloves',
+			modSlots: ['gloves'],
+			modWorth: 'good',
+			quantityPct: null,
+			rarityPct: null
+		} as unknown as OfferView['line'];
 		const box = only(
 			offer({
-				line: {
-					kind: 'chest',
-					content: null,
-					modArchitect: 'Puhuarte',
-					modHint: 'temple gloves',
-					modSlots: ['gloves'],
-					modWorth: null,
-					quantityPct: null,
-					rarityPct: null
-				},
-				value: value({ drivers: [modTerm()] })
-			})
-		);
-
-		expect(box.mod).toEqual({
-			name: 'Puhuarte',
-			hint: 'temple gloves',
-			slots: ['gloves'],
-			price: '30c',
-			perRun: '×2',
-			// POE-277 v5: the wire's verdict on the mod family, and `neutral`
-			// here because this fixture's line states none — which is the
-			// guard's answer for "nobody said", not a middling grade.
-			worth: 'neutral',
-			marks: ['G']
-		});
-	});
-
-	it('carries the wire\'s good verdict onto the mod block', () => {
-		// Vertolka's 2026-09-10 call on Puhuarte, which is what turns the mod
-		// NAME green on the box (POE-277 v5). Rust decides it from the mod
-		// family; nothing on this side re-derives it from the price, and this
-		// is the assertion that the wire's word reaches the box at all.
-		const box = only(
-			offer({
-				line: {
-					kind: 'chest',
-					content: null,
-					modArchitect: 'Puhuarte',
-					modHint: 'temple gloves',
-					modSlots: ['gloves'],
-					modWorth: 'good',
-					quantityPct: null,
-					rarityPct: null
-				},
-				value: value({ drivers: [modTerm()] })
-			})
-		);
-
-		expect(box.mod?.worth).toBe('good');
-	});
-
-	it('carries the wire\'s junk verdict onto the mod block', () => {
-		// The other end of the same message — Matatl, red — and its own test
-		// rather than a second assertion above: a guard narrowed to the good
-		// arm alone would pass that one and drop this verdict to `neutral`,
-		// which reads on screen as a family nobody has graded.
-		const box = only(
-			offer({
-				line: {
-					kind: 'chest',
-					content: null,
-					modArchitect: 'Matatl',
-					modHint: 'temple boots',
-					modSlots: ['boots'],
-					modWorth: 'junk',
-					quantityPct: null,
-					rarityPct: null
-				},
-				value: value({ drivers: [modTerm()] })
-			})
-		);
-
-		expect(box.mod?.worth).toBe('junk');
-	});
-
-	it('reads a verdict this file has not been taught as no verdict at all', () => {
-		// Same rule as `offerState`'s: the wire spelling is a plain string and
-		// `serde(default)` lets an older payload omit it, so a word this file
-		// does not know must land on the one answer that claims nothing.
-		// Without the guard the raw string reaches the markup's class list and
-		// colours the name off a verdict nobody chose.
-		const box = only(
-			offer({
-				line: {
-					kind: 'chest',
-					content: null,
-					modArchitect: 'Puhuarte',
-					modHint: 'temple gloves',
-					modSlots: ['gloves'],
-					modWorth: 'chase' as unknown as ModWorth,
-					quantityPct: null,
-					rarityPct: null
-				},
-				value: value({ drivers: [modTerm()] })
-			})
-		);
-
-		expect(box.mod?.worth).toBe('neutral');
-	});
-
-	it('leaves the mod block absent when the line has no mod', () => {
-		const box = only(
-			offer({
-				line: {
-					kind: 'chest',
-					content: null,
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
-					quantityPct: null,
-					rarityPct: null
-				},
-				value: value({ drivers: [uniqueTerm()] })
-			})
-		);
-
-		expect(box.mod).toBeNull();
-	});
-
-	it('falls back to the driver name when the line is absent', () => {
-		const box = only(offer({ line: null, value: value({ drivers: [modTerm()] }) }));
-
-		expect(box.mod?.name).toBe('temple gloves');
-		expect(box.mod?.slots).toEqual([]);
-	});
-
-	it('prints no price for an unpriced mod term', () => {
-		const box = only(
-			offer({
-				line: {
-					kind: 'chest',
-					content: null,
-					modArchitect: 'Puhuarte',
-					modHint: 'temple gloves',
-					modSlots: ['gloves'],
-					modWorth: null,
-					quantityPct: null,
-					rarityPct: null
-				},
+				line: oldLine,
 				value: value({
 					priced: 'partial',
-					drivers: [modTerm({ unitPrice: null, chaos: null })]
+					drivers: [
+						uniqueTerm(),
+						term({ kind: 'mod_item', name: 'temple gloves', count: 2, unitPrice: null, chaos: null })
+					]
 				})
 			})
 		);
 
-		expect(box.mod?.price).toBe('no price');
+		expect(box).not.toHaveProperty('mod');
+		expect(box.drivers.map((row) => row.name)).toEqual(['Story of the Vaal']);
+		expect(box.driverCount).toBe(1);
+		expect(box.chip).toBe('floor');
 	});
 
-	it('keeps a named mod block on a fallback read without a mod term', () => {
-		const box = only(
-			offer({
-				line: {
-					kind: 'chest',
-					content: null,
-					modArchitect: 'Puhuarte',
-					modHint: 'temple gloves',
-					modSlots: ['gloves'],
-					modWorth: null,
-					quantityPct: null,
-					rarityPct: null
-				},
-				value: value({ priced: 'fallback', drivers: [] })
-			})
-		);
+	// T15: the architect line is the panel read's name, never the line's mod
+	// facts, and a blank read draws no line. Fails if the name is read off
+	// `line.modArchitect`, the blank guard goes, or the signature ignores it.
+	describe('a box names its architect from the panel read, not from the line', () => {
+		const plainLine = {
+			kind: 'chest' as const,
+			content: null,
+			quantityPct: null,
+			rarityPct: null
+		} as unknown as OfferView['line'];
 
-		expect(box.mod).toEqual({
-			name: 'Puhuarte',
-			hint: 'temple gloves',
-			slots: ['gloves'],
-			price: '—',
-			perRun: null,
-			worth: 'neutral',
-			marks: []
+		it('carries the panel read\'s architect', () => {
+			expect(only(offer({ architectName: 'Puhuarte', line: plainLine })).architect).toBe('Puhuarte');
 		});
-	});
 
-	it('gives the mod cell a price its drawer can tell apart from having none', () => {
-		const noPrice = only(
-			offer({
-				line: {
-					kind: 'chest',
-					content: null,
-					modArchitect: 'Puhuarte',
-					modHint: 'temple gloves',
-					modSlots: [],
-					modWorth: null,
-					quantityPct: null,
-					rarityPct: null
-				},
-				value: value({ priced: 'partial', drivers: [modTerm({ unitPrice: null, chaos: null })] })
-			})
-		);
-		const priced = only(
-			offer({
-				line: {
-					kind: 'chest',
-					content: null,
-					modArchitect: 'Puhuarte',
-					modHint: 'temple gloves',
-					modSlots: [],
-					modWorth: null,
-					quantityPct: null,
-					rarityPct: null
-				},
-				value: value({ drivers: [modTerm()] })
-			})
-		);
-		const fallback = only(
-			offer({
-				line: {
-					kind: 'chest',
-					content: null,
-					modArchitect: 'Puhuarte',
-					modHint: 'temple gloves',
-					modSlots: [],
-					modWorth: null,
-					quantityPct: null,
-					rarityPct: null
-				},
-				value: value({ priced: 'fallback', drivers: [] })
-			})
-		);
+		it('ignores an old payload\'s mod architect', () => {
+			const oldLine = { ...plainLine, modArchitect: 'Puhuarte' } as unknown as OfferView['line'];
+			expect(only(offer({ architectName: 'Tacati', line: oldLine })).architect).toBe('Tacati');
+		});
 
-		expect(noPrice.mod?.price).toBe('no price');
-		expect(priced.mod?.price).toBe('30c');
-		expect(fallback.mod?.price).toBe('—');
-	});
+		it('has no architect line for a blank read', () => {
+			expect(only(offer({ architectName: '', line: plainLine })).architect).toBeNull();
+		});
 
-	it('draws the mod price cell only when a real number sits in it', () => {
-		// The two stand-ins above are the box's answer to "what does this rare
-		// go for", and neither is a number: `no price` means the sheet named
-		// none and `—` means the ladder priced the room. Printing either in the
-		// parenthesis beside the architect's name would read as a quote.
-		//
-		// Read off the source because this app has no DOM harness for a
-		// `.svelte` file — the same seam `overlay-geometry.test.ts` uses.
-		const modBlock = offerBoxesSource.slice(offerBoxesSource.indexOf('{#if box.mod}'));
-
-		expect(modBlock).toContain("{#if box.mod.price !== 'no price' && box.mod.price !== '—'}");
-		expect(modBlock.match(/\{box\.mod\.price\}/g)).toHaveLength(1);
-	});
-
-	it('excludes the mod row from visible driver counts', () => {
-		const box = only(
-			offer({ value: value({ drivers: [saleTerm(), uniqueTerm(), modTerm()] }) })
-		);
-
-		expect(box.drivers.map((driver) => driver.kind)).toEqual(['sale', 'unique']);
-		expect(box.driverCount).toBe(2);
-		expect(box.fold).toBeNull();
-	});
-
-	it('counts an unpriced mod in the completeness chip', () => {
-		const box = only(
-			offer({
-				line: {
-					kind: 'chest',
-					content: null,
-					modArchitect: 'Puhuarte',
-					modHint: 'temple gloves',
-					modSlots: [],
-					modWorth: null,
-					quantityPct: null,
-					rarityPct: null
-				},
-				value: value({
-					priced: 'partial',
-					drivers: [uniqueTerm(), modTerm({ unitPrice: null, chaos: null })]
-				})
-			})
-		);
-
-		expect(box.chip).toBe('floor · 1 unpriced');
-	});
-
-	it('rolls a mod estimate up to the box while retaining its row data', () => {
-		const box = only(offer({ value: value({ guessed: true, drivers: [modTerm()] }) }));
-
-		expect(box.mod?.marks).toEqual(['G']);
-		expect(box.marks).toEqual(['G']);
-	});
-
-	it('does not call a mod-only line an empty unique drop', () => {
-		const box = only(offer({ value: value({ drivers: [modTerm()] }) }));
-
-		expect(box.note).toBeNull();
+		it('lets the architect line\'s presence change the box signature', () => {
+			const named = only(offer({ architectName: 'Puhuarte', line: plainLine }));
+			const blank = only(offer({ architectName: '', line: plainLine }));
+			expect(offerBoxSignature(named, false)).not.toBe(offerBoxSignature(blank, false));
+		});
 	});
 
 	it('lists the sale first and then what the room drops, in the wire order', () => {
-		// `valuation.rs` pushes sale, unique, mod, and the box draws that
+		// `valuation.rs` pushes sale, then unique, and the box draws that
 		// order: the sale is money the room pays out now and the drops are what
 		// falls out of it, which is the order a player reads them in. A box
 		// re-sorting them by price would put a 600 c unique above the 186 c sale.
@@ -1878,7 +1606,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 						saleTerm({ chaos: 186 }),
 						uniqueTerm(),
 						secondUniqueTerm(),
-						modTerm({ unitPrice: null, chaos: null })
+						uniqueTerm({ name: "Coward's Chains", unitPrice: null, chaos: null })
 					]
 				})
 			})
@@ -1965,10 +1693,6 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				line: {
 					kind: 'content',
 					content: 'Upgrade a room',
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -1991,10 +1715,6 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				line: {
 					kind: 'content',
 					content: 'Armour drops',
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -2016,10 +1736,6 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				line: {
 					kind: 'content',
 					content: 'Double-corrupt an item',
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -2338,10 +2054,6 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					modArchitect: null,
-					modHint: null,
-					modSlots: [],
-					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -2371,15 +2083,14 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 	});
 
 	it('gives the compact strip its prices', () => {
-		// The compact form drops the counts, the bonus and the
-		// mod block. Only the PRICED rows reach the strip: a bare `no price` in a
+		// The compact form drops the counts and the bonus. Only the PRICED rows reach the strip: a bare `no price` in a
 		// run of numerals
 		// reads as one of them.
 		const box = only(
 			offer({
 				value: value({
 					priced: 'partial',
-					drivers: [uniqueTerm(), secondUniqueTerm(), modTerm()]
+					drivers: [uniqueTerm(), secondUniqueTerm()]
 				})
 			})
 		);
@@ -2432,18 +2143,6 @@ describe('offerBoxSignature', () => {
 		)[0],
 		...over
 	});
-
-	/** A mod block to vary the slot list on, so the chip tests differ in the
-	 *  one field they are about. */
-	const MOD = {
-		name: 'Puhuarte',
-		hint: 'temple gloves',
-		slots: [] as ItemSlotId[],
-		price: '30c',
-		perRun: '×2',
-		worth: 'neutral' as ModWorth,
-		marks: []
-	};
 
 	it('does not change when only the rendered TEXT changes', () => {
 		// The POE-258 regression this replaces: the market-age line was in the
@@ -2560,24 +2259,6 @@ describe('offerBoxSignature', () => {
 		);
 	});
 
-	it('changes when a fifth slot chip wraps the list to a second row', () => {
-		// The threshold the component's own `.slots` rule states: the chips are
-		// a 4 px-gapped wrap row inside the 300 px box, and they wrap once the
-		// row passes 272 px — five (Xopec) always, and four or even three when
-		// BODY ARMOUR is among them (Guatelitzi, Tacati). Two rows is the worst
-		// case at any count, which the budget carries, and `slots.length` is in
-		// the string as the cheap proxy for that shape: it is not the wrap rule,
-		// but nothing changes the wrap without changing it. 19 px of box against
-		// 37. A signature blind to the count would leave the pair measured for a
-		// box one chip row shorter than the one on screen.
-		const threeChips = box({ mod: { ...MOD, slots: ['helmet', 'gloves', 'amulet'] } });
-		const fiveChips = box({
-			mod: { ...MOD, slots: ['helmet', 'gloves', 'boots', 'amulet', 'ring'] }
-		});
-
-		expect(offerBoxSignature(fiveChips, false)).not.toBe(offerBoxSignature(threeChips, false));
-	});
-
 	it('changes when a row appears that was not there', () => {
 		// Every optional row is in the signature because every one of them is
 		// height. The note is the one that wraps.
@@ -2642,46 +2323,6 @@ describe('offerBoxSignature', () => {
 		expect(offerBoxSignature(withDifferentText, false)).toBe(offerBoxSignature(withQuant, false));
 	});
 
-	it('changes for a mod block and its slot count', () => {
-		const withoutMod = box({ mod: null });
-		const emptyMod = box({
-			mod: {
-				name: 'Puhuarte',
-				hint: 'temple gloves',
-				slots: [],
-				price: '30c',
-				perRun: '×2',
-				worth: 'neutral',
-				marks: ['G']
-			}
-		});
-		const oneSlot = box({
-			mod: {
-				name: 'Puhuarte',
-				hint: 'temple gloves',
-				slots: ['gloves'],
-				price: '30c',
-				perRun: '×2',
-				worth: 'neutral',
-				marks: ['G']
-			}
-		});
-		const threeSlots = box({
-			mod: {
-				name: 'Puhuarte',
-				hint: 'temple gloves',
-				slots: ['ring', 'gloves', 'boots'],
-				price: '30c',
-				perRun: '×2',
-				worth: 'neutral',
-				marks: ['G']
-			}
-		});
-
-		expect(offerBoxSignature(emptyMod, false)).not.toBe(offerBoxSignature(withoutMod, false));
-		expect(offerBoxSignature(oneSlot, false)).not.toBe(offerBoxSignature(withoutMod, false));
-		expect(offerBoxSignature(threeSlots, false)).not.toBe(offerBoxSignature(oneSlot, false));
-	});
 });
 
 describe('marketNote', () => {

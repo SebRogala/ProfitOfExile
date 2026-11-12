@@ -12,7 +12,8 @@
 	 * area-bonus ladder and the temple-mod block, led the header with the room,
 	 * and dropped the unique/vial names from the rows. POE-366 (3.30) removed
 	 * vials, and with them the vial cell, the upgrade cell and the borrowed
-	 * price: the item row is the line's unique alone.
+	 * price: the item row is the line's unique alone. POE-367 (3.30) removed
+	 * the temple-mod items, so the mod block is the architect's name alone.
 	 *
 	 * What it replaces is the single kill callout (POE-244), which named ONE
 	 * block and said one reason about it. The player is choosing BETWEEN two
@@ -29,14 +30,14 @@
 	 *
 	 * - **Air.** `padding: 2px 10px` gave a 269 px box two pixels of vertical
 	 *   air and every block butted against the next. It is `10px 12px` now,
-	 *   and the box is FIVE SECTIONS — header, items, room bonuses, temple mod,
+	 *   and the box is FIVE SECTIONS — header, items, room bonuses, architect,
 	 *   market warning — with a 1 px hairline between each pair that is
 	 *   present, never one over nothing. Every margin is drawn from
 	 *   `{3, 5, 6}` and stated per row.
 	 * - **Ramp.** Seven font sizes with no relationship became six: 22 (the
 	 *   value), 17 (the grade letter), 15 (the room name and the ladder rungs),
-	 *   13 (prices, sale gain, mod name), 11 (kind, sale name, fold, the ladder's
-	 *   stat word, market line), 10 (the three section labels, the chips and
+	 *   13 (prices, sale gain, architect name), 11 (kind, sale name, fold, the ladder's
+	 *   stat word, market line), 10 (the section label and
 	 *   the rate caption). The 15 px yellow ladder
 	 *   used to out-shout the 16 px room name; it is the room name that is 15
 	 *   now, and the rungs keep 15 at the owner's own ask. The compact strip's
@@ -66,21 +67,18 @@
 	 *   It is `39c` in one span; the `G` box became the muted ` · est.` on the
 	 *   header's second line and the `F` box was dropped outright, because the
 	 *   value it sat beside already reads `grade C1`.
-	 * - **The mod name carries the verdict.** Vertolka, 12:23, on the nine grey
-	 *   slot silhouettes: *"for player it is information this chest is good
-	 *   because of temple mod items in it, it don't need further explanation on
-	 *   infographic."* The glyph row went; the name went green or red instead
-	 *   (`OfferMod.worth`, Rust's `drops::Worth`). The owner then asked for the
-	 *   row BACK as word CHIPS — `WEAPON · BOOTS` reads at arm's length where a
-	 *   silhouette needs a legend — so the row is words now and `SlotIcon.svelte`
-	 *   has no caller on this box.
+	 * - **The architect line names the block's architect, uncoloured.** It
+	 *   was the temple-mod block — Vertolka's green/red verdict on the name,
+	 *   its price and `Appears on:` word chips — until 3.30 removed the
+	 *   temple-mod items (POE-367). The name stays, from the panel read
+	 *   (`OfferBox.architect`), in the box's own text colour.
 	 *
 	 * # What the box carries
 	 *
 	 * The number POE-257 computes is the whole of the ranking. The box leads with
 	 * the resolved room and tier, then shows that value in chaos and what makes it
 	 * up: the items the room drops, as ICONS with prices, the quantity / rarity
-	 * bonus ladder, and the temple mod at the end. Everything on screen comes from the offer
+	 * bonus ladder, and the architect at the end. Everything on screen comes from the offer
 	 * view — the same `Valued` row the advisor ranked on (POE-257 D6) — so no box can
 	 * justify a number the recommendation did not use.
 	 *
@@ -129,8 +127,8 @@
 	 *
 	 * The box's WIDTH is the registry's number applied as `width` on a
 	 * `border-box` element, so it is fixed and known before anything renders.
-	 * Its HEIGHT is not — how many item cells a room has, and whether it has a
-	 * mod, are properties of the board — so the box is still rendered before
+	 * Its HEIGHT is not — how many item cells a room has, and whether it has an
+	 * architect line, are properties of the board — so the box is still rendered before
 	 * it is placed and stays `visibility: hidden` until the placement answers.
 	 * Hidden rather than `display: none`, because a box that is not laid out
 	 * cannot be measured and the frame would never end. Same trick, and the same
@@ -154,7 +152,6 @@
 	import ItemIcon from '$lib/components/ItemIcon.svelte';
 	import { getIconUrl } from '$lib/icons';
 	import { offersCompact, offerStackPlacement } from './overlay-geometry';
-	import { SLOT_NAMES } from './slice';
 	import { offerBoxSignature } from './view';
 	import type { OfferBox, OfferDriver } from './view';
 	import type { HostSize, WidgetRect } from '$lib/overlay/widgets/widget-geometry';
@@ -412,7 +409,7 @@
 {#each boxes as box, i (signature + "|" + box.offer.index)}
 	{@const sale = saleDriver(box)}
 	{@const cell = dropCell(box.uniqueDrop)}
-	<!-- Two of the four optional sections as booleans (the mod's own `{#if}`
+	<!-- Two of the four optional sections as booleans (the architect's own `{#if}`
 	     is the third and the warning line the fourth), because the hairlines
 	     BETWEEN sections are conditional: a rule with nothing under it is a
 	     line the box drew for its own sake. Each one is a PRESENCE over fields
@@ -456,16 +453,17 @@
 			{#if guessed(box)}<span class="est">· est.</span>{/if}
 		</div>
 		<!-- Gated like every other rule, and for the same reason: an offer whose
-		     printed target did not resolve has no value, no rows and no mod, so
+		     printed target did not resolve has no value and no rows, and a blank
+		     architect read has no architect line, so
 		     on a fresh market this is a hairline drawn over nothing. -->
-		{#if compact ? box.drivers.length > 0 || box.ageLine !== null : hasItems || hasBonus || box.mod !== null || box.ageLine !== null}
+		{#if compact ? box.drivers.length > 0 || box.ageLine !== null : hasItems || hasBonus || box.architect !== null || box.ageLine !== null}
 			<div class="rule"></div>
 		{/if}
 
 		{#if compact}
 			<!-- Icons and prices, one row. What the eye uses at arm's length —
 			     who, what it builds, what it is worth and what pays for it —
-			     with the bonus ladder, the temple mod and its slots dropped. -->
+			     with the bonus ladder and the architect dropped. -->
 			{#if box.drivers.length > 0}
 				<div class="strip">
 					{#each box.drivers as driver (driver.name)}
@@ -489,7 +487,7 @@
 			{#if box.content !== null}
 				<!-- A content line draws its prose alone: it drops no unique. The
 				     drops-nothing note yields to it; the instrumental and own-number
-				     wordings still print under the row (299 px worst case, inside
+				     wordings still print under the row (262 px worst case, inside
 				     the budget). -->
 				<div class="items" class:aftersale={sale !== null}>
 					<span class="content-spacer"></span>
@@ -528,30 +526,12 @@
 				</div>
 			{/if}
 
-			{#if box.mod}
+			{#if box.architect !== null}
 				{#if hasItems || hasBonus}<div class="rule"></div>{/if}
-				<div class="mod" title={box.mod.hint ?? undefined}>
-					<span class="lb">Temple mod:</span>
-					<span
-						class="nm"
-						class:good={box.mod.worth === 'good'}
-						class:junk={box.mod.worth === 'junk'}>{box.mod.name}</span
-					>
-					{#if box.mod.price !== 'no price' && box.mod.price !== '—'}
-						<span class="pz">({box.mod.price})</span>
-					{/if}
-				</div>
-				{#if box.mod.slots.length > 0}
-					<div class="slots">
-						<span class="lb">Appears on:</span>
-						{#each box.mod.slots as slot (slot)}
-							<span class="sc">{SLOT_NAMES[slot]}</span>
-						{/each}
-					</div>
-				{/if}
+				<div class="architect"><span class="nm">{box.architect}</span></div>
 			{/if}
 			{#if box.ageLine}
-				{#if hasItems || hasBonus || box.mod !== null}<div class="rule"></div>{/if}
+				{#if hasItems || hasBonus || box.architect !== null}<div class="rule"></div>{/if}
 				<p class="mkt" class:warn={box.stale}>{box.ageLine}</p>
 			{/if}
 		{/if}
@@ -756,7 +736,7 @@
 	/* The section hairline: height 1, margin 6 above and 6 below — 13 px, and
 	   ONE rule for all four of them (owner via Vertolka, 2026-09-10). It sits
 	   under the header and between each pair of sections that are both present:
-	   header · items · room bonuses · temple mod · market warning. Never
+	   header · items · room bonuses · architect · market warning. Never
 	   unconditional: a rule with nothing under it is a line the box drew for
 	   its own sake, which is what an unresolved offer on a fresh market got.
 
@@ -780,8 +760,7 @@
 	   design has always described this row as text, and rendering the null-icon
 	   SVG at 39 px for it was the single biggest contributor to the cramped
 	   feel. The leading `+` and the green carry the "money out" meaning; it is
-	   the only green number in the box apart from a mod name worth chasing, and
-	   the two agree rather than collide. */
+	   the only green number in the box. */
 	.sale {
 		display: flex;
 		align-items: center;
@@ -917,8 +896,8 @@
 	}
 
 	/* Row 6: height 13, margin-top 3 — inside the item group, not a new one.
-	   Unreachable as the wording stands (`view.ts`'s three `ROW_KINDS` minus the
-	   mod cannot exceed `FULL_DRIVER_ROWS`) and styled anyway, because the day
+	   Unreachable as the wording stands (`view.ts`'s two `ROW_KINDS` cannot
+	   exceed `FULL_DRIVER_ROWS`) and styled anyway, because the day
 	   a fifth row kind is added is not the day to discover it has no rule. */
 	.fold {
 		margin-top: 3px;
@@ -958,10 +937,9 @@
 
 	/* ---------------------------------------------------- section labels -- */
 
-	/* ONE style for all three: `Room bonuses`, `Temple mod:` and `Appears on:`.
-	   Mixed case with no `text-transform` — the uppercase-by-CSS labels of the
-	   shipped build read as three different kinds of heading at three different
-	   widths. None of the three is its own row: each opens the line it labels,
+	/* The `Room bonuses` label. Mixed case with no `text-transform` — the
+	   uppercase-by-CSS labels of the shipped build read as different kinds of
+	   heading at different widths. It is not its own row: it opens the line it labels,
 	   and the rule above it is what separates the section. */
 	.lb {
 		flex: 0 0 auto;
@@ -1054,10 +1032,10 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* ------------------------------------------------- the temple mod -- */
+	/* -------------------------------------------------- the architect -- */
 
 	/* Row 8: height 18, margin-top 0 — first in its section, under a rule. */
-	.mod {
+	.architect {
 		display: flex;
 		align-items: baseline;
 		gap: 5px;
@@ -1067,72 +1045,13 @@
 		overflow: hidden;
 	}
 
-	.mod .nm {
+	.architect .nm {
 		min-width: 0;
 		font-size: 13px;
 		font-weight: 600;
 		line-height: 18px;
 		overflow: hidden;
 		text-overflow: ellipsis;
-	}
-
-	/* The name carries Vertolka's verdict on the mod FAMILY (2026-09-10), which
-	   `drops.rs` states and `OfferMod.worth` carries; nothing here derives it
-	   from a price, because one family out of seven has one. Two reuses, both
-	   judged acceptable: green already marks the sale gain — both mean "worth
-	   something", so they agree — and red already means a closed seal on the
-	   room widget, which is a different surface. */
-	.mod .nm.good {
-		color: var(--color-lab-green);
-	}
-
-	.mod .nm.junk {
-		color: var(--color-lab-red);
-	}
-
-	/* Only the one priced case (Crucible of Flame / Puhuarte's 30 c guess). A
-	   `no price` mod prints no cell at all rather than the words. */
-	.mod .pz {
-		flex: 0 0 auto;
-		font-size: 13px;
-		font-weight: 600;
-		line-height: 18px;
-		color: var(--color-lab-text-secondary);
-		font-variant-numeric: tabular-nums;
-	}
-
-	/* Row 9: chip rows of 14 with a 4 px row gap, margin-top 5 — 19 for one
-	   row and 37 for two. The chips wrap once the row passes 272 px: five
-	   (Xopec) always, and four or even three when BODY ARMOUR is among them
-	   (Guatelitzi, Tacati). Two rows is the worst case at any count, which the
-	   budget carries, and `offerBoxSignature` carries `slots.length` as the
-	   cheap proxy for that shape. 5 and not 8: the chips belong to the mod line
-	   above them, and the section rules own the rhythm between sections.
-
-	   WORDS and not the nine grey silhouettes this replaces: the owner's
-	   verdict on those was that they are "defenetely NOT intuitive", and a
-	   glyph that needs a legend has no room for one on an overlay. */
-	.slots {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 4px;
-		margin-top: 5px;
-	}
-
-	.sc {
-		flex: 0 0 auto;
-		box-sizing: border-box;
-		height: 14px;
-		padding: 0 5px;
-		font-size: 10px;
-		font-weight: 600;
-		line-height: 12px;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-		color: var(--color-lab-text-secondary);
-		border: 1px solid rgb(228 228 231 / 14%);
-		border-radius: 3px;
 	}
 
 	/* -------------------------------------------------- the other lines -- */
@@ -1142,13 +1061,14 @@
 	   Content lines say what they drop nothing for in the item row's right-hand
 	   `.content` cell, so the drops-nothing wording is never printed under one;
 	   the instrumental and own-number wordings are, and the tallest box that
-	   makes is 299 px, inside the 311 the sum below budgets.
+	   makes is 262 px (the own-number wording on a content line with a
+	   bonus row), inside the 274 the sum budgets.
 	   `margin-top: 5`, and the ONE row here with no fixed height: its longest
 	   wording wraps to two lines at 272 px, and clipping it would drop the only
 	   sentence on a box that has no rows to read instead. It is not in
 	   `FULL_BOX_MAX_CSS` for the reason it can afford not to be — on a chest
 	   box every state that prints it has no item row and no fold, and the
-	   content boxes that print it stop at the 299 above. */
+	   content boxes that print it stop at the 262 above. */
 	.note {
 		margin: 5px 0 0;
 		font-size: 11px;

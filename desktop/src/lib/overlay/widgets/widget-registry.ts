@@ -178,15 +178,12 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// 300 (up from POE-249's 260) is what the item row needs: the two drops
 		// packed left, a stretched arrow, and the upgrade on the right edge,
 		// each cell 39 px of art over its price. Item
-		// cells carry no name and no marks since POE-277; the widest line is
-		// the mod's slot chips, which wrap once the row passes 272 px — five
-		// (Xopec) always, and four or even three when BODY ARMOUR is among them
-		// (Guatelitzi, Tacati). The margin holds up to 532 px on the committed
+		// cells carry no name and no marks since POE-277. The margin holds up to 532 px on the committed
 		// 1920×1080 frame, so this is nowhere near a limit. The position is
 		// never used — `overlay-geometry.ts`'s `offerStackPlacement` decides it
 		// per read, in the sheet's left margin — but the registry's own
 		// invariant is that every default is a real rectangle, so `h` is the
-		// at least the tallest a FULL box can be (`FULL_BOX_MAX_CSS`, 311,
+		// at least the tallest a FULL box can be (`FULL_BOX_MAX_CSS`, 274,
 		// summed from the component's own row heights). It stays at the 323
 		// px owner budget (`FULL_BOX_BUDGET_CSS`) the borrowed-price box
 		// needed until POE-366 removed vials, because a stored rect shorter

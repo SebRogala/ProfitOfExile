@@ -2,7 +2,7 @@
 //!
 //! [`rooms`](super::rooms) owns the closed name vocabulary and Vertolka's letter
 //! grade. This module owns the numbers behind that letter: the tier-3 chest
-//! unique, the architect's temple-mod items, and the quantity / rarity / pack-size percentages the room adds.
+//! unique and the quantity / rarity / pack-size percentages the room adds.
 //!
 //! Epic lock L1 (POE-124) is what this table feeds: room value = sale price +
 //! drops (expected count x LIVE price) + bonus (quant/rarity x chaos-per-%).
@@ -24,16 +24,12 @@
 //! - [`POEDB`] — the room's own page on poedb.tw, read 2026-09-06. This is the
 //!   game's data: the quantity / rarity / pack-size lines, the item-chance stat
 //!   and the unique listed on the room's `Unique` tab. Measured.
-//! - [`VERTOLKA_SHEET`] — Vertolka's room sheet, read 2026-09-06. Used for the
-//!   architect mod-group names and the item hints; every number it states is
+//! - [`VERTOLKA_SHEET`] — Vertolka's room sheet, read 2026-09-06. Used for
+//!   Vertolka's commentary ([`LineDrops::note`]); every number it states is
 //!   also on poedb, and poedb is cited for those.
 //! - [`VERTOLKA_MSG`] — Vertolka's 2026-09-06 message quoted on POE-124. Every
 //!   number from it is a [`Basis::Guess`], because he said so: "price of unique
 //!   divided by 4" (hence 0.25 per run at tier 3).
-//!
-//! [`TempleMod::worth`] is the one field here that is a VERDICT rather than a
-//! number, and it has its own source — Vertolka's 2026-09-10 Discord message.
-//! See [`Worth`].
 //!
 //! # Uniques drop at tier 3 only
 //!
@@ -51,15 +47,8 @@
 //! per-tier chest-unique chance, so his 0.25 stays a flat tier-3 number on the
 //! six lines whose sheet row names a unique.
 //!
-//! The same pages print a per-tier item stat on four of those lines —
-//! `map incursion boss chance to drop <tag> item % [33/66/100]`, on Conduit of
-//! Lightning, Crucible of Flame, Hybridisation Chamber and Sanctum of
-//! Immortality — and [`TierDrops::mod_item_chance_raw`] is that integer,
-//! verbatim: raw, unscaled, never multiplied by a price. Nobody has stated an
-//! anchor for it, so there is no ratio to hang it off. It is the game's own
-//! per-tier handle on how often the architect's signature rare
-//! ([`TempleMod`]) drops. Defense Research Lab and Toxic Grove
-//! name a temple mod but their pages print no such stat, so both are `None`.
+//! No line carries the architect's temple-mod items: 3.30 removed every
+//! source of them (POE-367).
 //!
 //! # Where the two sources disagree
 //!
@@ -70,8 +59,7 @@
 //!
 //! # What this table deliberately does not model
 //!
-//! The schema is numeric — counts per run, percentages, and the raw poedb
-//! item-chance stat. Eight further statements on those pages and on the sheet are
+//! The schema is numeric — counts per run and percentages. Eight further statements on those pages and on the sheet are
 //! real drops or real bonuses with no number and no field here. They are
 //! listed rather than passed over in silence, because a reader of this table
 //! would otherwise conclude the rooms state nothing.
@@ -112,8 +100,8 @@ use super::strategy::Tier;
 /// The room's own page on poedb.tw (`https://poedb.tw/us/<Room_Name>`), read
 /// 2026-09-06 for all 75 tiered rooms.
 pub const POEDB: &str = "poedb.tw room page, 2026-09-06";
-/// Vertolka's room sheet, read 2026-09-06 — the architect mod-group names and
-/// the item hints.
+/// Vertolka's room sheet, read 2026-09-06 — the source of [`LineDrops::note`].
+#[allow(dead_code)] // Named by the docs only since POE-367 removed the temple-mod rows that cited it.
 pub const VERTOLKA_SHEET: &str = "Vertolka's sheet, 2026-09-06";
 /// Vertolka's 2026-09-06 message, quoted on epic POE-124. Everything sourced
 /// here is a [`Basis::Guess`]; he offered the numbers as his own estimates.
@@ -217,120 +205,6 @@ fn any_guess(estimates: &[Option<Estimate>]) -> bool {
         .any(|e| matches!(e, Some(estimate) if estimate.is_guess()))
 }
 
-// -------------------------------------------------------------- temple mod --
-
-/// An item class an architect's mod family can roll on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Slot {
-    Helmet,
-    BodyArmour,
-    Gloves,
-    Boots,
-    Amulet,
-    Ring,
-    Belt,
-    Shield,
-    Weapon,
-}
-
-impl Slot {
-    /// The stable wire spelling used by the temple offer view.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Slot::Helmet => "helmet",
-            Slot::BodyArmour => "body_armour",
-            Slot::Gloves => "gloves",
-            Slot::Boots => "boots",
-            Slot::Amulet => "amulet",
-            Slot::Ring => "ring",
-            Slot::Belt => "belt",
-            Slot::Shield => "shield",
-            Slot::Weapon => "weapon",
-        }
-    }
-}
-
-/// Whether a mod family is one to chase, one to ignore, or neither.
-///
-/// A VERDICT on the family itself and not on this read's prices — which is why
-/// it lives beside the name here: this table carries no price for a mod
-/// family, so there is nothing a price-derived rule could grade.
-///
-/// Source: Vertolka's verdict on the mod family itself, 2026-09-10 Discord:
-/// *"make Puhuarte green and Matatl red"*. Everything he did not name is
-/// [`Worth::Neutral`] — the absence of a verdict, not a middling one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Worth {
-    /// Worth chasing.
-    Good,
-    /// Junk.
-    Junk,
-    /// Nobody has graded this family.
-    Neutral,
-}
-
-impl Worth {
-    /// The stable wire spelling used by the temple offer view.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Worth::Good => "good",
-            Worth::Junk => "junk",
-            Worth::Neutral => "neutral",
-        }
-    }
-}
-
-/// The architect's signature rare — items that roll a mod group only this room
-/// can produce.
-///
-/// No room value carries a term for it: 3.30 removed every source of these
-/// items (POE-367), and poe.ninja prices no mod-rolled rare anyway.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TempleMod {
-    architect: &'static str,
-    item_hint: &'static str,
-    /// Item classes this mod family can roll on, from the source named on the row.
-    slots: &'static [Slot],
-    /// Vertolka's verdict on the mod family itself (2026-09-10, see [`Worth`]).
-    worth: Worth,
-    source: &'static str,
-}
-
-impl TempleMod {
-    /// The architect whose name the mod group is known by — "Puhuarte",
-    /// "Guatelitzi". Spelled as the game spells the boss on the room's poedb
-    /// page, which is also how [`VERTOLKA_SHEET`] writes it.
-    pub fn architect(self) -> &'static str {
-        self.architect
-    }
-
-    /// What the mod lands on, in Vertolka's words — "temple gloves", "jewellery
-    /// with mana modifiers". Prose for the overlay, never a join key.
-    pub fn item_hint(self) -> &'static str {
-        self.item_hint
-    }
-
-    /// What item classes this mod family can roll on, from the wiki tables.
-    pub fn slots(self) -> &'static [Slot] {
-        self.slots
-    }
-
-    /// Vertolka's verdict on the mod family itself — what colours the offer
-    /// box's mod name (POE-277). See [`Worth`] for the source and the rule.
-    pub fn worth(self) -> Worth {
-        self.worth
-    }
-
-    /// Who named the mod group and the item hint. Always [`VERTOLKA_SHEET`]:
-    /// the sheet's `temple mod` column is the only place either is written
-    /// down. The architect's spelling is normalised to the boss name on the
-    /// room's poedb page ("Guatelitzi", not the sheet's "guatelitzi").
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
-    pub fn source(self) -> &'static str {
-        self.source
-    }
-}
-
 // --------------------------------------------------------------- per tier --
 
 /// What one tier of one line is expected to drop.
@@ -340,7 +214,6 @@ impl TempleMod {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TierDrops {
     uniques_per_run: Option<Estimate>,
-    mod_item_chance_raw: Option<u32>,
     quantity_pct: Option<Estimate>,
     rarity_pct: Option<Estimate>,
     pack_size_pct: Option<Estimate>,
@@ -351,7 +224,6 @@ impl TierDrops {
     /// for the lines with no chest and no area bonus.
     pub const NONE: TierDrops = TierDrops {
         uniques_per_run: None,
-        mod_item_chance_raw: None,
         quantity_pct: None,
         rarity_pct: None,
         pack_size_pct: None,
@@ -361,17 +233,6 @@ impl TierDrops {
     /// the game drops the chest unique at tier 3 only.
     pub fn uniques_per_run(self) -> Option<Estimate> {
         self.uniques_per_run
-    }
-
-    /// poedb's `map incursion boss chance to drop <tag> item % [N]` integer,
-    /// verbatim, on the four lines whose page prints it (33 / 66 / 100 across the tiers). It is
-    /// the game's own handle on how often the architect's signature rare
-    /// ([`TempleMod`]) actually drops, and the same caveat applies: **raw, the
-    /// page prints no scale, not an [`Estimate`]** — no anchor has been stated
-    /// for it, so it stays raw and unmultiplied.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
-    pub fn mod_item_chance_raw(self) -> Option<u32> {
-        self.mod_item_chance_raw
     }
 
     /// `increased Quantity of Items found in this Area`, in percent.
@@ -419,7 +280,6 @@ pub struct LineDrops {
     /// UNCONFIRMED — the owner / Vertolka are to confirm each string. Prose for
     /// the box, never a join key.
     content: Option<&'static str>,
-    temple_mod: Option<TempleMod>,
     note: Option<&'static str>,
     tiers: [TierDrops; 3],
 }
@@ -480,11 +340,6 @@ impl LineDrops {
         }
     }
 
-    /// The architect's signature rare, where the room produces one.
-    pub fn temple_mod(self) -> Option<TempleMod> {
-        self.temple_mod
-    }
-
     /// Vertolka's own `Commentary` cell for this line, **verbatim** —
     /// [`VERTOLKA_SHEET`] is the source and its typos are his ("you should't
     /// need it", the stray closing bracket on Wealth of the Vaal). Nine of the
@@ -517,9 +372,7 @@ impl LineDrops {
     /// Whether this line drops nothing anybody has quantified or named.
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn is_empty(&self) -> bool {
-        self.unique.is_none()
-            && self.temple_mod.is_none()
-            && self.tiers.iter().all(|t| t.is_empty())
+        self.unique.is_none() && self.tiers.iter().all(|t| t.is_empty())
     }
 
     /// **Is anything in this room's value guessed?** POE-257 reads it to weight
@@ -551,7 +404,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "apex_of_ascension",
         unique: None,
         content: Some("Sacrifice a unique, get a random one"),
-        temple_mod: None,
         note: None,
         tiers: [
             TierDrops::NONE,
@@ -563,7 +415,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "atlas_of_worlds",
         unique: None,
         content: Some("Map drops"),
-        temple_mod: None,
         note: None,
         tiers: [
             TierDrops::NONE,
@@ -575,26 +426,22 @@ pub const DROPS: [LineDrops; 25] = [
         key: "chamber_of_iron",
         unique: None,
         content: Some("Armour drops"),
-        temple_mod: None,
         note: Some("sometimes can drop temple mod item + fracture/veiled items"),
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
@@ -605,35 +452,22 @@ pub const DROPS: [LineDrops; 25] = [
         key: "conduit_of_lightning",
         unique: Some("Dance of the Offered"),
         content: None,
-        temple_mod: Some(TempleMod {
-            architect: "Xopec",
-            item_hint: "jewellery with mana modifiers",
-            // Source: poewiki modifier tables ("Xopec's" and "of Xopec"),
-            // union of the Classes column, owner-pasted 2026-09-10; every
-            // weapon class folds into Weapon.
-            slots: &[Slot::Helmet, Slot::Gloves, Slot::Boots, Slot::Amulet, Slot::Ring],
-            worth: Worth::Neutral,
-            source: VERTOLKA_SHEET,
-        }),
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: Some(33),
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: Some(66),
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                mod_item_chance_raw: Some(100),
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
@@ -644,7 +478,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "court_of_sealed_death",
         unique: None,
         content: Some("Arcanist & Diviner strongboxes"),
-        temple_mod: None,
         note: Some("In T3 Arcanist and Diviner Stronboxes are quite common"),
         tiers: [
             TierDrops::NONE,
@@ -656,35 +489,22 @@ pub const DROPS: [LineDrops; 25] = [
         key: "crucible_of_flame",
         unique: Some("Story of the Vaal"),
         content: None,
-        temple_mod: Some(TempleMod {
-            architect: "Puhuarte",
-            item_hint: "temple gloves",
-            // Source: poewiki modifier tables ("Puhuarte's" and "of Puhuarte"),
-            // union of the Classes column, owner-pasted 2026-09-10; every
-            // weapon class folds into Weapon.
-            slots: &[Slot::Helmet, Slot::Gloves, Slot::Amulet],
-            worth: Worth::Good,
-            source: VERTOLKA_SHEET,
-        }),
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: Some(33),
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: Some(66),
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                mod_item_chance_raw: Some(100),
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
@@ -695,38 +515,22 @@ pub const DROPS: [LineDrops; 25] = [
         key: "defense_research_lab",
         unique: Some("Architect's Hand"),
         content: None,
-        temple_mod: Some(TempleMod {
-            architect: "Matatl",
-            // The sheet's tier-3 column names two things, not one: "mine/trap
-            // items + 30% movespeed boots". Dropping the boots would lose a
-            // whole item class from the hint (VERTOLKA_SHEET).
-            item_hint: "items with trap and mine modifiers, + 30% movespeed boots",
-            // Source: poewiki modifier tables ("Matatl's" and "of Matatl"),
-            // union of the Classes column, owner-pasted 2026-09-10; every
-            // weapon class folds into Weapon.
-            slots: &[Slot::Boots, Slot::Weapon],
-            worth: Worth::Junk,
-            source: VERTOLKA_SHEET,
-        }),
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
@@ -737,7 +541,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "gem",
         unique: None,
         content: Some("Double-corrupt a gem"),
-        temple_mod: None,
         note: None,
         tiers: [
             TierDrops::NONE,
@@ -749,26 +552,22 @@ pub const DROPS: [LineDrops; 25] = [
         key: "factory",
         unique: None,
         content: Some("Extra item quantity"),
-        temple_mod: None,
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(22.0, FACTORY_QUANTITY)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(44.0, FACTORY_QUANTITY)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(66.0, FACTORY_QUANTITY)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
@@ -779,26 +578,22 @@ pub const DROPS: [LineDrops; 25] = [
         key: "glittering_halls",
         unique: None,
         content: Some("Jewellery drops"),
-        temple_mod: None,
         note: Some("sometimes can drop fractured item"),
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: Some(Estimate::measured(20.0, POEDB)),
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: Some(Estimate::measured(40.0, POEDB)),
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: Some(Estimate::measured(60.0, POEDB)),
                 pack_size_pct: None,
@@ -809,26 +604,22 @@ pub const DROPS: [LineDrops; 25] = [
         key: "hall_of_champions",
         unique: None,
         content: Some("Weapon drops"),
-        temple_mod: None,
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
@@ -839,7 +630,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "hall_of_legends",
         unique: None,
         content: Some("Legion encounter"),
-        temple_mod: None,
         note: Some("there are much better ways how to farm legion"),
         tiers: [
             TierDrops::NONE,
@@ -851,26 +641,22 @@ pub const DROPS: [LineDrops; 25] = [
         key: "hall_of_war",
         unique: None,
         content: Some("Rare monster packs"),
-        temple_mod: None,
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: Some(Estimate::measured(10.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: Some(Estimate::measured(20.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: Some(Estimate::measured(30.0, POEDB)),
@@ -881,7 +667,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "house_of_the_others",
         unique: None,
         content: Some("Breach encounter"),
-        temple_mod: None,
         note: None,
         tiers: [
             TierDrops::NONE,
@@ -898,35 +683,22 @@ pub const DROPS: [LineDrops; 25] = [
         // page, 2026-09-06). Legacy is the upgrade, and belongs to POE-255.
         unique: Some("Coward's Chains"),
         content: None,
-        temple_mod: Some(TempleMod {
-            architect: "Citaqualotl",
-            item_hint: "items with minion modifiers",
-            // Source: poewiki modifier tables ("Citaqualotl's" and "of
-            // Citaqualotl"), union of the Classes column, owner-pasted
-            // 2026-09-10; every weapon class folds into Weapon.
-            slots: &[Slot::Weapon],
-            worth: Worth::Neutral,
-            source: VERTOLKA_SHEET,
-        }),
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: Some(33),
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: Some(66),
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                mod_item_chance_raw: Some(100),
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
@@ -942,26 +714,22 @@ pub const DROPS: [LineDrops; 25] = [
         // chest.
         unique: None,
         content: Some("Double-corrupt an item"),
-        temple_mod: None,
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
@@ -972,7 +740,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "museum_of_artefacts",
         unique: None,
         content: Some("Extra item drops"),
-        temple_mod: None,
         note: Some("nothing worth much"),
         tiers: [
             TierDrops::NONE,
@@ -984,7 +751,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "sadists_den",
         unique: None,
         content: Some("Extra monsters (dangerous)"),
-        temple_mod: None,
         note: None,
         tiers: [
             TierDrops::NONE,
@@ -996,35 +762,22 @@ pub const DROPS: [LineDrops; 25] = [
         key: "sanctum_of_immortality",
         unique: Some("Mask of the Spirit Drinker"),
         content: None,
-        temple_mod: Some(TempleMod {
-            architect: "Guatelitzi",
-            item_hint: "items with life and energy-shield modifiers",
-            // Source: poewiki modifier tables ("Guatelitzi's" and "of
-            // Guatelitzi"), union of the Classes column, owner-pasted
-            // 2026-09-10; every weapon class folds into Weapon.
-            slots: &[Slot::BodyArmour, Slot::Amulet, Slot::Ring, Slot::Belt],
-            worth: Worth::Neutral,
-            source: VERTOLKA_SHEET,
-        }),
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: Some(33),
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: Some(66),
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                mod_item_chance_raw: Some(100),
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
@@ -1035,7 +788,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "explosive",
         unique: None,
         content: Some("Destroy rooms / explosives"),
-        temple_mod: None,
         note: Some("usually you should't need it"),
         tiers: [
             TierDrops::NONE,
@@ -1047,16 +799,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "storm_of_corruption",
         unique: None,
         content: Some("Corrupting tempest"),
-        temple_mod: Some(TempleMod {
-            architect: "Topotante",
-            item_hint: "weapons with elemental offence modifiers, gloves with physical-to-elemental conversion",
-            // Source: poewiki modifier tables ("Topotante's" and "of
-            // Topotante"), union of the Classes column, owner-pasted
-            // 2026-09-10; every weapon class folds into Weapon.
-            slots: &[Slot::Gloves, Slot::Shield, Slot::Weapon],
-            worth: Worth::Neutral,
-            source: VERTOLKA_SHEET,
-        }),
         note: Some("corrupting tempest can be good in early league for corrupted 6-links"),
         tiers: [
             TierDrops::NONE,
@@ -1068,26 +810,22 @@ pub const DROPS: [LineDrops; 25] = [
         key: "upgrade",
         unique: None,
         content: Some("Upgrade a room"),
-        temple_mod: None,
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
@@ -1098,26 +836,22 @@ pub const DROPS: [LineDrops; 25] = [
         key: "throne_of_atziri",
         unique: None,
         content: Some("Queen Atziri"),
-        temple_mod: None,
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
@@ -1128,39 +862,22 @@ pub const DROPS: [LineDrops; 25] = [
         key: "toxic_grove",
         unique: Some("Apep's Slumber"),
         content: None,
-        temple_mod: Some(TempleMod {
-            architect: "Tacati",
-            // Vertolka's own trailing caveat, kept verbatim: one of the mods he
-            // lists is no longer in the drop pool and the wikis still print it,
-            // so the hint has to carry the correction with the claim
-            // (VERTOLKA_SHEET).
-            item_hint: "weapons with attack- and cast-speed, physical offence or spell-trigger modifiers, body armour with chaos resistance, note: caster mod dont drop - legacy - wiki dont update this change",
-            // Source: poewiki modifier tables ("Tacati's" and "of Tacati"),
-            // union of the Classes column, owner-pasted 2026-09-10; every
-            // weapon class folds into Weapon.
-            slots: &[Slot::BodyArmour, Slot::Shield, Slot::Weapon],
-            worth: Worth::Neutral,
-            source: VERTOLKA_SHEET,
-        }),
         note: Some("can be good with corrupting tempest for 6-link farming"),
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                mod_item_chance_raw: None,
                 quantity_pct: None,
                 rarity_pct: None,
                 pack_size_pct: None,
@@ -1171,7 +888,6 @@ pub const DROPS: [LineDrops; 25] = [
         key: "wealth_of_the_vaal",
         unique: None,
         content: Some("Currency drops"),
-        temple_mod: None,
         note: Some("couple of currency usually max. 10c value - maybe worth in Early League)"),
         tiers: [
             TierDrops::NONE,
@@ -1257,168 +973,12 @@ mod tests {
         ),
     ];
 
-    /// poedb's raw mod-item chance stat, read a **second** time out of the
-    /// POE-256 evidence set (`poedb-pct.json`, the `map incursion boss chance
-    /// to drop <tag> item % [N]` lines of the 75 fetched pages) rather than
-    /// copied out of [`DROPS`]. Two independent transcriptions of the same
-    /// pages: a slipped digit in either one shows up as a mismatch, which is
-    /// the only way a plausible-looking wrong integer gets caught.
-    ///
-    /// Key, then the mod-item stat at tiers 1/2/3.
-    const POEDB_RAW_CHANCES: [(&str, [u32; 3]); 4] = [
-        ("conduit_of_lightning", [33, 66, 100]),
-        ("crucible_of_flame", [33, 66, 100]),
-        ("hybridisation_chamber", [33, 66, 100]),
-        ("sanctum_of_immortality", [33, 66, 100]),
-    ];
 
     // ------------------------------------------------------------ shape --
 
-    #[test]
-    fn every_slot_has_a_unique_snake_case_wire_name() {
-        // Fails if a variant is added without a row here
-        let slots = [
-            (Slot::Helmet, "helmet"),
-            (Slot::BodyArmour, "body_armour"),
-            (Slot::Gloves, "gloves"),
-            (Slot::Boots, "boots"),
-            (Slot::Amulet, "amulet"),
-            (Slot::Ring, "ring"),
-            (Slot::Belt, "belt"),
-            (Slot::Shield, "shield"),
-            (Slot::Weapon, "weapon"),
-        ];
 
-        for (slot, expected) in slots {
-            let actual = slot.as_str();
-            assert_eq!(actual, expected, "{slot:?} wire name");
-        }
-    }
 
-    #[test]
-    fn every_worth_has_its_own_wire_spelling() {
-        // These three strings are the whole contract with the overlay:
-        // `LineView.mod_worth` carries one of them and `view.ts`'s `modWorth`
-        // guard recognises `good` and `junk` by spelling, dropping anything
-        // else to `neutral`. So a retyped or swapped arm here does not fail
-        // anywhere downstream — it reaches the box as a mod nobody graded, or
-        // as the opposite verdict, in a colour.
-        let worths = [(Worth::Good, "good"), (Worth::Junk, "junk"), (Worth::Neutral, "neutral")];
 
-        for (worth, expected) in worths {
-            assert_eq!(worth.as_str(), expected, "{worth:?} wire name");
-        }
-    }
-
-    // Fails if a slot is swapped, if a verdict moves to another family, or if a
-    // temple-mod row is added or removed.
-    //
-    // The `worth` column joined this table rather than getting a test of its
-    // own because it is the same fact as the other two — the row — and it is
-    // Vertolka's 2026-09-10 message in full: *"make Puhuarte green and Matatl
-    // red"*, and the five families he did not name are `Neutral`. The five
-    // matter as much as the two: `Neutral` is the absence of a verdict, so a
-    // family that quietly acquired one would colour a mod name on the overlay
-    // off nobody's word.
-    #[test]
-    fn temple_mod_rows_carry_their_architect_slot_table_and_worth() {
-        const EXPECTED: [(&str, &str, &[Slot], Worth); 7] = [
-            (
-                "conduit_of_lightning",
-                "Xopec",
-                &[Slot::Helmet, Slot::Gloves, Slot::Boots, Slot::Amulet, Slot::Ring],
-                Worth::Neutral,
-            ),
-            (
-                "crucible_of_flame",
-                "Puhuarte",
-                &[Slot::Helmet, Slot::Gloves, Slot::Amulet],
-                Worth::Good,
-            ),
-            ("defense_research_lab", "Matatl", &[Slot::Boots, Slot::Weapon], Worth::Junk),
-            ("hybridisation_chamber", "Citaqualotl", &[Slot::Weapon], Worth::Neutral),
-            (
-                "sanctum_of_immortality",
-                "Guatelitzi",
-                &[Slot::BodyArmour, Slot::Amulet, Slot::Ring, Slot::Belt],
-                Worth::Neutral,
-            ),
-            (
-                "storm_of_corruption",
-                "Topotante",
-                &[Slot::Gloves, Slot::Shield, Slot::Weapon],
-                Worth::Neutral,
-            ),
-            (
-                "toxic_grove",
-                "Tacati",
-                &[Slot::BodyArmour, Slot::Shield, Slot::Weapon],
-                Worth::Neutral,
-            ),
-        ];
-
-        let actual_keys: Vec<&str> = DROPS
-            .iter()
-            .filter_map(|row| row.temple_mod().map(|_| row.key()))
-            .collect();
-        let expected_keys: Vec<&str> = EXPECTED.iter().map(|(key, _, _, _)| *key).collect();
-        assert_eq!(actual_keys, expected_keys, "temple mod rows changed");
-
-        for (key, architect, slots, worth) in EXPECTED {
-            let temple_mod = drops_for(key)
-                .temple_mod()
-                .unwrap_or_else(|| panic!("{key} must carry a temple mod"));
-            assert_eq!(temple_mod.architect(), architect, "{key} architect");
-            assert_eq!(temple_mod.slots(), slots, "{key} slots");
-            assert_eq!(temple_mod.worth(), worth, "{key} worth");
-        }
-    }
-
-    // The overlay draws the "Appears on:" glyphs straight off this array, so
-    // the array's order IS the reading order: armour top-to-bottom, then
-    // jewellery, then shield, then weapon. The wiki's Classes column is in a
-    // different order, and a row transcribed from it lands here. Fails on a
-    // row written in column order, and on a slot listed twice.
-    #[test]
-    fn every_temple_mod_lists_its_slots_in_display_order() {
-        const DISPLAY_ORDER: [Slot; 9] = [
-            Slot::Helmet,
-            Slot::BodyArmour,
-            Slot::Gloves,
-            Slot::Boots,
-            Slot::Amulet,
-            Slot::Ring,
-            Slot::Belt,
-            Slot::Shield,
-            Slot::Weapon,
-        ];
-        let rank = |slot: Slot| {
-            DISPLAY_ORDER
-                .iter()
-                .position(|candidate| *candidate == slot)
-                .expect("DISPLAY_ORDER names every variant")
-        };
-
-        let mut checked = 0;
-        for row in DROPS.iter() {
-            let Some(temple_mod) = row.temple_mod() else {
-                continue;
-            };
-            let ranks: Vec<usize> = temple_mod.slots().iter().map(|slot| rank(*slot)).collect();
-            let mut ascending = ranks.clone();
-            ascending.sort_unstable();
-            ascending.dedup();
-            assert_eq!(
-                ranks,
-                ascending,
-                "{} lists {:?}, not display order",
-                row.key(),
-                temple_mod.slots()
-            );
-            checked += 1;
-        }
-        assert_eq!(checked, 7, "the temple-mod rows moved out from under this");
-    }
 
     // DROPS is keyed 1:1 on LINES and in the same order, which is what makes
     // RoomLine::drops total rather than a lookup that can miss. Fails if a row
@@ -1526,6 +1086,44 @@ mod tests {
         }
     }
 
+    // POE-367 acceptance: "The room's global temple-modifier text is
+    // unchanged." Every row's content prose, in DROPS order, pinned in one
+    // table. Fails if any line's text is edited, blanked or moved.
+    #[test]
+    fn every_rooms_global_modifier_text_is_unchanged() {
+        const EXPECTED: [(&str, Option<&str>); 25] = [
+            ("apex_of_ascension", Some("Sacrifice a unique, get a random one")),
+            ("atlas_of_worlds", Some("Map drops")),
+            ("chamber_of_iron", Some("Armour drops")),
+            ("conduit_of_lightning", None),
+            ("court_of_sealed_death", Some("Arcanist & Diviner strongboxes")),
+            ("crucible_of_flame", None),
+            ("defense_research_lab", None),
+            ("gem", Some("Double-corrupt a gem")),
+            ("factory", Some("Extra item quantity")),
+            ("glittering_halls", Some("Jewellery drops")),
+            ("hall_of_champions", Some("Weapon drops")),
+            ("hall_of_legends", Some("Legion encounter")),
+            ("hall_of_war", Some("Rare monster packs")),
+            ("house_of_the_others", Some("Breach encounter")),
+            ("hybridisation_chamber", None),
+            ("corruption", Some("Double-corrupt an item")),
+            ("museum_of_artefacts", Some("Extra item drops")),
+            ("sadists_den", Some("Extra monsters (dangerous)")),
+            ("sanctum_of_immortality", None),
+            ("explosive", Some("Destroy rooms / explosives")),
+            ("storm_of_corruption", Some("Corrupting tempest")),
+            ("upgrade", Some("Upgrade a room")),
+            ("throne_of_atziri", Some("Queen Atziri")),
+            ("toxic_grove", None),
+            ("wealth_of_the_vaal", Some("Currency drops")),
+        ];
+
+        let carried: Vec<(&str, Option<&str>)> =
+            DROPS.iter().map(|row| (row.key(), row.content())).collect();
+        assert_eq!(carried, EXPECTED);
+    }
+
     /// The kind is DERIVED rather than stored, and this is what that buys: the
     /// two facts cannot drift apart the way a second column would let them.
     /// A row with a chest unique draws the `A + B -> C` recipe and a row
@@ -1626,36 +1224,29 @@ mod tests {
     // empty line is filled in, or if is_empty stops looking at a field.
     #[test]
     fn a_line_with_no_drops_reports_empty_and_nothing_guessed() {
-        for key in ["museum_of_artefacts", "wealth_of_the_vaal", "sadists_den"] {
+        for key in [
+            "museum_of_artefacts",
+            "wealth_of_the_vaal",
+            "sadists_den",
+            "storm_of_corruption",
+        ] {
             let row = drops_for(key);
             assert!(row.is_empty(), "{key} is not empty");
             assert!(!row.has_guess(), "{key} has a guess but no drops");
             assert_eq!(row.unique(), None, "{key} names a unique");
-            assert_eq!(row.temple_mod(), None, "{key} names a temple mod");
             for drops in row.tiers() {
                 assert!(drops.is_empty(), "{key} has a non-empty tier");
                 assert_eq!(drops.quantity_pct(), None);
             }
         }
 
-        // The other side of the same contract: Hall of War names no unique and
-        // no temple mod, so only its per-tier pack size keeps it off
-        // the empty list. A line that drops something is not empty.
+        // The other side of the same contract: Hall of War names no unique, so only its
+        // per-tier pack size keeps it off the empty list. A line that drops something is not empty.
         let hall_of_war = drops_for("hall_of_war");
         assert_eq!(hall_of_war.unique(), None);
-        assert_eq!(hall_of_war.temple_mod(), None);
         assert!(
             !hall_of_war.is_empty(),
             "Hall of War carries a pack-size bonus, so it is not empty"
-        );
-
-        // And the temple-mod half of the same clause. Storm of Corruption's
-        // three tiers are all NONE and it names no unique, so the
-        // architect's mod group is the only thing keeping it off the empty
-        // list. Fails if is_empty stops looking at temple_mod.
-        assert!(
-            !drops_for("storm_of_corruption").is_empty(),
-            "a named temple mod is not nothing"
         );
     }
 
@@ -1663,7 +1254,7 @@ mod tests {
     // prices; Locus of Corruption has no chest unique — its altar makes
     // Shadowstitch from the Sacrificial Garb the player brings. Fails if the
     // 0.25 is applied to Locus by pattern rather than because his sheet
-    // states it, or if a temple mod or bonus is transcribed onto it.
+    // states it, or if a bonus is transcribed onto it.
     #[test]
     fn the_rushed_lines_name_no_unique_rate() {
         let doryani = drops_for("gem");
@@ -1671,7 +1262,6 @@ mod tests {
 
         let locus = drops_for("corruption");
         assert_eq!(locus.unique(), None);
-        assert_eq!(locus.temple_mod(), None);
         for (index, drops) in locus.tiers().iter().enumerate() {
             assert_eq!(
                 drops.uniques_per_run(),
@@ -1799,31 +1389,4 @@ mod tests {
         }
     }
 
-    // The raw poedb integers have no internal shape to check them against, so
-    // the check is a second transcription of the same pages, made from the
-    // evidence set rather than from this file. Fails on a single wrong digit
-    // in the 12 mod-item values, and on the stat given to a fifth line.
-    #[test]
-    fn the_raw_poedb_chances_match_a_second_transcription_of_the_pages() {
-        for (key, item) in POEDB_RAW_CHANCES {
-            let stored_item: Vec<Option<u32>> = drops_for(key)
-                .tiers()
-                .iter()
-                .map(|t| t.mod_item_chance_raw())
-                .collect();
-            assert_eq!(stored_item, item.map(Some).to_vec(), "{key} mod-item chance");
-        }
-
-        let transcribed: Vec<&str> = POEDB_RAW_CHANCES.iter().map(|(key, _)| *key).collect();
-        for row in DROPS.iter().filter(|row| !transcribed.contains(&row.key())) {
-            for drops in row.tiers() {
-                assert_eq!(
-                    drops.mod_item_chance_raw(),
-                    None,
-                    "{} carries an untranscribed mod-item chance",
-                    row.key()
-                );
-            }
-        }
-    }
 }

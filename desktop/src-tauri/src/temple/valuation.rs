@@ -23,21 +23,16 @@
 //! the line being present at all, because the 50 % double-tier node and the
 //! Timelines scarab act on the line, not on the tier.
 //!
-//! # Three terms have no price, and say so rather than reading zero
+//! # Two terms have no price, and say so rather than reading zero
 //!
 //! - **Pack size.** [`drops::TierDrops::pack_size_pct`](super::drops::TierDrops::pack_size_pct)
 //!   carries poedb's measured percentage, and nobody has stated what a point of
 //!   it is worth. There is no `c_per_pack_size` knob and no driver: inventing a
 //!   rate would put a fabricated number in the total, and pricing it at zero
 //!   would claim pack size is worthless. It is simply not in the sum, and it is
-//!   the one stated exception to the third bullet below: a term left out is
+//!   the one stated exception to the last bullet below: a term left out is
 //!   still listed, but a driver has to be listed against a rate, and pack size
 //!   has none.
-//! - **The raw poedb mod-item chance integer.**
-//!   [`mod_item_chance_raw`](super::drops::TierDrops::mod_item_chance_raw) is 33
-//!   / 66 / 100 with no scale printed anywhere, and nobody has stated a per-run
-//!   rate to anchor it on. It is never multiplied here, and 3.30 removed the
-//!   items it described (POE-367), so no term prices them.
 //! - **A term with no count or no price** contributes nothing and is still
 //!   listed as a [`Driver`] with `chaos: None`, so the explanation box shows
 //!   what was left out instead of quietly showing a smaller total.

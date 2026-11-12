@@ -292,47 +292,45 @@ export const DIAGONAL_BUDGET_CSS = 316;
 export const FULL_BOX_BUDGET_CSS = DIAGONAL_BUDGET_CSS + 7;
 
 /**
- * The tallest a FULL offer box can actually be, CSS px (POE-277, v5).
+ * The tallest a FULL offer box can actually be, CSS px (POE-277, v5; POE-367).
  *
  * Summed from `TempleOfferBoxes.svelte`'s own fixed row heights — every row in
  * the full form is a `height` or a `line-height` with a stated margin, which is
  * what makes a box's geometry a function of its SHAPE — for the worst case
  * this wording can produce: a box with a sale row, an item row carrying a
- * rare unique's rate caption, the room-bonus row, the temple mod with
- * slot chips wrapped to two rows, the market warning line, and the four
- * section hairlines those five sections put between themselves.
+ * rare unique's rate caption, the room-bonus row, the architect line, the
+ * market warning line, and the four section hairlines those five sections
+ * put between themselves.
  *
  *     border 2x2 4 + padding 2x10 20 + header (26 + 15) 41
  *     + 4 rules x (6 + 1 + 6) 52
  *     + sale 18 + items (8 + 69) 77
  *     + room bonuses (18 + 13) 31
- *     + mod (18 + 5 + 14 + 4 + 14) 55
- *     + market line 13 = 311
+ *     + architect 18
+ *     + market line 13 = 274
  *
- * The 316 px diagonal budget therefore has 5 px of spare height, where v4's
- * 269 px box had 47: the restyle bought air, a price under every icon, a word
- * under every ladder, slot chips and four hairlines with the rest. Any row
- * added here is a decision about what the box DROPS.
+ * The 316 px diagonal budget therefore has 42 px of spare height: 3.30 removed
+ * the temple-mod items (POE-367), and the 55 px mod block with its two chip
+ * rows became the architect's one 18 px name. Any row added here is still a
+ * decision about what the box DROPS.
  *
- * Three rows are deliberately outside the sum:
+ * Two rows are deliberately outside the sum:
  *
- * - `fold` (13 + 3) is unreachable — `view.ts`'s `ROW_KINDS` has three entries
- *   and the mod is removed from the drop rows before the component sees the
- *   box, so `driverCount` cannot pass `FULL_DRIVER_ROWS`;
+ * - `fold` (13 + 3) is unreachable — `view.ts`'s `ROW_KINDS` has two entries,
+ *   so `driverCount` cannot pass `FULL_DRIVER_ROWS`;
  * - `note` (a wrapping 15 px line) fires only for `instrumental`, `override`
  *   and a line that drops nothing, and every one of those has no item row —
- *   it REPLACES the shape it would otherwise extend;
- * - a one-row slot-chip line, because two rows is the worst case and both
- *   heights are already a shape `offerBoxSignature` re-enters on.
+ *   it REPLACES the shape it would otherwise extend (a content line keeps its
+ *   row, and its tallest such box is 262 px).
  *
  * Not measured from the DOM because this app has no DOM harness for a
  * `.svelte` file; `overlay-geometry.test.ts` restates the row table beside the
  * constant so a row added to the component without a number here fails.
  */
-export const FULL_BOX_MAX_CSS = 311;
+export const FULL_BOX_MAX_CSS = 274;
 
 /** What two FULL boxes and the gap between them need, CSS px —
- * `311 * 2 + STACK_GAP_CSS` = 630. This is the clearance [`offersCompact`]
+ * `274 * 2 + STACK_GAP_CSS` = 556. This is the clearance [`offersCompact`]
  * demands before it lets the pair render full.
  * It uses the WORST case rather than the design's typical one, because the box
  * that gets clamped for want of it is the LOWER one, and a clamped box lands
@@ -349,8 +347,8 @@ export const FULL_PAIR_CSS = FULL_BOX_MAX_CSS * 2 + STACK_GAP_CSS;
  * reads as a summary.
  *
  * **Unreachable as the wording stands**, and kept anyway. `view.ts`'s
- * `ROW_KINDS` has three entries — sale, unique drop, mod item — and a room
- * publishes at most one driver of each, so `driverCount` cannot exceed 3
+ * `ROW_KINDS` has two entries — sale and unique drop — and a room
+ * publishes at most one driver of each, so `driverCount` cannot exceed 2
  * today and this trigger never fires. It fires the day enough `ROW_KINDS` are
  * added, which is the day the fold would start hiding as much as it shows; a
  * collapse rule that only appeared then would be a rule written under the

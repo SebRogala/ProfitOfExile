@@ -609,24 +609,6 @@ pub struct LineView {
     /// The draft prose for a content line, or `null` for a chest line.
     #[serde(default)]
     pub content: Option<String>,
-    /// The architect the mod group is known by, or `null` where the line has
-    /// no signature rare.
-    pub mod_architect: Option<String>,
-    /// What the mod lands on in Vertolka's words. Prose, never a join key.
-    pub mod_hint: Option<String>,
-    /// Item classes the mod family rolls on, `Slot::as_str` spellings from the
-    /// verified poewiki tables. Empty when the line has no mod.
-    pub mod_slots: Vec<String>,
-    /// Vertolka's verdict on the mod family — `"good"`, `"junk"` or
-    /// `"neutral"` ([`Worth::as_str`](super::drops::Worth::as_str)), `null`
-    /// where the line has no mod. It is what COLOURS the offer box's mod name,
-    /// and the only grade on the box now that the number beside it prices one
-    /// family out of seven.
-    ///
-    /// `serde(default)` so a payload written before this field existed decodes
-    /// as "nobody said", which is what an absent verdict means.
-    #[serde(default)]
-    pub mod_worth: Option<String>,
     /// Area quantity bonus at tiers 1, 2, 3 — poedb's `2/4/6 %` ladder.
     /// `null` when any tier has no stated number (a ladder is a ladder or it
     /// is nothing; `TierDrops` keeps `None` apart from zero).
@@ -1552,22 +1534,9 @@ where
 
 fn line_view(line: &rooms::RoomLine) -> LineView {
     let row = line.drops();
-    let temple_mod = row.temple_mod();
     LineView {
         kind: row.kind(),
         content: row.content().map(str::to_string),
-        mod_architect: temple_mod.map(|value| value.architect().to_string()),
-        mod_hint: temple_mod.map(|value| value.item_hint().to_string()),
-        mod_slots: temple_mod
-            .map(|value| {
-                value
-                    .slots()
-                    .iter()
-                    .map(|slot| slot.as_str().to_string())
-                    .collect()
-            })
-            .unwrap_or_default(),
-        mod_worth: temple_mod.map(|value| value.worth().as_str().to_string()),
         quantity_pct: ladder_values(row.tiers(), |tier| tier.quantity_pct()),
         rarity_pct: ladder_values(row.tiers(), |tier| tier.rarity_pct()),
     }
@@ -3574,42 +3543,24 @@ mod tests {
         assert_eq!(line.rarity_pct, None);
     }
 
+    // POE-367: 3.30 removed the temple-mod items, so a line's wire facts name
+    // none. Crucible of Flame is the line that carried Puhuarte's mod. Fails if
+    // any mod field is put back on LineView.
     #[test]
-    fn a_temple_mod_line_publishes_its_architect_hint_slots_and_worth() {
+    fn a_line_view_carries_no_temple_mod_facts() {
         let input = offer("Puhuarte", "Crucible of Flame", OfferKind::Upgrade);
         let view = offer_view(0, &input, None, &valued());
         let line = view.line.expect("a resolved offer carries line facts");
 
-        assert_eq!(line.mod_architect.as_deref(), Some("Puhuarte"));
-        assert_eq!(line.mod_hint.as_deref(), Some("temple gloves"));
-        assert_eq!(line.mod_slots, vec!["helmet", "gloves", "amulet"]);
-        // The one family Vertolka called green (2026-09-10), so this is also
-        // the assertion that the verdict reaches the wire at all.
-        assert_eq!(line.mod_worth.as_deref(), Some("good"));
-    }
-
-    #[test]
-    fn a_junk_temple_mod_line_publishes_its_verdict_too() {
-        // The other end of the 2026-09-10 verdict, and the pair is the point:
-        // a `worth` field wired to a constant would pass the Puhuarte test
-        // alone.
-        let input = offer("Matatl", "Defense Research Lab", OfferKind::Upgrade);
-        let view = offer_view(0, &input, None, &valued());
-        let line = view.line.expect("a resolved offer carries line facts");
-
-        assert_eq!(line.mod_architect.as_deref(), Some("Matatl"));
-        assert_eq!(line.mod_worth.as_deref(), Some("junk"));
-    }
-
-    #[test]
-    fn a_line_without_a_temple_mod_publishes_empty_mod_facts() {
-        let input = offer("Quipolatl", "Chamber of Iron", OfferKind::Upgrade);
-        let view = offer_view(0, &input, None, &valued());
-        let line = view.line.expect("a resolved offer carries line facts");
-        assert_eq!(line.mod_architect, None);
-        assert_eq!(line.mod_hint, None);
-        assert!(line.mod_slots.is_empty());
-        assert_eq!(line.mod_worth, None);
+        let json = serde_json::to_value(&line).expect("line view serialises");
+        let mut keys: Vec<&str> = json
+            .as_object()
+            .expect("line view is a JSON object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["content", "kind", "quantityPct", "rarityPct"]);
     }
 
     /// A line with no tier-3 chest publishes the prose the box draws in place
@@ -3661,6 +3612,8 @@ mod tests {
     /// fields it added. It decodes as the chest-shaped box it drew: that is what
     /// `Default` for [`LineKind`] is for, and a `content` defaulting to anything
     /// but `None` would put prose on a box whose chest row is already drawn.
+    /// The literal keeps the `mod*` keys POE-367 removed, so it also guards
+    /// that an older payload carrying them still decodes.
     #[test]
     fn a_line_json_without_kind_or_content_decodes_as_a_chest_line() {
         let line: LineView = serde_json::from_str(
@@ -5702,10 +5655,6 @@ mod tests {
                     line: Some(LineView {
                         kind: LineKind::Content,
                         content: Some("Extra monsters (dangerous)".to_string()),
-                        mod_architect: None,
-                        mod_hint: None,
-                        mod_slots: Vec::new(),
-                        mod_worth: None,
                         quantity_pct: None,
                         rarity_pct: None,
                     }),
@@ -5831,7 +5780,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"line":{"kind":"content","content":"Extra monsters (dangerous)","modArchitect":null,"modHint":null,"modSlots":[],"modWorth":null,"quantityPct":null,"rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"line":{"kind":"content","content":"Extra monsters (dangerous)","quantityPct":null,"rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///
