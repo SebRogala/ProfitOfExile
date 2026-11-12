@@ -329,6 +329,9 @@ pub struct AppStatus {
     /// profile-language recognizer, and the only other trace is one LOGS line
     /// that scrolls away, so it is surfaced in Settings as a standing warning.
     pub ocr_language_warning: Option<String>,
+    /// Why every request is blocked this run (an unusable saved proxy);
+    /// `None` with a usable proxy or none.
+    pub proxy_error: Option<String>,
 }
 
 pub use font_session::{FontRound, FontSessionData};
@@ -641,6 +644,7 @@ fn build_status(state: &AppState) -> AppStatus {
         device_id_dev_salt: fingerprint::USES_DEV_SALT,
         font_session_rounds: state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner()).rounds.len(),
         ocr_language_warning: ocr_warning_field(),
+        proxy_error: state.proxy_in_effect.blocked_reason().map(str::to_string),
     }
 }
 
@@ -2008,14 +2012,19 @@ struct ProxySettings {
     /// The in-effect proxy as the updater's `check({ proxy })` takes it
     /// (`socks5h://` for SOCKS); empty when none.
     updater_proxy: String,
+    /// Why every request is blocked this run; empty when not blocked.
+    blocked: String,
 }
 
 #[tauri::command]
 fn get_proxy_settings(app: AppHandle) -> ProxySettings {
-    let in_effect = &app.state::<AppState>().proxy_in_effect;
-    let saved = settings::load(&app);
+    proxy_settings(&settings::load(&app), &app.state::<AppState>().proxy_in_effect)
+}
+
+/// The Settings page's view of the saved proxy and the one in effect.
+fn proxy_settings(saved: &settings::Settings, in_effect: &http::ProxyConfig) -> ProxySettings {
     ProxySettings {
-        saved: saved.proxy_url,
+        saved: saved.proxy_url.clone(),
         in_effect: match &in_effect.mode {
             http::ProxyMode::Via(p) => p.as_str().to_string(),
             _ => String::new(),
@@ -2028,6 +2037,7 @@ fn get_proxy_settings(app: AppHandle) -> ProxySettings {
             .flatten()
             .map(http::ProxyUrl::for_http_clients)
             .unwrap_or_default(),
+        blocked: in_effect.blocked_reason().unwrap_or_default().to_string(),
     }
 }
 
@@ -4033,6 +4043,38 @@ mod tests {
         write_debug_mode(&flag, true);
 
         assert!(*flag.lock().unwrap_or_else(|e| e.into_inner()));
+    }
+
+    #[test]
+    fn status_reports_the_blocked_proxy_reason() {
+        let mut state = crate::settings::tests::test_app_state();
+        state.proxy_in_effect = crate::http::ProxyConfig { mode: crate::http::ProxyMode::blocked("R"), trade: true };
+        assert_eq!(
+            super::build_status(&state).proxy_error,
+            Some("R. Nothing is sent until you fix or clear the proxy in Settings and restart the app.".to_string())
+        );
+    }
+
+    #[test]
+    fn status_has_no_proxy_error_without_a_blocked_proxy() {
+        assert_eq!(super::build_status(&crate::settings::tests::test_app_state()).proxy_error, None);
+    }
+
+    fn blocked_config() -> crate::http::ProxyConfig {
+        crate::http::ProxyConfig { mode: crate::http::ProxyMode::blocked("R"), trade: true }
+    }
+
+    #[test]
+    fn proxy_settings_echo_the_blocked_reason() {
+        assert_eq!(
+            super::proxy_settings(&crate::settings::Settings::default(), &blocked_config()).blocked,
+            "R. Nothing is sent until you fix or clear the proxy in Settings and restart the app."
+        );
+    }
+
+    #[test]
+    fn proxy_settings_offer_the_updater_no_proxy_while_blocked() {
+        assert_eq!(super::proxy_settings(&crate::settings::Settings::default(), &blocked_config()).updater_proxy, "");
     }
 
     #[test]

@@ -67,7 +67,7 @@
 	// --- Proxy (POE-360) ---
 	// Rust validates and owns the value; it applies on the next launch, so the
 	// note shows while the saved URL or trade flag differs from the ones in effect.
-	let proxy = $state<ProxySettings>({ saved: '', inEffect: '', savedTrade: true, tradeInEffect: true, updaterProxy: '' });
+	let proxy = $state<ProxySettings>({ saved: '', inEffect: '', savedTrade: true, tradeInEffect: true, updaterProxy: '', blocked: '' });
 	let proxySaved = $derived(proxy.saved);
 	let editingProxy = $state(false);
 	let editProxyValue = $state('');
@@ -857,6 +857,12 @@
 					<Button onclick={startEditProxy}>Edit</Button>
 				{/if}
 			</div>
+			{#if store.status?.proxy_error && !editingProxy}
+				<div class="setting-row">
+					<span class="setting-label"></span>
+					<span class="setting-error" role="alert">{store.status.proxy_error}</span>
+				</div>
+			{/if}
 			{#if proxyError}
 				<div class="setting-row">
 					<span class="setting-label"></span>

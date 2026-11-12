@@ -9,7 +9,8 @@ const inEffect: ProxySettings = {
 	inEffect: 'socks5://127.0.0.1:1080',
 	savedTrade: true,
 	tradeInEffect: true,
-	updaterProxy: 'socks5h://127.0.0.1:1080'
+	updaterProxy: 'socks5h://127.0.0.1:1080',
+	blocked: ''
 };
 
 describe('proxyRestartNeeded', () => {

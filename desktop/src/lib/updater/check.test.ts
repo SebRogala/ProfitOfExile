@@ -64,7 +64,7 @@ beforeEach(() => {
 	entitlements.role = '';
 	entitlements.channel = 'stable';
 	entitlements.features = [];
-	vi.mocked(getProxySettings).mockResolvedValue({ saved: '', inEffect: '', savedTrade: true, tradeInEffect: true, updaterProxy: '' });
+	vi.mocked(getProxySettings).mockResolvedValue({ saved: '', inEffect: '', savedTrade: true, tradeInEffect: true, updaterProxy: '', blocked: '' });
 	// The half-failed paths log on purpose; one test below asserts on it.
 	warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
@@ -100,7 +100,8 @@ describe('checkForUpdate with a proxy setting', () => {
 			inEffect: 'socks5://127.0.0.1:1080',
 			savedTrade: true,
 			tradeInEffect: true,
-			updaterProxy: 'socks5h://127.0.0.1:1080'
+			updaterProxy: 'socks5h://127.0.0.1:1080',
+			blocked: ''
 		});
 		vi.mocked(check).mockResolvedValue(null);
 
@@ -115,13 +116,37 @@ describe('checkForUpdate with a proxy setting', () => {
 			inEffect: '',
 			savedTrade: true,
 			tradeInEffect: true,
-			updaterProxy: ''
+			updaterProxy: '',
+			blocked: ''
 		});
 		vi.mocked(check).mockResolvedValue(null);
 
 		await checkForUpdate();
 
 		expect(check).toHaveBeenCalledWith();
+	});
+});
+
+describe('checkForUpdate while the proxy is blocked', () => {
+	const blocked = { saved: 'ftp://p:21', inEffect: '', savedTrade: true, tradeInEffect: true, updaterProxy: '', blocked: 'R' };
+
+	it('refuses the stable check while the proxy is blocked', async () => {
+		vi.mocked(getProxySettings).mockResolvedValue(blocked);
+		vi.mocked(check).mockResolvedValue(null);
+
+		await expect(checkForUpdate()).rejects.toThrow('R');
+		expect(check).not.toHaveBeenCalled();
+	});
+
+	it('refuses both beta arms while the proxy is blocked', async () => {
+		entitlements.channel = 'beta';
+		vi.mocked(getProxySettings).mockResolvedValue(blocked);
+		vi.mocked(check).mockResolvedValue(null);
+		vi.mocked(invoke).mockResolvedValue(null);
+
+		await expect(checkForUpdate()).rejects.toThrow('R');
+		expect(check).not.toHaveBeenCalled();
+		expect(invoke).not.toHaveBeenCalled();
 	});
 });
 

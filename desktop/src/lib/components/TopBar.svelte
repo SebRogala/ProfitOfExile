@@ -91,6 +91,9 @@
 				v{store.updateVersion}
 			</button>
 		{/if}
+		{#if status?.proxy_error}
+			<button class="update-badge proxy-error" title={status.proxy_error} onclick={() => nav.go('/settings')}>Proxy error</button>
+		{/if}
 		<button class="settings-link" title="Settings" onclick={() => nav.go('/settings')}>&#9881;&#65039;</button>
 	</div>
 	<div class="right">
@@ -219,6 +222,17 @@
 
 	.update-badge:hover {
 		background: rgba(34, 197, 94, 0.25);
+	}
+
+	.update-badge.proxy-error {
+		color: var(--color-lab-red);
+		background: rgba(239, 68, 68, 0.15);
+		border-color: rgba(239, 68, 68, 0.4);
+		animation: none;
+	}
+
+	.update-badge.proxy-error:hover {
+		background: rgba(239, 68, 68, 0.25);
 	}
 
 	.settings-link {

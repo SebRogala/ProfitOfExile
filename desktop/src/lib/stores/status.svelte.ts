@@ -45,6 +45,9 @@ export interface AppStatus {
 	 *  unreliable until the English (US) OCR pack is installed. Null when the
 	 *  recognizer is fine or no scan has resolved one yet. */
 	ocr_language_warning: string | null;
+	/** Why every request is blocked this run (an unusable saved proxy, POE-360);
+	 *  null with a usable proxy or none. */
+	proxy_error: string | null;
 }
 
 /** Reactive store — mutate properties, never reassign the export. */

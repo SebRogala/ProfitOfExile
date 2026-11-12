@@ -9,6 +9,8 @@ export interface ProxySettings {
 	tradeInEffect: boolean;
 	/** The proxy in effect as the updater takes it (socks5h for SOCKS); empty when none. */
 	updaterProxy: string;
+	/** Why every request is blocked this run (an unusable saved proxy); empty when not blocked. */
+	blocked: string;
 }
 
 /** Saved settings differ from the ones this run started with. */

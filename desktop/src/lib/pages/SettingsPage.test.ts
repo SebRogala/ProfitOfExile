@@ -99,3 +99,30 @@ describe('SettingsPage update recovery', () => {
 		expect(controller!.version).toBe('1.3.0');
 	});
 });
+
+/** The markup from the Proxy field to the trade toggle below it. */
+function proxyBlock(markup: string): string {
+	const start = markup.indexOf('for="proxy-url"');
+	const end = markup.indexOf('Use the proxy for trade requests');
+	expect(start).toBeGreaterThan(-1);
+	expect(end).toBeGreaterThan(start);
+	return markup.slice(start, end);
+}
+
+describe('SettingsPage blocked proxy', () => {
+	afterEach(() => {
+		store.status = null;
+	});
+
+	it('shows the blocked proxy reason on the Proxy field', () => {
+		store.status = { proxy_error: 'R' } as unknown as typeof store.status;
+
+		expect(proxyBlock(renderSettingsPage())).toMatch(/class="setting-error[^"]*" role="alert">R</);
+	});
+
+	it('shows no proxy error without a blocked proxy', () => {
+		store.status = { proxy_error: null } as unknown as typeof store.status;
+
+		expect(proxyBlock(renderSettingsPage())).not.toMatch(/class="setting-error[^"]*" role="alert"/);
+	});
+});

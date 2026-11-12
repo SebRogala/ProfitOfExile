@@ -20,6 +20,9 @@
  * beta manifest instead and answers with the SAME metadata the plugin returns.
  * Wrapping it in the plugin's `Update` class here means the download and
  * install path is the plugin's own, for both channels.
+ *
+ * While the saved proxy is unusable (POE-360) neither arm is asked: the check
+ * throws the blocked reason, so nothing goes out unproxied.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { check, Update } from '@tauri-apps/plugin-updater';
@@ -40,8 +43,7 @@ export const BETA_MANIFEST_URL =
  * Ask the `tauri.conf.json` manifest. The plugin's init has no proxy option, so
  * the proxy in effect is passed per call (the beta arm applies it in Rust).
  */
-async function checkStableManifest(): Promise<Update | null> {
-	const { updaterProxy } = await getProxySettings();
+async function checkStableManifest(updaterProxy: string): Promise<Update | null> {
 	return updaterProxy ? check({ proxy: updaterProxy }) : check();
 }
 
@@ -74,11 +76,13 @@ async function discard(update: Update | null, kept: Update | null): Promise<void
  * "you are on the latest version".
  */
 export async function checkForUpdate(): Promise<Update | null> {
-	if (entitlements.channel !== 'beta') return checkStableManifest();
+	const proxy = await getProxySettings();
+	if (proxy.blocked) throw new Error(proxy.blocked);
+	if (entitlements.channel !== 'beta') return checkStableManifest(proxy.updaterProxy);
 
 	// Stable first: `higherUpdate` keeps its first argument on a tie, so a beta
 	// build promoted to stable unchanged leaves the device on the stable one.
-	const [stableArm, betaArm] = await Promise.allSettled([checkStableManifest(), checkBetaManifest()]);
+	const [stableArm, betaArm] = await Promise.allSettled([checkStableManifest(proxy.updaterProxy), checkBetaManifest()]);
 
 	if (stableArm.status === 'rejected' && betaArm.status === 'rejected') {
 		console.warn('[updater] beta check failed:', betaArm.reason);
