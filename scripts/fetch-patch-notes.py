@@ -20,10 +20,24 @@ The forum markup is not an API, so every structural assumption is checked:
 no first post, no table of contents, or a contents entry without its section
 block aborts with a non-zero exit instead of writing a partial set.
 
+A "New and Changed Gems" thread has no table of contents; its first post holds
+a `<div id="gem-forum-post">`, which selects the gem layout instead:
+
+    OUT/post.txt   the whole post as text
+    OUT/gems.tsv   name, status (new/updated), icon_url, diff
+
+Gem names and icons come from the item JSON the page passes to its item
+renderer (`factory([{"item": {...}, "destination": "#item-fragment-N"}])`).
+A fragment inside a `<div class="gem">` with its `<h4 class="gem-header">` is
+an updated gem and its diff is the text of that block; a fragment outside one
+(the "New Gems" list) is a new gem with an empty diff. A fragment without an
+item, an item without a fragment, or a header that differs from its item's
+name aborts as above.
+
 Usage:
     python3 scripts/fetch-patch-notes.py URL OUT
 """
-import argparse, html.parser, os, re, sys, urllib.request
+import argparse, csv, html.parser, json, os, re, sys, urllib.request
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 THREAD_URL = re.compile(r"^https://(www\.)?pathofexile\.com/forum/view-thread/\d+")
@@ -31,6 +45,8 @@ THREAD_URL = re.compile(r"^https://(www\.)?pathofexile\.com/forum/view-thread/\d
 # body is the first one sitting directly inside a table cell.
 FIRST_POST = re.compile(r'<td[^>]*>\s*<div class="content">')
 INDEX_NAME = "00-index.txt"
+GEM_POST = 'id="gem-forum-post"'
+ITEM_RENDERER = "factory("
 
 
 class ExtractError(Exception):
@@ -60,7 +76,8 @@ class _PostParser(html.parser.HTMLParser):
     link inside a later section is never mistaken for a contents entry.
     """
 
-    BLOCK = {"h2": "# ", "h3": "## "}
+    BLOCK = {"h2": "# ", "h3": "## ", "h4": "### ", "h6": "#### "}
+    SKIP = {"style", "script", "button"}
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -70,9 +87,14 @@ class _PostParser(html.parser.HTMLParser):
         self._prefix = ""
         self._line = ""
         self._list_depth = 0
-        self._skip = 0  # inside <style> or a "#top" link
+        self._skip = []  # open tags whose content is dropped
         self._toc_href = None
         self._toc_text = ""
+        self._div_depth = 0
+        self._gem = None
+        self._header_open = False
+        self.gems = []  # [{"fragment", "header", "lines"}]
+        self.new_fragments = []
 
     def _flush(self):
         text = re.sub(r"\s+", " ", self._line).strip()
@@ -82,19 +104,27 @@ class _PostParser(html.parser.HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
-        if tag == "div" and "lbox-container" in (a.get("class") or "").split():
+        classes = (a.get("class") or "").split()
+        if self._skip:
+            if tag == self._skip[-1]:
+                self._skip.append(tag)
+            return
+        if tag == "div":
+            self._div_depth += 1
+            self._start_div(a.get("id") or "", classes)
+        if tag in self.SKIP or (tag == "a" and (
+                a.get("href") == "#top" or "show-differences" in classes)):
+            self._skip.append(tag)
+        elif tag == "div" and "lbox-container" in classes:
             self._flush()
             self._lines = []
             self.sections.append((a.get("id") or "", self._lines))
-        elif tag == "style":
-            self._skip += 1
-        elif tag == "a" and a.get("href") == "#top":
-            self._skip += 1
         elif tag == "a" and (a.get("href") or "").startswith("#") and len(self.sections) == 1:
             self._toc_href, self._toc_text = a["href"][1:], ""
         elif tag in self.BLOCK:
             self._flush()
             self._prefix = self.BLOCK[tag]
+            self._header_open = tag == "h4" and "gem-header" in classes and self._gem is not None
         elif tag == "ul":
             self._flush()
             self._list_depth += 1
@@ -108,16 +138,45 @@ class _PostParser(html.parser.HTMLParser):
             self._flush()
             self._prefix = "### "
 
+    def _start_div(self, div_id, classes):
+        if "gem" in classes:
+            self._flush()
+            self._gem = {"depth": self._div_depth, "fragment": None, "header": None,
+                         "start": len(self._lines) if self._lines is not None else 0}
+        elif div_id.startswith("item-fragment-"):
+            if self._gem is not None:
+                self._gem["fragment"] = div_id
+            else:
+                self.new_fragments.append(div_id)
+
+    def _end_div(self):
+        gem = self._gem
+        if gem is not None and gem["depth"] == self._div_depth:
+            lines = self._lines[gem["start"]:] if self._lines is not None else []
+            if gem["header"] is not None and lines[:1] == ["### " + gem["header"]]:
+                lines = lines[1:]
+            self.gems.append({"fragment": gem["fragment"], "header": gem["header"], "lines": lines})
+            self._gem = None
+        self._div_depth -= 1
+
     def handle_endtag(self, tag):
-        if tag == "style" or (tag == "a" and self._skip):
-            self._skip = max(0, self._skip - 1)
+        if self._skip:
+            if tag == self._skip[-1]:
+                self._skip.pop()
+            return
+        if tag == "h4" and self._header_open:
+            self._gem["header"] = re.sub(r"\s+", " ", self._line).strip()
+            self._header_open = False
+        if tag == "div":
+            self._flush()
+            self._end_div()
         elif tag == "a" and self._toc_href is not None:
             self.toc.append((self._toc_href, self._toc_text.strip()))
             self._toc_href = None
         elif tag == "ul":
             self._flush()
             self._list_depth = max(0, self._list_depth - 1)
-        elif tag in ("li", "div", "h2", "h3") or (tag == "strong" and self._prefix == "### "):
+        elif tag in ("li", "p") or tag in self.BLOCK or (tag == "strong" and self._prefix == "### "):
             self._flush()
 
     def handle_data(self, data):
@@ -156,6 +215,85 @@ def extract_sections(page: str):
     return post_title, sections
 
 
+def post_text(post_html: str) -> str:
+    """Render the whole post, one blank line between its blocks."""
+    parser = _PostParser()
+    parser.feed(post_html)
+    parser.close()
+    return "\n\n".join("\n".join(lines) for _, lines in parser.sections if lines) + "\n"
+
+
+def page_items(page: str) -> dict:
+    """Map each `#item-fragment-N` destination to its item JSON."""
+    start = page.find(ITEM_RENDERER)
+    if start < 0:
+        raise ExtractError(f"item JSON not found: no {ITEM_RENDERER!r} call on the page")
+    try:
+        entries, _ = json.JSONDecoder().raw_decode(page, start + len(ITEM_RENDERER))
+        return {e["destination"].lstrip("#"): e["item"] for e in entries}
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        raise ExtractError(f"item JSON is not a list of {{item, destination}}: {e}") from e
+
+
+def icon_url(icon: str) -> str:
+    if icon.startswith("//"):
+        return "https:" + icon
+    if icon.startswith("https://"):
+        return icon
+    raise ExtractError(f"unexpected icon URL {icon!r}")
+
+
+def extract_gems(page: str):
+    """Return (post text, [(name, status, icon_url, diff)]) for a gems thread."""
+    post_html = first_post_html(page)
+    parser = _PostParser()
+    parser.feed(post_html)
+    parser.close()
+    items = page_items(page)
+
+    gems, seen = [], set()
+
+    def item_for(fragment, what):
+        if fragment not in items:
+            raise ExtractError(f"{what} has no item JSON for #{fragment}")
+        seen.add(fragment)
+        item = items[fragment]
+        return item["typeLine"], icon_url(item["icon"])
+
+    for fragment in parser.new_fragments:
+        name, icon = item_for(fragment, "new gem")
+        gems.append((name, "new", icon, ""))
+    for gem in parser.gems:
+        if gem["header"] is None or gem["fragment"] is None:
+            raise ExtractError(f"updated gem block lacks its header or item fragment: {gem}")
+        name, icon = item_for(gem["fragment"], f"updated gem {gem['header']!r}")
+        if name != gem["header"]:
+            raise ExtractError(f"gem header {gem['header']!r} does not match its item {name!r}")
+        if not gem["lines"]:
+            raise ExtractError(f"updated gem {name!r} has no diff text")
+        diff = " | ".join(line.lstrip("# ") for line in gem["lines"])
+        gems.append((name, "updated", icon, diff))
+    if not gems:
+        raise ExtractError("gem post has no gems")
+    unplaced = sorted(set(items) - seen)
+    if unplaced:
+        raise ExtractError(f"item JSON entries with no gem in the post: {unplaced}")
+    return post_text(post_html), gems
+
+
+def write_gems(text: str, gems, out: str) -> list:
+    """Write post.txt and gems.tsv; return the written paths."""
+    os.makedirs(out, exist_ok=True)
+    text_path, tsv_path = os.path.join(out, "post.txt"), os.path.join(out, "gems.tsv")
+    with open(text_path, "w", encoding="utf-8") as f:
+        f.write(text)
+    with open(tsv_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t", lineterminator="\n")
+        writer.writerow(["name", "status", "icon_url", "diff"])
+        writer.writerows(gems)
+    return [text_path, tsv_path]
+
+
 def write_sections(url: str, post_title: str, sections, out: str) -> list:
     """Write one file per section plus the index; return the written paths."""
     os.makedirs(out, exist_ok=True)
@@ -184,7 +322,7 @@ def fetch(url: str) -> str:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="Save a pathofexile.com patch-notes thread's first post, one file per section.",
+        description="Save a pathofexile.com patch-notes or gems thread's first post as text.",
     )
     parser.add_argument("url", help="forum thread URL, https://www.pathofexile.com/forum/view-thread/<id>")
     parser.add_argument("out", help="output directory")
@@ -193,13 +331,23 @@ def main(argv=None) -> int:
     if not THREAD_URL.match(args.url):
         print(f"not a pathofexile.com forum thread URL: {args.url}", file=sys.stderr)
         return 2
+    gems = None
     try:
-        post_title, sections = extract_sections(fetch(args.url))
+        page = fetch(args.url)
+        if GEM_POST in first_post_html(page):
+            text, gems = extract_gems(page)
+        else:
+            post_title, sections = extract_sections(page)
     except ExtractError as e:
         print(f"{args.url}: {e} — the forum markup may have changed", file=sys.stderr)
         return 1
-    paths = write_sections(args.url, post_title, sections, args.out)
-    print(f"DONE: {len(sections)} sections -> {args.out}")
+    if gems is not None:
+        paths = write_gems(text, gems, args.out)
+        new = sum(1 for g in gems if g[1] == "new")
+        print(f"DONE: {len(gems)} gems ({new} new) -> {args.out}")
+    else:
+        paths = write_sections(args.url, post_title, sections, args.out)
+        print(f"DONE: {len(sections)} sections -> {args.out}")
     for path in paths:
         print(f"  {path}")
     return 0
