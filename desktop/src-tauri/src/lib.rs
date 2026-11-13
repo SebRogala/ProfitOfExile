@@ -22,6 +22,7 @@ mod mercenary;
 mod modules;
 mod ocr;
 mod overlay_hook;
+mod read_hotkey;
 mod settings;
 mod ssot;
 mod temple;
@@ -344,6 +345,8 @@ pub(crate) use lab::commands::apply_manual_lab_mode;
 
 pub struct AppState {
     pub loot: loot_capture::LootState,
+    /// The "Read screen" shortcut and press-to-grab delay. Taken alone.
+    pub read_hotkey: Mutex<read_hotkey::ReadHotkeySettings>,
     /// Hardware-based device fingerprint — computed once at startup, immutable.
     /// String is Sync so no Mutex needed.
     pub device_id: String,
@@ -1790,6 +1793,7 @@ pub fn run() {
 
     let app_state = AppState {
         loot: loot_capture::LootState::new(),
+        read_hotkey: Mutex::new(read_hotkey::ReadHotkeySettings::default()),
         device_id: device_id.clone(),
         pair_code: Mutex::new(pair_code),
         client_txt_path: Mutex::new(String::from(
@@ -1864,6 +1868,7 @@ pub fn run() {
             loot_capture::boss_loot_action,
             loot_capture::boss_loot_submit,
             loot_capture::boss_loot_rebind,
+            read_hotkey::read_hotkey_set_settings,
             loot_api::boss_loot_stats,
             loot_api::boss_loot_runs,
             loot_api::boss_loot_edit,

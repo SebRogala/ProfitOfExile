@@ -364,5 +364,14 @@
   "server": {
     "url": "https://saved.example",
     "defaultUrl": "https://built.example"
+  },
+  "readHotkey": {
+    "shortcut": {
+      "key": 82,
+      "shift": false,
+      "ctrl": true,
+      "alt": true
+    },
+    "delayMs": 150
   }
 }

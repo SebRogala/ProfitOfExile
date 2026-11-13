@@ -261,6 +261,12 @@ export interface ServerSlice {
 	defaultUrl: string;
 }
 
+/** `AppSsotSnapshot.readHotkey` on the Rust side (POE-387). */
+export interface ReadHotkeySettings {
+	shortcut: BossLootShortcut;
+	delayMs: number;
+}
+
 export interface SsotSnapshot {
 	league: { name: string | null; generation?: number };
 	/** A league resolve is in flight (bounded-retry fetch task running). */
@@ -305,6 +311,8 @@ export interface SsotSnapshot {
 	/** The server base URLs (POE-383), Rust-owned via `settings::server_base`.
 	 *  `''` means not known yet. Type only until WI-4 applies it. */
 	server?: ServerSlice;
+	/** The "Read screen" shortcut and press-to-grab delay, Rust-owned. */
+	readHotkey?: ReadHotkeySettings;
 }
 
 /**
@@ -366,6 +374,8 @@ export const ssot = $state({
 	screen: null as ScreenSlice | null,
 	/** Derived capture-relative placements, projected by Rust at snapshot time. */
 	placements: null as Placements | null,
+	/** Unknown until Rust answers; the default lives in `read_hotkey.rs`. */
+	readHotkey: null as ReadHotkeySettings | null,
 });
 
 /** The three market fields, which share the write-through + poll-guard machinery. */
@@ -684,6 +694,7 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	applyMarketField('dedicationPool', snap.dedicationPool, dispatchedAtSeq);
 	applyModules(snap.modules, dispatchedAtSeq);
 	if (snap.bossLoot !== undefined) ssot.bossLoot = snap.bossLoot;
+	if (snap.readHotkey !== undefined) ssot.readHotkey = snap.readHotkey;
 	applyMercenary(snap.mercenary);
 	applyTemple(snap.temple);
 	applyServerSlice(snap.server);

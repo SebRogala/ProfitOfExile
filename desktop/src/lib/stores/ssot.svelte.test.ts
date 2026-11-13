@@ -1649,6 +1649,23 @@ describe('the native bossLoot slice', () => {
 	});
 });
 
+describe('the readHotkey slice', () => {
+	const readHotkey = { shortcut: { key: 82, shift: false, ctrl: true, alt: false }, delayMs: 250 };
+
+	it('takes the shortcut and delay from a polled snapshot', async () => {
+		const mod = await import('./ssot.svelte');
+		mod.applySnapshot({ league: { name: null }, readHotkey });
+		expect(mod.ssot.readHotkey).toEqual(readHotkey);
+	});
+
+	it('keeps the last shortcut when a snapshot omits it', async () => {
+		const mod = await import('./ssot.svelte');
+		mod.applySnapshot({ league: { name: null }, readHotkey });
+		mod.applySnapshot({ league: { name: null } });
+		expect(mod.ssot.readHotkey).toEqual(readHotkey);
+	});
+});
+
 describe('league generation delivery', () => {
 	async function fresh() {
 		vi.resetModules();

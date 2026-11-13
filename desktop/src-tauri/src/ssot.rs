@@ -582,6 +582,9 @@ pub struct AppSsotSnapshot {
     /// "no target". `Default` is two empty strings, which the webview reads as
     /// "not known yet".
     pub server: ServerSlice,
+    /// The "Read screen" shortcut and delay (POE-387), read from the owner
+    /// `AppState.read_hotkey` at snapshot time — not stored in `AppState.ssot`.
+    pub read_hotkey: crate::read_hotkey::ReadHotkeySettings,
     // future slices (e.g. account, config) added here as later tasks land.
 }
 
@@ -706,6 +709,7 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         url: crate::settings::server_base(state),
         default_url: crate::settings::DEFAULT_SERVER_URL.to_string(),
     };
+    let read_hotkey = state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let mut snapshot = compose_snapshot(
         base,
         normal_variant,
@@ -721,6 +725,7 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         screen,
     );
     snapshot.server = server;
+    snapshot.read_hotkey = read_hotkey;
     snapshot
 }
 
@@ -3741,6 +3746,10 @@ mod tests {
         snapshot.server = ServerSlice {
             url: "https://saved.example".into(),
             default_url: "https://built.example".into(),
+        };
+        snapshot.read_hotkey = crate::read_hotkey::ReadHotkeySettings {
+            shortcut: crate::read_hotkey::Shortcut { key: 82, shift: false, ctrl: true, alt: true },
+            delay_ms: 150,
         };
         snapshot
     }

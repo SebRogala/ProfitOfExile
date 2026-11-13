@@ -14,6 +14,7 @@ import type {
 	Anchors,
 	BossLootSlice,
 	Placements,
+	ReadHotkeySettings,
 	ScreenSlice,
 	ServerSlice,
 	SsotSnapshot
@@ -34,7 +35,13 @@ const snapshotKeys: Record<keyof SsotSnapshot, true> = {
 	temple: true,
 	screen: true,
 	placements: true,
-	server: true
+	server: true,
+	readHotkey: true
+};
+
+const readHotkeyKeys: Record<keyof ReadHotkeySettings, true> = {
+	shortcut: true,
+	delayMs: true
 };
 
 const serverKeys: Record<keyof ServerSlice, true> = {
@@ -138,7 +145,8 @@ describe('ssot-snapshot.json golden matches SsotSnapshot', () => {
 		['temple', templeKeys],
 		['screen', screenKeys],
 		['placements', placementsKeys],
-		['server', serverKeys]
+		['server', serverKeys],
+		['readHotkey', readHotkeyKeys]
 	] as const)('carries exactly the %s slice keys', (slice, table) => {
 		expect(keysOf(wire[slice])).toEqual(Object.keys(table).sort());
 	});

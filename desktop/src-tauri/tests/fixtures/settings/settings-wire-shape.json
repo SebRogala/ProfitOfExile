@@ -18,6 +18,15 @@
       "alt": false
     }
   },
+  "read_hotkey": {
+    "shortcut": {
+      "key": 2,
+      "shift": true,
+      "ctrl": false,
+      "alt": false
+    },
+    "delayMs": 0
+  },
   "number_format": null,
   "client_txt_path": "C:/PoE/logs/Client.txt",
   "server_url": "https://fixture.invalid",

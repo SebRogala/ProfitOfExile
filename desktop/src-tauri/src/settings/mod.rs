@@ -115,6 +115,7 @@ impl Default for LabSettings {
 #[serde(default)]
 pub struct Settings {
     pub boss_loot: crate::loot_capture::LootSettings,
+    pub read_hotkey: crate::read_hotkey::ReadHotkeySettings,
     /// None means the legacy numberFormat preference has not migrated yet.
     pub number_format: Option<crate::loot_capture::NumberFormat>,
     pub client_txt_path: String,
@@ -740,6 +741,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             boss_loot: Default::default(),
+            read_hotkey: Default::default(),
             number_format: None,
             client_txt_path: crate::detect_client_txt_path(),
             server_url: String::from(DEFAULT_SERVER_URL),
@@ -960,6 +962,7 @@ pub fn update(app: &tauri::AppHandle, f: impl FnOnce(&Settings) -> Settings) {
 pub fn from_state(state: &crate::AppState) -> Settings {
     let boss_loot = state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let number_format = *state.loot.number_format.lock().unwrap_or_else(|e| e.into_inner());
+    let read_hotkey = state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let temple = state.temple_state.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     // Bound HERE rather than inside the struct literal below: a temporary
     // guard in a literal lives to the end of the whole statement, and this
@@ -977,6 +980,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     let lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     Settings {
         boss_loot,
+        read_hotkey,
         number_format: Some(number_format),
         client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
@@ -1053,6 +1057,11 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
         Err(reason) => { rejected.push(format!("boss loot settings: {reason}; using defaults")); Default::default() }
     };
     *state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()) = boss_loot;
+    let read_hotkey = match settings.read_hotkey.validate() {
+        Ok(()) => settings.read_hotkey.clone(),
+        Err(reason) => { rejected.push(format!("read screen shortcut: {reason}; using defaults")); Default::default() }
+    };
+    *state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()) = read_hotkey;
     *state.loot.number_format.lock().unwrap_or_else(|e| e.into_inner()) =
         crate::loot_capture::NumberFormat::migrate(settings.number_format, settings.ui_prefs.get("numberFormat"));
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = settings.client_txt_path.clone();
@@ -1390,7 +1399,8 @@ pub fn settings_path_before_app(identifier: &str) -> Option<PathBuf> {
 pub(crate) mod tests {
     #[test]
     fn boss_loot_settings_survive_unrelated_writes_and_echo_through_ssot() {
-        use crate::loot_capture::{LootLayout, NumberFormat, Shortcut};
+        use crate::loot_capture::{LootLayout, NumberFormat};
+        use crate::read_hotkey::Shortcut;
         let state = test_app_state();
         let mut settings = Settings::default();
         settings.boss_loot.layout = LootLayout::List;
@@ -1433,6 +1443,65 @@ pub(crate) mod tests {
         assert!(apply_to_state(&settings, &state).iter().any(|line| line.contains("boss loot")));
         assert_eq!(from_state(&state).boss_loot.auto_save_seconds, 10);
         assert!(!from_state(&state).sidebar_open);
+    }
+
+    fn custom_read_hotkey() -> crate::read_hotkey::ReadHotkeySettings {
+        crate::read_hotkey::ReadHotkeySettings {
+            shortcut: crate::read_hotkey::Shortcut { key: 82, shift: false, ctrl: true, alt: false },
+            delay_ms: 250,
+        }
+    }
+    #[test]
+    fn read_hotkey_survives_a_restart_through_the_settings_file() {
+        let dir = fresh_test_dir("read_hotkey_restart");
+        let path = dir.join(SETTINGS_FILENAME);
+        let before = test_app_state();
+        *before.read_hotkey.lock().unwrap() = custom_read_hotkey();
+        save_to(&path, &from_state(&before)).unwrap();
+        let after = test_app_state();
+        assert!(apply_to_state(&load_from(&path).unwrap(), &after).is_empty());
+        assert_eq!(*after.read_hotkey.lock().unwrap(), custom_read_hotkey());
+        let _ = fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn read_hotkey_survives_an_unrelated_settings_write() {
+        let state = test_app_state();
+        let mut settings = Settings::default();
+        settings.read_hotkey = custom_read_hotkey();
+        assert!(apply_to_state(&settings, &state).is_empty());
+        *state.sidebar_open.lock().unwrap() = false;
+        assert_eq!(from_state(&state).read_hotkey, custom_read_hotkey());
+    }
+    #[test]
+    fn read_hotkey_echoes_through_ssot() {
+        let state = test_app_state();
+        *state.read_hotkey.lock().unwrap() = custom_read_hotkey();
+        let json = serde_json::to_value(crate::ssot::build_snapshot(&state)).unwrap();
+        assert_eq!(
+            json["readHotkey"],
+            serde_json::json!({"shortcut": {"key": 82, "shift": false, "ctrl": true, "alt": false}, "delayMs": 250})
+        );
+    }
+    #[test]
+    fn read_hotkey_bad_delay_is_rejected_without_erasing_boss_loot_settings() {
+        let state = test_app_state();
+        let mut settings = Settings::default();
+        settings.boss_loot.auto_save_seconds = 30;
+        settings.read_hotkey.delay_ms = crate::read_hotkey::MAX_DELAY_MS + 1;
+        assert!(apply_to_state(&settings, &state).iter().any(|line| line.contains("read screen shortcut")));
+        assert_eq!(*state.read_hotkey.lock().unwrap(), crate::read_hotkey::ReadHotkeySettings::default());
+        assert_eq!(from_state(&state).boss_loot.auto_save_seconds, 30);
+    }
+    #[test]
+    fn read_hotkey_bad_shortcut_is_rejected_without_erasing_boss_loot_settings() {
+        let state = test_app_state();
+        let mut settings = Settings::default();
+        settings.boss_loot.auto_save_seconds = 30;
+        settings.read_hotkey = custom_read_hotkey();
+        settings.read_hotkey.shortcut.key = 27;
+        assert!(apply_to_state(&settings, &state).iter().any(|line| line.contains("read screen shortcut")));
+        assert_eq!(*state.read_hotkey.lock().unwrap(), crate::read_hotkey::ReadHotkeySettings::default());
+        assert_eq!(from_state(&state).boss_loot.auto_save_seconds, 30);
     }
 
     /// The GPU-free flag has no `AppState` owner, so an unrelated save rebuilt
@@ -1749,6 +1818,7 @@ pub(crate) mod tests {
     pub(crate) fn test_app_state() -> crate::AppState {
         crate::AppState {
             loot: crate::loot_capture::LootState::new(),
+            read_hotkey: Mutex::new(crate::read_hotkey::ReadHotkeySettings::default()),
             device_id: String::new(),
             game_monitor: Mutex::new(None),
             pair_code: Mutex::new(String::new()),

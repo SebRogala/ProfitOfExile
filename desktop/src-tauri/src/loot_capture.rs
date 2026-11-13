@@ -3,6 +3,7 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 use crate::loot_api::*;
 use crate::loot_profiles::{LineMatch, LootProfile, Selection};
+use crate::read_hotkey::Shortcut;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -41,22 +42,6 @@ impl NumberFormat {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Shortcut {
-    pub key: u16,
-    pub shift: bool,
-    pub ctrl: bool,
-    pub alt: bool,
-}
-impl Shortcut {
-    fn validate(&self) -> Result<(), String> {
-        if !(1..=254).contains(&self.key) || matches!(self.key, 16..=18 | 27 | 160..=165) {
-            return Err("Choose a key or mouse button other than a modifier or Esc".into());
-        }
-        Ok(())
-    }
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct LootSettings {
     pub layout: LootLayout,
@@ -87,12 +72,7 @@ impl Default for LootSettings {
                 .filter(|i| i.not_counted_default)
                 .map(|i| i.id.clone())
                 .collect(),
-            capture_shortcut: Shortcut {
-                key: 2,
-                shift: true,
-                ctrl: false,
-                alt: false,
-            },
+            capture_shortcut: crate::read_hotkey::ReadHotkeySettings::default().shortcut,
             preview_shortcut: Shortcut {
                 key: 119,
                 shift: true,
