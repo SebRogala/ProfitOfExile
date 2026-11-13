@@ -549,7 +549,7 @@
 				below are readable anyway.
 			</p>
 		{:else if capture === null}
-			<p class="stub">No capture yet. Turn on Merc OCR (sidebar) and open a recruit window.</p>
+			<p class="stub">No capture yet.</p>
 		{:else}
 			<div class="capture-header">
 				<span class="hdr"><span class="hdr-key">name</span> {capture.header.name ?? '—'}</span>

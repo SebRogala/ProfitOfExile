@@ -2492,7 +2492,7 @@ mod tests {
     }
 
     /// After three rounds an incomplete capture stays incomplete (ADR-025's
-    /// accepted cost): the hover, or a Scan now, is the answer.
+    /// accepted cost): the next press refills the budget (`run::round_plan`).
     #[test]
     fn no_rounds_left_plans_nothing_over_an_incomplete_capture() {
         let layout = layout_of();

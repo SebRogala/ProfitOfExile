@@ -479,8 +479,8 @@ pub enum PanelAnchor {
     NoRows,
     /// The placed crop contains name lines, but their median x is outside the
     /// half-cell tolerance of the placed column. Nothing is published from the
-    /// shifted geometry; only a manual tick (Scan now, Recalibrate) spends the
-    /// full-screen locate on it (`run::locate_decision`).
+    /// shifted geometry; only a pending Recalibrate spends the full-screen
+    /// locate on it (`run::locate_decision`).
     ColumnMoved { column_x: i32, expected_x: i32, tolerance: i32 },
     /// A placed rect supplied the rows, but no wager, verdict or button line
     /// corroborated that the recruit window is open.
@@ -1208,14 +1208,6 @@ const HEADER_GUARD_FOOTER_PITCHES: f32 = 1.0;
 /// `None` for a layout with no rows, exactly as [`panel_bounds`].
 pub fn header_guard_bounds(layout: &MercLayout, g: &MercGeometry) -> Option<[i32; 4]> {
     bounds(layout, g, HEADER_GUARD_FOOTER_PITCHES)
-}
-
-/// Whether the placed recruit crop OCR saw any recruit-window chrome.
-///
-/// The crop is already anchored by the SSOT panel placement, so any of the
-/// three text anchors is enough for the cheap voice-gate proof.
-pub fn probe_hit(lines: &[OcrLineBox], g: &MercGeometry) -> bool {
-    lines.iter().any(|l| text_anchor(&l.text, g).is_some())
 }
 
 /// The shared rect construction: the grid plus [`PANEL_MARGIN_CELLS`] either
@@ -3307,58 +3299,6 @@ mod tests {
                 .is_some(),
             "translated, the same frame is the panel the session already knows",
         );
-    }
-
-    // -- what a placed-crop probe accepts on -------------------------------
-
-    /// The dump as OCR returned it, wager line and all: the probe accepts.
-    #[test]
-    fn a_crop_holding_a_footer_button_is_a_hit() {
-        assert!(probe_hit(&windows_dump_lines(), &MercGeometry::default()));
-    }
-
-    /// The 2026-08-24 measurement that shaped the whole anchor rule: Windows
-    /// OCR returned NO line for the wager, and both buttons read clean. Either
-    /// one alone has to be enough.
-    #[test]
-    fn each_text_anchor_alone_is_a_hit() {
-        let g = MercGeometry::default();
-
-        for text in ["Wager: 8 831", "Should Recruit", "TAKE ITEM", "REMATCH"] {
-            let lines = vec![OcrLineBox { text: text.into(), x: 830, y: 979, w: 87, h: 13 }];
-            assert!(probe_hit(&lines, &g), "{text} must accept");
-        }
-    }
-
-    /// Skill text alone is not recruit chrome.
-    #[test]
-    fn a_crop_holding_only_skill_names_is_not_a_hit() {
-        let g = MercGeometry::default();
-        let lines = vec![OcrLineBox { text: "FROST BOMB".into(), x: 719, y: 678, w: 87, h: 13 }];
-
-        assert!(text_anchor(&lines[0].text, &g).is_none(), "arrange: it is not chrome");
-        assert!(!probe_hit(&lines, &g));
-    }
-
-    /// The rejection that matters: skill names are what a gem tooltip and the
-    /// character panel are full of, and the probe runs while the player is
-    /// walking through an arena. Accepting on those would hand a full detect to
-    /// every voice line, which is the burst back.
-    #[test]
-    fn a_crop_holding_only_non_chrome_lines_is_not_a_hit() {
-        let g = MercGeometry::default();
-        let lines: Vec<OcrLineBox> = windows_dump_lines()
-            .into_iter()
-            .filter(|l| text_anchor(&l.text, &g).is_none())
-            .collect();
-
-        assert!(!lines.is_empty(), "arrange: the dump still has its skill rows");
-        assert!(!probe_hit(&lines, &g));
-    }
-
-    #[test]
-    fn an_empty_crop_is_not_a_hit() {
-        assert!(!probe_hit(&[], &MercGeometry::default()));
     }
 
 }

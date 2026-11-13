@@ -1,9 +1,7 @@
 //! Client.txt line grammar and the shared line-clock policy: the pure parses
 //! every feature reads a log line with (speaker, area entry, area change, the
 //! line's own timestamp), the catch-up tail read, and the clock constants the
-//! mercenary and temple triggers both measure against. `MANUAL_ARM_GRACE_MS`
-//! is policy rather than grammar; it lives here because merc and temple share
-//! it.
+//! mercenary and temple triggers both measure against.
 
 use serde::Serialize;
 use std::io::{Read as _, Seek, SeekFrom};
@@ -52,16 +50,6 @@ pub const LINE_STALE_MS: u64 = 10_000;
 /// clock — the behaviour POE-198 shipped, which is wrong by at most one watcher
 /// hop.
 pub const MAX_BACKDATE_MS: u64 = 10_000;
-
-/// How long a Scan-now request waits for the game before giving up.
-///
-/// Scan now is clicked in OUR window, which by definition means the game is not
-/// the foreground window and the capture loop is napping. So the request is not
-/// a deadline to meet but a debt to settle: it is owed ONE detect, and it gets
-/// it at the first moment the game IS in front. This bounds the wait, so a
-/// click that is never followed by an alt-tab does not leave the module holding
-/// a detect for the rest of the session.
-pub const MANUAL_ARM_GRACE_MS: u64 = 60_000;
 
 /// Sigils PoE puts in front of a PLAYER's name: whisper, guild, global, trade,
 /// party. A speaker starting with one of these is a person typing, whatever it
