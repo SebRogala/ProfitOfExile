@@ -58,6 +58,17 @@ func TestListingsInMarket_dropsOtherLevelsFromALevelTwentyMarket(t *testing.T) {
 	}
 }
 
+func TestListingsInMarket_dropsOtherQualitiesFromAQualityTwentyMarket(t *testing.T) {
+	key := resolve.GemKey(observationLeague, "Siege Ballista", "20/20")
+	listings := []TradeListingDetail{chaosListing(12, 20, 19, false), chaosListing(40, 20, 20, false)}
+
+	got := listingPrices(ListingsInMarket(key, listings))
+
+	if want := []float64{40}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("prices in market = %v, want %v", got, want)
+	}
+}
+
 func TestListingsInMarket_levelOneMarketKeepsEveryLevel(t *testing.T) {
 	key := resolve.GemKey(observationLeague, "Siege Ballista", "1")
 	listings := []TradeListingDetail{chaosListing(5, 1, 0, false), chaosListing(7, 7, 13, false)}
