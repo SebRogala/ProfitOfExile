@@ -276,7 +276,7 @@ function labSetup() {
 	const reloads: string[] = [];
 	const status = vi.fn(async () => ({ lastUpdate: '', nextFetch: '', connected: false, collectorUptime: '', divinePrice: 1 }));
 	const lab = createLabController({
-		status, rankings: async () => ({ rows: [], total: 0 }), market: async () => ({}) as never, rate: () => {},
+		status, rankings: async () => ({ rows: [], total: 0 }), market: async () => ({}) as never,
 		connected: () => undefined, onReload: () => reloads.push('reload'), random: () => 0.5
 	});
 	return { lab, reloads, status };
@@ -305,7 +305,7 @@ it('lab re-rolls the jitter on every update', () => {
 	const rolls = [0, 1];
 	const reloads: number[] = [];
 	const lab = createLabController({
-		status: async () => ({}) as never, rankings: async () => ({ rows: [], total: 0 }), market: async () => ({}) as never, rate: () => {},
+		status: async () => ({}) as never, rankings: async () => ({ rows: [], total: 0 }), market: async () => ({}) as never,
 		connected: () => undefined, onReload: () => reloads.push(Date.now()), random: () => rolls.shift() ?? 0
 	});
 	const t0 = Date.now();

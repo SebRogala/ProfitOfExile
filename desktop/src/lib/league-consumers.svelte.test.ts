@@ -43,7 +43,7 @@ const queueItem = () => ({ gem: 'Arc', variant: '20/20', pickedAt: new Date(), s
 function dashboard() {
 	return createLabController({
 		status: async () => ({ divinePrice: 0 } as StatusData), rankings: async () => ({ rows: [], total: 0 }),
-		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
+		market: async () => ({} as MarketOverviewData), connected: () => undefined
 	});
 }
 
@@ -86,26 +86,25 @@ it('a rankings response from the previous league is dropped', async () => {
 	const ranksB = deferred<RankingsPage>();
 	const statusA = deferred<StatusData>();
 	const statusB = deferred<StatusData>();
-	const readings: number[] = [];
 	let rankCall = 0;
 	let statusCall = 0;
 	const controller = createLabController({
 		status: () => [statusA, statusB][statusCall++].promise,
 		rankings: () => [ranksA, ranksB][rankCall++].promise,
-		market: async () => ({} as MarketOverviewData), rate: (value) => readings.push(value), connected: () => undefined
+		market: async () => ({} as MarketOverviewData), connected: () => undefined
 	});
 	stops.push(controller.start(() => {}));
 	controller.setRankingsQuery(rankingsQuery('20/20'));
 	const old = controller.loadAll();
 	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
-	expect([controller.state.bestPlays, controller.state.status, controller.state.loading, readings]).toEqual([[], null, true, [0]]);
+	expect([controller.state.bestPlays, controller.state.status, controller.state.loading]).toEqual([[], null, true]);
 	statusB.reject(new Error('B offline'));
 	ranksB.resolve(page());
 	await settle();
 	statusA.resolve({ divinePrice: 999 } as StatusData);
 	ranksA.resolve(page('outgoing'));
 	await old;
-	expect([controller.state.bestPlays, controller.state.status, controller.state.marketOverview, controller.state.loading, controller.state.error, readings]).toEqual([[], null, null, false, 'B offline', [0]]);
+	expect([controller.state.bestPlays, controller.state.status, controller.state.marketOverview, controller.state.loading, controller.state.error]).toEqual([[], null, null, false, 'B offline']);
 });
 
 it('rankings refetch after a league change uses the stored query', async () => {
@@ -113,7 +112,7 @@ it('rankings refetch after a league change uses the stored query', async () => {
 	const controller = createLabController({
 		status: async () => ({ divinePrice: 0 } as StatusData),
 		rankings: async (q) => { asked.push(q); return page('row'); },
-		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
+		market: async () => ({} as MarketOverviewData), connected: () => undefined
 	});
 	stops.push(controller.start(() => {}));
 	const stored = { ...rankingsQuery('1/20'), color: 'BLUE', budget: 40, sort: 'roiPercent' as const };
@@ -130,7 +129,7 @@ function pagedController() {
 	const controller = createLabController({
 		status: async () => ({ divinePrice: 0 } as StatusData),
 		rankings: (q) => { const reply = deferred<RankingsPage>(); calls.push({ q, reply }); return reply.promise; },
-		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
+		market: async () => ({} as MarketOverviewData), connected: () => undefined
 	});
 	stops.push(controller.dispose);
 	return { controller, calls };
@@ -183,7 +182,7 @@ function failingController() {
 	const controller = createLabController({
 		status: async () => ({ divinePrice: 0 } as StatusData),
 		rankings: async () => { if (fail) throw new Error('offline'); return page('shown before'); },
-		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
+		market: async () => ({} as MarketOverviewData), connected: () => undefined
 	});
 	const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 	return { controller, warn, failNext: () => { fail = true; } };
@@ -220,7 +219,7 @@ it('a rankings page stores its total', async () => {
 	const controller = createLabController({
 		status: async () => ({ divinePrice: 0 } as StatusData),
 		rankings: async () => ({ rows: [{ name: 'a' } as GemPlay], total: 137 }),
-		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
+		market: async () => ({} as MarketOverviewData), connected: () => undefined
 	});
 	controller.setRankingsQuery(rankingsQuery('20/20'));
 	await debounce();

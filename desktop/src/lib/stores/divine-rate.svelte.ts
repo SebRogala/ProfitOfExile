@@ -15,6 +15,7 @@
 import { listen } from '@tauri-apps/api/event';
 import { onLeagueChange } from './ssot.svelte';
 import { fetchDivineRate, getApiBase } from '$lib/api';
+import { setDivineRate } from '$lib/price.svelte';
 import { whenServerUrl } from '$lib/stores/server-base.svelte';
 import { refetchDelay } from '$lib/exchange/view';
 import { deriveDivineRateState, normalizeDivineRate, type DivineRateSnapshot, type DivineRateState } from './divine-rate';
@@ -135,6 +136,14 @@ export function initDivineRateStore(): () => void {
 		void refreshDivineRate();
 	});
 
+	// formatPrice's rate in this window is this store's (POE-339); price.svelte.ts
+	// stays byte-identical to the web frontend's, so its setter is the seam.
+	const stopFormatBridge = $effect.root(() => {
+		$effect(() => {
+			setDivineRate(currentDivineRate() ?? 0);
+		});
+	});
+
 	void refreshDivineRate();
 
 	const healthPoll = setInterval(() => {
@@ -161,6 +170,7 @@ export function initDivineRateStore(): () => void {
 		generation++;
 		readInFlight = false;
 		stopLeague();
+		stopFormatBridge();
 		clearInterval(clock);
 		clearInterval(healthPoll);
 		if (refetchTimer) {

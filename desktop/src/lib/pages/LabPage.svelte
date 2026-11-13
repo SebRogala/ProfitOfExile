@@ -4,7 +4,7 @@
 	import { untrack } from 'svelte';
 	import { store } from '$lib/stores/status.svelte';
 	import { ssot, fetchSsot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
-	import { setDivineRate } from '$lib/price.svelte';
+	import { currentDivineRate } from '$lib/stores/divine-rate.svelte';
 	import { mercureConnected, subscribeMercureConnection, subscribeMercureUpdate } from '$lib/stores/mercure.svelte';
 	import {
 		fetchStatus,
@@ -128,7 +128,7 @@
 
 	const dashboard = createLabController({
 		status: fetchStatus, rankings: fetchRankingsPage,
-		market: fetchMarketOverview, rate: setDivineRate,
+		market: fetchMarketOverview,
 		connected: mercureConnected,
 		onReload: () => { refreshKey++; }
 	});
@@ -163,7 +163,7 @@
 		},
 		lookup: (item) => invoke<TradeLookupResult>('trade_lookup', {
 			// Refresh the queued item's market and normalize divine listings with the current rate.
-			gem: item.gem, variant: item.variant, divineRate: status?.divinePrice || undefined,
+			gem: item.gem, variant: item.variant, divineRate: currentDivineRate() ?? undefined,
 			mode: (DEDICATION_VARIANTS as readonly string[]).includes(item.variant) ? 'dedication' : undefined
 		})
 	});
@@ -344,7 +344,7 @@
 		     Hidden via CSS when not on Session tab to avoid unmount/remount. -->
 		<div class:tab-hidden={activeTab !== 'Session'}>
 			<Comparator
-				divineRate={status?.divinePrice || 0}
+				divineRate={currentDivineRate() ?? 0}
 				onQueueGem={handleQueueGem}
 				labMode={labModeForChild}
 			/>

@@ -285,7 +285,6 @@ export function createLabController(dependencies: {
 	status: () => Promise<StatusData>;
 	rankings: (q: RankingsQuery) => Promise<RankingsPage>;
 	market: () => Promise<MarketOverviewData>;
-	rate: (value: number) => void;
 	connected: () => boolean | undefined;
 	/** Runs before each Mercure-driven reload (LabPage bumps its refreshKey). */
 	onReload?: () => void;
@@ -363,7 +362,6 @@ export function createLabController(dependencies: {
 			const connected = dependencies.connected();
 			state.status = connected === undefined ? status : { ...status, connected };
 			state.marketOverview = market;
-			dependencies.rate(status?.divinePrice ?? 0);
 		} catch (error) {
 			if (mine !== generation || request !== loadGeneration) return;
 			state.error = String((error as Error)?.message ?? 'Failed to load dashboard data');
@@ -412,7 +410,6 @@ export function createLabController(dependencies: {
 			state.bestPlays = []; state.rankingsTotal = 0; state.rankingsPending = true;
 			state.status = null; state.marketOverview = null;
 			state.bestPlaysError = ''; state.error = ''; state.loading = true;
-			dependencies.rate(0);
 			clearDebounce();
 			clearRankingsTimer();
 			invalidateQueue();
