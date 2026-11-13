@@ -2,7 +2,7 @@
 //!
 //! [`rooms`](super::rooms) owns the closed name vocabulary and Vertolka's letter
 //! grade. This module owns the numbers behind that letter: the tier-3 chest
-//! unique and the rarity / pack-size percentages the room adds.
+//! uniques and the rarity / pack-size percentages the room adds.
 //!
 //! Epic lock L1 (POE-124) is what this table feeds: room value = sale price +
 //! drops (expected count x LIVE price) + bonus (rarity x chaos-per-%).
@@ -19,7 +19,7 @@
 //! [`LineDrops::has_guess`] answers "is anything in this room's value guessed?"
 //! so the overlay (POE-260) can mark it.
 //!
-//! Four sources for the NUMBERS, and only four:
+//! Five sources for the NUMBERS, and only five:
 //!
 //! - [`POEDB`] — the room's own page on poedb.tw, read 2026-09-06. This is the
 //!   game's data: the rarity / pack-size lines, the item-chance stat
@@ -30,6 +30,9 @@
 //! - [`VERTOLKA_MSG`] — Vertolka's 2026-09-06 message quoted on POE-124. Every
 //!   number from it is a [`Basis::Guess`], because he said so: "price of unique
 //!   divided by 4" (hence 0.25 per run at tier 3).
+//! - [`SHEET_UNIQUES_330`] — Vertolka's 3.30 sheet export, 2026-11-13
+//!   (POE-370): the chest rooms' unique pools and the 25 % share. A
+//!   [`Basis::Guess`]; [`VERTOLKA_MSG`] was the source before it.
 //! - Vertolka's 3.30 sheet export, 2026-11-13 (POE-369) — the rows cited by
 //!   [`SHEET_LOCUS_330`], [`SHEET_CRADLE_330`] and [`SHEET_GLITTERING_330`]:
 //!   the corruption rooms' rarity and pack size, the Cradle of Creation line's
@@ -40,7 +43,15 @@
 //! Vertolka: "only tier 3 rooms can drop unique, but T1 and T2 ... provide
 //! smaller quant/rarity bonuses". So
 //! [`TierDrops::uniques_per_run`] is `None` at tiers 1 and 2 for every line, and
-//! his 0.25 sits at tier 3 for the six lines whose sheet row names a unique.
+//! the 3.30 sheet's 0.25 sits at tier 3 on the eight chest lines. Each chest is
+//! a pool: each of its N base items counts at 0.25 / N.
+//!
+//! # Chests that may be absent
+//!
+//! The 3.30 patch notes say certain tier-3 rooms "no longer always contain a
+//! special chest". The flat 0.25 is read as covering that; no separate chest
+//! chance is modelled. Storm of Corruption "can no longer contain a special
+//! chest" and has none here.
 //!
 //! # No vials (POE-366)
 //!
@@ -53,8 +64,8 @@
 //! room value has a quantity term.
 //!
 //! [`TierDrops::uniques_per_run`] does NOT scale: no stat on any page states a
-//! per-tier chest-unique chance, so his 0.25 stays a flat tier-3 number on the
-//! six lines whose sheet row names a unique.
+//! per-tier chest-unique chance, so the 0.25 stays a flat tier-3 number on the
+//! eight chest lines.
 //!
 //! No line carries the architect's temple-mod items: 3.30 removed every
 //! source of them (POE-367).
@@ -127,7 +138,41 @@ pub const SHEET_CRADLE_330: &str = "Vertolka's sheet export 2026-11-13: gid0.csv
 pub const SHEET_GLITTERING_330: &str = "Vertolka's sheet export 2026-11-13: gid0.csv row 13 (Glittering Halls 12% rarity) and g744679169.csv row 27 (12% IIR per tier, exact)";
 /// Vertolka's 2026-09-06 message, quoted on epic POE-124. Everything sourced
 /// here is a [`Basis::Guess`]; he offered the numbers as his own estimates.
+#[allow(dead_code)] // Named by the docs only since POE-370 moved the chest unique rate to SHEET_UNIQUES_330.
 pub const VERTOLKA_MSG: &str = "Vertolka, 2026-09-06 message (POE-124)";
+/// The 3.30 chest unique rate and pools (POE-370). A guess: the sheet says
+/// "count 25% of value", and the equal-weight pool is the sheet author's guess
+/// (Operator ruling T28 2026-11-13 00:20).
+pub const SHEET_UNIQUES_330: &str = "Vertolka's sheet export 2026-11-13: g744679169.csv row 13 (use non-upgraded version / count 25% of value; the upgraded version only with a Cradle of Creation), rows 28-29 (Glittering Halls: Sacrificial Heart and the Tempered jewels; Museum of Artefacts: Soul Catcher), gid0.csv rows 13 and 25; equal-weight pool per the Operator ruling 2026-11-13 00:20 (the sheet author's guess)";
+
+// ----------------------------------------------------------- chest uniques --
+
+/// One unique a tier-3 chest drops and the upgraded version that drops in its
+/// place when a Cradle of Creation is present. Both are poe.ninja spellings.
+///
+/// The server keeps the same pairs in `internal/temple/upgrades.go`
+/// `uniqueUpgrades`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChestUnique {
+    base: &'static str,
+    upgraded: &'static str,
+}
+
+impl ChestUnique {
+    const fn new(base: &'static str, upgraded: &'static str) -> ChestUnique {
+        ChestUnique { base, upgraded }
+    }
+
+    /// The non-upgraded unique; its price is the one counted.
+    pub fn base(self) -> &'static str {
+        self.base
+    }
+
+    /// The Cradle-present upgraded unique; shown, never counted.
+    pub fn upgraded(self) -> &'static str {
+        self.upgraded
+    }
+}
 
 // ------------------------------------------------------------------- basis --
 
@@ -198,6 +243,15 @@ impl Estimate {
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn basis(self) -> Basis {
         self.basis
+    }
+
+    /// This count split across a pool of `n` items, each counted at value / n,
+    /// with the same basis.
+    pub fn per_item(self, n: usize) -> Estimate {
+        Estimate {
+            value: self.value / n as f64,
+            basis: self.basis,
+        }
     }
 
     /// Shorthand for [`Basis::is_guess`].
@@ -291,7 +345,7 @@ impl TierDrops {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LineDrops {
     key: &'static str,
-    unique: Option<&'static str>,
+    uniques: &'static [ChestUnique],
     /// WI-6 draft wording (orchestrator, 2026-09-10) for the tier-3 room's use;
     /// UNCONFIRMED — the owner / Vertolka are to confirm each string. Prose for
     /// the box, never a join key.
@@ -333,11 +387,12 @@ impl LineDrops {
         self.key
     }
 
-    /// The unique the tier-3 chest drops, as **poe.ninja spells it** — the join
-    /// key POE-255/257 price against. `None` for the nineteen lines with no
-    /// unique of their own.
-    pub fn unique(self) -> Option<&'static str> {
-        self.unique
+    /// The uniques the tier-3 chest drops, base first in each pair, as
+    /// **poe.ninja spells them** — the join keys POE-255/257 price against.
+    /// Empty for the seventeen lines with no chest. A line with several is a
+    /// pool: the chest drops one of them ([`SHEET_UNIQUES_330`]).
+    pub fn uniques(self) -> &'static [ChestUnique] {
+        self.uniques
     }
 
     /// The draft prose for a content line, or `None` for a chest line.
@@ -349,7 +404,7 @@ impl LineDrops {
     /// carry content prose instead. The kind is derived so those facts cannot
     /// disagree.
     pub fn kind(self) -> LineKind {
-        if self.unique.is_some() {
+        if !self.uniques.is_empty() {
             LineKind::Chest
         } else {
             LineKind::Content
@@ -364,8 +419,8 @@ impl LineDrops {
     /// It is prose for the overlay, never a join key and never a number. In
     /// particular it is deliberately **not** part of [`LineDrops::is_empty`] or
     /// [`LineDrops::has_guess`]: "nothing worth much" is a remark about a room
-    /// that drops nothing, not a drop, and Museum of Artefacts must keep
-    /// reporting empty while carrying it.
+    /// that drops little, not a drop, and Wealth of the Vaal must keep
+    /// reporting empty while carrying its commentary.
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn note(self) -> Option<&'static str> {
         self.note
@@ -388,7 +443,7 @@ impl LineDrops {
     /// Whether this line drops nothing anybody has quantified or named.
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn is_empty(&self) -> bool {
-        self.unique.is_none() && self.tiers.iter().all(|t| t.is_empty())
+        self.uniques.is_empty() && self.tiers.iter().all(|t| t.is_empty())
     }
 
     /// **Is anything in this room's value guessed?** POE-257 reads it to weight
@@ -418,7 +473,7 @@ impl RoomLine {
 pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "apex_of_ascension",
-        unique: None,
+        uniques: &[],
         // 3.30 patch note: "can now generate multiple Unique Items, proportional
         // to the value of the Unique Item sacrificed".
         content: Some("Sacrifice a unique for uniques of its worth"),
@@ -431,7 +486,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "atlas_of_worlds",
-        unique: None,
+        uniques: &[],
         // 3.30 patch note: the device has "multiple uses in higher-tier rooms";
         // sheet export 2026-11-13 gid0.csv row 23 "corrupt maps for second time
         // (higher tier provide more uses)" (its 1/3/5? counts not adopted) and
@@ -447,7 +502,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "chamber_of_iron",
-        unique: None,
+        uniques: &[],
         content: Some("Armour drops"),
         // 3.30 removed temple-mod items and this cell's 3.30 text is unverified (sheet not fetched).
         note: None,
@@ -474,7 +529,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "conduit_of_lightning",
-        unique: Some("Dance of the Offered"),
+        uniques: &[ChestUnique::new("Dance of the Offered", "Omeyocan")],
         content: None,
         note: None,
         tiers: [
@@ -491,7 +546,7 @@ pub const DROPS: [LineDrops; 25] = [
                 magic_pack_size_pct: None,
             },
             TierDrops {
-                uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
+                uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
@@ -500,7 +555,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "court_of_sealed_death",
-        unique: None,
+        uniques: &[],
         content: Some("Arcanist & Diviner strongboxes"),
         note: Some("In T3 Arcanist and Diviner Stronboxes are quite common"),
         tiers: [
@@ -511,7 +566,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "crucible_of_flame",
-        unique: Some("Story of the Vaal"),
+        uniques: &[ChestUnique::new("Story of the Vaal", "Fate of the Vaal")],
         content: None,
         note: None,
         tiers: [
@@ -528,7 +583,7 @@ pub const DROPS: [LineDrops; 25] = [
                 magic_pack_size_pct: None,
             },
             TierDrops {
-                uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
+                uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
@@ -537,7 +592,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "defense_research_lab",
-        unique: Some("Architect's Hand"),
+        uniques: &[ChestUnique::new("Architect's Hand", "Slavedriver's Hand")],
         content: None,
         note: None,
         tiers: [
@@ -554,7 +609,7 @@ pub const DROPS: [LineDrops; 25] = [
                 magic_pack_size_pct: None,
             },
             TierDrops {
-                uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
+                uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
@@ -563,7 +618,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "gem",
-        unique: None,
+        uniques: &[],
         content: Some("Double-corrupt a gem"),
         note: None,
         tiers: [
@@ -574,7 +629,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "factory",
-        unique: None,
+        uniques: &[],
         // Sheet export 2026-11-13 gid0.csv row 11 "increase yield of items";
         // 3.30 removed item quantity.
         content: Some("Extra item drops"),
@@ -602,8 +657,16 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "glittering_halls",
-        unique: None,
-        content: Some("Jewellery drops"),
+        // g744679169.csv row 28 and gid0.csv row 13: the chest drops one of
+        // these four; the Cradle upgrades are Zerphi's Heart and the
+        // Transcendent jewels.
+        uniques: &[
+            ChestUnique::new("Sacrificial Heart", "Zerphi's Heart"),
+            ChestUnique::new("Tempered Flesh", "Transcendent Flesh"),
+            ChestUnique::new("Tempered Mind", "Transcendent Mind"),
+            ChestUnique::new("Tempered Spirit", "Transcendent Spirit"),
+        ],
+        content: None,
         // The 3.30 sheet row (gid0.csv row 13) carries no fractured note.
         note: None,
         tiers: [
@@ -620,7 +683,7 @@ pub const DROPS: [LineDrops; 25] = [
                 magic_pack_size_pct: None,
             },
             TierDrops {
-                uniques_per_run: None,
+                uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
                 rarity_pct: Some(Estimate::measured(36.0, SHEET_GLITTERING_330)),
                 pack_size_pct: None,
                 magic_pack_size_pct: None,
@@ -629,7 +692,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "hall_of_champions",
-        unique: None,
+        uniques: &[],
         content: Some("Weapon drops"),
         note: None,
         tiers: [
@@ -655,7 +718,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "hall_of_legends",
-        unique: None,
+        uniques: &[],
         content: Some("Legion encounter"),
         note: Some("there are much better ways how to farm legion"),
         tiers: [
@@ -666,7 +729,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "hall_of_war",
-        unique: None,
+        uniques: &[],
         content: Some("Rare monster packs"),
         note: None,
         tiers: [
@@ -692,7 +755,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "house_of_the_others",
-        unique: None,
+        uniques: &[],
         content: Some("Breach encounter"),
         note: None,
         tiers: [
@@ -708,7 +771,7 @@ pub const DROPS: [LineDrops; 25] = [
         // along with Coward's Chains to transform it", and the Recipe table on
         // the same page names Chains as the input (poedb.tw Vial of Consequence
         // page, 2026-09-06). Legacy is the upgrade, and belongs to POE-255.
-        unique: Some("Coward's Chains"),
+        uniques: &[ChestUnique::new("Coward's Chains", "Coward's Legacy")],
         content: None,
         note: None,
         tiers: [
@@ -725,7 +788,7 @@ pub const DROPS: [LineDrops; 25] = [
                 magic_pack_size_pct: None,
             },
             TierDrops {
-                uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
+                uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
@@ -739,7 +802,7 @@ pub const DROPS: [LineDrops; 25] = [
         // poedb.tw `Unique /1` tab (2026-09-06) was the source of that mistake.
         // Vertolka's sheet correctly has no chest unique here: this room has no
         // chest.
-        unique: None,
+        uniques: &[],
         content: Some("Double-corrupt an item"),
         note: None,
         tiers: [
@@ -765,18 +828,25 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "museum_of_artefacts",
-        unique: None,
-        content: Some("Extra item drops"),
+        // g744679169.csv row 29 and gid0.csv row 25: Soul Catcher, upgraded
+        // Soul Ripper.
+        uniques: &[ChestUnique::new("Soul Catcher", "Soul Ripper")],
+        content: None,
         note: Some("nothing worth much"),
         tiers: [
             TierDrops::NONE,
             TierDrops::NONE,
-            TierDrops::NONE,
+            TierDrops {
+                uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
+                rarity_pct: None,
+                pack_size_pct: None,
+                magic_pack_size_pct: None,
+            },
         ],
     },
     LineDrops {
         key: "sadists_den",
-        unique: None,
+        uniques: &[],
         content: Some("Extra monsters (dangerous)"),
         note: None,
         tiers: [
@@ -787,7 +857,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "sanctum_of_immortality",
-        unique: Some("Mask of the Spirit Drinker"),
+        uniques: &[ChestUnique::new("Mask of the Spirit Drinker", "Mask of the Stitched Demon")],
         content: None,
         note: None,
         tiers: [
@@ -804,7 +874,7 @@ pub const DROPS: [LineDrops; 25] = [
                 magic_pack_size_pct: None,
             },
             TierDrops {
-                uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
+                uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
@@ -813,7 +883,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "explosive",
-        unique: None,
+        uniques: &[],
         content: Some("Destroy rooms / explosives"),
         note: Some("usually you should't need it"),
         tiers: [
@@ -824,7 +894,9 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "storm_of_corruption",
-        unique: None,
+        // 3.30 patch note: the room "can no longer contain a special chest"
+        // (gid0.csv row 27 has an empty unique cell).
+        uniques: &[],
         content: Some("Corrupting tempest"),
         note: Some("corrupting tempest can be good in early league for corrupted 6-links"),
         tiers: [
@@ -835,7 +907,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "upgrade",
-        unique: None,
+        uniques: &[],
         content: Some("Upgrade a room"),
         note: None,
         tiers: [
@@ -861,7 +933,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "throne_of_atziri",
-        unique: None,
+        uniques: &[],
         // 3.30 patch note: "area level 84 and contain Uber Atziri"; sheet export
         // 2026-11-13 gid0.csv row 8 "Area level 84, uber Atziri" and
         // g744679169.csv row 32 "area is level 84".
@@ -890,7 +962,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "toxic_grove",
-        unique: Some("Apep's Slumber"),
+        uniques: &[ChestUnique::new("Apep's Slumber", "Apep's Supremacy")],
         content: None,
         note: Some("can be good with corrupting tempest for 6-link farming"),
         tiers: [
@@ -907,7 +979,7 @@ pub const DROPS: [LineDrops; 25] = [
                 magic_pack_size_pct: None,
             },
             TierDrops {
-                uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
+                uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
                 rarity_pct: None,
                 pack_size_pct: None,
                 magic_pack_size_pct: None,
@@ -916,7 +988,7 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "wealth_of_the_vaal",
-        unique: None,
+        uniques: &[],
         content: Some("Currency drops"),
         note: Some("couple of currency usually max. 10c value - maybe worth in Early League)"),
         tiers: [
@@ -932,24 +1004,6 @@ mod tests {
     use super::*;
     use crate::temple::rooms::LINES;
 
-    /// poe.ninja's own `lines[].name` strings, snapshotted 2026-09-06. The
-    /// table joins to live prices by these, so this file is the typo net.
-    const NINJA_NAMES: &str = include_str!("assets/poe-ninja-names-2026-09-06.txt");
-
-    fn fixture(section: &str) -> Vec<&'static str> {
-        let mut names = Vec::new();
-        let mut inside = false;
-        for line in NINJA_NAMES.lines() {
-            let line = line.trim();
-            if line.starts_with('[') {
-                inside = line == section;
-            } else if inside && !line.is_empty() && !line.starts_with('#') {
-                names.push(line);
-            }
-        }
-        names
-    }
-
     fn drops_for(key: &str) -> &'static LineDrops {
         for_key(key).unwrap_or_else(|| panic!("no drops row keyed {key}"))
     }
@@ -958,13 +1012,15 @@ mod tests {
         Tier::new(n).expect("test tier is 0..=3")
     }
 
-    /// The six lines whose sheet row names a tier-3 chest unique, and so the
-    /// six that carry his 0.25 unique rate.
-    const CHEST_LINES: [&str; 6] = [
+    /// The eight chest lines of the 3.30 sheet, and so the eight that carry
+    /// its 0.25 unique rate.
+    const CHEST_LINES: [&str; 8] = [
         "conduit_of_lightning",
         "crucible_of_flame",
         "defense_research_lab",
+        "glittering_halls",
         "hybridisation_chamber",
+        "museum_of_artefacts",
         "sanctum_of_immortality",
         "toxic_grove",
     ];
@@ -1047,46 +1103,98 @@ mod tests {
 
     // ------------------------------------------------------------ names --
 
-    // Every unique in the table has to be a string poe.ninja actually
-    // publishes, or POE-255/257 join to nothing and the room silently prices at
-    // zero. Fails on any typo — "Mask of Spirit Drinker" for "Mask of the
-    // Spirit Drinker".
+    // Every base and upgraded name in the table has to be one the market
+    // prices, or the room silently prices at zero. Fails on any typo —
+    // "Zerphis Heart" for "Zerphi's Heart".
     #[test]
-    fn every_item_name_in_the_table_is_one_poe_ninja_publishes() {
-        let uniques = fixture("[unique]");
-        let absent = fixture("[absent]");
-
+    fn every_chest_item_is_one_the_capture_prices() {
+        let market = crate::temple::market::allflame();
         for row in DROPS.iter() {
-            if let Some(unique) = row.unique() {
-                assert!(
-                    uniques.contains(&unique) || absent.contains(&unique),
-                    "{}: {unique:?} is neither published by poe.ninja nor listed as absent",
-                    row.key()
-                );
+            for item in row.uniques() {
+                for name in [item.base(), item.upgraded()] {
+                    assert!(
+                        market.price(name).is_some(),
+                        "{}: {name:?} is not priced by the capture",
+                        row.key()
+                    );
+                }
             }
         }
+    }
 
-        // No name in the table is unpublished now. Pinned so that an
-        // unpriceable name cannot be waved through by adding it to the fixture.
-        assert!(absent.is_empty(), "the drops table has an unpriceable name: {absent:?}");
+    // POE-370 R1/R2: the 3.30 chest rooms and their base -> upgraded pairs
+    // (g744679169.csv rows 28-29; gid0.csv rows 13-16, 21-22, 25, 28), matching
+    // the server's `uniqueUpgrades`. Fails if a pair is dropped or a base and
+    // its upgraded are swapped.
+    #[test]
+    fn every_chest_room_carries_its_3_30_pairs() {
+        let expected: Vec<(&str, Vec<(&str, &str)>)> = vec![
+            ("conduit_of_lightning", vec![("Dance of the Offered", "Omeyocan")]),
+            ("crucible_of_flame", vec![("Story of the Vaal", "Fate of the Vaal")]),
+            ("defense_research_lab", vec![("Architect's Hand", "Slavedriver's Hand")]),
+            (
+                "glittering_halls",
+                vec![
+                    ("Sacrificial Heart", "Zerphi's Heart"),
+                    ("Tempered Flesh", "Transcendent Flesh"),
+                    ("Tempered Mind", "Transcendent Mind"),
+                    ("Tempered Spirit", "Transcendent Spirit"),
+                ],
+            ),
+            ("hybridisation_chamber", vec![("Coward's Chains", "Coward's Legacy")]),
+            ("museum_of_artefacts", vec![("Soul Catcher", "Soul Ripper")]),
+            (
+                "sanctum_of_immortality",
+                vec![("Mask of the Spirit Drinker", "Mask of the Stitched Demon")],
+            ),
+            ("toxic_grove", vec![("Apep's Slumber", "Apep's Supremacy")]),
+        ];
+        let carried: Vec<(&str, Vec<(&str, &str)>)> = DROPS
+            .iter()
+            .filter(|row| !row.uniques().is_empty())
+            .map(|row| {
+                (
+                    row.key(),
+                    row.uniques().iter().map(|u| (u.base(), u.upgraded())).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(carried, expected);
+    }
+
+    // POE-370 R4/A2: the 3.30 patch note says the room "can no longer contain
+    // a special chest". Fails if Storm is given a pair or a unique rate.
+    #[test]
+    fn storm_of_corruption_has_no_chest() {
+        let storm = drops_for("storm_of_corruption");
+        assert!(storm.uniques().is_empty());
+        assert_eq!(storm.kind(), LineKind::Content);
+        assert!(storm.tiers().iter().all(|t| t.uniques_per_run().is_none()));
+    }
+
+    // A pool of n items counts each at the rate / n and keeps the rate's
+    // basis. Fails if the split drops the basis to Measured.
+    #[test]
+    fn a_pooled_count_divides_the_rate_and_keeps_its_basis() {
+        let pooled = Estimate::guess(0.25, SHEET_UNIQUES_330).per_item(4);
+        assert_eq!(pooled.value(), 0.0625);
+        assert_eq!(pooled.basis(), Basis::Guess { source: SHEET_UNIQUES_330 });
     }
 
     #[test]
     fn content_lines_are_exactly_the_non_chest_lines() {
-        const CONTENT_LINES: [&str; 19] = [
+        const CONTENT_LINES: [&str; 17] = [
             "apex_of_ascension",
             "atlas_of_worlds",
             "chamber_of_iron",
             "court_of_sealed_death",
             "gem",
             "factory",
-            "glittering_halls",
             "hall_of_champions",
             "hall_of_legends",
             "hall_of_war",
             "house_of_the_others",
             "corruption",
-            "museum_of_artefacts",
             "sadists_den",
             "explosive",
             "storm_of_corruption",
@@ -1100,13 +1208,13 @@ mod tests {
             .filter(|row| row.content().is_some())
             .map(|row| row.key())
             .collect();
-        assert_eq!(content.len(), 19);
+        assert_eq!(content.len(), 17);
         assert_eq!(content, CONTENT_LINES);
 
         for row in DROPS.iter() {
             assert_eq!(
                 row.content().is_some(),
-                row.unique().is_none(),
+                row.uniques().is_empty(),
                 "{} kind fields disagree",
                 row.key()
             );
@@ -1130,14 +1238,14 @@ mod tests {
             ("defense_research_lab", None),
             ("gem", Some("Double-corrupt a gem")),
             ("factory", Some("Extra item drops")),
-            ("glittering_halls", Some("Jewellery drops")),
+            ("glittering_halls", None),
             ("hall_of_champions", Some("Weapon drops")),
             ("hall_of_legends", Some("Legion encounter")),
             ("hall_of_war", Some("Rare monster packs")),
             ("house_of_the_others", Some("Breach encounter")),
             ("hybridisation_chamber", None),
             ("corruption", Some("Double-corrupt an item")),
-            ("museum_of_artefacts", Some("Extra item drops")),
+            ("museum_of_artefacts", None),
             ("sadists_den", Some("Extra monsters (dangerous)")),
             ("sanctum_of_immortality", None),
             ("explosive", Some("Destroy rooms / explosives")),
@@ -1169,16 +1277,17 @@ mod tests {
     #[test]
     fn every_rows_kind_is_chest_exactly_when_the_line_drops_a_unique() {
         for row in DROPS.iter() {
-            let expected = match row.unique() {
-                Some(_) => LineKind::Chest,
-                None => LineKind::Content,
+            let expected = if row.uniques().is_empty() {
+                LineKind::Content
+            } else {
+                LineKind::Chest
             };
             assert_eq!(row.kind(), expected, "{} kind does not follow its unique", row.key());
         }
 
-        // The six, stated so the loop above cannot pass vacuously on a table
+        // The eight, stated so the loop above cannot pass vacuously on a table
         // that had drifted to one kind throughout.
-        assert_eq!(DROPS.iter().filter(|row| row.kind() == LineKind::Chest).count(), 6);
+        assert_eq!(DROPS.iter().filter(|row| row.kind() == LineKind::Chest).count(), 8);
     }
 
     // ----------------------------------------------------------- rates --
@@ -1200,7 +1309,7 @@ mod tests {
             }
             if row.tiers()[2].uniques_per_run().is_some() {
                 assert!(
-                    row.unique().is_some(),
+                    !row.uniques().is_empty(),
                     "{} rates uniques but names none to price",
                     row.key()
                 );
@@ -1249,7 +1358,6 @@ mod tests {
     #[test]
     fn a_line_with_no_drops_reports_empty_and_nothing_guessed() {
         for key in [
-            "museum_of_artefacts",
             "wealth_of_the_vaal",
             "sadists_den",
             "storm_of_corruption",
@@ -1257,7 +1365,7 @@ mod tests {
             let row = drops_for(key);
             assert!(row.is_empty(), "{key} is not empty");
             assert!(!row.has_guess(), "{key} has a guess but no drops");
-            assert_eq!(row.unique(), None, "{key} names a unique");
+            assert!(row.uniques().is_empty(), "{key} names a unique");
             for drops in row.tiers() {
                 assert!(drops.is_empty(), "{key} has a non-empty tier");
             }
@@ -1266,7 +1374,7 @@ mod tests {
         // The other side of the same contract: Hall of War names no unique, so only its
         // per-tier pack size keeps it off the empty list. A line that drops something is not empty.
         let hall_of_war = drops_for("hall_of_war");
-        assert_eq!(hall_of_war.unique(), None);
+        assert!(hall_of_war.uniques().is_empty());
         assert!(
             !hall_of_war.is_empty(),
             "Hall of War carries a pack-size bonus, so it is not empty"
@@ -1284,7 +1392,7 @@ mod tests {
         assert!(doryani.is_empty(), "Doryani's Institute is not empty");
 
         let locus = drops_for("corruption");
-        assert_eq!(locus.unique(), None);
+        assert!(locus.uniques().is_empty());
         for (index, drops) in locus.tiers().iter().enumerate() {
             assert_eq!(
                 drops.uniques_per_run(),
@@ -1323,7 +1431,7 @@ mod tests {
             vec![Some((1.0, measured)), Some((2.0, measured)), Some((3.0, measured))]
         );
         assert!(SHEET_LOCUS_330.contains("not yet confirmed in game"));
-        assert_eq!(locus.unique(), None);
+        assert!(locus.uniques().is_empty());
         assert!(locus.tiers().iter().all(|t| t.uniques_per_run().is_none()));
     }
 
@@ -1382,19 +1490,9 @@ mod tests {
         );
     }
 
-    // POE-366: 3.30 removed vials, so Glittering Halls — whose only guessed
-    // number was its derived vial rate (its rarity is poedb's) — is measured.
-    #[test]
-    fn a_line_whose_only_guess_was_its_vial_is_not_guessed() {
-        assert!(
-            !drops_for("glittering_halls").has_guess(),
-            "Glittering Halls carries only poedb's rarity"
-        );
-    }
-
     // has_guess is what POE-257/260 read to mark a value as somebody's
-    // estimate: the set it is true on is exactly the six chest lines carrying
-    // Vertolka's 0.25. Fails if a Guess is stored as Measured or if has_guess
+    // estimate: the set it is true on is exactly the eight chest lines carrying
+    // the 3.30 sheet's 0.25. Fails if a Guess is stored as Measured or if has_guess
     // stops walking the tiers.
     #[test]
     fn has_guess_marks_every_chest_line_and_no_other() {
@@ -1405,23 +1503,23 @@ mod tests {
             .collect();
         assert_eq!(guessed, CHEST_LINES);
 
-        // Every guessed unique rate is attributed to Vertolka's message.
+        // Every guessed unique rate is attributed to the 3.30 sheet.
         for row in DROPS.iter() {
             for drops in row.tiers() {
                 if let Some(unique) = drops.uniques_per_run() {
-                    assert_eq!(unique.source(), VERTOLKA_MSG, "{}", row.key());
+                    assert_eq!(unique.source(), SHEET_UNIQUES_330, "{}", row.key());
                     assert!(unique.is_guess(), "{}", row.key());
                 }
             }
         }
     }
 
-    // Vertolka's unique ratio is a flat number on the six chest lines: 1/4 of
-    // a unique per run at tier 3, and no page states a per-tier chance to
-    // scale it by. Fails on an off-by-a-decimal (0.025) and on a rate leaking
-    // onto a seventh line.
+    // The 3.30 sheet's unique share is a flat number on the eight chest lines:
+    // 25 % at tier 3, and no page states a per-tier chance to scale it by.
+    // Fails on an off-by-a-decimal (0.025) and on a rate leaking onto a ninth
+    // line.
     #[test]
-    fn tier_three_carries_vertolkas_quarter_unique_unscaled() {
+    fn tier_three_carries_the_sheets_quarter_unique_unscaled() {
         for key in CHEST_LINES {
             let t3 = drops_for(key).tier(Tier::T3).expect("tier 3 exists");
             assert_eq!(
@@ -1455,13 +1553,12 @@ mod tests {
         );
 
         // A remark about a room is not a drop, which is why `note` is outside
-        // both is_empty and has_guess. Museum of Artefacts is the case that
-        // proves it: Vertolka wrote "nothing worth much" precisely because the
-        // room drops nothing this table prices.
-        let museum = drops_for("museum_of_artefacts");
-        assert_eq!(museum.note(), Some("nothing worth much"));
-        assert!(museum.is_empty(), "commentary is not a drop");
-        assert!(!museum.has_guess(), "commentary is not a number");
+        // both is_empty and has_guess. Wealth of the Vaal is the case that
+        // proves it: it carries commentary and drops nothing this table prices.
+        let wealth = drops_for("wealth_of_the_vaal");
+        assert!(wealth.note().is_some());
+        assert!(wealth.is_empty(), "commentary is not a drop");
+        assert!(!wealth.has_guess(), "commentary is not a number");
     }
 
     // ---------------------------------------------------------- numbers --

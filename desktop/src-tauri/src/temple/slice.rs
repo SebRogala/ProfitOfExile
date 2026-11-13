@@ -723,6 +723,23 @@ pub struct DriverView {
     pub low_confidence: bool,
     /// POE-252: that price is a trailing-window median, not the newest print.
     pub window_priced: bool,
+    /// POE-370: a chest drop's Cradle-present upgraded alternative
+    /// ([`Driver::upgraded`]); never part of [`RoomValueView::total`].
+    /// `null` on every other driver, and on a payload from before the field.
+    #[serde(default)]
+    pub upgraded: Option<UpgradedView>,
+}
+
+/// The upgraded alternative on a [`DriverView`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpgradedView {
+    /// The upgraded unique, as poe.ninja spells it.
+    pub name: String,
+    /// Its feed price, `null` where the feed carries none.
+    pub unit_price: Option<f64>,
+    /// What it would add in the base item's place; never summed.
+    pub chaos: Option<f64>,
 }
 
 /// The side panel, as text gave it.
@@ -1406,6 +1423,11 @@ fn driver_view(driver: &Driver) -> DriverView {
         guessed: driver.guessed,
         low_confidence: driver.low_confidence,
         window_priced: driver.window_priced,
+        upgraded: driver.upgraded.as_ref().map(|u| UpgradedView {
+            name: u.name.clone(),
+            unit_price: u.unit_price,
+            chaos: u.chaos,
+        }),
     }
 }
 
@@ -3603,6 +3625,42 @@ mod tests {
         assert_eq!(view.line, None);
     }
 
+    /// A driver written before POE-370 has no `upgraded` key; it decodes as
+    /// `None`. Fails if `upgraded` is made required.
+    #[test]
+    fn a_driver_json_without_upgraded_decodes_as_none() {
+        let driver: DriverView = serde_json::from_str(
+            r#"{"kind":"unique_drop","name":"Soul Catcher","count":0.25,"unitPrice":1.0,"chaos":0.25,"guessed":true,"lowConfidence":false,"windowPriced":false}"#,
+        )
+        .expect("a driver from before POE-370 still decodes");
+
+        assert_eq!(driver.upgraded, None);
+        assert_eq!(driver.name, "Soul Catcher");
+    }
+
+    /// POE-370: a chest drop's driver carries its Cradle-present upgraded
+    /// alternative onto the wire, at the base item's count. Fails if the
+    /// builder drops the field or crosses its price and chaos.
+    #[test]
+    fn a_driver_view_carries_the_upgraded_alternative() {
+        let valued = allflame_valuation();
+        let sanctum = valued.get("sanctum_of_immortality", Tier::T3).expect("valued");
+        let unique = sanctum
+            .drivers
+            .iter()
+            .find(|d| d.kind == DriverKind::UniqueDrop)
+            .expect("Sanctum drops its mask");
+
+        assert_eq!(
+            driver_view(unique).upgraded,
+            Some(UpgradedView {
+                name: "Mask of the Stitched Demon".to_string(),
+                unit_price: Some(427.0),
+                chaos: Some(106.75),
+            })
+        );
+    }
+
     /// A payload written before WI-6 carries line facts but neither of the two
     /// fields it added. It decodes as the chest-shaped box it drew: that is what
     /// `Default` for [`LineKind`] is for, and a `content` defaulting to anything
@@ -5635,6 +5693,7 @@ mod tests {
                                 guessed: false,
                                 low_confidence: true,
                                 window_priced: true,
+                                upgraded: None,
                             },
                             DriverView {
                                 kind: "tier_fraction".to_string(),
@@ -5645,6 +5704,7 @@ mod tests {
                                 guessed: false,
                                 low_confidence: false,
                                 window_priced: false,
+                                upgraded: None,
                             },
                         ],
                     }),
@@ -5776,7 +5836,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"line":{"kind":"content","content":"Extra monsters (dangerous)","rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true,"upgraded":null},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false,"upgraded":null}]},"line":{"kind":"content","content":"Extra monsters (dangerous)","rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///
@@ -6433,7 +6493,8 @@ mod tests {
     /// leaves the top five. Since POE-367 removed Crucible of Flame's 60 c
     /// temple-mod term it leaves too, and since POE-369 removed item quantity
     /// Factory is its rarity bonus alone and leaves as well. At POE-370's 1 c
-    /// rarity base Glittering Halls' 36 % rarity is 36 c, so Sanctum of
+    /// rarity base Glittering Halls' 36 % rarity is 36 c, and its POE-370 chest
+    /// pool adds 1 c (37 c), so Sanctum of
     /// Immortality, Conduit of Lightning and Glittering Halls follow the two
     /// sales, with Defense Research Lab sixth and Temple Nexus seventh.
     #[test]
@@ -6461,7 +6522,7 @@ mod tests {
         assert_eq!(ranked[1].1, 390.0, "Doryani's Institute, its sale delta");
         assert!(close(ranked[2].1, 60.75), "Sanctum of Immortality");
         assert!(close(ranked[3].1, 59.625), "Conduit of Lightning");
-        assert!(close(ranked[4].1, 36.0), "Glittering Halls is fifth");
+        assert!(close(ranked[4].1, 37.0), "Glittering Halls is fifth");
         assert_eq!(ranked[5].0, "defense_research_lab", "Defense Research Lab sixth");
         assert!(close(ranked[5].1, 30.85), "Defense Research Lab");
         assert_eq!(ranked[6].0, "upgrade", "and Temple Nexus seventh");

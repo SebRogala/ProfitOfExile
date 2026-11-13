@@ -299,16 +299,22 @@
 		return box.drivers.find((driver) => driver.kind === 'sale') ?? null;
 	}
 
-	/** The unique cell, or null where the line drops no unique. */
-	function dropCell(driver: OfferDriver | null): ItemCell | null {
-		if (driver === null || driver.iconName === null) return null;
-		return {
-			iconName: driver.iconName,
-			kind: driver.kind,
-			price: driver.price,
-			priced: driver.priced,
-			caption: driver.caption
-		};
+	/** One item cell per unique row (a chest room's pool, POE-370); a row
+	 *  with no icon draws no cell. */
+	function dropCells(box: OfferBox): ItemCell[] {
+		return box.uniqueDrops.flatMap((driver) =>
+			driver.iconName === null
+				? []
+				: [
+						{
+							iconName: driver.iconName,
+							kind: driver.kind,
+							price: driver.price,
+							priced: driver.priced,
+							caption: driver.caption
+						}
+					]
+		);
 	}
 
 	/**
@@ -406,13 +412,13 @@
 
 {#each boxes as box, i (signature + "|" + box.offer.index)}
 	{@const sale = saleDriver(box)}
-	{@const cell = dropCell(box.uniqueDrop)}
+	{@const cells = dropCells(box)}
 	<!-- Two of the four optional sections as booleans (the architect's own `{#if}`
 	     is the third and the warning line the fourth), because the hairlines
 	     BETWEEN sections are conditional: a rule with nothing under it is a
 	     line the box drew for its own sake. Each one is a PRESENCE over fields
 	     `offerBoxSignature` already carries, so nothing new re-measures. -->
-	{@const hasItems = sale !== null || cell !== null || box.content !== null || box.fold !== null || box.note !== null}
+	{@const hasItems = sale !== null || cells.length > 0 || box.content !== null || box.fold !== null || box.note !== null}
 	{@const hasBonus = box.ladder !== null || box.bonus !== null}
 	{@const amount = bonusAmount(box)}
 	<div
@@ -491,9 +497,15 @@
 					<span class="content-spacer"></span>
 					<span class="content-cell"><span class="content">{box.content}</span></span>
 				</div>
-			{:else if cell !== null}
-				<div class="items" class:aftersale={sale !== null} class:captioned={cell.caption !== null}>
-					{@render itemCell(cell)}
+			{:else if cells.length > 0}
+				<div
+					class="items"
+					class:aftersale={sale !== null}
+					class:captioned={cells.some((cell) => cell.caption !== null)}
+				>
+					{#each cells as cell (cell.iconName)}
+						{@render itemCell(cell)}
+					{/each}
 				</div>
 			{/if}
 
@@ -784,8 +796,9 @@
 	}
 
 	/* Row 5: height 57 (69 captioned), margin-top 0 — 5 under a sale row.
-	   ONE cell packed left: the line's unique. POE-366 removed the vial cell,
-	   the `+` and `→` connectors and the upgrade cell with 3.30's vials. */
+	   One cell per unique row, packed left, at most three (POE-370: a chest
+	   room's pool; Glittering Halls folds its fourth). POE-366 removed the vial
+	   cell, the `+` and `→` connectors and the upgrade cell with 3.30's vials. */
 	.items {
 		display: flex;
 		align-items: flex-start;
@@ -884,9 +897,8 @@
 	}
 
 	/* Row 6: height 13, margin-top 3 — inside the item group, not a new one.
-	   Unreachable as the wording stands (`view.ts`'s two `ROW_KINDS` cannot
-	   exceed `FULL_DRIVER_ROWS`) and styled anyway, because the day
-	   a fifth row kind is added is not the day to discover it has no rule. */
+	   Reached by Glittering Halls' four-item pool (POE-370), which exceeds
+	   `FULL_DRIVER_ROWS`. */
 	.fold {
 		margin-top: 3px;
 		height: 13px;

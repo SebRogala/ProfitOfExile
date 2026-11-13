@@ -1191,6 +1191,7 @@ function term(over: Partial<DriverView> & { kind: string; name: string }): Drive
 		guessed: false,
 		lowConfidence: false,
 		windowPriced: false,
+		upgraded: null,
 		...over
 	};
 }
@@ -1351,7 +1352,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		// alone — no second drop slot and no vial upgrade beside it.
 		const box = only(offer({ value: value({ drivers: [saleTerm(), uniqueTerm()] }) }));
 
-		expect(box.uniqueDrop?.name).toBe('Story of the Vaal');
+		expect(box.uniqueDrops.map((drop) => drop.name)).toEqual(['Story of the Vaal']);
 		expect(box).not.toHaveProperty('recipe');
 		expect(box).not.toHaveProperty('dropPair');
 	});
@@ -1364,7 +1365,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(offer({ value: value({ drivers: [saleTerm()] }) }));
 
 		expect(box.drivers.map((driver) => driver.kind)).toEqual(['sale']);
-		expect(box.uniqueDrop).toBeNull();
+		expect(box.uniqueDrops).toEqual([]);
 	});
 
 	// A derived count interpolated raw puts `×0.16666666666666666` in a 24 px
@@ -1816,6 +1817,40 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.fold).toBe('+1 more item · 17c');
 	});
 
+	/** Glittering Halls' tier-3 chest pool on the 2026-09-06 capture (POE-370):
+	 *  each of the four base items counts 0.0625. */
+	const glitteringPool = () => [
+		term({ kind: 'unique_drop', name: 'Sacrificial Heart', count: 0.0625, unitPrice: 5, chaos: 0.3125, guessed: true }),
+		term({ kind: 'unique_drop', name: 'Tempered Flesh', count: 0.0625, unitPrice: 7, chaos: 0.4375, guessed: true }),
+		term({ kind: 'unique_drop', name: 'Tempered Mind', count: 0.0625, unitPrice: 1, chaos: 0.0625, guessed: true }),
+		term({ kind: 'unique_drop', name: 'Tempered Spirit', count: 0.0625, unitPrice: 3, chaos: 0.1875, guessed: true })
+	];
+
+	it('draws one item cell per unique row up to the row cap', () => {
+		// R1: Glittering Halls' chest drops one of four. The full form shows
+		// three in wire order and folds the fourth with what it contributed.
+		const box = only(offer({ value: value({ total: 37, drivers: glitteringPool() }) }));
+
+		expect(box.uniqueDrops.map((drop) => drop.name)).toEqual([
+			'Sacrificial Heart',
+			'Tempered Flesh',
+			'Tempered Mind'
+		]);
+		expect(box.fold).toBe('+1 more item · 0.19c');
+		expect(box.driverCount).toBe(4);
+	});
+
+	it('a scaled chest box folds the fourth item without its chaos', () => {
+		const box = only(
+			offer({
+				builtTier: 1,
+				value: value({ total: 29.6, scaledFromTier3: 37, drivers: [...glitteringPool(), fractionTerm()] })
+			})
+		);
+
+		expect(box.fold).toBe('+1 more item');
+	});
+
 	it('withholds the folded chaos on a scaled row, where it would be tier 3\'s', () => {
 		// Same trap as the headline: summing copied tier-3 terms under a tier-1
 		// total would print a number from the wrong tier. The COUNT is still
@@ -2197,9 +2232,20 @@ describe('offerBoxSignature', () => {
 
 	it('changes when the unique cell appears', () => {
 		const one = box({});
-		const none = box({ uniqueDrop: null });
+		const none = box({ uniqueDrops: [] });
 
 		expect(offerBoxSignature(none, false)).not.toBe(offerBoxSignature(one, false));
+	});
+
+	it('changes when the item row gains a third cell', () => {
+		// POE-370: a chest pool draws one cell per unique row, and each cell
+		// widens the row the pair is measured for.
+		const one = box({});
+		const drop = one.uniqueDrops[0];
+		const two = box({ uniqueDrops: [drop, drop] });
+		const three = box({ uniqueDrops: [drop, drop, drop] });
+
+		expect(offerBoxSignature(three, false)).not.toBe(offerBoxSignature(two, false));
 	});
 
 	it('does not change when only a driver\'s price changes', () => {
@@ -2209,7 +2255,7 @@ describe('offerBoxSignature', () => {
 		const one = box({});
 		const repriced = box({
 			drivers: [{ ...one.drivers[0], price: '75c' }],
-			uniqueDrop: { ...one.drivers[0], price: '75c' }
+			uniqueDrops: [{ ...one.drivers[0], price: '75c' }]
 		});
 
 		expect(offerBoxSignature(repriced, false)).toBe(offerBoxSignature(one, false));
@@ -2228,7 +2274,7 @@ describe('offerBoxSignature', () => {
 		// The caption takes the item row from 57 px to 69.
 		const one = box({});
 		const captioned = box({
-			uniqueDrop: { ...one.drivers[0], caption: '4.8% / run' }
+			uniqueDrops: [{ ...one.drivers[0], caption: '4.8% / run' }]
 		});
 
 		expect(offerBoxSignature(captioned, false)).not.toBe(offerBoxSignature(one, false));
@@ -2241,10 +2287,10 @@ describe('offerBoxSignature', () => {
 		// frame — every time a price move nudged a rate.
 		const one = box({});
 		const captioned = box({
-			uniqueDrop: { ...one.drivers[0], caption: '4.8% / run' }
+			uniqueDrops: [{ ...one.drivers[0], caption: '4.8% / run' }]
 		});
 		const otherText = box({
-			uniqueDrop: { ...one.drivers[0], caption: '1.2% / run' }
+			uniqueDrops: [{ ...one.drivers[0], caption: '1.2% / run' }]
 		});
 
 		expect(offerBoxSignature(otherText, false)).toBe(offerBoxSignature(captioned, false));

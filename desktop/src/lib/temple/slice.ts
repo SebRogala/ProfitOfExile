@@ -412,6 +412,19 @@ export interface DriverView {
 	lowConfidence: boolean;
 	/** POE-252: that price is a trailing-window median, not the newest print. */
 	windowPriced: boolean;
+	/** POE-370: a chest drop's Cradle-present upgraded alternative, never part
+	 *  of the total. Null on every other driver. */
+	upgraded: UpgradedView | null;
+}
+
+/** The upgraded unique a chest drop carries (POE-370). */
+export interface UpgradedView {
+	/** The upgraded unique, as poe.ninja spells it. */
+	name: string;
+	/** Its feed price, null where the feed carries none. */
+	unitPrice: number | null;
+	/** What it would add in the base item's place; never summed. */
+	chaos: number | null;
 }
 
 /** The side panel, as text gave it. */

@@ -595,9 +595,9 @@ describe('offerStackPlacement', () => {
 	 *
 	 * What it guards is `FULL_BOX_MAX_CSS` against this table. It cannot see a
 	 * row ADDED to the component — nothing here reads the stylesheet — so a new
-	 * row has to land in both places or the budget is quietly short. It also rests
-	 * on the two-entry `ROW_KINDS`, so `offerFold` is null
-	 * today, and on `offerNote` firing only when there are zero rows.
+	 * row has to land in both places or the budget is quietly short. It carries
+	 * the fold line, which Glittering Halls' four-item chest pool reaches
+	 * (POE-370), and rests on `offerNote` firing only when there are zero rows.
 	 */
 	const FULL_BOX_ROWS = {
 		border: 2 * 2,
@@ -610,6 +610,8 @@ describe('offerStackPlacement', () => {
 		// The item row carrying a rare unique's rate caption (39 art + 3 + 15
 		// price + 12 caption), with its margin under the sale row.
 		items: 8 + (39 + 3 + 15 + 12),
+		// The fold line under the item row (POE-370: Glittering Halls' fourth item).
+		fold: 3 + 13,
 		// The label inline, both ladders as a value over its word, the amount.
 		bonuses: 18 + 13,
 		// The architect's name, one 18 px row (POE-367).
@@ -635,13 +637,14 @@ describe('offerStackPlacement', () => {
 	const WORST_FULL_BOX = Math.max(CHEST_FULL_BOX, INSTRUMENTAL_FULL_BOX);
 
 	it('budgets the pair against the tallest box the wording can build, not the design\'s typical one', () => {
-		// Since POE-367 cut the temple-mod block to the architect's 18 px name
-		// the chest WARN form is 274 px, and the tallest box is the
-		// instrumental content WARN form at 277 (review r1 P2).
-		expect(CHEST_FULL_BOX).toBe(274);
+		// Since POE-370 the chest WARN form carries the fold line (Glittering
+		// Halls' fourth item) and is 290 px, above the instrumental content
+		// WARN form's 277.
+		expect(CHEST_FULL_BOX).toBe(290);
 		expect(INSTRUMENTAL_FULL_BOX).toBe(277);
 		expect(FULL_BOX_MAX_CSS).toBe(WORST_FULL_BOX);
-		expect(FULL_PAIR_CSS).toBe(2 * 277 + STACK_GAP_CSS);
+		expect(FULL_BOX_MAX_CSS).toBe(290);
+		expect(FULL_PAIR_CSS).toBe(2 * 290 + STACK_GAP_CSS);
 		expect(FULL_BOX_MAX_CSS).toBeLessThanOrEqual(DIAGONAL_BUDGET_CSS);
 	});
 
@@ -748,7 +751,7 @@ describe('offersCompact', () => {
 
 	it('keeps the full form where the host has room for two of them', () => {
 		// 1080 - 133 is 947, and two full boxes plus the stack gap need
-		// FULL_PAIR_CSS = 277 * 2 + 8 = 562.
+		// FULL_PAIR_CSS = 290 * 2 + 8 = 588.
 		expect(
 			offersCompact({
 				driverCounts: THREE,
@@ -760,8 +763,8 @@ describe('offersCompact', () => {
 	});
 
 	it('collapses when what is left of the host under the first block cannot seat the pair', () => {
-		// The boundary itself: a first block at y 455 leaves exactly 625 px,
-		// one short of the pair. The rule is about what is BELOW the block,
+		// The boundary itself: a first block one px too low leaves one px
+		// short of the pair. The rule is about what is BELOW the block,
 		// because the stack starts level with it and grows downward — a test on
 		// the host's height alone would pass on a screen with no room at all.
 		const low = [{ ...HIGH[0], y: HOST.height - FULL_PAIR_CSS + 1 }, HIGH[1]];
@@ -791,16 +794,16 @@ describe('offersCompact', () => {
 		).toBe(false);
 	});
 
-	it('draws the pair full from 562 px of free height and compact one px less', () => {
-		// The POE-367 budget as numbers, not as the constant: two 277 px
-		// instrumental WARN boxes and the 8 px gap. Fails if FULL_PAIR_CSS
-		// keeps the 630 of the temple-mod box or the 556 of the chest box.
+	it('draws the pair full from 588 px of free height and compact one px less', () => {
+		// The POE-370 budget as numbers, not as the constant: two 290 px chest
+		// WARN boxes with the fold line and the 8 px gap. Fails if FULL_PAIR_CSS
+		// keeps the 562 of the 277 px instrumental box.
 		const at = (free: number) => [{ ...HIGH[0], y: HOST.height - free }, HIGH[1]];
 		const compactAt = (free: number) =>
 			offersCompact({ driverCounts: THREE, blocks: at(free), panel: COMMITTED_PANEL, host: HOST });
 
-		expect(compactAt(562)).toBe(false);
-		expect(compactAt(561)).toBe(true);
+		expect(compactAt(588)).toBe(false);
+		expect(compactAt(587)).toBe(true);
 	});
 
 	/** A 720 CSS px host — native 1280×720, 1080p at 150 %, 1440p at 200 % —
@@ -810,7 +813,7 @@ describe('offersCompact', () => {
 	const HIGH_720 = [{ ...HIGH[0], y: 133 / 1.5 }, HIGH[1]];
 
 	it('keeps a 720 px host full', () => {
-		// 631.3 px against the 277-based pair's 562.
+		// 631.3 px against the 290-based pair's 588.
 		expect(
 			offersCompact({
 				driverCounts: THREE,

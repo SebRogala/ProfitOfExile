@@ -65,7 +65,8 @@
 //! of the 23 non-instrumental lines, overrides ignored — a player's stated
 //! number is not a sum, so it never enters the set and never moves it, while
 //! the line's own formula sum always does. On the committed capture the
-//! anchor is Toxic Grove's 1.75. Tier A equals it; every lower tier is a
+//! anchor is Museum of Artefacts' 0.25 (0.25 x Soul Catcher at 1 c; POE-370
+//! moved it from Toxic Grove's 1.75). Tier A equals it; every lower tier is a
 //! fixed fraction of it. Rank within a tier never affects the price.
 //!
 //! This implements Vertolka's rule (POE-262): an unpriced room must not
@@ -303,6 +304,24 @@ pub struct Driver {
     /// POE-252: the price behind this term is a trailing-window median rather
     /// than the newest print.
     pub window_priced: bool,
+    /// POE-370: the Cradle-present alternative for a chest drop — the upgraded
+    /// unique that drops in the base item's place when a Cradle of Creation is
+    /// present (g744679169.csv row 13). Its `chaos` is the same count x the
+    /// upgraded price x `drops_weight`. It is NEVER added to any total and
+    /// never read by the advisor; it is carried for the overlay's bracket.
+    /// `None` on every driver that is not a chest drop.
+    pub upgraded: Option<Upgraded>,
+}
+
+/// The upgraded alternative a chest drop carries; see [`Driver::upgraded`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Upgraded {
+    /// The upgraded unique, as poe.ninja spells it.
+    pub name: String,
+    /// Its feed price, or `None` where the feed carries none.
+    pub unit_price: Option<f64>,
+    /// What it WOULD add in the base item's place; never summed.
+    pub chaos: Option<f64>,
 }
 
 // ---------------------------------------------------------------- the value --
@@ -595,8 +614,8 @@ fn lowest_sale_priced_room_total(market: &MarketInput, knobs: &Knobs) -> Option<
 ///
 /// - a room is IN when its own sum produced chaos, [`Priced::Market`] or
 ///   [`Priced::Partial`] alike — a partial sum is still a price somebody
-///   printed, and Toxic Grove's partial 1.857 is exactly the number the capture
-///   turns on;
+///   printed; on the capture the anchor is Museum of Artefacts' 0.25
+///   (POE-370);
 /// - the two [`INSTRUMENTAL_LINES`] are OUT, because their totals are letters
 ///   rather than sums (ADR-022 §4) and anchoring the ladder on a rung of
 ///   itself would make the ladder define its own scale;
@@ -736,6 +755,7 @@ fn instrumental(
             guessed: live,
             low_confidence: false,
             window_priced: false,
+            upgraded: None,
         }],
         guessed: live,
         priced: Priced::Instrumental,
@@ -759,6 +779,7 @@ fn cold_fallback(line: &RoomLine) -> RoomValue {
             guessed: false,
             low_confidence: false,
             window_priced: false,
+            upgraded: None,
         }],
         guessed: false,
         priced: Priced::Fallback,
@@ -789,6 +810,7 @@ fn overridden(line: &RoomLine, tier: Tier, chaos: f64) -> RoomValue {
             guessed: false,
             low_confidence: false,
             window_priced: false,
+            upgraded: None,
         }],
         guessed: false,
         priced: Priced::Override,
@@ -835,20 +857,25 @@ fn value_tier3(
         guessed: false,
         low_confidence: quote.is_some_and(|q| q.low_confidence),
         window_priced: false,
+        upgraded: None,
     });
 
     // --- drops ---
     let mut drops = 0.0;
     let weight = rate(knobs.drops_weight);
 
-    if let Some(unique) = drops_row.unique() {
+    // POE-370: a chest room's uniques are a pool; each base item counts at
+    // the rate / N (equal weight, the sheet author's guess — SHEET_UNIQUES_330).
+    let pool = drops_row.uniques();
+    for item in pool {
         drops += push_drop(
             &mut drivers,
             DriverKind::UniqueDrop,
-            unique,
-            tier.uniques_per_run(),
-            market.price(unique).map(UnitPrice::from_feed),
+            item.base(),
+            tier.uniques_per_run().map(|e| e.per_item(pool.len())),
+            market.price(item.base()).map(UnitPrice::from_feed),
             weight,
+            Some((item.upgraded(), market.price(item.upgraded()).map(|q| q.chaos))),
         );
     }
     // --- bonus ---
@@ -879,6 +906,9 @@ fn value_tier3(
         // unit prices stay — what was tried is still worth showing.
         for driver in drivers.iter_mut() {
             driver.chaos = None;
+            if let Some(upgraded) = driver.upgraded.as_mut() {
+                upgraded.chaos = None;
+            }
         }
         drivers.push(Driver {
             kind: DriverKind::GradeFallback,
@@ -889,6 +919,7 @@ fn value_tier3(
             guessed: true,
             low_confidence: false,
             window_priced: false,
+            upgraded: None,
         });
         return RoomValue {
             sale: 0.0,
@@ -960,6 +991,10 @@ impl UnitPrice {
 }
 
 /// Push one drop term and return what it added to the total.
+///
+/// `upgraded` is the chest item's Cradle-present alternative (name, feed
+/// price). Its chaos uses the same count, weight and floors, and is never part
+/// of the returned figure.
 fn push_drop(
     drivers: &mut Vec<Driver>,
     kind: DriverKind,
@@ -967,11 +1002,20 @@ fn push_drop(
     count: Option<Estimate>,
     price: Option<UnitPrice>,
     weight: f64,
+    upgraded: Option<(&str, Option<f64>)>,
 ) -> f64 {
     let chaos = match (count, price) {
         (Some(count), Some(price)) => Some(weight * rate(count.value()) * rate(price.chaos)),
         _ => None,
     };
+    let upgraded = upgraded.map(|(name, unit_price)| Upgraded {
+        name: name.to_string(),
+        unit_price,
+        chaos: match (count, unit_price) {
+            (Some(count), Some(price)) => Some(weight * rate(count.value()) * rate(price)),
+            _ => None,
+        },
+    });
     drivers.push(Driver {
         kind,
         name: name.to_string(),
@@ -981,6 +1025,7 @@ fn push_drop(
         guessed: count.is_some_and(Estimate::is_guess) || price.is_some_and(|price| price.guessed),
         low_confidence: price.is_some_and(|price| price.low_confidence),
         window_priced: price.is_some_and(|price| price.window_priced),
+        upgraded,
     });
     chaos.unwrap_or(0.0)
 }
@@ -1009,6 +1054,7 @@ fn push_bonus(
         guessed: true,
         low_confidence: false,
         window_priced: false,
+        upgraded: None,
     });
     chaos
 }
@@ -1033,6 +1079,7 @@ fn scale_from_tier3(line: &RoomLine, tier3: &RoomValue, knobs: &Knobs) -> RoomVa
         guessed: false,
         low_confidence: false,
         window_priced: false,
+        upgraded: None,
     });
 
     RoomValue {
@@ -1186,15 +1233,15 @@ mod tests {
     }
 
     /// The committed capture's fallback anchor L — `lowest_summed_room_total`,
-    /// which is Toxic Grove's tier-3 formula sum and the number every scaled
-    /// rung on this capture is a fraction of: 0.25 x Apep's Slumber at 7 c.
-    /// POE-262's derived vial term put it at 1.857 until POE-366 removed vials.
+    /// which is Museum of Artefacts' tier-3 formula sum and the number every
+    /// scaled rung on this capture is a fraction of: 0.25 x Soul Catcher at
+    /// 1 c. POE-370 moved it from Toxic Grove's 1.75 (0.25 x Apep's Slumber).
     ///
     /// The operand order is the formula's, so this is bit-identical to the
     /// total the table computes — pinned by
-    /// `the_anchor_is_toxic_groves_formula_sum`, which is what lets the rung
+    /// `the_anchor_is_museums_formula_sum`, which is what lets the rung
     /// assertions stay exact rather than approximate.
-    const ANCHOR: f64 = 0.25 * 7.0;
+    const ANCHOR: f64 = 0.25 * 1.0;
 
     fn driver<'a>(value: &'a RoomValue, kind: DriverKind) -> &'a Driver {
         value
@@ -1236,11 +1283,40 @@ mod tests {
         ("wealth_of_the_vaal", [0.0035, 0.0035, 0.004375]),
     ];
 
+    /// POE-370 WI-2: the totals the chest model moved, over
+    /// [`RARITY_BASE_1C_TOTALS`]. Glittering Halls and Museum of Artefacts now
+    /// sum their chest pools; Museum's 0.25 becomes the fallback anchor (V7),
+    /// so every scaled fallback rung moves by 0.25 / 1.75 = 1/7. Every line not
+    /// listed keeps its WI-1 total.
+    const CHEST_UNIQUES_330_TOTALS: [(&str, [f64; 3]); 12] = [
+        // 36 rarity + 0.0625 x (5 + 7 + 1 + 3); tiers 1-2 are 0.8 of tier 3.
+        ("glittering_halls", [29.6, 29.6, 37.0]),
+        // 0.25 x Soul Catcher at 1 c.
+        ("museum_of_artefacts", [0.2, 0.2, 0.25]),
+        // D rung, 5/800 x 0.25.
+        ("apex_of_ascension", [0.00125, 0.00125, 0.0015625]),
+        ("hall_of_war", [0.00125, 0.00125, 0.0015625]),
+        ("sadists_den", [0.00125, 0.00125, 0.0015625]),
+        ("throne_of_atziri", [0.00125, 0.00125, 0.0015625]),
+        // E rung, 2/800 x 0.25.
+        ("atlas_of_worlds", [0.0005, 0.0005, 0.000625]),
+        ("court_of_sealed_death", [0.0005, 0.0005, 0.000625]),
+        ("hall_of_legends", [0.0005, 0.0005, 0.000625]),
+        ("house_of_the_others", [0.0005, 0.0005, 0.000625]),
+        ("wealth_of_the_vaal", [0.0005, 0.0005, 0.000625]),
+        // C rung.
+        ("storm_of_corruption", [0.005, 0.005, 0.00625]),
+    ];
+
     #[test]
     fn the_capture_values_every_room_tier_at_these_totals() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
         assert_eq!(valued.lines().count(), RARITY_BASE_1C_TOTALS.len());
-        for (key, expected) in RARITY_BASE_1C_TOTALS {
+        for (key, wi1) in RARITY_BASE_1C_TOTALS {
+            let expected = CHEST_UNIQUES_330_TOTALS
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map_or(wi1, |(_, moved)| *moved);
             for (index, want) in expected.iter().enumerate() {
                 let got = value_of(&valued, key, index as u8 + 1).total;
                 assert!(close(got, *want), "{key} tier {}: {got} != {want}", index + 1);
@@ -1248,50 +1324,106 @@ mod tests {
         }
     }
 
-    /// POE-367 (T12): 3.30 removed the temple-mod items, NOT the room uniques.
-    /// Every line that drops a chest unique keeps the same `UniqueDrop` driver
-    /// at every tier — name, Vertolka's 0.25, the capture's feed price, its
-    /// chaos and its guess flag. Captured on the post-POE-366 table before the
-    /// mod term was deleted; a lower tier carries its tier-3 driver unscaled.
-    const UNIQUE_DRIVERS: [(&str, &str, f64, f64); 6] = [
-        ("conduit_of_lightning", "Dance of the Offered", 190.5, 47.625),
-        ("crucible_of_flame", "Story of the Vaal", 5.0, 1.25),
-        ("defense_research_lab", "Architect's Hand", 75.4, 18.85),
-        ("hybridisation_chamber", "Coward's Chains", 10.0, 2.5),
-        ("sanctum_of_immortality", "Mask of the Spirit Drinker", 195.0, 48.75),
-        ("toxic_grove", "Apep's Slumber", 7.0, 1.75),
+    /// POE-370 (R5, A4): each chest item counts 0.25 / N of its BASE price
+    /// (g744679169.csv row 13), N the room's pool size, and carries its
+    /// upgraded alternative at the same count. Values on the 2026-09-06
+    /// capture: (line, base, count, base price, chaos, upgraded, upgraded
+    /// price, upgraded chaos). A lower tier carries its tier-3 drivers
+    /// unscaled.
+    const CHEST_DRIVERS: [(&str, &str, f64, f64, f64, &str, f64, f64); 11] = [
+        ("conduit_of_lightning", "Dance of the Offered", 0.25, 190.5, 47.625, "Omeyocan", 428.0, 107.0),
+        ("crucible_of_flame", "Story of the Vaal", 0.25, 5.0, 1.25, "Fate of the Vaal", 39.2, 9.8),
+        ("defense_research_lab", "Architect's Hand", 0.25, 75.4, 18.85, "Slavedriver's Hand", 91.2, 22.8),
+        ("glittering_halls", "Sacrificial Heart", 0.0625, 5.0, 0.3125, "Zerphi's Heart", 1280.0, 80.0),
+        ("glittering_halls", "Tempered Flesh", 0.0625, 7.0, 0.4375, "Transcendent Flesh", 600.0, 37.5),
+        ("glittering_halls", "Tempered Mind", 0.0625, 1.0, 0.0625, "Transcendent Mind", 320.0, 20.0),
+        ("glittering_halls", "Tempered Spirit", 0.0625, 3.0, 0.1875, "Transcendent Spirit", 853.6, 53.35),
+        ("hybridisation_chamber", "Coward's Chains", 0.25, 10.0, 2.5, "Coward's Legacy", 60.0, 15.0),
+        ("museum_of_artefacts", "Soul Catcher", 0.25, 1.0, 0.25, "Soul Ripper", 598.0, 149.5),
+        ("sanctum_of_immortality", "Mask of the Spirit Drinker", 0.25, 195.0, 48.75, "Mask of the Stitched Demon", 427.0, 106.75),
+        ("toxic_grove", "Apep's Slumber", 0.25, 7.0, 1.75, "Apep's Supremacy", 60.0, 15.0),
     ];
 
+    // Fails if the pool counts 0.25 per item instead of 0.25 / N (Glittering
+    // would add 4.0), or if the upgraded price is priced into `chaos`.
     #[test]
-    fn the_unique_drivers_are_untouched_by_the_mod_removal() {
+    fn every_chest_item_counts_a_quarter_of_its_base_price_split_across_its_pool() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
         for (key, tiers) in valued.lines() {
-            let want = UNIQUE_DRIVERS.iter().find(|(k, ..)| *k == key);
+            let want: Vec<_> = CHEST_DRIVERS.iter().filter(|row| row.0 == key).collect();
             for (index, value) in tiers.iter().enumerate() {
+                let at = format!("{key} tier {}", index + 1);
                 let got: Vec<&Driver> = value
                     .drivers
                     .iter()
                     .filter(|d| d.kind == DriverKind::UniqueDrop)
                     .collect();
-                match want {
-                    Some((_, name, unit, chaos)) => {
-                        assert_eq!(got.len(), 1, "{key} tier {}", index + 1);
-                        let d = got[0];
-                        assert_eq!(d.name, *name, "{key} tier {}", index + 1);
-                        assert_eq!(d.count, Some(0.25), "{key} tier {}", index + 1);
-                        assert_eq!(d.unit_price, Some(*unit), "{key} tier {}", index + 1);
-                        assert!(
-                            d.chaos.is_some_and(|c| close(c, *chaos)),
-                            "{key} tier {}: {:?} != {chaos}",
-                            index + 1,
-                            d.chaos
-                        );
-                        assert!(d.guessed, "{key} tier {}: 0.25 is a guess", index + 1);
-                    }
-                    None => assert!(got.is_empty(), "{key} tier {} has a unique", index + 1),
+                assert_eq!(got.len(), want.len(), "{at}");
+                for (d, &&(_, name, count, unit, chaos, up_name, up_unit, up_chaos)) in
+                    got.iter().zip(want.iter())
+                {
+                    assert_eq!(d.name, name, "{at}");
+                    assert_eq!(d.count, Some(count), "{at} {name}");
+                    assert_eq!(d.unit_price, Some(unit), "{at} {name}");
+                    assert!(d.chaos.is_some_and(|c| close(c, chaos)), "{at} {name}: {:?}", d.chaos);
+                    assert!(d.guessed, "{at} {name}: the 25 % share is a guess");
+                    let up = d.upgraded.as_ref().unwrap_or_else(|| panic!("{at} {name} has no upgraded"));
+                    assert_eq!(up.name, up_name, "{at}");
+                    assert_eq!(up.unit_price, Some(up_unit), "{at} {up_name}");
+                    assert!(
+                        up.chaos.is_some_and(|c| close(c, up_chaos)),
+                        "{at} {up_name}: {:?}",
+                        up.chaos
+                    );
                 }
             }
         }
+    }
+
+    // POE-370 (A4, H4): the upgraded value is shown, never summed. Sanctum's
+    // tier-3 total stays 60.75 while its driver's upgraded chaos is 106.75.
+    // Fails if `upgraded.chaos` is added into `drops` or the total.
+    #[test]
+    fn the_upgraded_value_never_reaches_a_total() {
+        let valued = Valued::compute(&allflame(), &Knobs::default());
+        for (key, tiers) in valued.lines() {
+            for (index, value) in tiers.iter().enumerate().filter(|(_, v)| v.priced == Priced::Market || v.priced == Priced::Partial) {
+                let terms: f64 = value
+                    .drivers
+                    .iter()
+                    .filter(|d| d.kind != DriverKind::TierFraction)
+                    .filter_map(|d| d.chaos)
+                    .sum();
+                let fraction = value
+                    .drivers
+                    .iter()
+                    .find(|d| d.kind == DriverKind::TierFraction)
+                    .and_then(|d| d.count)
+                    .unwrap_or(1.0);
+                assert!(
+                    close(value.total, terms * fraction),
+                    "{key} tier {}: total {} != terms {terms} x {fraction}",
+                    index + 1,
+                    value.total
+                );
+            }
+        }
+        let sanctum = value_of(&valued, "sanctum_of_immortality", 3);
+        assert!(close(sanctum.total, 60.75), "total was {}", sanctum.total);
+        let unique = driver(&sanctum, DriverKind::UniqueDrop);
+        assert_eq!(unique.upgraded.as_ref().and_then(|u| u.chaos), Some(106.75));
+    }
+
+    // POE-370 (A2, R4): Storm of Corruption has no chest, so it sums nothing
+    // and prices at its C rung. Fails if Storm gains a chest driver.
+    #[test]
+    fn storm_of_corruption_contributes_no_chest_value() {
+        let storm = value_of(&Valued::compute(&allflame(), &Knobs::default()), "storm_of_corruption", 3);
+        assert!(storm.drivers.iter().all(|d| d.kind != DriverKind::UniqueDrop));
+        assert!(storm.drivers.iter().all(|d| d.upgraded.is_none()));
+        assert_eq!(storm.drops, 0.0);
+        assert_eq!(storm.priced, Priced::Fallback);
+        assert!(close(storm.total, 0.00625), "total was {}", storm.total);
     }
 
     /// Toxic Grove's only unpriced term was Tacati's temple-mod item. With the
@@ -1547,35 +1679,38 @@ mod tests {
 
     #[test]
     fn a_room_with_nothing_priced_falls_back_to_its_grade() {
-        // Museum of Artefacts is the emptiest line on the sheet: it sits at
-        // the floor, names no unique and no temple-mod item, and
-        // poedb measures no area bonus on it. Nothing about it is priced, so
-        // the letter is all there is.
+        // Wealth of the Vaal sits at the floor, names no unique, and poedb
+        // measures no area bonus on it. Nothing about it is priced, so the
+        // letter is all there is. (Museum of Artefacts was this test's subject
+        // until POE-370 gave it a Soul Catcher chest, which it now sums.)
         let value = value_of(
             &Valued::compute(&allflame(), &Knobs::default()),
-            "museum_of_artefacts",
+            "wealth_of_the_vaal",
             3,
         );
 
         assert_eq!(value.priced, Priced::Fallback);
-        // The E5 rung on the LIVE ladder: the capture's cheapest SUMMED room is
-        // Toxic Grove at `ANCHOR` = 1.75, so every rung is ANCHOR/800 of its
-        // cold value and E is 2 x 1.75/800 = 0.004375. 2.0 here would mean the
-        // ladder had stopped moving with the market; 2.115 would mean it was
-        // still anchored on the top sale delta.
+        // The E rung on the LIVE ladder: the capture's cheapest SUMMED room is
+        // Museum of Artefacts at `ANCHOR` = 0.25, so every rung is ANCHOR/800
+        // of its cold value and E is 2 x 0.25/800 = 0.000625. 2.0 here would
+        // mean the ladder had stopped moving with the market; 2.115 would mean
+        // it was still anchored on the top sale delta.
         assert_eq!(
             value.total,
-            rank_of("museum_of_artefacts").fallback_chaos_scaled(ANCHOR)
+            rank_of("wealth_of_the_vaal").fallback_chaos_scaled(ANCHOR)
         );
         assert!(
-            close(value.total, 0.004_375),
+            close(value.total, 0.000_625),
             "total was {}",
             value.total
         );
         assert_eq!(value.sale, 0.0);
         assert_eq!(value.drops, 0.0);
         assert_eq!(value.bonus, 0.0);
-        assert_eq!(driver(&value, DriverKind::GradeFallback).name, "E5");
+        assert_eq!(
+            driver(&value, DriverKind::GradeFallback).name,
+            rank_of("wealth_of_the_vaal").label()
+        );
     }
 
     #[test]
@@ -1619,7 +1754,7 @@ mod tests {
         // at the floor, drops nothing, and its two percentages now price at 0,
         // so its C2 rung stands in. The terms stay listed — the percentages are
         // real — but one still carrying `Some(0)` would make the lines the box
-        // prints disagree with the 0.03125 c the advisor ranked on.
+        // prints disagree with the 0.00625 c the advisor ranked on.
         let knobs = Knobs {
             c_per_rarity: 0.0,
             ..Knobs::default()
@@ -1630,17 +1765,16 @@ mod tests {
         // The C2 rung on the LIVE ladder, stated as a number as well as as an
         // expression: an assertion written only in terms of
         // `fallback_chaos_scaled` moves with any change to that function and
-        // could not fail. Zeroing the two rates moves the anchor off Toxic
-        // Grove's 1.75 onto Crucible of Flame's one remaining drop, 0.25 x
-        // Story of the Vaal at 5 c = 1.25 (its bonus is gone and, since
-        // POE-367, so is its temple-mod term), so tier C is
-        // 20 x 1.25/800 = 0.03125.
+        // could not fail. Zeroing the rarity rate leaves the anchor on Museum
+        // of Artefacts' 0.25 (0.25 x Soul Catcher at 1 c, no bonus to lose),
+        // the cheapest summed room either way, so tier C is
+        // 20 x 0.25/800 = 0.00625.
         assert_eq!(
             value.total,
-            rank_of("chamber_of_iron").fallback_chaos_scaled(0.25 * 5.0)
+            rank_of("chamber_of_iron").fallback_chaos_scaled(0.25 * 1.0)
         );
         assert!(
-            close(value.total, 0.031_25),
+            close(value.total, 0.006_25),
             "total was {}",
             value.total
         );
@@ -1661,7 +1795,7 @@ mod tests {
             carried,
             vec![(
                 DriverKind::GradeFallback,
-                Some(rank_of("chamber_of_iron").fallback_chaos_scaled(0.25 * 5.0))
+                Some(rank_of("chamber_of_iron").fallback_chaos_scaled(0.25 * 1.0))
             )],
         );
     }
@@ -1831,8 +1965,8 @@ mod tests {
             "D4, and pack size prices at nothing"
         );
         // 5 x ANCHOR/800: the D-tier rung on the cheapest SUMMED room.
-        assert!(close(sadists.total, 0.010_937_5), "{}", sadists.total);
-        assert!(close(war.total, 0.010_937_5), "{}", war.total);
+        assert!(close(sadists.total, 0.001_562_5), "{}", sadists.total);
+        assert!(close(war.total, 0.001_562_5), "{}", war.total);
         assert!(measured.total > sadists.total);
         assert!(measured.total > war.total);
     }
@@ -1840,8 +1974,9 @@ mod tests {
     /// Glittering Halls ranks above Factory now that 3.30 removed item quantity.
     ///
     /// With the vial gone (POE-366, decisions T6) it is its 36 % rarity bonus
-    /// alone (the 3.30 sheet's 12 % per tier, POE-369), 36 x 1.0 = 36 c at the
-    /// POE-370 base. Factory's 66 % quantity was what put it ahead; with
+    /// (the 3.30 sheet's 12 % per tier, POE-369), 36 x 1.0 = 36 c at the
+    /// POE-370 base, plus its chest pool, 0.0625 x (5 + 7 + 1 + 3) = 1.0
+    /// (POE-370 WI-2). Factory's 66 % quantity was what put it ahead; with
     /// quantity gone (POE-369) Factory is its 12 % rarity, 12 c.
     #[test]
     fn glittering_halls_ranks_above_factory_without_item_quantity() {
@@ -1850,7 +1985,7 @@ mod tests {
         let halls = value_of(&valued, "glittering_halls", 3);
         let factory = value_of(&valued, "factory", 3);
 
-        assert!(close(halls.total, 36.0), "{}", halls.total);
+        assert!(close(halls.total, 37.0), "{}", halls.total);
         assert!(close(factory.total, 12.0), "{}", factory.total);
         assert!(halls.total > factory.total, "above Factory");
     }
@@ -1881,6 +2016,7 @@ mod tests {
                 window_priced: false,
             }),
             1.0,
+            Some(("Mask of the Stitched Demon", Some(427.0))),
         );
 
         assert_eq!(added, 0.0, "an unrated drop adds nothing to the total");
@@ -1890,45 +2026,42 @@ mod tests {
         assert_eq!(driver.count, None, "nobody has stated a rate");
         assert_eq!(driver.unit_price, Some(195.0), "the price is still shown");
         assert_eq!(driver.chaos, None, "and no term was priced from it");
+        let upgraded = driver.upgraded.as_ref().expect("the upgraded item is listed");
+        assert_eq!(upgraded.unit_price, Some(427.0));
+        assert_eq!(upgraded.chaos, None, "no count prices no bracket either");
     }
 
-    /// The capture's anchor L is Toxic Grove's formula sum, to the bit.
+    /// The capture's anchor L is Museum of Artefacts' formula sum, to the bit.
     ///
     /// `ANCHOR` is written as arithmetic so the rung assertions can state where
     /// their numbers come from; this is what licenses those assertions to be
-    /// exact rather than approximate. POE-366 moved it from 1.857 to 1.75 by
-    /// removing Toxic Grove's vial term; the whole board of scaled rungs moved
-    /// by that ratio.
+    /// exact rather than approximate. POE-370 moved it from Toxic Grove's 1.75
+    /// to Museum's 0.25 by giving Museum its Soul Catcher chest; the whole
+    /// board of scaled rungs moved by that ratio, 1/7.
     ///
-    /// Fails if any other line drops below Toxic Grove (the anchor would be
-    /// that line's sum instead) and fails if `ANCHOR` drifts from the formula.
+    /// Fails if any other line drops below Museum (the anchor would be that
+    /// line's sum instead) and fails if `ANCHOR` drifts from the formula.
     #[test]
-    fn the_anchor_is_toxic_groves_formula_sum() {
+    fn the_anchor_is_museums_formula_sum() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
 
-        let grove = value_of(&valued, "toxic_grove", 3);
-        assert_eq!(
-            grove.priced,
-            Priced::Market,
-            "its unique is priced, at 7 c"
-        );
-        assert_eq!(grove.total, ANCHOR, "bit-identical, not merely close");
-        assert_eq!(ANCHOR, 1.75);
-        assert_eq!(driver(&grove, DriverKind::UniqueDrop).chaos, Some(1.75));
+        let museum = value_of(&valued, "museum_of_artefacts", 3);
+        assert_eq!(museum.priced, Priced::Market, "its Soul Catcher is priced, at 1 c");
+        assert_eq!(museum.total, ANCHOR, "bit-identical, not merely close");
+        assert_eq!(ANCHOR, 0.25);
+        assert_eq!(driver(&museum, DriverKind::UniqueDrop).chaos, Some(0.25));
 
         // And it really is the lowest formula sum on the board, which is the
         // only reason it is the anchor.
         let second = valued
             .lines()
             .filter(|(key, tiers)| {
-                *key != "toxic_grove" && matches!(tiers[2].priced, Priced::Market | Priced::Partial)
+                *key != "museum_of_artefacts"
+                    && matches!(tiers[2].priced, Priced::Market | Priced::Partial)
             })
             .map(|(_, tiers)| tiers[2].total)
             .fold(f64::INFINITY, f64::min);
-        assert!(
-            close(second, 12.0),
-            "Chamber of Iron / Hall of Champions / Factory, {second}"
-        );
+        assert!(close(second, 1.75), "Toxic Grove, {second}");
         assert!(ANCHOR < second);
     }
 
@@ -1944,8 +2077,8 @@ mod tests {
             .filter(|(_, tiers)| matches!(tiers[2].priced, Priced::Market | Priced::Partial))
             .map(|(_, tiers)| tiers[2].total)
             .fold(f64::INFINITY, f64::min);
-        assert!(close(cheapest_summed, ANCHOR), "Toxic Grove, a partial sum");
-        assert_eq!(cheapest_summed, 1.75);
+        assert!(close(cheapest_summed, ANCHOR), "Museum of Artefacts");
+        assert_eq!(cheapest_summed, 0.25);
 
         let mut fallbacks = 0;
         for (key, tiers) in valued.lines() {
@@ -1971,9 +2104,10 @@ mod tests {
                 );
             }
         }
-        // Eleven: POE-366 removed Throne of Atziri's vial, its one priced term,
-        // so it is back among the rooms nothing prices.
-        assert_eq!(fallbacks, 11, "the capture's unpriced rooms");
+        // Ten: POE-366 removed Throne of Atziri's vial, its one priced term,
+        // so it is back among the rooms nothing prices; POE-370 gave Museum of
+        // Artefacts a priced chest, so it left them.
+        assert_eq!(fallbacks, 10, "the capture's unpriced rooms");
     }
 
     /// With drops and bonus rates zeroed, only the two sales remain in the
@@ -2017,14 +2151,14 @@ mod tests {
             assert_eq!(value.priced, Priced::Fallback, "precondition");
         }
         // D3 and D2 share 5; C5 takes 20; E1 takes 2, each x ANCHOR/800.
-        assert!(close(apex.total, 0.010_937_5), "D3, {}", apex.total);
+        assert!(close(apex.total, 0.001_562_5), "D3, {}", apex.total);
         assert!(
-            close(sadists.total, 0.010_937_5),
+            close(sadists.total, 0.001_562_5),
             "D2, {}",
             sadists.total
         );
-        assert!(close(storm.total, 0.043_75), "C5, {}", storm.total);
-        assert!(close(atlas.total, 0.004_375), "E1, {}", atlas.total);
+        assert!(close(storm.total, 0.006_25), "C5, {}", storm.total);
+        assert!(close(atlas.total, 0.000_625), "E1, {}", atlas.total);
         assert_eq!(apex.total, sadists.total);
         assert!(storm.total > sadists.total);
         assert!(sadists.total > atlas.total);
@@ -2035,14 +2169,14 @@ mod tests {
     /// The anchor is over the FORMULA sums of the 23 non-instrumental lines,
     /// and a Custom override changes neither membership nor value: the player's
     /// number is not a sum so it never enters the set, and the line's own
-    /// formula sum is one so it never leaves. Toxic Grove is the room to prove
-    /// it on because it IS the capture's anchor at 1.75, and the two override
-    /// values bracket it from both sides — 0 below, 500 above.
+    /// formula sum is one so it never leaves. Museum of Artefacts is the room to
+    /// prove it on because it IS the capture's anchor at 0.25, and the two
+    /// override values bracket it from both sides — 0 below, 500 above.
     ///
     /// Excluding an overridden line instead is the tempting reading, and it is
     /// the one this pins against: it would make one Custom edit move ten
-    /// other rooms (the anchor would jump to Chamber of Iron's 6.00 and every
-    /// rung would rise by 6.00/1.75), and overriding the LAST summed room would
+    /// other rooms (the anchor would jump to Toxic Grove's 1.75 and every rung
+    /// would rise by 1.75/0.25), and overriding the LAST summed room would
     /// drop the whole board onto the cold ladder — a fallback rising from its scaled value
     /// to its cold rung because of an edit made somewhere else.
     ///
@@ -2052,23 +2186,23 @@ mod tests {
         let market = allflame();
         let untouched = Valued::compute(&market, &Knobs::default());
         assert!(
-            close(value_of(&untouched, "toxic_grove", 3).total, ANCHOR),
-            "precondition: Toxic Grove is the capture's anchor",
+            close(value_of(&untouched, "museum_of_artefacts", 3).total, ANCHOR),
+            "precondition: Museum of Artefacts is the capture's anchor",
         );
 
         for stated in [0.0, 500.0] {
             let overrides =
-                RoomOverrides::from([("toxic_grove".to_string(), [None, None, Some(stated)])]);
+                RoomOverrides::from([("museum_of_artefacts".to_string(), [None, None, Some(stated)])]);
 
             let valued = Valued::compute_with(&market, &Knobs::default(), &overrides);
 
             assert_eq!(
-                value_of(&valued, "toxic_grove", 3).total,
+                value_of(&valued, "museum_of_artefacts", 3).total,
                 stated,
                 "the player's number is on the row",
             );
             for (key, tiers) in valued.lines() {
-                if key == "toxic_grove" || tiers[2].priced != Priced::Fallback {
+                if key == "museum_of_artefacts" || tiers[2].priced != Priced::Fallback {
                     continue;
                 }
                 assert_eq!(
@@ -2084,33 +2218,33 @@ mod tests {
     ///
     /// The other half of the same rule, and the one a player would hit first:
     /// writing 0.5 c against the room that IS the anchor must not drag all
-    /// ten unpriced rooms down with it. Toxic Grove is the room because its
-    /// stated 0.5 sits below its own formula sum of 1.75, so the
-    /// two answers are distinguishable on the row and on every rung — its
-    /// formula sum is `ANCHOR`, 1.75.
+    /// ten unpriced rooms down with it. Museum of Artefacts is the room because
+    /// its stated 0.1 sits below its own formula sum of 0.25, so the two
+    /// answers are distinguishable on the row and on every rung — its formula
+    /// sum is `ANCHOR`, 0.25.
     ///
     /// Fails if the set is ever fed the PUBLISHED totals — the row as the
     /// player sees it — rather than the formula value of each line: Sadist's
-    /// Den would read 5 x 0.5/800 = 0.003125 instead of
-    /// 5 x ANCHOR/800 = 0.0109375.
+    /// Den would read 5 x 0.1/800 = 0.000625 instead of
+    /// 5 x ANCHOR/800 = 0.0015625.
     #[test]
     fn a_stated_number_never_becomes_the_anchor() {
         let market = allflame();
-        let overrides = RoomOverrides::from([("toxic_grove".to_string(), [None, None, Some(0.5)])]);
+        let overrides = RoomOverrides::from([("museum_of_artefacts".to_string(), [None, None, Some(0.1)])]);
 
         let valued = Valued::compute_with(&market, &Knobs::default(), &overrides);
 
         assert_eq!(
-            value_of(&valued, "toxic_grove", 3).total,
-            0.5,
+            value_of(&valued, "museum_of_artefacts", 3).total,
+            0.1,
             "the player's number is on the row",
         );
         let sadists = value_of(&valued, "sadists_den", 3);
         assert_eq!(sadists.priced, Priced::Fallback);
         // 5 x ANCHOR/800, the formula sum of the overridden line — not
-        // 5 x 0.5/800, the number the player wrote over it.
+        // 5 x 0.1/800, the number the player wrote over it.
         assert!(
-            close(sadists.total, 0.010_937_5),
+            close(sadists.total, 0.001_562_5),
             "D2, {}",
             sadists.total
         );
@@ -2126,8 +2260,8 @@ mod tests {
     /// evidence and it is `advisor::tests`'s, not this module's.
     ///
     /// Fails if the two lines are routed through `fallback_rung`: at the
-    /// capture's 1.75 anchor Temple Nexus would read 0.04375 and the shrine
-    /// 0.004375, which is the shape that produced the board-7 miss.
+    /// capture's 0.25 anchor Temple Nexus would read 0.00625 and the shrine
+    /// 0.000625, which is the shape that produced the board-7 miss.
     #[test]
     fn the_instrumental_lines_are_not_re_anchored_on_the_cheapest_summed_room() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
@@ -2202,7 +2336,7 @@ mod tests {
             "was {}",
             gem.total,
         );
-        assert!(close(gem.total, 1.75), "was {}", gem.total);
+        assert!(close(gem.total, 0.25), "was {}", gem.total);
         for (key, tiers) in valued.lines() {
             if key == "gem" || tiers[2].priced != Priced::Fallback {
                 continue;
@@ -2235,6 +2369,8 @@ mod tests {
         let market: MarketInput = serde_json::from_str(
             r#"{"league":"Allflame","floor":10,"rooms":[],
                 "items":[{"name":"Mask of the Spirit Drinker","price":{"chaos":7,"listings":40,
+                          "lowConfidence":false,"windowPriced":false},"unpriced":false},
+                         {"name":"Mask of the Stitched Demon","price":{"chaos":427,"listings":40,
                           "lowConfidence":false,"windowPriced":false},"unpriced":false}]}"#,
         )
         .expect("the wire mirror accepts a partial payload");
@@ -2263,6 +2399,17 @@ mod tests {
                 tiers[2].guessed,
                 "{key}: a rung on a live market is an inference about it",
             );
+            // A fallback room shows no bracket: the upgraded chaos is nulled
+            // with the base chaos.
+            for d in tiers[2].drivers.iter().filter(|d| d.kind == DriverKind::UniqueDrop) {
+                assert_eq!(d.chaos, None, "{key} {}", d.name);
+                assert_eq!(
+                    d.upgraded.as_ref().map(|u| u.chaos),
+                    Some(None),
+                    "{key} {}: a fallback room carries no upgraded chaos",
+                    d.name
+                );
+            }
         }
     }
 

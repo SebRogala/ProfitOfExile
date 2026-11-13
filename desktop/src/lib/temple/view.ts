@@ -639,8 +639,11 @@ export interface OfferBox {
 	/** The dropped items and the sale, in display order, at most
 	 *  [`FULL_DRIVER_ROWS`]. */
 	drivers: OfferDriver[];
-	/** The unique cell, or null where the line drops no unique. */
-	uniqueDrop: OfferDriver | null;
+	/** The item cells: every unique row among the drawn `drivers`, in wire
+	 *  order. Empty where the line drops no unique. A chest room's pool has
+	 *  several (POE-370: Glittering Halls' four), and the fold carries any
+	 *  past [`FULL_DRIVER_ROWS`]. */
+	uniqueDrops: OfferDriver[];
 	/** How many rows there were before the cap — what the collapse rule reads
 	 *  (`offersCompact` in `overlay-geometry.ts`). */
 	driverCount: number;
@@ -919,9 +922,9 @@ function saleAddedNothing(driver: DriverView, ladder: boolean): boolean {
 	return driver.chaos === 0 || (ladder && driver.unitPrice !== null);
 }
 
-/** The full form's unique cell, or null where the line drops no unique. */
-export function offerUniqueDrop(drivers: OfferDriver[]): OfferDriver | null {
-	return drivers.find((driver) => driver.kind === 'unique') ?? null;
+/** The full form's item cells: every unique row, in wire order. */
+export function offerUniqueDrops(drivers: OfferDriver[]): OfferDriver[] {
+	return drivers.filter((driver) => driver.kind === 'unique');
 }
 
 /**
@@ -1128,9 +1131,9 @@ function offerStripPrices(terms: DriverTerm[]): string | null {
  * numbers are not here and must not be — `+4/8/12%` becoming `+12/24/36%` is
  * text, and text moves nothing.
  *
- * `content` is present when the content cell draws, and the `uniqueDrop`
- * caption presence is present because the rare-caption threshold is a
- * row-height change.
+ * `content` is present when the content cell draws, and the `uniqueDrops`
+ * count and whether any carries a caption are present because the item row's
+ * cell count and the rare-caption threshold are row-shape changes.
  *
  * Here rather than in the component because a `.svelte` file has no unit-test
  * harness in this app: the one thing that must be provable about this string is
@@ -1148,8 +1151,8 @@ export function offerBoxSignature(box: OfferBox, compact: boolean): string {
 		box.content !== null ? 'content' : '-',
 		box.ladder ? 'ladder' : '-',
 		box.ladder?.rarity ? 'r' : '-',
-		box.uniqueDrop ? 'unique' : '-',
-		box.uniqueDrop?.caption ? 'caption' : '-',
+		`unique${box.uniqueDrops.length}`,
+		box.uniqueDrops.some((drop) => drop.caption) ? 'caption' : '-',
 		box.architect !== null ? 'architect' : '-',
 		box.ageLine ? 'age' : '-'
 	].join(' ');
@@ -1246,7 +1249,7 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 			chip: state === null ? null : offerChip(state, allRows),
 			marks: value === null || state === null ? [] : offerBoxMarks(value, state, allRows),
 			drivers,
-			uniqueDrop: offerUniqueDrop(drivers),
+			uniqueDrops: offerUniqueDrops(drivers),
 			driverCount: terms.length,
 			fold: value === null ? null : offerFold(value, terms),
 			bonus: value === null ? null : offerBonusLine(value),

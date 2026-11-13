@@ -305,38 +305,37 @@ export const FULL_BOX_BUDGET_CSS = DIAGONAL_BUDGET_CSS + 7;
  *     border 2x2 4 + padding 2x10 20 + header (26 + 15) 41
  *     + 4 rules x (6 + 1 + 6) 52
  *     + sale 18 + items (8 + 69) 77
+ *     + fold (3 + 13) 16
  *     + room bonuses (18 + 13) 31
  *     + architect 18
- *     + market line 13 = 274
+ *     + market line 13 = 290
  *
- * One box outgrows that sum: the instrumental note under a content line with
- * both ladders, in WARN (Temple Nexus) — the same rules, header, bonuses,
- * architect and market line, with the content row (6 + 57) and the note
- * wrapped to two lines (5 + 30) in place of sale and items: **277**. That is
- * the constant (review r1 P2).
+ * The fold is reachable since POE-370: Glittering Halls' chest pool has four
+ * unique rows, one past [`FULL_DRIVER_ROWS`]. That chest WARN form, **290**, is
+ * the constant. The instrumental note under a content line with both ladders,
+ * in WARN (Temple Nexus) — content row (6 + 57) and a two-line note (5 + 30) in
+ * place of sale, items and fold — is 277, under it.
  *
- * The 316 px diagonal budget therefore has 42 px of spare height: 3.30 removed
+ * The 316 px diagonal budget therefore has 26 px of spare height: 3.30 removed
  * the temple-mod items (POE-367), and the 55 px mod block with its two chip
  * rows became the architect's one 18 px name. Any row added here is still a
  * decision about what the box DROPS.
  *
- * Two rows are deliberately outside the sum:
+ * One row is deliberately outside the sum:
  *
- * - `fold` (13 + 3) is unreachable — `view.ts`'s `ROW_KINDS` has two entries,
- *   so `driverCount` cannot pass `FULL_DRIVER_ROWS`;
  * - `note` (a wrapping 15 px line) fires only for `instrumental`, `override`
  *   and a line that drops nothing, and every one of those has no item row —
  *   it REPLACES the shape it would otherwise extend (a content line keeps its
- *   row, and its tallest such box is the 277 above, which IS the constant).
+ *   row, and its tallest such box is the 277 above, under the constant).
  *
  * Not measured from the DOM because this app has no DOM harness for a
  * `.svelte` file; `overlay-geometry.test.ts` restates the row table beside the
  * constant so a row added to the component without a number here fails.
  */
-export const FULL_BOX_MAX_CSS = 277;
+export const FULL_BOX_MAX_CSS = 290;
 
 /** What two FULL boxes and the gap between them need, CSS px —
- * `277 * 2 + STACK_GAP_CSS` = 562. This is the clearance [`offersCompact`]
+ * `290 * 2 + STACK_GAP_CSS` = 588. This is the clearance [`offersCompact`]
  * demands before it lets the pair render full.
  * It uses the WORST case rather than the design's typical one, because the box
  * that gets clamped for want of it is the LOWER one, and a clamped box lands
@@ -353,8 +352,8 @@ export const FULL_PAIR_CSS = FULL_BOX_MAX_CSS * 2 + STACK_GAP_CSS;
  * reads as a summary.
  *
  * **Unreachable as the wording stands**, and kept anyway. `view.ts`'s
- * `ROW_KINDS` has two entries — sale and unique drop — and a room
- * publishes at most one driver of each, so `driverCount` cannot exceed 2
+ * `ROW_KINDS` has two entries — sale and unique drop — and the largest chest
+ * pool is Glittering Halls' four (POE-370), so `driverCount` cannot exceed 5
  * today and this trigger never fires. It fires the day enough `ROW_KINDS` are
  * added, which is the day the fold would start hiding as much as it shows; a
  * collapse rule that only appeared then would be a rule written under the
