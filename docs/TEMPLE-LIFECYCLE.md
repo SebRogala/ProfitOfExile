@@ -13,9 +13,12 @@ once (the temple's own banter excepted), and once a board has been READ the firs
 the sheet closing — ends the cycle and the loop stops capturing. Rows 1, 3 and 4, the
 consequences, the residuals and the tails bullet below carry the change; everything tagged
 2026-09-04 or 2026-09-06 is history and is left standing.
-**Superseded for automatic capture (2026-11-13, POE-387)**: the detect tick and retry rounds
-below break [Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy); POE-389
-replaces them.
+**Amended 2026-11-13 (POE-389)**: the temple reads once per press of the read key, under
+[Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy). "Per press" below is
+the current behaviour. The detect loop, the retry rounds, the cold sweep, the start-up probe and
+Re-arm are gone; every section after "Per press" that describes them is **historical
+(superseded 2026-11-13, POE-389)**, kept as history, and so are the dated amendment notes in this
+header.
 **Amended 2026-09-07 (WI-2, owner)**: the retry rounds are PARTIAL. A board is still read at
 most three times, but rounds 2 and 3 OCR only the regions the kept read left unclean, decided
 before the round starts. Row 2, "Where each rule lives", "Cadences and budgets" and "Owner
@@ -59,14 +62,41 @@ Related: [Overlay Guide](OVERLAY-GUIDE.md) (windows, click-through, smoke items)
 [ADR-025](adr/025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md)
 (the capture contract rows 2–3 implement, shared with merc; POE-278).
 
-## The one sentence
+## Per press
+
+Current since 2026-11-13 (POE-389). Homes: `temple/press.rs` (`TempleReader`, `press_reason`) and
+`temple/run.rs` (`worker_loop`, `read_press`, `locate_on_miss`).
+
+- **Client.txt arms; it does not capture.** An Alva START line arms `AlvaStart`, entering The
+  Temple of Atzoatl arms `TempleArea` (`temple/trigger.rs`). Neither grabs the screen.
+- **The reader runs only under Client.txt temple context.** On a read-key press,
+  `TempleReader::arm` declines unless the temple module is running and the arm holds `AlvaStart`
+  or `TempleArea`. Declined, it takes no frame on the temple's account.
+- **One frame per press.** An accepted press hands its one frame (or the grab error) to the temple
+  worker thread; `worker_loop` reads each received frame once, in order, and captures nothing
+  itself.
+- **The read.** A placed-origin recheck on that frame first. On a miss, the full-frame locate
+  (`anchor::anchor_for_loop`) runs on the same frame only when the slice is null or has no
+  anchored Entrance origin (`locate_on_miss`); a placed miss publishes no-panel with no search.
+- **A full read follows**, with no retry rounds and no merge with an earlier read. A press that
+  finds no panel publishes no-panel. A partial read stays published until the next press.
+- **Geometry.** Only a located anchor that fills or contradicts the placement is remembered, and
+  only after the read has published (`run::finish`, ADR-025). Recalibrate is the manual fix for a
+  wrong placement.
+- **app.log** gets one `Temple: read on press (<reason>) — <outcome>` line per read: `read`,
+  `read, unclean`, `no panel`, `capture failed`, `OCR failed` or `cancelled`.
+
+## The one sentence — historical (superseded 2026-11-13, POE-389)
 
 The capture runs only while something says an incursion is in scope, and stops the moment the
 sheet it read closes; the sheet-bound overlays live with the temple **sheet** on screen; the room
 overlay lives with the **incursion**; a full OCR read happens once per board, with bounded
 retries, and then stops.
 
-## States
+## States — historical (superseded 2026-11-13, POE-389)
+
+Rows 1–4, the consequences and the residuals below describe the detect loop. The arm, the
+valuation and the overlays still apply; capture and OCR are "Per press" above.
 
 `idle → waiting → reading → read → playing → idle`
 
@@ -341,7 +371,7 @@ Facts that shape the rules (PC mining):
 - Not verified against the wiki's canonical list (fetch blocked); rarer variants cannot be ruled
   out — a missed one degrades to Re-arm by the rule above.
 
-## Cadences and budgets (measured numbers, where they exist)
+## Cadences and budgets (measured numbers, where they exist) — loop numbers historical (superseded 2026-11-13, POE-389)
 
 - **The budget (owner, 2026-09-06): the verdict is on screen about 1 s after the panel opens.**
   Panel open → next cheap tick (0–650 ms) → one full read → publish → the overlay's next
@@ -454,18 +484,14 @@ Facts that shape the rules (PC mining):
 
 | Rule | Home |
 |---|---|
-| what arms / disarms | `temple/trigger.rs` (`arm_source`, `ArmState`, `ArmReason`, `TempleArm`) — a START phrase or the temple area arms with no deadline, Re-arm for `MANUAL_ARM_GRACE_MS`, and `LoopState::live` holds the gate from a sighting until the retire (`RETIRE_AFTER` = 2 consecutive clean misses since 2026-09-11, POE-275) |
-| what SHUTS the gate, and the word the log uses | `temple/trigger.rs` (`StandDown` on `ArmState`, written by `apply_line`, `ArmState::arm_manual` and `ArmState::complete_cycle`) and `temple/run.rs` (`gate_line`, which prints it) — WI-1 |
-| the completed cycle — read once, sheet closed, stop looking | `temple/run.rs` (`cycle_complete` decides, `LoopState::has_read` is its board half, `miss` calls it with the key the tick opened on, `board_key` builds that pair) and `temple/trigger.rs` (`ArmState::complete_cycle` writes, and holds both the `TempleArea` carve-out and the `key_current` guard — a tick takes seconds, so a START line or a Re-arm inside it arms a cycle this observation is not about; `trigger::complete_cycle` is the loop's seam into the lock and re-reads the pair there) — WI-1 |
+| what arms / disarms | `temple/trigger.rs` (`ArmState`, `ArmReason`, `TempleArm`, `apply_line`) — a START phrase arms `AlvaStart`, the temple area arms `TempleArea`, both with no deadline (POE-389) |
+| whether a read-key press reads the temple, and with which reason | `temple/press.rs` (`TempleReader::arm`, `press_reason`): only with the module's worker running and a `AlvaStart`/`TempleArea` arm; `TemplePending::consume` hands the frame to the worker (POE-389) |
 | what ONE Client.txt line means — the area parse, the speaker match, the staleness gate and the three START phrases, decided once | `temple/trigger.rs` (`classify` → `LineEvent`, `ends_epoch`) |
-| tick order: prune → hint from placements → placed-origin recheck → explicit fallback when qualified → full read → publish | `temple/run.rs` (`tick`, `cheap_hint_from_screen`, `cold_sweep_reason`, `cold_sweep`, `full_read`) — current POE-269 path. **Amended 2026-09-11 (POE-275 WI-2):** a sweep in flight is cancelled on a key change, then after the recheck the sweep slot is settled — a recheck that anchored wins and cancels it, a found origin is used only as re-found on this capture — and only a clean miss with nothing live may START a sweep, which runs off the loop: prune → hint → recheck → settle the sweep in flight → sighting: full read → publish, or miss: maybe start a sweep. Homes: `SweepSlot` (`launch`, `settle`, `keep_only`, `cancel`), `confirm_swept`, `SweepBudget` with `NULL_SWEEP_EVERY` = 3 and `NULL_SWEEP_CAP` = 10 (charged by `cold_sweep_reason`), `sweep_line`; the stand-down and module-stop cancels are in `run_loop` |
-| the OCR gate: read this board or re-show it | `temple/run.rs` (`LoopState::gate` → `GateAnswer`, `LoopState::reshow`, `BoardRead`); since 2026-10-09 (POE-282) the lock is `BoardRead::locked` and its answer `GateAnswer::Locked`, which replaces `GateAnswer::Reshow` |
-| board IDENTITY — is what I am looking at the thing I already read | `temple/slice.rs` (`BoardFrame`: the anchor origin and scale in a banded form plus `layout_signature`, the semantic half) and the `(temple_epoch, temple_rearm)` key. Since 2026-10-09 (POE-282) `BoardFrame` decides identity only before the lock (`BoardRead::locked`, `GateAnswer::Locked`) and for the retry merge; a locked board is the board for its whole key |
-| the retry merge | `temple/slice.rs` (`KeptRead`, `merge_reads`, `unclean`) and `temple/run.rs` (`kept_for`) |
-| what a retry ROUND re-reads — 1 full + up to 2 partial | `temple/slice.rs` (`ReadPlan`, `plan_read`, and the one `retry_plan` predicate set `unclean` is the bool view of) decides; `temple/run.rs` (`full_read` asks it before any OCR, off the reading `kept_for` allows; `panel_text` takes the region names, `read_timings_line` prints the round) and `temple/panel.rs` (`read_slots`, which still reports all 13 slots) execute it. `merge_reads` is what a skipped region rides out on — WI-2 |
-| the capture contract rows 2–3 and the Manual-only sweep implement — read once, re-read only the unclean, stop; a placed miss sweeps only under Re-arm | stated once, for temple and merc, in [ADR-025](adr/025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md) (POE-278); the temple homes are the rows above and `run::cold_sweep_reason` |
-| the re-arm counter (all that is left of the old read gate) | `temple/slice.rs` (`RearmGate`) |
-| what INVALIDATES a board vs what FORCES a read | `AppState.temple_state.epoch` invalidates a board already read; `AppState.temple_state.rearm` forces one read with nothing sighted (`temple/mod.rs`, both fields carry the invariant) |
+| the worker: one read per received frame, nothing captured | `temple/run.rs` (`worker_loop`, driven by `run_worker`) (POE-389) |
+| press order: hint from placements → placed-origin recheck → locate on a miss when qualified → full read → publish → remember | `temple/run.rs` (`read_press`, `hint_from_slice`, `locate_on_miss`, `read_board`, `verdict`, `finish`) (POE-389) |
+| what one read OCRs — the whole board, no merge | `temple/slice.rs` (`plan_read(None, …)`, `unclean`) and `temple/run.rs` (`read_board`) (POE-389) |
+| the capture contract the press implements — read once, a located anchor replaces geometry only on a null/unplaced slice | stated once, for temple and merc, in [ADR-025](adr/025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md) (POE-278, temple amendment POE-389); the temple homes are the rows above |
+| the loop, stand-down, completed cycle, OCR gate, board lock, retry merge and rounds, cold sweep, start-up probe and Re-arm rows | **historical (superseded 2026-11-13, POE-389)**: their homes (`tick`, `cold_sweep_reason`, `LoopState`, `cycle_complete`, `merge_reads` rounds, `temple_rearm`) are deleted or no longer on the read path; see git history before POE-389 |
 | which overlay shows on which status / context | `desktop/src/lib/temple/view.ts` — `overlayShowsBoard(status)` for the sheet-bound surfaces, `overlayShowsDoors(slice)` for the room widget's diamond, which since POE-248 reads the ADVICE and not the status, composed by `doorWidget(slice)` with the widget's one status rule — a `reading…` line while the status is `reading` and the read is not a retry round (`readRetry`, set by `run::read_is_retry`; POE-276) — and `overlayShowsWaiting(slice)` for the notice, which reads `waitingForPanel` AND the absence of a board |
 | what each offer box says | `desktop/src/lib/temple/view.ts` (`offerBoxes` → `OfferBox`, one per panel block in the panel's own order) |
 | where the notice ships and where the boxes are drawn | `desktop/src/lib/temple/overlay-geometry.ts` (`waitingDefaultPlacement` for the notice's offered default, `offerStackPlacement` for the column in the sheet's left margin) |
@@ -484,7 +510,7 @@ Facts that shape the rules (PC mining):
 | where that object comes from, and when it is BUILT | `temple/preset.rs` (`ValuationKey`, `CachedValuation`, `ValuationSource`, and the cache decision as three pure functions — `cached_valuation`, `compute_valuation`, `store_valuation`) behind `temple::valuation::temple_valuation_now(app, settings)` over `AppState.temple_state.valuation`; built on an input change by `temple::valuation::warm_temple_valuation` (POE-257 WI-3) and never on the read path unless a key moved. Three functions and not one so the accessor builds with the slot mutex dropped. `slice::value_read` is `#[cfg(test)]` — no read may rebuild the table |
 | smoke items per rule | `OVERLAY-GUIDE.md` "Windows smoke checks" |
 
-## Owner decisions this encodes (2026-09-04, amended 2026-09-06, 2026-09-07, 2026-09-09, 2026-09-11 and 2026-10-09)
+## Owner decisions this encodes (2026-09-04, amended 2026-09-06, 2026-09-07, 2026-09-09, 2026-09-11 and 2026-10-09) — historical (superseded 2026-11-13, POE-389)
 
 "Sheet presence should be every 1 s, as sometimes 4 s is the time the user already finished the
 temple — and if that presence test is cheap, I'd even go every 650 ms." "After the Alva voice

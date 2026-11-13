@@ -139,11 +139,11 @@ POE-278).
 
 | Clause | Temple (shipped) | Merc |
 |---|---|---|
-| 1 one full read | row 2; `run::LoopState::gate` → `GateAnswer::Read`, `run::full_read` | shipped: `run::detect_tick` — placed crop (`geometry::placed_panel_crop`, `geometry::placed_layout`), then `read::pass2_texts` and `read::build_planned` with no plan (`read::build_capture` is now the debug/test wrapper) |
-| 2 two partial rounds | row 2 (WI-2) and "Where each rule lives"; `slice::plan_read` / `retry_plan` → `ReadPlan`, `slice::merge_reads` over `KeptRead`, `slice::unclean`, `run::RETRIES`, `run::kept_for` | shipped (`POE-278 WI-C`, `072c98c`): `read::plan_read` → `ReadPlan` / `RowPlan` from the kept capture, `read::pass2_planned`, `read::build_planned` (copies confident cells), `read::fold_unresolved_header`, `read::lines_up`; `run::RETRIES`, `run::LoopState::rounds`, `run::round_plan` |
-| 3 then stop (**temple amended by the POE-282 amendment below**) | row 2 ("After round 3 all OCR stops"); `DETECT_INTERVAL` 650 ms, `GateAnswer::Reshow` | shipped (`POE-278 WI-C`, `072c98c`): `read::capture_complete` or `LoopState::rounds_spent` → `LoopState::detect_interval` returns `LIVENESS_INTERVAL`; `ReadPlan::Nothing` → `read::carry_capture` re-reads nothing, and `run::replaced_on_sight` checks a REMATCH on pass 1 |
-| 4 geometry moves only on a manual scan | row 3, residual "Placed-origin verification", "Owner decisions" 2026-09-09; `run::cold_sweep_reason` → `ColdSweepReason::{NullSlice, PlacedMiss}`, `run::cold_sweep`, `placed_origin_contradiction`, `remember_fallback_anchor` → `ssot::remember_anchor` | shipped (`POE-278 WI-B`, `f78786e`): `run::locate_decision` (`LocateReason::{ColdStart, ManualMiss}`, `PlacedRead`), asked from `run::detect_tick`; `run::manual_tick` / `refit_requested` — a voice-probe miss while a Recalibrate is pending is a manual miss; `MERC_COLUMN_TRUSTED_LINE` |
-| 5 fresh budget (**temple amended by the POE-282 amendment below**) | row 3 (board identity); `run::board_key`, `slice::BoardFrame`, `LoopState::note_read`; Re-arm bumps `temple_rearm` | shipped (`POE-278 WI-C`, `072c98c`): `LoopState::refill_rounds` — from `run::round_plan` on a new capture or one `read::panel_replaced` dropped, `LoopState::resume` on Scan now, `run::refills_budget` on a Recalibrate `consume_refit` acted on; and, merc-specific (not in clause 5), `run::refills_budget` on a template-store generation change (`run::generation_changed`) |
+| 1 one full read | POE-389: one per press — `press::TempleReader`, `run::worker_loop`, `run::read_press`, `run::read_board` | shipped: `run::detect_tick` — placed crop (`geometry::placed_panel_crop`, `geometry::placed_layout`), then `read::pass2_texts` and `read::build_planned` with no plan (`read::build_capture` is now the debug/test wrapper) |
+| 2 two partial rounds | POE-389: none — `slice::plan_read(None, …)` reads the whole board each press | shipped (`POE-278 WI-C`, `072c98c`): `read::plan_read` → `ReadPlan` / `RowPlan` from the kept capture, `read::pass2_planned`, `read::build_planned` (copies confident cells), `read::fold_unresolved_header`, `read::lines_up`; `run::RETRIES`, `run::LoopState::rounds`, `run::round_plan` |
+| 3 then stop (**temple amended by the POE-282 amendment below**) | POE-389: nothing captures between presses — `run::worker_loop` owns no grab | shipped (`POE-278 WI-C`, `072c98c`): `read::capture_complete` or `LoopState::rounds_spent` → `LoopState::detect_interval` returns `LIVENESS_INTERVAL`; `ReadPlan::Nothing` → `read::carry_capture` re-reads nothing, and `run::replaced_on_sight` checks a REMATCH on pass 1 |
+| 4 geometry moves only on a manual scan | POE-389: `run::locate_on_miss` (null/unplaced slice only), `placed_origin_contradiction`, `run::finish` → `ssot::remember_anchor`; Recalibrate is the manual fix | shipped (`POE-278 WI-B`, `f78786e`): `run::locate_decision` (`LocateReason::{ColdStart, ManualMiss}`, `PlacedRead`), asked from `run::detect_tick`; `run::manual_tick` / `refit_requested` — a voice-probe miss while a Recalibrate is pending is a manual miss; `MERC_COLUMN_TRUSTED_LINE` |
+| 5 fresh budget (**temple amended by the POE-282 amendment below**) | POE-389: no budget or board key; each press is an independent read | shipped (`POE-278 WI-C`, `072c98c`): `LoopState::refill_rounds` — from `run::round_plan` on a new capture or one `read::panel_replaced` dropped, `LoopState::resume` on Scan now, `run::refills_budget` on a Recalibrate `consume_refit` acted on; and, merc-specific (not in clause 5), `run::refills_budget` on a template-store generation change (`run::generation_changed`) |
 
 Row numbers and section names are those of [Temple Lifecycle](../TEMPLE-LIFECYCLE.md).
 
@@ -272,3 +272,23 @@ line per `LOCKED_SIGHTING_LOG_EVERY` = 10 s). Normative write-up in
 Merc is unchanged: the contract is shared; the code is not. Merc's clause 5
 identity — a new capture, or a panel judged REPLACED by `read::panel_replaced`
 — stands as written.
+
+## Amended 2026-11-13 (POE-389)
+
+**Temple clauses 1–5 are amended; merc is unchanged here (POE-390).** The temple reads once per
+press of the read key, only under Client.txt temple context (`AlvaStart` or `TempleArea`),
+following [Overlay Guide § Screen reading (GGG policy)](../OVERLAY-GUIDE.md#screen-reading-ggg-policy).
+
+- Clause 1: one full read per press, on the pressed frame (`run::read_press`, `run::read_board`).
+- Clauses 2, 3 and 5: no retry rounds, no merge with an earlier read, no board lock and no
+  board key; each press is an independent read (`slice::plan_read(None, …)`). The next press is
+  the only re-read.
+- Clause 4: the full-frame locate (`anchor::anchor_for_loop`) runs on the pressed frame only
+  when the slice is null or has no anchored Entrance origin (`run::locate_on_miss`); a placed
+  miss is no-panel with no locate under every reason. Geometry is replaced only by a located
+  anchor on such a null/unplaced slice, and only after the read has published (`run::finish`).
+  Recalibrate stays the manual fix for a wrong placement. Temple Re-arm is gone.
+
+The temple column of "Where each clause lives" above names the POE-389 homes; the POE-275 and
+POE-282 temple amendments above are **historical (superseded 2026-11-13, POE-389)**. Normative
+write-up in [Temple Lifecycle](../TEMPLE-LIFECYCLE.md), "Per press".

@@ -9,7 +9,7 @@ This is the documentation entry point. Documents are classified so historical pl
 - [Product vision](product-vision.md) — historical strategy-simulation domain and future scope; not current architecture.
 - [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — current workflows plus clearly labeled reliability targets for collection, native trade, contributions, optional server trading, pairing, and Mercure; includes current POE-297 restriction/backoff and empty-result behavior.
 - [Overlay Guide](OVERLAY-GUIDE.md) — maintained Windows/Tauri overlay mechanics and regression guards.
-- [Temple Lifecycle](TEMPLE-LIFECYCLE.md) — normative order of arming, detection, OCR and overlay show/hide for the temple module (POE-249, implemented 2026-09-04); every rule tagged shipped with the commit that shipped it, plus where the POE-257 room valuation, market read and presets live.
+- [Temple Lifecycle](TEMPLE-LIFECYCLE.md) — normative order of arming, per-press read, OCR and overlay show/hide for the temple module (POE-249, implemented 2026-09-04; one read per key press since 2026-11-13, POE-389); every rule tagged shipped with the commit that shipped it, plus where the POE-257 room valuation, market read and presets live.
 - [Boss loot lifecycle](BOSS-LOOT-LIFECYCLE.md) — current native capture, confirmation, runs, statistics and seed import; verified 2026-11-02.
 - [Lab font OCR lifecycle](LAB-FONT-OCR-LIFECYCLE.md) — current font scan, craft ledger and gem tooltip scan, including the open gem-scan parity question; verified 2026-11-02.
 - [Mercenaries lifecycle](MERCENARIES-LIFECYCLE.md) — current Inspect trigger, bounded capture and triage; verified 2026-11-02.
