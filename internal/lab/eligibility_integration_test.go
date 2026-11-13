@@ -280,9 +280,11 @@ func TestGemNamesAutocomplete_offersTheLatestSnapshotHoweverStale(t *testing.T) 
 	leagueID := "POE-145-fac-stale"
 	registerLeague(t, pool, leagueID)
 
-	// Before this project had a database, so no real row shares the timestamp
-	// cleanupAtTime deletes across leagues.
-	stale := time.Date(2019, 3, 14, 9, 26, 53, 0, time.UTC)
+	// Older than every bounded reader window (168h max) yet inside the 21-day
+	// retention window (ADR-034), so the retention job cannot drop it mid-run.
+	// The odd sub-second offset keeps cleanupAtTime, which deletes across
+	// leagues, from matching a real row.
+	stale := time.Now().UTC().Add(-14*24*time.Hour).Truncate(time.Second).Add(437 * time.Microsecond)
 	cleanupAtTime(t, pool, stale, "gem_snapshots")
 
 	const name = "POE145 Cyclone of Tumult"

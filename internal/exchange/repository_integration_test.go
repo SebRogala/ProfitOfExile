@@ -25,8 +25,9 @@ import (
 var integrationScope = league.Historical("Mirage")
 
 // baseHour is the feed hour the tests build their windows from. Whole hours only,
-// matching what the runner stores, so TIMESTAMPTZ round-trips exactly.
-var baseHour = time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
+// matching what the runner stores, so TIMESTAMPTZ round-trips exactly. Far future
+// so the 21-day retention job (ADR-034) never drops these rows mid-run.
+var baseHour = time.Date(2103, 1, 5, 0, 0, 0, 0, time.UTC)
 
 func integrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
