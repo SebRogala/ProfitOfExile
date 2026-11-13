@@ -75,7 +75,7 @@
 	const temple = $derived(ssot.temple);
 	const statusBadge = $derived(
 		temple.status === 'idle' && ssot.readHotkey
-			? `press ${shortcutLabel(ssot.readHotkey.shortcut)} to read`
+			? shortcutLabel(ssot.readHotkey.shortcut)
 			: TEMPLE_STATUS_LABEL[temple.status]
 	);
 	const layout = $derived(temple.layout);
