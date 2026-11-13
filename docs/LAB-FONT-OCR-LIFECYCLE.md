@@ -83,12 +83,15 @@ A press while the gem context is armed reads that one frame (POE-397):
    the three slots' best RMSE) is chosen; a frame never mixes sets
    ([Game facts](GAME-FACTS.md#gem-choice-screen)).
 2. **Presence gate.** Above `GEM_PANEL_JOINT_RMSE_MAX` (85, provisional, its
-   measurements in its doc comment) the frame is "no gem panel": logged,
-   nothing written, no tooltip read.
+   measurements in its doc comment) a frame judged on a complete reference
+   population is "no gem panel": logged, nothing written, no tooltip read.
 3. **Certain or uncertain.** A slot is certain when its second-best reference
    scores at least `UNCERTAIN_MARGIN` (1.1) times its best, otherwise uncertain
    with its top 3 candidates. While the references are `incomplete` (some art
-   failed to load, not a 404) every slot is uncertain.
+   failed to load, not a 404) every slot is uncertain, and a frame above the
+   gate is "icon evidence unavailable", not "no gem panel": the true gems may
+   be the ones that failed. With no references loaded at all the same holds.
+   Either way no icon slot is guessed and the hover read below still runs.
 4. **Hover.** Only when the press cursor lies on a slot, the `lab.gem` band of
    the same frame is OCR'd (Lanczos3 2×, then bilinear when that yields no
    candidates) and matched against the tooltip vocabulary; a match makes that

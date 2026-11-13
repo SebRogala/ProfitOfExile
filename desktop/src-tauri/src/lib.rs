@@ -361,7 +361,7 @@ pub struct AppStatus {
 }
 
 pub use font_session::{FontRound, FontSessionData};
-pub(crate) use lab::commands::{fetch_gem_names, send_gems_to_server, record_lab_detection, publish_lab_detection};
+pub(crate) use lab::commands::{send_gems_to_server, record_lab_detection, publish_lab_detection};
 #[cfg(test)]
 pub(crate) use lab::commands::apply_manual_lab_mode;
 

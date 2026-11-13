@@ -210,8 +210,13 @@ pub(crate) enum IconSlot {
 /// The icon verdict on a frame's three slots.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum IconRead {
-    /// The chosen set's joint score is above the presence gate.
+    /// The chosen set's joint score is above the presence gate, judged on a
+    /// complete reference population.
     NoPanel { joint: f32 },
+    /// The references cannot support the gate: none loaded, or the population
+    /// is incomplete and nothing matched (the true gems may be the missing
+    /// ones). Neither a panel nor its absence; no slot is guessed.
+    Unavailable { joint: f32 },
     Panel {
         set: GemSet,
         /// The chosen set's sum of the three best RMSE.
@@ -235,11 +240,15 @@ pub(crate) fn classify_slots(refs: &GemIconRefs, slots: &[SlotImage; 3]) -> Icon
         })
         .collect();
     let Some(chosen) = ranked.iter().min_by(|a, b| a.2.total_cmp(&b.2)) else {
-        return IconRead::NoPanel { joint: f32::INFINITY };
+        return IconRead::Unavailable { joint: f32::INFINITY };
     };
     let (set, lists, joint) = chosen;
     if *joint > GEM_PANEL_JOINT_RMSE_MAX {
-        return IconRead::NoPanel { joint: *joint };
+        return if refs.incomplete {
+            IconRead::Unavailable { joint: *joint }
+        } else {
+            IconRead::NoPanel { joint: *joint }
+        };
     }
     let other_joint = ranked.iter().find(|r| r.0 != *set).map(|r| r.2);
     let slots = lists.clone().map(|list| {
@@ -382,6 +391,26 @@ pub(crate) mod tests {
 
         eprintln!("chrome: {read:?}");
         assert!(matches!(read, IconRead::NoPanel { .. }), "{read:?}");
+    }
+
+    #[test]
+    fn an_empty_failed_population_is_unavailable_not_no_panel() {
+        let refs = GemIconRefs { normal: Vec::new(), transfigured: Vec::new(), incomplete: true };
+        let rects = placements_for(Some(&screen(1920, 1080, 0.9))).lab.gem_slots;
+
+        let read = classify_slots(&refs, &slots_of(&fixture_frame(), rects));
+
+        assert!(matches!(read, IconRead::Unavailable { .. }), "{read:?}");
+    }
+
+    #[test]
+    fn an_incomplete_population_with_no_match_is_unavailable_not_no_panel() {
+        let refs = crate::lab::gem_icon_refs::tests::fixture_refs_marked_incomplete();
+        let rects = [530, 628, 728].map(|x| [x - 24, 300 - 24, 48, 48]);
+
+        let read = classify_slots(&refs, &slots_of(&fixture_frame(), rects));
+
+        assert!(matches!(read, IconRead::Unavailable { .. }), "{read:?}");
     }
 
     #[test]

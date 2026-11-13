@@ -227,7 +227,8 @@ pub(crate) enum GemFrameRead {
     Read {
         /// `None` when the context or the lab mode changed since the press.
         commit: Option<GemCommit>,
-        /// The icon references were not loaded yet.
+        /// No icon evidence: the references were not loaded yet, or too
+        /// few loaded to judge the frame.
         icons_skipped: bool,
         tooltip: TooltipOutcome,
     },
@@ -291,11 +292,13 @@ pub(crate) fn read_gem_frame(
 ) -> GemFrameRead {
     let Some(vocab) = gem_vocab::current(&state.lab_scan) else { return GemFrameRead::NoVocab };
     let mut read = LabGemRead { token: captured, set: None, slots: [GemSlot::Unread, GemSlot::Unread, GemSlot::Unread] };
-    let icons_skipped = vocab.refs.is_none();
+    let mut icons_skipped = vocab.refs.is_none();
     if let Some(refs) = &vocab.refs {
         let slots = lab.gem_slots.map(|rect| SlotImage::from_frame(image, rect));
         match gem_icons::classify_slots(refs, &slots) {
             IconRead::NoPanel { joint } => return GemFrameRead::NoPanel { joint },
+            // No icon evidence either way: read as without references.
+            IconRead::Unavailable { .. } => icons_skipped = true,
             IconRead::Panel { set, slots, .. } => {
                 read.set = Some(set);
                 read.slots = slots.map(icon_slot);
@@ -434,7 +437,7 @@ fn publish_gem_frame(app: &AppHandle, token: u64, read: GemFrameRead) {
         GemFrameRead::Read { commit, icons_skipped, tooltip, .. } => (commit, icons_skipped, tooltip),
     };
     if icons_skipped && once_per_context(&LOGGED, token, LogOnce::NoIcons) {
-        app_log(app, "Gem read: icon match skipped, the gem icons have not loaded yet; hover a gem and press".to_string());
+        app_log(app, "Gem read: icon match skipped, the gem icons are not loaded (or too many failed to load); hover a gem and press".to_string());
     }
     match tooltip {
         TooltipOutcome::NotHovered => {}
@@ -702,6 +705,60 @@ mod tests {
         assert!(matches!(read, GemFrameRead::NoPanel { .. }));
         assert!(held(&state).is_empty());
         assert_eq!(last(&state), None);
+    }
+
+    /// The fixture population with `failed` names' art failing in transport.
+    fn refs_with_failed(failed: &[&str]) -> Arc<gem_icons::GemIconRefs> {
+        use crate::gem_art::ArtReply;
+        use crate::lab::gem_icon_refs::{art_outcome, build_refs, tests::{gem_sets, ART_DIR}, GemDictionary};
+        let sets = gem_sets();
+        let dict = GemDictionary { normal: sets.normal, transfigured: sets.transfigured };
+        let (refs, _) = build_refs(&dict, |name| {
+            if failed.contains(&name) {
+                return art_outcome(ArtReply::Unreachable("timed out".into()));
+            }
+            match std::fs::read(crate::gem_art::art_file(std::path::Path::new(ART_DIR), name)) {
+                Ok(bytes) => art_outcome(ArtReply::Response(200, bytes)),
+                Err(_) => art_outcome(ArtReply::Response(404, Vec::new())),
+            }
+        });
+        Arc::new(refs)
+    }
+
+    #[test]
+    fn with_every_reference_failed_a_hovered_tooltip_still_commits_only_its_name() {
+        let state = test_app_state();
+        let token = arm_gem_context(&state);
+        let empty_failed = Arc::new(gem_icons::GemIconRefs { normal: Vec::new(), transfigured: Vec::new(), incomplete: true });
+        with_refs(&state, empty_failed);
+
+        let read = press(&state, token, &fixture_frame(), centre_of(1), &["Reave of Refraction", "Level: 1"]);
+
+        assert_eq!(committed(read).map(|c| c.names), Some(vec!["Reave of Refraction".to_string()]));
+    }
+
+    #[test]
+    fn with_every_reference_failed_an_unhovered_press_guesses_no_icon() {
+        let state = test_app_state();
+        let token = arm_gem_context(&state);
+        let empty_failed = Arc::new(gem_icons::GemIconRefs { normal: Vec::new(), transfigured: Vec::new(), incomplete: true });
+        with_refs(&state, empty_failed);
+
+        let commit = committed(press(&state, token, &fixture_frame(), None, &[])).expect("stored");
+
+        assert!(commit.names.is_empty());
+        assert!(commit.read.slots.iter().all(|s| *s == GemSlot::Unread), "{:?}", commit.read);
+    }
+
+    #[test]
+    fn with_the_matching_references_failed_a_hovered_tooltip_still_commits_only_its_name() {
+        let state = test_app_state();
+        let token = arm_gem_context(&state);
+        with_refs(&state, refs_with_failed(&TRUTH));
+
+        let read = press(&state, token, &fixture_frame(), centre_of(1), &["Reave of Refraction", "Level: 1"]);
+
+        assert_eq!(committed(read).map(|c| c.names), Some(vec!["Reave of Refraction".to_string()]));
     }
 
     #[test]
