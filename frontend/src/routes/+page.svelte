@@ -370,12 +370,11 @@
 				</div>
 				<div class="transparency-item">
 					<span class="transparency-label">2. Screen Capture & OCR</span>
-					<p>When a Client.txt event says a panel is on screen, the app captures the region that panel occupies using
-						the standard Windows screenshot API and reads it with Windows' built-in text recognition (Windows.Media.Ocr).
-						It reads only while the panel is up and within a fixed budget, then stops. Which panel each module reads, and
-						what triggers it, is stated in its entry under <a href="#modules">Modules</a>. The automatic trigger is a
-						quality-of-life choice &mdash; none of these interactions has a time limit. Client.txt says exactly when the
-						panel is on screen, so there's no reason to make you press a hotkey.</p>
+					<p>The app reads the screen once per press of one read key (Ctrl+A by default, changeable in Settings): each
+						press captures one frame with the standard Windows screenshot API and reads it with Windows' built-in text
+						recognition (Windows.Media.Ocr). No press, no capture. Client.txt only tells the app which module is waiting
+						for a press. Which panel each module reads, and when, is stated in its entry under
+						<a href="#modules">Modules</a>; the boss-loot module keeps its own key.</p>
 					<p><strong>Important privacy detail:</strong> no screenshot or screen capture ever leaves your machine.
 						The captured image is processed entirely locally by Windows' built-in OCR engine, then immediately
 						discarded.</p>

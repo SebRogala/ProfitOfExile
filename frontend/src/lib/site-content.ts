@@ -46,8 +46,8 @@ export const modules: Module[] = [
 		name: 'Lab Farming',
 		status: 'available',
 		tagline: 'PoE lab farming and transfigured gems farming: which gem to take, and at what price.',
-		trigger: "Entering the 3rd Aspirant's Trial, from Client.txt.",
-		reads: 'The gem tooltip while you hover Font options, and the Font craft panel.',
+		trigger: "A press of the read key (Ctrl+A by default) from Izaro's defeat, per Client.txt, until you leave the lab.",
+		reads: 'The Font craft panel and, while you hover a Font option, its gem tooltip; once per press.',
 		gives: [
 			'Comparator overlay: the gems on offer with live trade prices, seller concentration and outliers, plus pick buttons.',
 			'Path strip and compass overlays: your route through the lab with room contents and navigation cues.',
@@ -71,8 +71,8 @@ export const modules: Module[] = [
 		name: 'Temple',
 		status: 'available',
 		tagline: "Alva's incursions: which architect to kill and which door to open.",
-		trigger: "Alva's start line (\"Time to go\"), from Client.txt; any other Alva line or a zone change stands it down. The read needs the sheet on screen, so you open it yourself: inside the incursion, press the league button (V by default) — the game pauses while it is open, so it costs you nothing.",
-		reads: 'The temple sheet — the 13 rooms and both architect offers — once per board.',
+		trigger: "A press of the read key (Ctrl+A by default) after Alva's start line (\"Time to go\") or in the temple area, per Client.txt. Open the sheet first: inside the incursion, press the league button (V by default).",
+		reads: 'The temple sheet — the 13 rooms and both architect offers — once per press.',
 		gives: [
 			'The ranked recommendation with its reasons, and the gambles with their measured risk.',
 			'Room values in chaos, fed by the market (Default) or by your own numbers (Custom).',
@@ -91,8 +91,8 @@ export const modules: Module[] = [
 		name: 'Mercenaries',
 		status: 'beta',
 		tagline: 'Is this recruit worth the wager?',
-		trigger: "The recruit's voice line, from Client.txt — or Scan now on the page.",
-		reads: 'The recruit window, row by row.',
+		trigger: 'A press of the read key (Ctrl+A by default) while the module is on.',
+		reads: 'The recruit window and, with the cursor on a gem, its tooltip; one frame per press.',
 		gives: [
 			'A verdict per community guide ruleset, with per-row glyphs on an overlay strip that clears four seconds after the window closes.',
 			'Trade links for the same mercenary and a warrant price check, opened in your browser on a click; the app runs no trade search for it.',
