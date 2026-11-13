@@ -1056,11 +1056,15 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
         Ok(()) => settings.boss_loot.clone(),
         Err(reason) => { rejected.push(format!("boss loot settings: {reason}; using defaults")); Default::default() }
     };
-    *state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()) = boss_loot;
-    let read_hotkey = match settings.read_hotkey.validate() {
+    let read_hotkey = match settings
+        .read_hotkey
+        .validate()
+        .and_then(|()| crate::read_hotkey::apart_from_boss_loot(&settings.read_hotkey.shortcut, &boss_loot))
+    {
         Ok(()) => settings.read_hotkey.clone(),
         Err(reason) => { rejected.push(format!("read screen shortcut: {reason}; using defaults")); Default::default() }
     };
+    *state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()) = boss_loot;
     *state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()) = read_hotkey;
     *state.loot.number_format.lock().unwrap_or_else(|e| e.into_inner()) =
         crate::loot_capture::NumberFormat::migrate(settings.number_format, settings.ui_prefs.get("numberFormat"));
@@ -1491,6 +1495,16 @@ pub(crate) mod tests {
         assert!(apply_to_state(&settings, &state).iter().any(|line| line.contains("read screen shortcut")));
         assert_eq!(*state.read_hotkey.lock().unwrap(), crate::read_hotkey::ReadHotkeySettings::default());
         assert_eq!(from_state(&state).boss_loot.auto_save_seconds, 30);
+    }
+    #[test]
+    fn read_hotkey_saved_on_a_boss_loot_key_is_rejected_and_the_boss_loot_key_kept() {
+        let state = test_app_state();
+        let mut settings = Settings::default();
+        settings.boss_loot.preview_shortcut = custom_read_hotkey().shortcut;
+        settings.read_hotkey = custom_read_hotkey();
+        assert!(apply_to_state(&settings, &state).iter().any(|line| line.contains("read screen shortcut")));
+        assert_eq!(*state.read_hotkey.lock().unwrap(), crate::read_hotkey::ReadHotkeySettings::default());
+        assert_eq!(from_state(&state).boss_loot.preview_shortcut, custom_read_hotkey().shortcut);
     }
     #[test]
     fn read_hotkey_bad_shortcut_is_rejected_without_erasing_boss_loot_settings() {

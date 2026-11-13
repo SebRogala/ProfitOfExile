@@ -33,7 +33,7 @@ impl Default for ReadHotkeySettings {
     fn default() -> Self {
         Self {
             shortcut: Shortcut {
-                key: 2,
+                key: 120,
                 shift: true,
                 ctrl: false,
                 alt: false,
@@ -41,6 +41,18 @@ impl Default for ReadHotkeySettings {
             delay_ms: 0,
         }
     }
+}
+
+/// The read key reads the whole screen and the boss-loot keys read near the
+/// mouse, so one key may not do both.
+pub fn apart_from_boss_loot(
+    read: &Shortcut,
+    loot: &crate::loot_capture::LootSettings,
+) -> Result<(), String> {
+    if *read == loot.capture_shortcut || *read == loot.preview_shortcut {
+        return Err("The read screen shortcut must differ from the boss loot shortcuts".into());
+    }
+    Ok(())
 }
 impl ReadHotkeySettings {
     pub fn validate(&self) -> Result<(), String> {
@@ -58,10 +70,10 @@ pub fn read_hotkey_set_settings(
     settings: ReadHotkeySettings,
 ) -> Result<(), String> {
     settings.validate()?;
-    *app.state::<crate::AppState>()
-        .read_hotkey
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = settings;
+    let state = app.state::<crate::AppState>();
+    let loot = state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    apart_from_boss_loot(&settings.shortcut, &loot)?;
+    *state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()) = settings;
     crate::persist_settings(&app);
     crate::ssot::emit_ssot(&app);
     Ok(())
@@ -93,6 +105,45 @@ mod tests {
         for bad in [0, 16, 17, 18, 27, 160, 165, 255] {
             assert!(key(bad).validate().is_err(), "key {bad} must be rejected");
         }
+    }
+    #[test]
+    fn read_hotkey_default_is_apart_from_the_default_boss_loot_keys() {
+        let loot = crate::loot_capture::LootSettings::default();
+        assert_eq!(apart_from_boss_loot(&ReadHotkeySettings::default().shortcut, &loot), Ok(()));
+    }
+    #[test]
+    fn read_hotkey_equal_to_the_boss_loot_capture_key_is_refused() {
+        let loot = crate::loot_capture::LootSettings::default();
+        assert!(apart_from_boss_loot(&loot.capture_shortcut.clone(), &loot).is_err());
+    }
+    #[test]
+    fn read_hotkey_equal_to_the_boss_loot_preview_key_is_refused() {
+        let loot = crate::loot_capture::LootSettings::default();
+        assert!(apart_from_boss_loot(&loot.preview_shortcut.clone(), &loot).is_err());
+    }
+    #[test]
+    fn boss_loot_capture_key_rebound_onto_the_read_key_is_refused() {
+        let read = key(65).shortcut;
+        let loot = crate::loot_capture::LootSettings {
+            capture_shortcut: read.clone(),
+            ..Default::default()
+        };
+        assert!(apart_from_boss_loot(&read, &loot).is_err());
+    }
+    #[test]
+    fn boss_loot_preview_key_rebound_onto_the_read_key_is_refused() {
+        let read = key(65).shortcut;
+        let loot = crate::loot_capture::LootSettings {
+            preview_shortcut: read.clone(),
+            ..Default::default()
+        };
+        assert!(apart_from_boss_loot(&read, &loot).is_err());
+    }
+    #[test]
+    fn read_hotkey_with_other_modifiers_than_a_boss_loot_key_is_accepted() {
+        let loot = crate::loot_capture::LootSettings::default();
+        let read = Shortcut { ctrl: true, ..loot.preview_shortcut.clone() };
+        assert_eq!(apart_from_boss_loot(&read, &loot), Ok(()));
     }
     #[test]
     fn read_hotkey_accepts_a_mouse_button_as_the_key() {

@@ -72,7 +72,12 @@ impl Default for LootSettings {
                 .filter(|i| i.not_counted_default)
                 .map(|i| i.id.clone())
                 .collect(),
-            capture_shortcut: crate::read_hotkey::ReadHotkeySettings::default().shortcut,
+            capture_shortcut: Shortcut {
+                key: 2,
+                shift: true,
+                ctrl: false,
+                alt: false,
+            },
             preview_shortcut: Shortcut {
                 key: 119,
                 shift: true,
@@ -819,6 +824,8 @@ pub fn boss_loot_profiles() -> Vec<LootProfile> {
 pub fn boss_loot_set_settings(app: tauri::AppHandle, settings: LootSettings) -> Result<(), String> {
     settings.validate()?;
     let state = app.state::<crate::AppState>();
+    let read = state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()).shortcut.clone();
+    crate::read_hotkey::apart_from_boss_loot(&read, &settings)?;
     *state
         .loot.settings
         .lock()

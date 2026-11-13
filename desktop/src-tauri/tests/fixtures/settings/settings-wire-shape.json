@@ -20,7 +20,7 @@
   },
   "read_hotkey": {
     "shortcut": {
-      "key": 2,
+      "key": 120,
       "shift": true,
       "ctrl": false,
       "alt": false
