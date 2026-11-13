@@ -29,7 +29,7 @@
 //!
 //! [`Knobs`] lives in [`super::valuation`] and is re-exported, never
 //! redefined: the formula owns its own parameters, and a second declaration of
-//! the same five numbers is a second set of defaults to drift.
+//! the same four numbers is a second set of defaults to drift.
 
 use std::collections::BTreeMap;
 
@@ -81,8 +81,6 @@ pub enum Preset {
 pub struct TempleCustomSettings {
     /// [`Knobs::tier_fraction`].
     pub tier_fraction: f64,
-    /// [`Knobs::c_per_quantity`].
-    pub c_per_quantity: f64,
     /// [`Knobs::c_per_rarity`].
     pub c_per_rarity: f64,
     /// [`Knobs::drops_weight`]. A rusher sets this to `0`, which reduces the
@@ -103,7 +101,6 @@ impl Default for TempleCustomSettings {
         let knobs = Knobs::default();
         TempleCustomSettings {
             tier_fraction: knobs.tier_fraction,
-            c_per_quantity: knobs.c_per_quantity,
             c_per_rarity: knobs.c_per_rarity,
             drops_weight: knobs.drops_weight,
             combo_premium: knobs.combo_premium,
@@ -117,7 +114,7 @@ impl Default for TempleCustomSettings {
 const OVERRIDE_TIERS: usize = 3;
 
 impl TempleCustomSettings {
-    /// The five rates as the formula takes them.
+    /// The four rates as the formula takes them.
     ///
     /// No validation here, and the reason differs per knob. The four the
     /// FORMULA reads — `tier_fraction` and the three rate-like ones — are
@@ -129,7 +126,6 @@ impl TempleCustomSettings {
     pub fn knobs(&self) -> Knobs {
         Knobs {
             tier_fraction: self.tier_fraction,
-            c_per_quantity: self.c_per_quantity,
             c_per_rarity: self.c_per_rarity,
             drops_weight: self.drops_weight,
             combo_premium: self.combo_premium,
@@ -233,12 +229,6 @@ impl TempleCustomSettings {
                 self.tier_fraction,
                 shipped.tier_fraction,
             ),
-            c_per_quantity: salvage_knob(
-                &mut refused,
-                C_PER_QUANTITY,
-                self.c_per_quantity,
-                shipped.c_per_quantity,
-            ),
             c_per_rarity: salvage_knob(
                 &mut refused,
                 C_PER_RARITY,
@@ -299,7 +289,6 @@ impl TempleCustomSettings {
         // about a rate.
         for (rule, value) in [
             (TIER_FRACTION, self.tier_fraction),
-            (C_PER_QUANTITY, self.c_per_quantity),
             (C_PER_RARITY, self.c_per_rarity),
             (DROPS_WEIGHT, self.drops_weight),
             (COMBO_PREMIUM, self.combo_premium),
@@ -352,15 +341,11 @@ struct KnobRule {
     max: Option<f64>,
 }
 
-/// The five rates. Named constants rather than an array so each use site says
+/// The four rates. Named constants rather than an array so each use site says
 /// which knob it is about.
 const TIER_FRACTION: KnobRule = KnobRule {
     label: "tier fraction",
     max: Some(1.0),
-};
-const C_PER_QUANTITY: KnobRule = KnobRule {
-    label: "chaos per quantity %",
-    max: None,
 };
 const C_PER_RARITY: KnobRule = KnobRule {
     label: "chaos per rarity %",
@@ -969,7 +954,7 @@ mod tests {
 
     #[test]
     fn the_shipped_defaults_are_the_formulas_own_knobs() {
-        // Both halves: the five values are the ones POE-257 shipped, and each
+        // Both halves: the four values are the ones POE-257 shipped, and each
         // one arrives on its own field rather than on a neighbour's — a
         // crossed pair would leave `Knobs::default()` equal to itself and this
         // assertion is what refuses it.
@@ -977,7 +962,6 @@ mod tests {
 
         assert_eq!(knobs, Knobs::default());
         assert_eq!(knobs.tier_fraction, 0.8);
-        assert_eq!(knobs.c_per_quantity, 0.5);
         assert_eq!(knobs.c_per_rarity, 0.25);
         assert_eq!(knobs.drops_weight, 1.0);
         assert_eq!(knobs.combo_premium, 0.0);
@@ -1050,36 +1034,16 @@ mod tests {
         );
     }
 
-    /// A negative rate is refused rather than silently read as zero.
-    ///
-    /// `valuation::rate` floors it, and its own doc names POE-259 as the owner
-    /// of refusing it at the UI: a stored -1 would show as -1 and price
-    /// quantity at nothing. Fails if the rates go unchecked.
-    #[test]
-    fn a_negative_rate_is_refused_rather_than_silently_read_as_zero() {
-        let custom = TempleCustomSettings {
-            c_per_quantity: -1.0,
-            ..Default::default()
-        };
-
-        let refusal = custom.validate().expect_err("a negative rate is refused");
-
-        assert!(
-            refusal.contains("chaos per quantity %"),
-            "the refusal names the knob, got {refusal:?}",
-        );
-    }
-
     /// Every rate the setter refuses is one the loader resets, and to the
     /// shipped number.
     ///
     /// `KnobRule` owns the predicate, but `validate` and `salvaged` still each
-    /// name the five fields, and that is where a sixth rate can reach one
+    /// name the four fields, and that is where a fifth rate can reach one
     /// list and not the other — a knob nobody lists is a knob nobody bounds.
-    /// Walking all five is what refuses that: drop one from either side and it
+    /// Walking all four is what refuses that: drop one from either side and it
     /// fails here, naming the rate.
     ///
-    /// -1 is outside every bound there is at once — below zero for the five
+    /// -1 is outside every bound there is at once — below zero for the four
     /// rates, outside 0..=1 for the fraction — so one value exercises the pair
     /// of predicates without the test having to know which knob has a ceiling.
     /// NaN goes through the same walk because it is the OTHER thing `KnobRule`
@@ -1091,16 +1055,11 @@ mod tests {
         let shipped = TempleCustomSettings::default();
         type Set = fn(&mut TempleCustomSettings, f64);
         type Get = fn(&TempleCustomSettings) -> f64;
-        let rates: [(&str, Set, Get); 5] = [
+        let rates: [(&str, Set, Get); 4] = [
             (
                 "tier fraction",
                 |c, v| c.tier_fraction = v,
                 |c| c.tier_fraction,
-            ),
-            (
-                "chaos per quantity %",
-                |c, v| c.c_per_quantity = v,
-                |c| c.c_per_quantity,
             ),
             (
                 "chaos per rarity %",
@@ -1467,7 +1426,7 @@ mod tests {
     #[test]
     fn a_miss_stores_the_table_the_settings_shaped_compute_produces() {
         let custom = TempleCustomSettings {
-            c_per_quantity: 9.0,
+            c_per_rarity: 9.0,
             ..Default::default()
         };
         let settings = crate::temple::slice::TempleSettings {

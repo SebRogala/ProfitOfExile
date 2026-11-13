@@ -147,15 +147,10 @@ pub struct Knobs {
     /// non-finite or negative value falls back to this default rather than to
     /// zero (see [`tier_fraction`]).
     pub tier_fraction: f64,
-    /// Chaos per point of `increased Quantity of Items found in this Area`.
-    /// **Vertolka's proposed rate** (1 % quantity = 0.5 c, 1 % rarity = 0.25 c,
-    /// 2026-09-06 message on POE-124: *"Maybe there we can setup something like
-    /// 1% quant = 0,5c, 1% rarity = 0,25c"*), unmeasured — a guess he flagged
-    /// as such.
-    pub c_per_quantity: f64,
     /// Chaos per point of `increased Rarity of Items found in this Area`.
-    /// **Vertolka's proposed rate**, same message and same standing as
-    /// [`Self::c_per_quantity`]: unmeasured, a guess he flagged as such.
+    /// **Vertolka's proposed rate** (1 % rarity = 0.25 c, 2026-09-06 message on
+    /// POE-124: *"Maybe there we can setup something like 1% quant = 0,5c, 1%
+    /// rarity = 0,25c"*), unmeasured — a guess he flagged as such.
     pub c_per_rarity: f64,
     /// A global multiplier on the whole drops term. A rusher who never opens a
     /// chest sets it to `0.0`, which reduces the ranking to sale value alone.
@@ -171,7 +166,6 @@ impl Default for Knobs {
     fn default() -> Knobs {
         Knobs {
             tier_fraction: 0.8,
-            c_per_quantity: 0.5,
             c_per_rarity: 0.25,
             drops_weight: 1.0,
             combo_premium: 0.0,
@@ -184,8 +178,8 @@ impl Default for Knobs {
 ///
 /// Zero rather than the [`Knobs::default`] value on purpose. Zero is a
 /// supported setting for the knobs this governs — a rusher really does set
-/// [`Knobs::drops_weight`] to it, and a player who thinks quantity is worthless
-/// really does set [`Knobs::c_per_quantity`] to it — so a malformed value lands
+/// [`Knobs::drops_weight`] to it, and a player who thinks rarity is worthless
+/// really does set [`Knobs::c_per_rarity`] to it — so a malformed value lands
 /// somewhere the player can already reach, and silently substituting a default
 /// would hide the malformed entry instead of surfacing it. POE-259 owns the
 /// warning that names the offending key when the table loads, and owns
@@ -1622,7 +1616,6 @@ mod tests {
         // real — but one still carrying `Some(0)` would make the lines the box
         // prints disagree with the 0.03125 c the advisor ranked on.
         let knobs = Knobs {
-            c_per_quantity: 0.0,
             c_per_rarity: 0.0,
             ..Knobs::default()
         };
@@ -1984,7 +1977,6 @@ mod tests {
     fn the_rushers_knobs_leave_the_two_sale_priced_rooms_as_the_whole_anchor_set() {
         let knobs = Knobs {
             drops_weight: 0.0,
-            c_per_quantity: 0.0,
             c_per_rarity: 0.0,
             ..Knobs::default()
         };
@@ -2243,7 +2235,6 @@ mod tests {
         assert!(market.prices_anything(), "precondition: this read is LIVE");
         let knobs = Knobs {
             drops_weight: 0.0,
-            c_per_quantity: 0.0,
             c_per_rarity: 0.0,
             ..Knobs::default()
         };
@@ -2439,7 +2430,6 @@ mod tests {
                 "no bonus rates",
                 allflame(),
                 Knobs {
-                    c_per_quantity: 0.0,
                     c_per_rarity: 0.0,
                     ..Knobs::default()
                 },

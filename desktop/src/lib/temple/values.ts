@@ -572,7 +572,7 @@ export function overrideCount(custom: TempleCustom): number {
 
 /** One editable rate of the Custom preset. */
 export interface KnobSpec {
-	field: 'tierFraction' | 'cPerQuantity' | 'cPerRarity' | 'dropsWeight' | 'comboPremium';
+	field: 'tierFraction' | 'cPerRarity' | 'dropsWeight' | 'comboPremium';
 	label: string;
 	/** The unit, spelled out — every one of these is chaos or a fraction, and
 	 *  a control that does not say which is a control nobody can set. */
@@ -583,7 +583,7 @@ export interface KnobSpec {
 	max: number | null;
 }
 
-/** The five rates, in the order the editor lays them out. */
+/** The four rates, in the order the editor lays them out. */
 export const KNOBS: KnobSpec[] = [
 	{
 		field: 'tierFraction',
@@ -591,13 +591,6 @@ export const KNOBS: KnobSpec[] = [
 		hint: 'What a tier-1 or tier-2 room is worth as a fraction of its line’s tier-3 total. 0 to 1.',
 		step: 0.05,
 		max: 1
-	},
-	{
-		field: 'cPerQuantity',
-		label: 'Chaos per quantity %',
-		hint: 'Chaos per point of increased Quantity. Unmeasured — Vertolka’s proposed rate.',
-		step: 0.05,
-		max: null
 	},
 	{
 		field: 'cPerRarity',

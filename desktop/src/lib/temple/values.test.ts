@@ -75,7 +75,6 @@ function market(over: Partial<MarketView> = {}): MarketView {
 function custom(over: Partial<TempleCustom> = {}): TempleCustom {
 	return {
 		tierFraction: 0.8,
-		cPerQuantity: 0.5,
 		cPerRarity: 0.25,
 		dropsWeight: 1,
 		comboPremium: 0,
@@ -670,13 +669,13 @@ describe('PRESET_OPTIONS', () => {
 });
 
 describe('KNOBS', () => {
-	it('the custom knobs are the five rates', () => {
+	it('the custom knobs are the four rates', () => {
 		// One missing spec is one rate with no control, which is a setting the
 		// player can only reach by hand-editing settings.json. The vial rate
-		// left with the 3.30 vial removal (POE-366).
+		// left with the 3.30 vial removal (POE-366), the quantity rate with the
+		// 3.30 item-quantity removal (POE-369).
 		expect(KNOBS.map((k) => k.field)).toEqual([
 			'tierFraction',
-			'cPerQuantity',
 			'cPerRarity',
 			'dropsWeight',
 			'comboPremium'

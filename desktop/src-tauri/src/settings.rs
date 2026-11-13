@@ -2534,7 +2534,7 @@ pub(crate) mod tests {
         let state = test_app_state();
         let mine = crate::temple::preset::TempleCustomSettings {
             drops_weight: 0.0,
-            c_per_quantity: 2.5,
+            c_per_rarity: 2.5,
             rooms: std::collections::BTreeMap::from([(
                 "corruption".to_string(),
                 vec![None, None, Some(1234.0)],
@@ -2829,6 +2829,49 @@ pub(crate) mod tests {
 
         assert!(
             json["temple_custom"].get("vialsPerRun").is_none(),
+            "the retired key must not be written back, got {json}",
+        );
+        assert_eq!(json["temple_custom"]["cPerRarity"], 0.75);
+    }
+
+    /// POE-369: 3.30 removed item quantity, and the quantity knob went with
+    /// it. Settings written before carry `temple_custom.cPerQuantity`; it must
+    /// load with no salvage warning, and the knobs beside it survive.
+    #[test]
+    fn a_settings_file_with_the_retired_c_per_quantity_still_loads() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"temple_preset":"custom",
+                "temple_custom":{"cPerQuantity":0.3,"cPerRarity":0.75}}"#,
+        )
+        .expect("a file with cPerQuantity must still parse");
+        assert!(!parsed.temple_custom.was_salvaged());
+
+        let state = test_app_state();
+        let rejected = apply_to_state(&parsed, &state);
+
+        assert_eq!(rejected, Vec::<String>::new(), "nothing to report");
+        assert_eq!(
+            state.temple_settings.lock().unwrap().custom.c_per_rarity,
+            0.75,
+            "the neighbouring knob survives",
+        );
+    }
+
+    /// …and the retired key is gone from the next save.
+    #[test]
+    fn the_retired_c_per_quantity_is_not_written_back_on_the_next_save() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"temple_preset":"custom",
+                "temple_custom":{"cPerQuantity":0.3,"cPerRarity":0.75}}"#,
+        )
+        .expect("a file with cPerQuantity must still parse");
+
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&parsed).expect("settings must serialize"))
+                .expect("its own output must parse");
+
+        assert!(
+            json["temple_custom"].get("cPerQuantity").is_none(),
             "the retired key must not be written back, got {json}",
         );
         assert_eq!(json["temple_custom"]["cPerRarity"], 0.75);

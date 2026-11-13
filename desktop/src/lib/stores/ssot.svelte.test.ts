@@ -1314,7 +1314,6 @@ describe('temple slice', () => {
 		function table(over: Partial<TempleCustom> = {}): TempleCustom {
 			return {
 				tierFraction: 0.8,
-				cPerQuantity: 0.5,
 				cPerRarity: 0.25,
 				dropsWeight: 1,
 				comboPremium: 0,

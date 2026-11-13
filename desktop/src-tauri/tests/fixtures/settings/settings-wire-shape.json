@@ -63,7 +63,6 @@
   "temple_preset": "default",
   "temple_custom": {
     "tierFraction": 0.8,
-    "cPerQuantity": 0.5,
     "cPerRarity": 0.25,
     "dropsWeight": 1.0,
     "comboPremium": 0.0,

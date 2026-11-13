@@ -576,11 +576,8 @@ export interface TempleCustom {
 	/** What a tier-1 or tier-2 room is worth as a fraction of its line's
 	 *  tier-3 total (epic lock L2's 80 %). */
 	tierFraction: number;
-	/** Chaos per point of `increased Quantity of Items found in this Area`. A
+	/** Chaos per point of `increased Rarity of Items found in this Area`. A
 	 *  guess — nobody has measured a rate. */
-	cPerQuantity: number;
-	/** Chaos per point of `increased Rarity of Items found in this Area`. Same
-	 *  standing as `cPerQuantity`. */
 	cPerRarity: number;
 	/** A global multiplier on the whole drops term. A rusher who never opens a
 	 *  chest sets it to 0, which reduces the ranking to sale value alone. */
@@ -815,7 +812,6 @@ export function templeSliceDefault(): TempleSlice {
 		preset: 'default',
 		custom: {
 			tierFraction: 0.8,
-			cPerQuantity: 0.5,
 			cPerRarity: 0.25,
 			dropsWeight: 1.0,
 			comboPremium: 0.0,

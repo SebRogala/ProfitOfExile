@@ -208,10 +208,9 @@ pub fn temple_set_custom(
     crate::app_log(
         &app,
         format!(
-            "Temple: custom — tier fraction {:.2}, {:.2} c per quantity %, {:.2} c per rarity %, \
+            "Temple: custom — tier fraction {:.2}, {:.2} c per rarity %, \
              drops weight {:.2}, combo premium {:.2}, {} room override{}",
             custom.tier_fraction,
-            custom.c_per_quantity,
             custom.c_per_rarity,
             custom.drops_weight,
             custom.combo_premium,
