@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -90,6 +91,15 @@ func NewGate(cfg TradeConfig, scope league.Scope, limiter *RateLimiter, client *
 // so only one API call is made and all waiters receive the result.
 func (g *Gate) Submit(req *GateRequest) {
 	key := CacheKey(req.Gem, req.Variant)
+	if req.FixedTarget {
+		if _, ok := LookupFixedTarget(req.Gem, req.Variant); !ok {
+			select {
+			case req.Result <- &GateResponse{Error: fmt.Errorf("trade: unknown fixed target %q", key)}:
+			default:
+			}
+			return
+		}
+	}
 
 	g.mu.Lock()
 	if existing, ok := g.inflight[key]; ok {
@@ -181,7 +191,7 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 	// Phase 1: Search.
 	slog.Info("trade gate: searching", "gem", req.Gem, "requestId", req.RequestID)
 	g.limiter.Record("search")
-	searchResp, searchHeaders, err := g.client.Search(ctx, req.Gem, req.Variant)
+	searchResp, searchHeaders, err := g.search(ctx, req)
 	g.limiter.ObserveResponse("search", searchHeaders, err)
 	if err != nil {
 		slog.Warn("trade gate: search failed", "gem", req.Gem, "error", err)
@@ -217,6 +227,17 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 
 	result := BuildResult(req.Gem, req.Variant, g.client.leagueName, *searchResp, listings, g.divineRate())
 	g.completeLookup(ctx, req, key, result)
+}
+
+func (g *Gate) search(ctx context.Context, req *GateRequest) (*SearchResponse, http.Header, error) {
+	if req.FixedTarget {
+		target, ok := LookupFixedTarget(req.Gem, req.Variant)
+		if !ok {
+			return nil, nil, fmt.Errorf("unknown fixed target %q", CacheKey(req.Gem, req.Variant))
+		}
+		return g.client.SearchFixedTarget(ctx, target)
+	}
+	return g.client.Search(ctx, req.Gem, req.Variant)
 }
 
 // waitForPool rechecks only the endpoint about to send. Bounded waits let

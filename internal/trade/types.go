@@ -31,8 +31,11 @@ type TradeConfig struct {
 
 // GateRequest is submitted by the HTTP handler into the Gate's priority queue.
 type GateRequest struct {
-	Gem         string
-	Variant     string
+	Gem     string
+	Variant string
+	// FixedTarget selects the registry query named by Gem/Variant instead of
+	// a gem search; an identity outside the registry is rejected unsent.
+	FixedTarget bool
 	RequestID   string
 	Priority    Priority
 	SubmittedAt time.Time

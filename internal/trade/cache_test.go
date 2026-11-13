@@ -417,3 +417,54 @@ func TestCache_FailureWithoutPreviousLookupDoesNotCreateMarketCheck(t *testing.T
 		t.Fatalf("failure created a checked market result: %+v found=%v", got, ok)
 	}
 }
+
+func fixedTargetResult(gem string) *TradeLookupResult {
+	return makeResult(gem, FixedTargetVariantFont)
+}
+
+func TestCache_EvictionKeepsFixedTargetsAndEvictsOldestOrdinary(t *testing.T) {
+	c := NewTradeCache(3, league.Historical("Mirage"))
+	lens := CacheKey(FixedTargetLens60Outcome, FixedTargetVariantFont)
+	support := CacheKey(FixedTargetLens60Feeder, FixedTargetVariantFont)
+	c.Set(lens, fixedTargetResult(FixedTargetLens60Outcome))
+	c.Set(support, fixedTargetResult(FixedTargetLens60Feeder))
+	c.Set("Arc|20/20", makeResult("Arc", "20/20"))
+	c.Set("Spark|20/20", makeResult("Spark", "20/20"))
+	c.Set("Frostbolt|20/20", makeResult("Frostbolt", "20/20"))
+
+	for _, key := range []string{lens, support, "Frostbolt|20/20"} {
+		if _, ok := c.Get(key); !ok {
+			t.Errorf("%s evicted, want kept", key)
+		}
+	}
+	for _, key := range []string{"Arc|20/20", "Spark|20/20"} {
+		if _, ok := c.Get(key); ok {
+			t.Errorf("%s kept, want the oldest ordinary entries evicted", key)
+		}
+	}
+	if c.Len() != 3 {
+		t.Errorf("Len = %d, want capacity 3", c.Len())
+	}
+}
+
+func TestCache_CapacityOneKeepsBothFixedTargets(t *testing.T) {
+	c := NewTradeCache(1, league.Historical("Mirage"))
+	lens := CacheKey(FixedTargetLens60Outcome, FixedTargetVariantFont)
+	support := CacheKey(FixedTargetLens60Feeder, FixedTargetVariantFont)
+	c.Set(lens, fixedTargetResult(FixedTargetLens60Outcome))
+	c.Set(support, fixedTargetResult(FixedTargetLens60Feeder))
+	c.Set("Arc|20/20", makeResult("Arc", "20/20"))
+	c.Set("Spark|20/20", makeResult("Spark", "20/20"))
+
+	for _, key := range []string{lens, support, "Spark|20/20"} {
+		if _, ok := c.Get(key); !ok {
+			t.Errorf("%s evicted, want kept", key)
+		}
+	}
+	if _, ok := c.Get("Arc|20/20"); ok {
+		t.Error("older ordinary entry kept past capacity")
+	}
+	if c.Len() != 3 {
+		t.Errorf("Len = %d, want capacity 1 plus the two fixed targets", c.Len())
+	}
+}

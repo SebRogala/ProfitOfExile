@@ -3,6 +3,8 @@ package trade
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -810,5 +812,224 @@ func TestGate_EmptySearch_DeliversEmptyResult(t *testing.T) {
 	data, _ := ready["data"].(map[string]interface{})
 	if listings, ok := data["listings"].([]interface{}); !ok || len(listings) != 0 {
 		t.Errorf("ready event data.listings = %v, want []", data["listings"])
+	}
+}
+
+func fixedTargetRequest(g *Gate, gem string) *GateRequest {
+	return &GateRequest{
+		Gem: gem, Variant: FixedTargetVariantFont, FixedTarget: true, RequestID: "fixed-" + gem,
+		Priority: PriorityHigh, SubmittedAt: g.now(), Result: make(chan *GateResponse, 1),
+	}
+}
+
+// fixedTargetServer answers every search with four listings, one in divines,
+// and records the search bodies it received.
+func fixedTargetServer(t *testing.T, bodies chan<- string) *httptest.Server {
+	t.Helper()
+	listing := func(account string, amount float64, currency string) tradeFetchEntry {
+		return tradeFetchEntry{Listing: tradeFetchListing{
+			Account: tradeFetchAccount{Name: account},
+			Price:   tradeFetchPrice{Amount: amount, Currency: currency},
+		}}
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/api/trade/search/") {
+			body, _ := io.ReadAll(r.Body)
+			if bodies != nil {
+				bodies <- string(body)
+			}
+			json.NewEncoder(w).Encode(tradeSearchResp{ID: "q-fixed", Result: []string{"a", "b", "c", "d"}, Total: 4})
+			return
+		}
+		json.NewEncoder(w).Encode(tradeFetchResp{Result: []tradeFetchEntry{
+			listing("a", 300, "chaos"), listing("b", 1, "divine"), listing("c", 100, "chaos"), listing("d", 50, "chaos"),
+		}})
+	}))
+}
+
+func TestGate_FixedTargetsDedupPerIdentityAndStayDistinctFromGems(t *testing.T) {
+	bodies := make(chan string, 10)
+	server := fixedTargetServer(t, bodies)
+	defer server.Close()
+	g := newTestGate(t, server, &mockPublisher{}, 30*time.Second)
+	reqs := []*GateRequest{
+		fixedTargetRequest(g, FixedTargetLens60Outcome),
+		fixedTargetRequest(g, FixedTargetLens60Outcome),
+		fixedTargetRequest(g, FixedTargetLens60Feeder),
+		{Gem: "Arc", Variant: "20/20", RequestID: "gem", Priority: PriorityHigh, SubmittedAt: g.now(), Result: make(chan *GateResponse, 1)},
+	}
+	for _, req := range reqs {
+		g.Submit(req)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go g.Run(ctx)
+
+	for _, req := range reqs {
+		select {
+		case resp := <-req.Result:
+			if resp.Error != nil || resp.Data.Gem != req.Gem || resp.Data.Variant != req.Variant {
+				t.Errorf("%s: response %+v, want its own identity", req.RequestID, resp)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: no response", req.RequestID)
+		}
+	}
+	close(bodies)
+	var lens, support, gem int
+	for body := range bodies {
+		switch {
+		case strings.Contains(body, "Facetor's Lens"):
+			lens++
+		case strings.Contains(body, "gem.supportgem"):
+			support++
+		case strings.Contains(body, `"Arc"`):
+			gem++
+		}
+	}
+	if lens != 1 || support != 1 || gem != 1 {
+		t.Errorf("searches lens=%d support=%d gem=%d, want one each", lens, support, gem)
+	}
+}
+
+func TestGate_FixedTargetPersistsNormalizedObservation(t *testing.T) {
+	server := fixedTargetServer(t, nil)
+	defer server.Close()
+	g := newTestGate(t, server, &mockPublisher{}, 30*time.Second)
+	hardeningClock(g)
+	persisted := make(hardeningPersister, 1)
+	g.repo = persisted
+	g.persistAsync = func(f func()) { f() }
+
+	resp := processHardeningRequest(t, g, context.Background(), fixedTargetRequest(g, FixedTargetLens60Outcome))
+	if resp.Error != nil {
+		t.Fatalf("lookup failed: %v", resp.Error)
+	}
+	got := (<-persisted)
+	r := got.result
+	if got.source != "server-gate" || r.Gem != FixedTargetLens60Outcome || r.Variant != FixedTargetVariantFont || r.League != "Mirage" || !r.FetchedAt.Equal(g.now()) {
+		t.Fatalf("persisted %s %s|%s league=%q at %v, want server-gate identity in Mirage at the gate clock", got.source, r.Gem, r.Variant, r.League, r.FetchedAt)
+	}
+	// 1 divine at 212c sorts between 100c and 300c; the 3 lowest are 50, 100, 212.
+	wantChaos := []float64{50, 100, 212, 300}
+	for i, l := range r.Listings {
+		if l.ChaosPrice != wantChaos[i] {
+			t.Errorf("listing %d chaos=%v, want %v", i, l.ChaosPrice, wantChaos[i])
+		}
+	}
+	if r.MedianTop3 != 100 || r.DivinePrice != 212 {
+		t.Errorf("MedianTop3=%v DivinePrice=%v, want 100 and 212", r.MedianTop3, r.DivinePrice)
+	}
+	cached, ok := g.cache.For(g.scope).Get(CacheKey(FixedTargetLens60Outcome, FixedTargetVariantFont))
+	if !ok || cached.MedianTop3 != 100 {
+		t.Errorf("cache under registry key = %+v, %v", cached, ok)
+	}
+}
+
+func TestGate_FixedTargetWithoutDivineRateKeepsDivineListingAndZeroRate(t *testing.T) {
+	server := fixedTargetServer(t, nil)
+	defer server.Close()
+	g := newTestGate(t, server, &mockPublisher{}, 30*time.Second)
+	hardeningClock(g)
+	g.divineRate = func() float64 { return 0 }
+	persisted := make(hardeningPersister, 1)
+	g.repo = persisted
+	g.persistAsync = func(f func()) { f() }
+
+	processHardeningRequest(t, g, context.Background(), fixedTargetRequest(g, FixedTargetLens60Feeder))
+	r := (<-persisted).result
+	if r.DivinePrice != 0 {
+		t.Errorf("DivinePrice = %v, want 0 when the rate is unavailable", r.DivinePrice)
+	}
+	divine := 0
+	for _, l := range r.Listings {
+		if l.Currency == "divine" {
+			divine++
+		}
+	}
+	if divine != 1 {
+		t.Errorf("persisted %d divine listings, want the divine currency kept on 1", divine)
+	}
+}
+
+func TestGate_FixedTargetEmptySearchPersistsEmptyResultWithoutFetch(t *testing.T) {
+	server := emptySearchServer(t, 0)
+	defer server.Close()
+	g := newTestGate(t, server, &mockPublisher{}, 30*time.Second)
+	hardeningClock(g)
+	persisted := make(hardeningPersister, 1)
+	g.repo = persisted
+	g.persistAsync = func(f func()) { f() }
+
+	resp := processHardeningRequest(t, g, context.Background(), fixedTargetRequest(g, FixedTargetLens60Outcome))
+	if resp.Error != nil {
+		t.Fatalf("lookup failed: %v", resp.Error)
+	}
+	r := (<-persisted).result
+	if r.Gem != FixedTargetLens60Outcome || r.Listings == nil || len(r.Listings) != 0 || r.FetchedAt.IsZero() {
+		t.Errorf("persisted %+v, want a stamped empty fixed-target result", r)
+	}
+}
+
+func TestGate_FixedTargetRateLimitPausesFollowingLookup(t *testing.T) {
+	var sends atomic.Int32
+	var rejected, earlySend atomic.Bool
+	clock := &atomic.Int64{}
+	var expiry atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sends.Add(1)
+		if rejected.Load() && clock.Load() < expiry.Load() {
+			earlySend.Store(true)
+		}
+		if strings.Contains(r.URL.Path, "/search/") {
+			if !rejected.Swap(true) {
+				expiry.Store(clock.Load() + int64(2*time.Second))
+				w.Header().Set("Retry-After", "2")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			json.NewEncoder(w).Encode(tradeSearchResp{ID: "q", Total: 1, Result: []string{"r"}})
+			return
+		}
+		json.NewEncoder(w).Encode(tradeFetchResp{Result: []tradeFetchEntry{{Listing: tradeFetchListing{Price: tradeFetchPrice{Amount: 12, Currency: "chaos"}}}}})
+	}))
+	defer server.Close()
+	g := newTestGate(t, server, &mockPublisher{}, 30*time.Second)
+	clock = hardeningClock(g)
+
+	resp := processHardeningRequest(t, g, context.Background(), fixedTargetRequest(g, FixedTargetLens60Outcome))
+	if !errors.Is(resp.Error, ErrRateLimited) {
+		t.Fatalf("first lookup error = %v, want rate limited", resp.Error)
+	}
+	resp = processHardeningRequest(t, g, context.Background(), fixedTargetRequest(g, FixedTargetLens60Feeder))
+	if resp.Error != nil || resp.Data.PriceFloor != 12 || earlySend.Load() {
+		t.Fatalf("following lookup = %+v earlySend=%v, want 12c only after the pause", resp, earlySend.Load())
+	}
+	if sends.Load() != 3 {
+		t.Errorf("HTTP sends = %d, want 3", sends.Load())
+	}
+}
+
+func TestGate_UnknownFixedTargetIsRejectedWithoutUpstreamRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected upstream request %s", r.URL.Path)
+	}))
+	defer server.Close()
+	g := newTestGate(t, server, &mockPublisher{}, 30*time.Second)
+	req := &GateRequest{Gem: "Arc", Variant: "20/20", FixedTarget: true, RequestID: "bad", Priority: PriorityHigh, SubmittedAt: g.now(), Result: make(chan *GateResponse, 1)}
+
+	g.Submit(req)
+	select {
+	case resp := <-req.Result:
+		if resp.Error == nil || !strings.Contains(resp.Error.Error(), "unknown fixed target") {
+			t.Errorf("response = %+v, want unknown fixed target error", resp)
+		}
+	default:
+		t.Fatal("unknown target got no response")
+	}
+	select {
+	case <-g.HighChan():
+		t.Error("unknown target was queued")
+	default:
 	}
 }

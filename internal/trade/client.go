@@ -141,7 +141,20 @@ func (c *Client) Search(ctx context.Context, gem, variant string) (*SearchRespon
 	if err != nil {
 		return nil, nil, fmt.Errorf("build search query: %w", err)
 	}
+	return c.postSearch(ctx, body)
+}
 
+// SearchFixedTarget performs a trade search with a registry target's query in
+// the client's league. Fetch is unchanged.
+func (c *Client) SearchFixedTarget(ctx context.Context, target FixedTarget) (*SearchResponse, http.Header, error) {
+	body, err := buildFixedTargetQuery(target)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build fixed target query: %w", err)
+	}
+	return c.postSearch(ctx, body)
+}
+
+func (c *Client) postSearch(ctx context.Context, body []byte) (*SearchResponse, http.Header, error) {
 	url := fmt.Sprintf("%s/api/trade/search/%s", c.baseURL, c.leagueName)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -351,6 +364,17 @@ func buildSearchQuery(gem string, gemLevel, gemQuality int) ([]byte, error) {
 	}
 
 	return json.Marshal(query)
+}
+
+// buildFixedTargetQuery wraps a registry target's query with the instant
+// buyout status and ascending price sort; it adds no other filter.
+func buildFixedTargetQuery(target FixedTarget) ([]byte, error) {
+	query := target.query()
+	query["status"] = map[string]string{"option": "securable"}
+	return json.Marshal(map[string]interface{}{
+		"query": query,
+		"sort":  map[string]string{"price": "asc"},
+	})
 }
 
 // extractPropertyValue parses a numeric value from a GGG item property.

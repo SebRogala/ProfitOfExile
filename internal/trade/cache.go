@@ -204,13 +204,18 @@ func (c *TradeCache) GetSnapshot() map[string]*TradeLookupResult {
 	return snap
 }
 
-// evictOldest removes the least-recently-used entry (order[0]).
+// evictOldest removes the least-recently-used entry that is not a fixed
+// target. Fixed targets are never evicted: ~1,100 gem lookups a day would
+// otherwise push them out of a 200-entry cache (POE-329 M2), so the cache may
+// exceed capacity by the registry's size when only fixed targets remain.
 // Caller must hold c.mu.
 func (c *TradeCache) evictOldest() {
-	if len(c.order) == 0 {
+	for i, key := range c.order {
+		if IsFixedTargetKey(key) {
+			continue
+		}
+		c.order = append(c.order[:i], c.order[i+1:]...)
+		delete(c.entries, key)
 		return
 	}
-	oldest := c.order[0]
-	c.order = c.order[1:]
-	delete(c.entries, oldest)
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -421,5 +422,43 @@ func TestFetch_RateLimitedIdentity(t *testing.T) {
 	_, _, err := testTradeClient(t, server).Fetch(context.Background(), "qid", []string{"id1"})
 	if !errors.Is(err, ErrRateLimited) {
 		t.Errorf("fetch 429 error = %v, want errors.Is ErrRateLimited", err)
+	}
+}
+
+// The fixed target bodies are the ticket's decoded trade searches (POE-329)
+// and go to the client's configured league, never the ticket URL's "Allflame".
+func TestSearchFixedTarget_SendsDecodedTicketQueryInClientLeague(t *testing.T) {
+	want := map[string]string{
+		FixedTargetLens60Outcome: `{"query":{"type":"Facetor's Lens","filters":{"misc_filters":{"filters":{"stored_experience":{"min":999627000}}}},"status":{"option":"securable"}},"sort":{"price":"asc"}}`,
+		FixedTargetLens60Feeder:  `{"query":{"filters":{"type_filters":{"filters":{"category":{"option":"gem.supportgem"}}},"req_filters":{"filters":{"lvl":{"min":76}}},"misc_filters":{"filters":{"gem_level":{"min":3}}}},"status":{"option":"securable"}},"sort":{"price":"asc"}}`,
+	}
+	for _, target := range FixedTargets() {
+		t.Run(target.Gem, func(t *testing.T) {
+			var body []byte
+			var path string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path = r.URL.Path
+				body, _ = io.ReadAll(r.Body)
+				json.NewEncoder(w).Encode(tradeSearchResp{ID: "q", Total: 0})
+			}))
+			defer server.Close()
+			c := NewClient(TradeConfig{UserAgent: "ProfitOfExile/test", LeagueName: "Keepers"})
+			c.SetBaseURL(server.URL)
+
+			if _, _, err := c.SearchFixedTarget(context.Background(), target); err != nil {
+				t.Fatalf("search: %v", err)
+			}
+			if path != "/api/trade/search/Keepers" {
+				t.Errorf("path = %q, want the client league Keepers", path)
+			}
+			var got, expected interface{}
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatalf("decode body %s: %v", body, err)
+			}
+			json.Unmarshal([]byte(want[target.Gem]), &expected)
+			if !reflect.DeepEqual(got, expected) {
+				t.Errorf("body = %s\nwant   %s", body, want[target.Gem])
+			}
+		})
 	}
 }
