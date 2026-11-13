@@ -52,6 +52,7 @@
 	import type { PagePorts } from '$lib/boss-loot/page-controller.svelte';
 	import DevPage from '$lib/pages/DevPage.svelte';
 	import IdentifyDialog from '$lib/components/IdentifyDialog.svelte';
+	import PrivacyGate from '$lib/components/PrivacyGate.svelte';
 
 	let { children } = $props();
 
@@ -383,6 +384,7 @@
 </div>
 
 <IdentifyDialog bind:open={identifyOpen} />
+<PrivacyGate />
 
 <style>
 	/* The app is a fixed 100vh shell whose ONLY scroller is main.content —
