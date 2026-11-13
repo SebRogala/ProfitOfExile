@@ -3460,71 +3460,37 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
     let tier = confirmation.tier;
 
     let row_index = capture.rows[ri].index;
-    let cached = agreed.crop;
-    let (learned, needs_save, offer) = match cached {
-        // THE REGISTRATION GATE (POE-215 D3). A crop cut at the OCR guess is
-        // 6-12 px off the art, and a template learned from one poisons every
-        // later match on this device and — through the pool — on everybody
-        // else's. The store is not asked at all, so no `Local` sample below
-        // `icons::REGISTRATION` can be created; `learn_result` turns the
-        // un-asked case into the line the player reads.
-        Some((.., source)) if crop_registration(source) < super::icons::REGISTRATION => {
-            learn_result(None, &family, tier, Vec::new())
-        }
-        Some((sig, raw, source)) => {
-            // The bytes the pool gets, taken before the signature is moved into
-            // the store. Copied here rather than read back out of the store so
-            // the payload is built from memory on the one path that has it
-            // (POE-201 L4) — the store directory is never walked.
-            let bytes = sig.bytes().to_vec();
-            let registration = crop_registration(source);
-            let (outcome, lost_seeds) = {
-                let state = app.state::<AppState>();
-                let mut store =
-                    state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
-                // Snapshotted under the SAME acquisition as the learn, like the
-                // pull's merge and the forget command: `LearnOutcome` describes
-                // the confirmation, so the only way to name the seed a colliding
-                // confirm evicted is to diff the list across the mutation.
-                let seeded = store.seeded_families();
-                // The crop is the DETECT frame's, cached before the cursor ever
-                // reached this cell (D5): a hovered cell may be drawn
-                // highlighted, and a template learned from the highlight
-                // matches nothing later.
-                let outcome = store.learn(
-                    &family,
-                    tier,
-                    sig,
-                    raw,
-                    registration,
-                    &session.geometry.thresholds,
-                );
-                let lost = store.seeds_lost_since(&seeded);
-                (outcome, lost)
-            };
-            // Every seed eviction blocklists, whichever door it came through
-            // (POE-208): the art stays in the cache, so without this the next
-            // module start re-derives the seed the player just contradicted.
-            //
-            // AFTER the store mutex is released, unlike the two forget
-            // commands, and that is safe rather than merely convenient: the
-            // confirmation this evicted for is now IN the store, so an install
-            // pass racing this write yields to it instead of re-seeding. Lock
-            // order: `seed::SEED_BLOCKLIST_LOCK`.
-            if !lost_seeds.is_empty() {
-                if let Some(dir) = sync::icons_dir(app) {
-                    for lost in &lost_seeds {
-                        super::debug::block_seed(app, &dir, lost);
-                    }
-                }
-            }
-            learn_result(Some(outcome), &family, tier, bytes)
-        }
-        // The confirmation still stands — it names the cell. Only the template
-        // is missing, and saying so is the difference between "we already knew
-        // this art" and "we never had the crop".
-        None => (Learned::NoCrop, false, None),
+    let LearnedConfirmation {
+        learned,
+        needs_save,
+        offer,
+        lost_seeds,
+    } = {
+        let state = app.state::<AppState>();
+        learn_confirmed(
+            &state.merc_templates,
+            agreed.crop,
+            &family,
+            tier,
+            &session.geometry.thresholds,
+        )
     };
+    // Every seed eviction blocklists, whichever door it came through
+    // (POE-208): the art stays in the cache, so without this the next
+    // module start re-derives the seed the player just contradicted.
+    //
+    // AFTER the store mutex is released — [`learn_confirmed`] returns only once
+    // it has dropped the guard — unlike the two forget commands, and that is
+    // safe rather than merely convenient: the confirmation this evicted for is
+    // now IN the store, so an install pass racing this write yields to it
+    // instead of re-seeding. Lock order: `seed::SEED_BLOCKLIST_LOCK`.
+    if !lost_seeds.is_empty() {
+        if let Some(dir) = sync::icons_dir(app) {
+            for lost in &lost_seeds {
+                super::debug::block_seed(app, &dir, lost);
+            }
+        }
+    }
     // Off the tick, like the pool upload below it: the write is one PNG per
     // sample plus the index, and the player is waiting on this read. The queue
     // is what keeps two confirms in a row from writing the directory at once —
@@ -3645,6 +3611,80 @@ fn learn_result(
             bytes,
         }),
     )
+}
+
+/// What [`learn_confirmed`] did with one corroborated crop: the
+/// [`learn_result`] triple plus the seeds the learn evicted, which the caller
+/// blocklists once the store mutex is free.
+#[derive(Debug)]
+struct LearnedConfirmation {
+    learned: Learned,
+    needs_save: bool,
+    offer: Option<sync::PendingSample>,
+    lost_seeds: Vec<String>,
+}
+
+/// The store half of a hover confirm: the registration gate, the learn, the
+/// pool bytes and the seeds it evicted, in that order and in one lock
+/// acquisition. `crop`, `family` and `tier` come from the CORROBORATED read
+/// (`FoldOutcome::Applied`), never from the read that just arrived.
+///
+/// Returns with the store mutex released, so the caller's `block_seed`
+/// (`seed::SEED_BLOCKLIST_LOCK`) never runs under it (POE-208).
+fn learn_confirmed(
+    store: &std::sync::Mutex<TemplateStore>,
+    crop: Option<(CellSig, Option<image::RgbaImage>, ScaleSource)>,
+    family: &str,
+    tier: u8,
+    thresholds: &super::Thresholds,
+) -> LearnedConfirmation {
+    let (learned, needs_save, offer, lost_seeds) = match crop {
+        // THE REGISTRATION GATE (POE-215 D3). A crop cut at the OCR guess is
+        // 6-12 px off the art, and a template learned from one poisons every
+        // later match on this device and — through the pool — on everybody
+        // else's. The store is not asked at all, so no `Local` sample below
+        // `icons::REGISTRATION` can be created; `learn_result` turns the
+        // un-asked case into the line the player reads.
+        Some((.., source)) if crop_registration(source) < super::icons::REGISTRATION => {
+            let (learned, needs_save, offer) = learn_result(None, family, tier, Vec::new());
+            (learned, needs_save, offer, Vec::new())
+        }
+        Some((sig, raw, source)) => {
+            // The bytes the pool gets, taken before the signature is moved into
+            // the store. Copied here rather than read back out of the store so
+            // the payload is built from memory on the one path that has it
+            // (POE-201 L4) — the store directory is never walked.
+            let bytes = sig.bytes().to_vec();
+            let registration = crop_registration(source);
+            let (outcome, lost_seeds) = {
+                let mut store = store.lock().unwrap_or_else(|e| e.into_inner());
+                // Snapshotted under the SAME acquisition as the learn, like the
+                // pull's merge and the forget command: `LearnOutcome` describes
+                // the confirmation, so the only way to name the seed a colliding
+                // confirm evicted is to diff the list across the mutation.
+                let seeded = store.seeded_families();
+                // The crop is the DETECT frame's, cached before the cursor ever
+                // reached this cell (D5): a hovered cell may be drawn
+                // highlighted, and a template learned from the highlight
+                // matches nothing later.
+                let outcome = store.learn(family, tier, sig, raw, registration, thresholds);
+                let lost = store.seeds_lost_since(&seeded);
+                (outcome, lost)
+            };
+            let (learned, needs_save, offer) = learn_result(Some(outcome), family, tier, bytes);
+            (learned, needs_save, offer, lost_seeds)
+        }
+        // The confirmation still stands — it names the cell. Only the template
+        // is missing, and saying so is the difference between "we already knew
+        // this art" and "we never had the crop".
+        None => (Learned::NoCrop, false, None, Vec::new()),
+    };
+    LearnedConfirmation {
+        learned,
+        needs_save,
+        offer,
+        lost_seeds,
+    }
 }
 
 /// What a hover-confirm did to the template store.
@@ -4837,6 +4877,78 @@ mod tests {
         assert_eq!(offer.family, "Brittle Chance");
         assert_eq!(offer.tier, 3);
         assert_eq!(offer.bytes, vec![7u8; 4]);
+    }
+
+    // -- learn_confirmed: the store half of a hover confirm ------------------
+
+    fn store_of(store: TemplateStore) -> std::sync::Mutex<TemplateStore> {
+        std::sync::Mutex::new(store)
+    }
+
+    /// The registration gate runs BEFORE the store is asked (POE-215 D3): a
+    /// crop cut at the OCR guess must not become a sample, because `learn`
+    /// mutates and a refusal after it would already have filed the art.
+    #[test]
+    fn learning_an_ocr_cut_crop_leaves_the_store_empty_and_offers_nothing() {
+        let store = store_of(TemplateStore::new());
+
+        let out = learn_confirmed(
+            &store,
+            Some((sig(3), None, ScaleSource::Ocr)),
+            "Brittle Chance",
+            3,
+            &Thresholds::default(),
+        );
+
+        assert_eq!(out.learned, Learned::Unregistered);
+        assert!(out.offer.is_none(), "offered {:?}", out.offer);
+        assert_eq!(store.lock().unwrap().len(), 0, "the unregistered crop was learned");
+    }
+
+    /// A confirmation whose art collides with a SEED evicts it, is stored, and
+    /// names the evicted family so the caller can blocklist it (POE-208). The
+    /// name only exists if the seed list is snapshotted before the learn.
+    #[test]
+    fn a_confirmation_colliding_with_a_seed_reports_that_seed_lost() {
+        let t = Thresholds::default();
+        let mut seeded = TemplateStore::new();
+        seeded.install_seed("Physical as Extra Chaos", 3, sig(5), &t);
+        let store = store_of(seeded);
+
+        let out = learn_confirmed(
+            &store,
+            Some((sig(5), None, ScaleSource::Frame)),
+            "Brittle Chance",
+            3,
+            &t,
+        );
+
+        assert_eq!(out.lost_seeds, ["Physical as Extra Chaos"]);
+        assert_eq!(out.learned, Learned::Saved);
+        assert_eq!(store.lock().unwrap().learned_keys(), ["Brittle Chance--3"]);
+    }
+
+    /// A stored confirmation offers the pool the bytes of the crop it was
+    /// given, under the confirmed name — copied before the signature moves
+    /// into the store (POE-201 L4).
+    #[test]
+    fn a_learned_confirmation_offers_the_pool_the_confirmed_crops_bytes() {
+        let store = store_of(TemplateStore::new());
+        let expected = sig(11).bytes().to_vec();
+
+        let out = learn_confirmed(
+            &store,
+            Some((sig(11), None, ScaleSource::Held)),
+            "Faster Casting",
+            2,
+            &Thresholds::default(),
+        );
+
+        let offer = out.offer.expect("a stored sample is owed to the pool");
+        assert_eq!(offer.family, "Faster Casting");
+        assert_eq!(offer.tier, 2);
+        assert_eq!(offer.bytes, expected);
+        assert!(out.needs_save);
     }
 
     // -- the registration gate (POE-215 D3) ----------------------------------
