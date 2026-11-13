@@ -76,6 +76,7 @@ pub(crate) fn arm_gem_context(state: &AppState) -> u64 {
     let mut gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
     let token = font_session::next_scan_generation(&state.lab_scan.read_token_seq);
     state.lab_scan.gem_context.store(token, Ordering::SeqCst);
+    state.lab_scan.choice_seq.fetch_add(1, Ordering::SeqCst);
     gems.clear();
     token
 }
@@ -159,22 +160,35 @@ pub(crate) fn set_lab_mode(mode: String, app: AppHandle) {
 
 /// Returns whether the mode changed.
 pub(crate) fn apply_manual_lab_mode(state: &AppState, mode: &str, mut emit: impl FnMut(&str)) -> bool {
+    // The gem choice as it stands before the generation bump, read under the
+    // `detected_gems` guard alone.
+    let (armed_before, seq_before) = {
+        let _gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+        (
+            state.lab_scan.gem_context.load(Ordering::SeqCst) != 0,
+            state.lab_scan.choice_seq.load(Ordering::SeqCst),
+        )
+    };
+    #[cfg(test)]
+    after_mode_snapshot(state);
     let changed = {
         let mut detection = state.lab_scan.detection.lock().unwrap_or_else(|e| e.into_inner());
         detection.override_mode();
         change_lab_mode(state, mode)
     };
-    let Some(change) = changed else { return false };
-    // After the generation bump and with no other lab guard held (r2-H1;
-    // `build_status` holds `detected_gems` while it takes `font_session`): a
-    // commit that passed its generation check before the bump is wiped here,
-    // and one that checks after sees the new generation. "Scanning" is the
-    // context as read before the bump, so a choice whose third commit
-    // completes across the bump (storing context 0) is still cleared; a choice
-    // finished before the change keeps its gems so the comparator can reprice.
+    if changed.is_none() {
+        return false;
+    }
+    // After the generation bump, under the `detected_gems` guard alone
+    // (r2-H1; `build_status` holds `detected_gems` while it takes
+    // `font_session`): a commit that passed its generation check before the
+    // bump is wiped here, and one that checks after sees the new generation.
+    // The choice is cleared if it was armed at the snapshot or changed since
+    // (an arm or a commit bumps `choice_seq`); a choice finished before the
+    // change keeps its gems so the comparator can reprice them.
     let scanning = {
         let mut gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
-        let scanning = change.scanning_before_bump || state.lab_scan.gem_context.load(Ordering::SeqCst) != 0;
+        let scanning = armed_before || state.lab_scan.choice_seq.load(Ordering::SeqCst) != seq_before;
         if scanning {
             gems.clear();
         }
@@ -198,16 +212,30 @@ fn change_lab_mode(state: &AppState, mode: &str) -> Option<LabModeChange> {
         return None;
     }
     let previous = std::mem::replace(&mut lab.lab_mode, mode.to_string());
-    let scanning_before_bump = state.lab_scan.gem_context.load(Ordering::SeqCst) != 0;
     state.lab_scan.gem_vocab_generation.fetch_add(1, Ordering::SeqCst);
-    Some(LabModeChange { previous, scanning_before_bump })
+    Some(LabModeChange { previous })
 }
 
-/// A lab-mode change: the previous mode, and whether a gem context was armed
-/// just before the generation bump.
+/// Test seam: runs in a manual mode change right after its gem-choice
+/// snapshot and before the generation bump, for the state it was installed
+/// for. No other arrangement pauses the change inside that gap.
+#[cfg(test)]
+type ModeHook = Box<dyn Fn() + Send>;
+#[cfg(test)]
+pub(crate) static AFTER_MODE_SNAPSHOT: std::sync::Mutex<Option<(usize, ModeHook)>> = std::sync::Mutex::new(None);
+#[cfg(test)]
+fn after_mode_snapshot(state: &AppState) {
+    let hook = AFTER_MODE_SNAPSHOT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((key, f)) = hook.as_ref() {
+        if *key == state as *const AppState as usize {
+            f();
+        }
+    }
+}
+
+/// A lab-mode change: the previous mode.
 struct LabModeChange {
     previous: String,
-    scanning_before_bump: bool,
 }
 
 fn emit_lab_mode_change(app: &AppHandle) {

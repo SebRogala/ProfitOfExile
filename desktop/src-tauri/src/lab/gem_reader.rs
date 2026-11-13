@@ -211,6 +211,7 @@ pub(crate) fn commit_gem_name(state: &AppState, captured: u64, vocab_gen: u64, n
         #[cfg(test)]
         after_commit_check(state);
         gems.push(name.to_string());
+        lab.choice_seq.fetch_add(1, Ordering::SeqCst);
         let complete = gems.len() >= MAX_GEMS;
         if complete {
             lab.gem_context.store(0, Ordering::SeqCst);
@@ -422,10 +423,12 @@ mod tests {
     }
 
     #[test]
-    fn a_third_commit_past_its_check_when_the_mode_flips_leaves_no_stale_gems() {
-        // Two g1 gems held; the third commit passes its checks, then the mode
-        // flip bumps the generation and waits for the gem guard; the commit
-        // completes 3/3 (context 0) and only then does the flip's clear run.
+    fn a_mode_flip_started_during_a_third_commit_waits_for_it_and_keeps_the_completed_choice() {
+        // Two g1 gems held; the third commit passes its checks and holds the
+        // gem guard; a mode flip starts meanwhile. The flip's snapshot needs
+        // that guard, so it cannot bump until the commit completes 3/3; the
+        // choice is then complete before the mode change and is kept (same
+        // rule as `manual_lab_mode_correction_keeps_completed_gems`).
         let state = Arc::new(test_app_state());
         state.lab_settings.lock().unwrap().lab_mode = "Normal".to_string();
         let token = arm_gem_context(&state);
@@ -434,10 +437,80 @@ mod tests {
         commit_gem_name(&state, token, g1, "Reave of Refraction").unwrap();
 
         let (checked_tx, checked_rx) = std::sync::mpsc::channel::<()>();
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let (checked_tx, started_rx) = (std::sync::Mutex::new(checked_tx), std::sync::Mutex::new(started_rx));
+        let bumped_during_commit = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (watched, bumped) = (state.clone(), bumped_during_commit.clone());
+        *AFTER_COMMIT_CHECK.lock().unwrap() = Some((
+            Arc::as_ptr(&state) as usize,
+            Box::new(move || {
+                checked_tx.lock().unwrap().send(()).unwrap();
+                started_rx.lock().unwrap().recv_timeout(Duration::from_secs(5)).expect("the flip never started");
+                // Give the flip time to run as far as it can while the guard is held.
+                std::thread::sleep(Duration::from_millis(200));
+                bumped.store(watched.lab_scan.gem_vocab_generation.load(Ordering::SeqCst) != g1, Ordering::SeqCst);
+            }),
+        ));
+        let committer = {
+            let state = state.clone();
+            std::thread::spawn(move || commit_gem_name(&state, token, g1, "Blade Flurry of Incision").map(|c| c.complete))
+        };
+        checked_rx.recv_timeout(Duration::from_secs(5)).expect("the third commit never passed its checks");
+        let flipper = {
+            let state = state.clone();
+            std::thread::spawn(move || {
+                started_tx.send(()).unwrap();
+                crate::apply_manual_lab_mode(&state, "Dedication", |_| {})
+            })
+        };
+        let completed = committer.join().unwrap();
+        let flipped = flipper.join().unwrap();
+        *AFTER_COMMIT_CHECK.lock().unwrap() = None;
+
+        assert_eq!((completed, flipped), (Some(true), true));
+        assert!(!bumped_during_commit.load(Ordering::SeqCst), "the flip bumped while a commit held the gem guard");
+        assert_eq!(
+            held(&state),
+            ["Blade Vortex of the Scythe", "Reave of Refraction", "Blade Flurry of Incision"].map(String::from).to_vec(),
+        );
+    }
+
+    #[test]
+    fn a_choice_armed_after_the_mode_snapshot_and_completed_across_the_bump_leaves_no_stale_gems() {
+        // The mode change snapshots an unarmed choice and pauses; CRAFT arms,
+        // two g1 gems commit and the third passes its g1 check; the change
+        // bumps to g2 and waits for the gem guard; the third commit completes
+        // 3/3 (context 0) before the change's clear runs.
+        use crate::lab::commands::AFTER_MODE_SNAPSHOT;
+        let state = Arc::new(test_app_state());
+        state.lab_settings.lock().unwrap().lab_mode = "Normal".to_string();
+        let g1 = with_vocab(&state);
+        let key = Arc::as_ptr(&state) as usize;
+
+        let (paused_tx, paused_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (paused_tx, release_rx) = (std::sync::Mutex::new(paused_tx), std::sync::Mutex::new(release_rx));
+        *AFTER_MODE_SNAPSHOT.lock().unwrap() = Some((
+            key,
+            Box::new(move || {
+                paused_tx.lock().unwrap().send(()).unwrap();
+                release_rx.lock().unwrap().recv_timeout(Duration::from_secs(5)).expect("never released");
+            }),
+        ));
+        let flipper = {
+            let state = state.clone();
+            std::thread::spawn(move || crate::apply_manual_lab_mode(&state, "Dedication", |_| {}))
+        };
+        paused_rx.recv_timeout(Duration::from_secs(5)).expect("the mode change never reached its snapshot");
+
+        let token = arm_gem_context(&state);
+        commit_gem_name(&state, token, g1, "Blade Vortex of the Scythe").unwrap();
+        commit_gem_name(&state, token, g1, "Reave of Refraction").unwrap();
+        let (checked_tx, checked_rx) = std::sync::mpsc::channel::<()>();
         let checked_tx = std::sync::Mutex::new(checked_tx);
         let watched = state.clone();
         *AFTER_COMMIT_CHECK.lock().unwrap() = Some((
-            Arc::as_ptr(&state) as usize,
+            key,
             Box::new(move || {
                 checked_tx.lock().unwrap().send(()).unwrap();
                 let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -452,15 +525,13 @@ mod tests {
             std::thread::spawn(move || commit_gem_name(&state, token, g1, "Blade Flurry of Incision").map(|c| c.complete))
         };
         checked_rx.recv_timeout(Duration::from_secs(5)).expect("the third commit never passed its checks");
-        let flipper = {
-            let state = state.clone();
-            std::thread::spawn(move || crate::apply_manual_lab_mode(&state, "Dedication", |_| {}))
-        };
+        release_tx.send(()).unwrap();
         let completed = committer.join().unwrap();
         let flipped = flipper.join().unwrap();
         *AFTER_COMMIT_CHECK.lock().unwrap() = None;
+        *AFTER_MODE_SNAPSHOT.lock().unwrap() = None;
 
         assert_eq!((completed, flipped), (Some(true), true), "the arrangement must reproduce the race");
-        assert!(held(&state).is_empty(), "g1 gems completed across the flip must not survive it");
+        assert!(held(&state).is_empty(), "g1 gems of a choice armed across the flip must not survive it");
     }
 }

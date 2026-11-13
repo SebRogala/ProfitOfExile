@@ -33,6 +33,11 @@ pub struct LabScanState {
     /// `detected_gems` guard is held, the guard `commit_gem_name` checks it
     /// under.
     pub gem_context: AtomicU64,
+    /// Bumped under the `detected_gems` guard by every gem arm and every gem
+    /// commit; never reset. A manual mode change compares it across its
+    /// generation bump to tell a choice that changed meanwhile from one
+    /// finished before it.
+    pub choice_seq: AtomicU64,
     /// The tooltip vocabulary for the gem reader, installed by the background
     /// preload (`lab::gem_vocab`). Acquired alone.
     pub gem_vocab: Mutex<Option<crate::lab::gem_vocab::GemVocab>>,
@@ -64,6 +69,7 @@ impl LabScanState {
             font_context: AtomicU64::new(0),
             font_idle_seq: AtomicU64::new(0),
             gem_context: AtomicU64::new(0),
+            choice_seq: AtomicU64::new(0),
             gem_vocab: Mutex::new(None),
             gem_vocab_generation: AtomicU64::new(0),
             font_opened_seq: AtomicU64::new(0),
