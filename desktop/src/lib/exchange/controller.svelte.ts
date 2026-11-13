@@ -21,6 +21,10 @@ const TYPED_DEBOUNCE_MS = 300;
 
 export function createExchangeController(dependencies: ExchangeDependencies) {
 	let result = $state<CurrencyExchangeResponse | null>(null);
+	// The last response this league answered, whatever query it was for: the
+	// filter bar and counters read it so they stay mounted while a changed query
+	// is pending or failed. Never a source of rows.
+	let settled = $state<CurrencyExchangeResponse | null>(null);
 	let lastFetchedAt = $state<Date | null>(null);
 	let lastError = $state<string | null>(null);
 	let loading = $state(false);
@@ -45,6 +49,7 @@ export function createExchangeController(dependencies: ExchangeDependencies) {
 			// First resolution emits no change notification. Keep the initial HTTP read usable while SSOT is cold.
 			if (ssot.league !== null && response.league !== ssot.league) return;
 			result = response;
+			settled = response;
 			lastFetchedAt = new Date();
 			lastError = null;
 		} catch (error) {
@@ -87,6 +92,7 @@ export function createExchangeController(dependencies: ExchangeDependencies) {
 			clearTypedTimer();
 			generation++;
 			result = null;
+			settled = null;
 			lastFetchedAt = null;
 			lastError = null;
 			void load();
@@ -110,6 +116,7 @@ export function createExchangeController(dependencies: ExchangeDependencies) {
 	}
 	return {
 		get result() { return result; },
+		get settled() { return settled; },
 		get lastFetchedAt() { return lastFetchedAt; },
 		get lastError() { return lastError; },
 		get loading() { return loading; },

@@ -224,7 +224,13 @@
 	 * after the mode filter — so an item whose own rule hid it stays listed.
 	 */
 	const rows = $derived(result?.plays ?? []);
-	const items = $derived(result?.itemUniverse ?? []);
+	/**
+	 * The controls' metadata: the current page, else the last settled response
+	 * while a changed query is pending or failed — so the filter bar stays
+	 * mounted (focus and typed text intact) without showing that response's rows.
+	 */
+	const meta = $derived(result ?? controller.settled);
+	const items = $derived(meta?.itemUniverse ?? []);
 	const hoursWindow = $derived(result?.hours ?? 0);
 	/**
 	 * The newest hour's chaos value of one divine, 0 when that hour carried no
@@ -238,7 +244,7 @@
 	 * `?? 0` written at one of those call sites is a second place for the fallback
 	 * to drift.
 	 */
-	const divineChaosRate = $derived(result?.divineChaosRate ?? 0);
+	const divineChaosRate = $derived(meta?.divineChaosRate ?? 0);
 
 	/**
 	 * Whether the route's convert slot is drawn, for the whole table at once: the
@@ -256,11 +262,11 @@
 	 */
 	const counts = $derived(
 		rowCounts({
-			total: result?.total ?? 0,
-			afterRules: result?.afterRules ?? 0,
-			afterGates: result?.afterGates ?? 0,
-			matched: result?.matched ?? 0,
-			shown: rows.length
+			total: meta?.total ?? 0,
+			afterRules: meta?.afterRules ?? 0,
+			afterGates: meta?.afterGates ?? 0,
+			matched: meta?.matched ?? 0,
+			shown: meta?.plays.length ?? 0
 		})
 	);
 
@@ -450,9 +456,9 @@
 		/>
 	</div>
 
-	{#if result}
+	{#if meta}
 		<ExchangeFilterBar
-			categories={result.categories}
+			categories={meta.categories}
 			{categoryRules}
 			{itemRules}
 			{items}

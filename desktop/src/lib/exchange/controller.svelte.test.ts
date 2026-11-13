@@ -167,3 +167,43 @@ it('a failed page fetch keeps the previous page and marks it stale', async () =>
 		}).kind
 	).toBe('stale');
 });
+
+it('several typed characters end in exactly one request carrying the full value', () => {
+	vi.useFakeTimers();
+	const { controller, query, requests } = setup();
+	for (const typed of ['o', 'or', 'orb']) {
+		query.params = { pageSize: '50', sort: 'expected', search: typed };
+		controller.syncSelection({ debounce: true });
+		vi.advanceTimersByTime(100);
+	}
+	vi.advanceTimersByTime(300);
+	expect(requests.slice(1)).toEqual([['all', 'day', { pageSize: '50', sort: 'expected', search: 'orb' }]]);
+});
+
+it('keeps the last settled response as metadata while a changed query is pending', async () => {
+	const { controller, calls, query } = setup();
+	calls[0].resolve(response('A', [{ id: 'settled' }]));
+	await settle();
+	query.params = { pageSize: '25', sort: 'roi' };
+	controller.syncSelection();
+	expect([controller.result, controller.settled?.plays]).toEqual([null, [{ id: 'settled' }]]);
+});
+
+it('keeps the last settled response as metadata after a changed query fails', async () => {
+	const { controller, calls, query } = setup();
+	calls[0].resolve(response('A', [{ id: 'settled' }]));
+	await settle();
+	query.params = { pageSize: '25', sort: 'roi' };
+	controller.syncSelection();
+	calls[1].reject(new Error('offline'));
+	await settle();
+	expect([controller.result, controller.lastError, controller.settled?.plays]).toEqual([null, 'offline', [{ id: 'settled' }]]);
+});
+
+it('a league switch drops the settled metadata of the previous league', async () => {
+	const { controller, calls } = setup();
+	calls[0].resolve(response('A', [{ id: 'settled' }]));
+	await settle();
+	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+	expect(controller.settled).toBeNull();
+});
