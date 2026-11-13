@@ -94,7 +94,7 @@ export function shortcutLabel(shortcut: BossLootShortcut): string {
 		: `Key ${shortcut.key}`)
 	return [...(shortcut.ctrl ? ['Ctrl'] : []), ...(shortcut.alt ? ['Alt'] : []), ...(shortcut.shift ? ['Shift'] : []), key].join(' + ')
 }
-function parseShortcut(label: string, existing: BossLootShortcut): BossLootShortcut {
+export function parseShortcut(label: string, existing: BossLootShortcut): BossLootShortcut {
 	if (label === shortcutLabel(existing)) return existing
 	const parts = label.split(' + ')
 	const name = parts.pop()!

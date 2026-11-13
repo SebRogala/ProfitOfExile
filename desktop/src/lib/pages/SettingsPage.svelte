@@ -7,6 +7,7 @@
 	import { hasFeature, MERC_FEATURE, TEMPLE_FEATURE, BETA_FEATURE } from '$lib/stores/entitlements.svelte';
 	import { ssot, fetchSsot, setBossLootSettings } from '$lib/stores/ssot.svelte';
 	import { nav } from '$lib/stores/navigation.svelte';
+	import ReadHotkeySetting from '$lib/components/ReadHotkeySetting.svelte';
 	import { untrack } from 'svelte';
 	import { ocrRectsKey, screenGeometryView } from '$lib/geometry/view';
 	import { createOcrPreviewOwner } from '$lib/overlay/ocr-preview';
@@ -890,6 +891,7 @@
 					<Button onclick={() => invoke('reset_client_txt_path').catch(e => console.error(e))} title="Auto-detect GGG or Steam install">Reset</Button>
 				{/if}
 			</div>
+			<ReadHotkeySetting />
 
 		</section>
 
