@@ -958,18 +958,6 @@ export function setBossLootSettings(settings: BossLootSettings): Promise<string 
 }
 
 /**
- * Turn the captured mercenary's auto trade search on or off (POE-202).
- *
- * Same reasoning as `setMercSourcesOff`: the value is Rust's, the page only
- * asks. It is not an ADR-013 view preference — the trigger loop in Rust reads
- * it every tick, so a webview-local copy would be able to disagree with the
- * loop that actually decides whether to search.
- */
-export function setMercTradeAuto(auto: boolean): Promise<string | null> {
-	return sliceCommand('merc', 'merc_set_trade_auto', { auto });
-}
-
-/**
  * Set how far below the read tier the merc query comps (1..=3, POE-202).
  *
  * Rust validates the range and refuses anything else, so the rejection comes

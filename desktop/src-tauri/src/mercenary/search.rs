@@ -1,5 +1,6 @@
-//! Trade query for the mercenary AS CAPTURED, and the pure trigger policy that
-//! decides whether to spend a search on it (POE-202).
+//! Trade query and browser links for the mercenary AS CAPTURED (POE-202). The
+//! desktop sends no mercenary trade request; the user opens the links
+//! (POE-392).
 //!
 //! # The probes that fixed the query shape
 //!
@@ -130,13 +131,11 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
-use crate::trade::{
-    MercTradeListing, MercTradeResult, RawSearch, TradeQueueEvent, TradeSource, CANCELLED,
-};
+use crate::trade::TradeSource;
 use crate::AppState;
 
 use super::read::confident;
-use super::run::{now_ms, publish};
+use super::run::publish;
 use super::vocab::MercVocab;
 use super::{MercCapture, MercRow};
 
@@ -159,15 +158,6 @@ const COUNT_GROUP_COST: u32 = 3;
 /// What each filter inside a `count` group costs on top of
 /// [`COUNT_GROUP_COST`].
 const COUNT_FILTER_COST: u32 = 2;
-
-/// A hash change has to hold still this long before it is worth a search. The
-/// capture is settled when the session opens, but every hover-confirm after
-/// that can still correct a cell, and each correction moves the hash.
-pub const DEBOUNCE_MS: u64 = 2000;
-
-/// Searches one capture session may spend before the app stops asking GGG and
-/// hands the user the URL instead.
-pub const MAX_SEARCHES: u8 = 3;
 
 /// The query built from one capture, ready to POST and to link.
 #[derive(Debug, Clone, PartialEq)]
@@ -726,43 +716,17 @@ fn link_url(league: &str, link: &Value) -> String {
     )
 }
 
-/// One capture's worth of trade-search state.
+/// One capture's worth of trade-link state.
 ///
 /// Opened at the first settle edge of a capture and closed when the window
-/// retires, so the search ceiling is per mercenary rather than per app run: a
-/// re-detected window is a new session and gets its own budget, but the hash
-/// cache is what stops it paying for the same question twice.
+/// retires. The desktop sends no mercenary trade request (POE-392): the
+/// session only decides when the slice's browser link changes.
 #[derive(Debug, Clone, Default)]
 pub struct MercTradeSession {
-    /// Searches actually sent to GGG in this session.
-    pub searches_used: u8,
-    /// The hash the session last ACTED on (enqueued, published from cache, or
-    /// answered with a URL). Not the last hash seen — see [`Self::pending_hash`].
+    /// The hash whose link the session last published.
     pub last_hash: Option<String>,
-    /// The hash last SEEN, whether or not anything was done about it. The
-    /// debounce needs to know when the query stopped moving, which is a
-    /// different question from what was last searched for; without this, a
-    /// caller that re-evaluates faster than the debounce window would push the
-    /// deadline forward on every tick and never search at all.
-    pub pending_hash: Option<String>,
-    /// When [`Self::pending_hash`] last changed.
-    pub last_change_ms: u64,
-    /// The status currently published for this session. Read, never written,
-    /// by [`decide`] — the caller owns what the slice says.
-    ///
-    /// The caller MUST write it back before the next `decide`: the `Error`
-    /// clause below makes the session forget its last hash, so a session left
-    /// on `Error` after a successful retry re-enqueues the same query once per
-    /// debounce window — bounded only by [`MAX_SEARCHES`].
-    pub state: MercTradeStatus,
-    /// The slice's `trade.terminal_hash`, re-read with [`Self::state`]: the
-    /// hash GGG rejected outright, which [`decide`] must not retry. Written by
-    /// the caller for the same reason `state` is — the lookup task learns of
-    /// the rejection long after `decide` returned.
-    pub terminal_hash: Option<String>,
     /// The hash-independent verdict last handed to the caller, if the last one
-    /// was hash-independent. The other refusals are deduplicated by
-    /// [`Self::last_hash`]; these three have no hash to dedupe against and the
+    /// was hash-independent. These two have no hash to dedupe against and the
     /// tick asks ten times a second, so without this the caller re-publishes
     /// `Idle` or `WaitingLeague` on every one of them.
     pub settled: Option<Settled>,
@@ -783,8 +747,6 @@ pub struct MercTradeSession {
 /// keep the previous one's answer on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Settled {
-    /// `SetIdle` — the user's auto-search toggle is off.
-    AutoOff,
     /// `SetIdle` — the capture has no expressible query.
     NoQuery,
     /// `SetWaitingLeague` — the league is not resolved yet.
@@ -792,7 +754,7 @@ pub enum Settled {
 }
 
 impl MercTradeSession {
-    /// A fresh session: no budget spent, nothing searched.
+    /// A fresh session: no link published yet.
     pub fn new() -> Self {
         Self::default()
     }
@@ -801,166 +763,51 @@ impl MercTradeSession {
 /// Everything outside the session that the decision depends on.
 #[derive(Debug, Clone, Copy)]
 pub struct TriggerInput<'a> {
-    /// The user's auto-search toggle.
-    pub auto: bool,
     /// The query for the current capture, or `None` when none can be built.
     pub query: Option<&'a CaptureQuery>,
     /// Whether the league is known. Unresolved means fail closed, not guess.
     pub league_resolved: bool,
-    /// A result for this exact hash is in the cache and young enough to serve.
-    pub cached: bool,
 }
 
-/// What the caller should do about the current capture.
+/// What the caller should do about the current capture. No variant sends a
+/// trade request: the desktop sends no mercenary trade request (POE-392).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TriggerAction {
     /// Nothing changed; leave the slice alone.
     None,
-    /// Publish `Idle` — no query to run, or auto-search is off.
+    /// Publish `Idle` and clear the link — no query to describe.
     SetIdle,
     /// Publish `WaitingLeague` and wait for the league fetch.
     SetWaitingLeague,
-    /// Serve the cached result for this hash.
-    PublishCached,
-    /// The query is still moving; re-evaluate after the debounce window.
-    Debounce,
-    /// Spend a search.
-    Enqueue,
-    /// Out of searches — publish the link and let the user follow it.
-    UrlOnly,
+    /// Publish this hash's browser link.
+    PublishLink,
 }
 
 /// Decide what to do at one publish, and record the decision on the session.
 ///
-/// Ordered so the refusals come first and nothing below them has to re-check
-/// them — `NoQuery` ahead of `AutoOff` for the reason given at the check. The
-/// one non-obvious rule is the `Error` clause: a failed lookup makes the
-/// session forget what it searched for, so a later publish of the same capture
-/// may retry — one debounce window later, and still against the same ceiling,
-/// so a persistently failing query costs at most [`MAX_SEARCHES`] attempts
-/// spread over at least that many windows.
-///
-/// A REJECTED query is not retried at all, and that is an INDEPENDENT gate
-/// rather than a qualifier on the `Error` clause. When the failure was a 4xx,
-/// [`accept_error`] records the hash on the slice; the gate reads it back and
-/// refuses the hash whatever else the session believes — GGG's answer to that
-/// exact body will not change, and every 4xx counts toward its separate
-/// invalid-request ban. Independence is what covers the two paths that reach
-/// `decide` with the `Error` clause out of the picture: the toggle going off and
-/// back on (which clears `last_hash`), and a retire-then-re-detect handing the
-/// same capture to a FRESH session — both re-read `terminal_hash` off the slice,
-/// which is why it lives there and not on the session. 5xx and transport
-/// failures keep the debounced retry.
-///
-/// Every verdict is returned ONCE per condition. The hash-driven ones dedupe
-/// against [`MercTradeSession::last_hash`]; the three that never look at a hash
+/// Every verdict is returned ONCE per condition. The hash-driven one dedupes
+/// against [`MercTradeSession::last_hash`]; the two that never look at a hash
 /// dedupe against [`MercTradeSession::settled`], because the caller asks at the
 /// capture loop's cadence (see [`tick`]) and a re-publish of the same `Idle` is
 /// a slice clone ten times a second for nothing.
-pub fn decide(
-    session: &mut MercTradeSession,
-    input: TriggerInput<'_>,
-    now_ms: u64,
-) -> TriggerAction {
-    // `NoQuery` is tested BEFORE `AutoOff` even though auto-off is the cheaper
-    // check: a capture that stops being expressible has to clear its link and
-    // listings, and that only happens under the `SetIdle` arm's `query.is_none()`
-    // (see [`tick`], whose auto-off early return states the same rule). Settling
-    // on `AutoOff` first would swallow the clear.
+pub fn decide(session: &mut MercTradeSession, input: TriggerInput<'_>) -> TriggerAction {
     let Some(query) = input.query else {
         return settle(session, Settled::NoQuery, TriggerAction::SetIdle);
     };
-    if !input.auto {
-        return settle(session, Settled::AutoOff, TriggerAction::SetIdle);
-    }
     if !input.league_resolved {
         return settle(session, Settled::NoLeague, TriggerAction::SetWaitingLeague);
     }
-    // Past every hash-independent refusal: the next one that fires is about a
-    // condition that has been away since, so it publishes again.
-    //
-    // `last_hash` goes with it: the settled condition published `Idle` (or
-    // `WaitingLeague`) OVER whatever the hash had been answered with, so the
-    // recorded hash no longer describes the slice. Keeping it would make the
-    // clause below return `None` for the current hash and leave that `Idle`
-    // standing over a valid `result` — auto off→on would go silent. Cleared,
-    // the next pass re-decides from scratch: `PublishCached` while the 15-min
-    // cache holds, otherwise one search against the same ceiling.
+    // Past every hash-independent refusal: the settled condition published
+    // over whatever link the hash had, so the recorded hash no longer
+    // describes the slice and the link is published again.
     if session.settled.take().is_some() {
         session.last_hash = None;
-    }
-
-    // GGG rejected this exact body. Nothing below this line may spend anything
-    // on it: a 4xx is a verdict on the query, identical every time it is asked,
-    // and every 4xx counts toward GGG's separate invalid-request ban. It cost
-    // the app a whole three-search budget in one second before the refusal
-    // existed (2026-08-26 live log: three 400 "Query is too complex" in 6 s).
-    //
-    // A GATE of its own, ahead of every other clause, because two paths reach
-    // here with no memory of the rejection on the session at all: the toggle
-    // going off and back on clears `last_hash` two lines up, and a retired
-    // window that is detected again arrives on a FRESH session. Both re-read
-    // `terminal_hash` off the slice (see [`tick`]), which is what makes the
-    // refusal survive them.
-    //
-    // `last_hash` is recorded so the caller is told once and then left alone:
-    // the slice already carries the `Error` and the message this refusal is
-    // about, and the tick asks ten times a second.
-    if session.terminal_hash.as_deref() == Some(query.hash.as_str()) {
-        session.last_hash = Some(query.hash.clone());
-        return TriggerAction::None;
-    }
-
-    // Track when the query stopped moving before anything acts on it, so the
-    // debounce measures the age of the CHANGE and not of the last poll.
-    if session.pending_hash.as_deref() != Some(query.hash.as_str()) {
-        session.pending_hash = Some(query.hash.clone());
-        session.last_change_ms = now_ms;
-    }
-
-    // A failed lookup is not an answer, so the hash it failed on is not one
-    // either: forgetting it is what lets the next pass retry. Only a 5xx or a
-    // transport failure gets here — a rejection returned at the gate above.
-    //
-    // The failure is folded into the debounce clock in the same breath, so the
-    // retry has to survive the same quiet window a fresh query does. Without
-    // it the whole budget goes in one burst — the error arrives, the very next
-    // tick (100 ms later) re-enqueues, and three transient failures are spent
-    // inside half a second, which is the shape of an outage rather than a
-    // retry.
-    //
-    // Fires ONCE per failure because folding it also clears the record that
-    // made it visible. Resetting on every tick that observes `Error` would
-    // push the deadline forward faster than the window closes and the session
-    // would never retry at all — the same trap `pending_hash` exists to avoid
-    // for hash changes.
-    if session.state == MercTradeStatus::Error && session.last_hash.is_some() {
-        session.last_hash = None;
-        session.last_change_ms = now_ms;
     }
     if session.last_hash.as_deref() == Some(query.hash.as_str()) {
         return TriggerAction::None;
     }
-
-    if input.cached {
-        session.last_hash = Some(query.hash.clone());
-        return TriggerAction::PublishCached;
-    }
-
-    if now_ms.saturating_sub(session.last_change_ms) < DEBOUNCE_MS {
-        return TriggerAction::Debounce;
-    }
-
-    if session.searches_used >= MAX_SEARCHES {
-        // Recorded as acted-on: the URL is the answer for this hash, and
-        // repeating it every publish would churn the slice for nothing.
-        session.last_hash = Some(query.hash.clone());
-        return TriggerAction::UrlOnly;
-    }
-
-    session.searches_used += 1;
     session.last_hash = Some(query.hash.clone());
-    TriggerAction::Enqueue
+    TriggerAction::PublishLink
 }
 
 /// Hand `action` back the first time this condition is reached, and
@@ -1103,74 +950,28 @@ fn encode_uri_component(raw: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Wiring: settings, the per-tick evaluation, the lookup task, the cache
+// Wiring: settings and the per-tick evaluation
 // ---------------------------------------------------------------------------
 
-/// How long a result answers for its hash.
-///
-/// The window is what makes a retire-then-re-detect of the same recruit window
-/// free: the new session starts with a fresh search budget, but the question it
-/// asks is the same one, so the cache answers it without spending any of it.
-pub const RESULT_TTL_MS: u64 = 15 * 60 * 1000;
-
-/// The queue-event label for a capture — what the shared trade queue calls this
-/// lookup while it waits.
-///
-/// The mercenary's name when the header was read, and a constant otherwise: the
-/// label is display text on a shared queue, not an identity (the hash is), so a
-/// missing header must not stop a lookup that is otherwise fully specified.
-fn label_for(capture: &MercCapture) -> String {
-    capture
-        .header
-        .name
-        .clone()
-        .unwrap_or_else(|| "mercenary".to_string())
-}
-
-/// Evaluate the trade policy for the capture on screen and apply its verdict.
-///
-/// # Cadence
+/// Evaluate the link policy for the capture on screen and apply its verdict.
 ///
 /// Called from the capture loop on EVERY iteration while a complete capture is
-/// on screen (`run::run_loop`) — every 100 ms with the game focused (`TICK`),
-/// every 1 s without it (`UNFOCUSED_NAP`). That is what makes the DEBOUNCE work
-/// without a timer: the loop comes back, re-evaluates, and eventually finds the
-/// change old enough to act on. A `tokio` timer would have to be cancelled and
-/// re-armed on every hover-confirm, and would fire into a loop that may since
-/// have retired the capture.
+/// on screen (`run::run_loop`) — every 100 ms with the game focused. Ten calls
+/// a second is why the built query is cached against `(revision, tier floor)`,
+/// the whole input to [`build_capture_query`], and why [`decide`] hands each
+/// verdict back once.
 ///
-/// Ten calls a second is also why nothing here may be expensive by default:
-///
-/// - `revision` is the capture's version from `run::Session`, bumped by the two
-///   ticks that write a capture. Together with the tier floor it is the whole
-///   input to [`build_capture_query`], so the built query is cached against the
-///   pair — a JSON body plus a SHA-256 over it is not something to redo ten
-///   times a second for a capture that has not moved.
-/// - The `!auto` refusal returns before publishing anything once the slice
-///   already says `Idle`, and [`decide`] hands each hash-independent verdict
-///   back once (see [`Settled`]), so the steady state publishes nothing. What
-///   it does still pay every tick is the [`cache_get`] below: it clones the
-///   stored result whether or not an arm goes on to use it.
-/// - [`capture_url`] renders and percent-encodes the whole body, so it is built
-///   per arm rather than up front.
-///
-/// `session.state` is re-read from the SLICE first rather than tracked here,
-/// because the lookup task publishes `Searching` / `Done` / `Error` after
-/// `decide` has returned — the slice is the only place that knows the current
-/// status, and [`decide`]'s `Error` clause is a decision about it.
+/// Nothing here sends a trade request (POE-392): the slice carries the browser
+/// links, and the user's browser runs the search.
 pub fn tick(
     app: &AppHandle,
     capture: &MercCapture,
     vocab: &MercVocab,
     session: &mut MercTradeSession,
     revision: u64,
-    now_ms: u64,
+    _now_ms: u64,
 ) {
     let state = app.state::<AppState>();
-    let auto = *state
-        .merc.trade_auto
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let floor = *state
         .merc.tier_floor
         .lock()
@@ -1182,88 +983,29 @@ pub fn tick(
         session.built_key = Some(key);
     }
 
-    (session.state, session.terminal_hash) = {
-        let slice = state.mercenary.lock().unwrap_or_else(|e| e.into_inner());
-        (slice.trade.status, slice.trade.terminal_hash.clone())
-    };
-
-    // Auto off and the slice already saying so: there is nothing left to
-    // publish. The `query.is_some()` guard is what keeps this from swallowing
-    // the one thing an auto-off tick still has to do — a capture that stops
-    // being expressible has to have its link and listings cleared, which is the
-    // `SetIdle` arm's job below.
-    if !auto
-        && session.state == MercTradeStatus::Idle
-        && session.built_query.is_some()
-    {
-        return;
-    }
-
     let league = state.ssot.lock().unwrap_or_else(|e| e.into_inner()).league.name.clone();
-    // Taken BEFORE `decide`, not looked up after it: `decide` is told whether a
-    // cached answer exists, and a lookup that raced the check would leave the
-    // caller told "cached" with nothing to publish.
-    //
-    // No league, no cache read: the cache is keyed by league (see
-    // [`cache_get`]), and an unresolved league is on its way to
-    // `SetWaitingLeague` anyway.
-    let cached = match (&league, session.built_query.as_ref()) {
-        (Some(league), Some(query)) => {
-            let cache = state
-                .merc.trade_cache
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            cache_get(&cache, league, &query.hash, now_ms)
-        }
-        _ => None,
-    };
 
     // Moved out and straight back: `decide` takes `&mut session` while
     // `TriggerInput` borrows the query out of that same session.
     let taken = session.built_query.take();
     let action = decide(
         session,
-        TriggerInput {
-            auto,
-            query: taken.as_ref(),
-            league_resolved: league.is_some(),
-            cached: cached.is_some(),
-        },
-        now_ms,
+        TriggerInput { query: taken.as_ref(), league_resolved: league.is_some() },
     );
     session.built_query = taken;
-
-    let used = session.searches_used;
     let query = session.built_query.as_ref();
-    let link = |query: Option<&CaptureQuery>| match (query, &league) {
-        (Some(query), Some(league)) => Some(capture_url(league, query)),
-        _ => None,
-    };
-    let link_anchors = |query: Option<&CaptureQuery>| match (query, &league) {
-        (Some(query), Some(league)) => Some(capture_url_anchors(league, query)),
-        _ => None,
-    };
 
     match action {
-        // Nothing moved. The slice already says what this capture is worth.
         TriggerAction::None => {}
-        // The query stopped being expressible, or the user switched the
-        // auto-search off. Only the first case clears the answer: a link and a
-        // listing table are still true about a capture whose owner has since
-        // turned the automation off, but they describe nothing at all once
-        // there is no query to describe.
+        // The query stopped being expressible: the link describes nothing.
         TriggerAction::SetIdle => {
-            let clear = query.is_none();
             publish(app, |slice| {
                 slice.trade.status = MercTradeStatus::Idle;
                 slice.trade.error = None;
-                slice.trade.searches_used = used;
-                if clear {
-                    slice.trade.query_hash = None;
-                    slice.trade.url = None;
-                    slice.trade.url_anchors = None;
-                    slice.trade.result = None;
-                }
+                slice.trade.query_hash = None;
+                slice.trade.url = None;
+                slice.trade.url_anchors = None;
+                slice.trade.result = None;
             });
         }
         // No league, no URL — `capture_url` cannot name a search without one,
@@ -1277,70 +1019,23 @@ pub fn tick(
                 slice.trade.url_anchors = None;
                 slice.trade.result = None;
                 slice.trade.error = None;
-                slice.trade.searches_used = used;
             });
         }
-        TriggerAction::PublishCached => {
-            let hash = query.map(|q| q.hash.clone());
-            let url = link(query);
-            let url_anchors = link_anchors(query);
-            publish(app, |slice| {
-                slice.trade.status = MercTradeStatus::Done;
-                slice.trade.query_hash = hash;
-                slice.trade.url = url;
-                slice.trade.url_anchors = url_anchors;
-                slice.trade.result = cached;
-                slice.trade.error = None;
-                slice.trade.searches_used = used;
-            });
-        }
-        // Deliberately nothing: the loop's next iteration re-evaluates, and the
-        // debounce is measured off `session.last_change_ms`, not off a timer
-        // this arm would have to own. Publishing an interim status here would
-        // also flicker the page once per hover-confirm.
-        TriggerAction::Debounce => {}
-        TriggerAction::Enqueue => {
-            let Some(query) = query else { return };
-            let hash = query.hash.clone();
-            let url = link(Some(query));
-            let url_anchors = link_anchors(Some(query));
-            publish(app, |slice| {
-                slice.trade.status = MercTradeStatus::Queued;
-                slice.trade.query_hash = Some(hash);
-                slice.trade.url = url;
-                slice.trade.url_anchors = url_anchors;
-                // The hash moved, so whatever was on the slice answered a
-                // different question. Keeping it would show one mercenary's
-                // prices under another's link.
-                slice.trade.result = None;
-                slice.trade.error = None;
-                slice.trade.searches_used = used;
-            });
-            spawn_lookup(app, label_for(capture), query.clone());
-        }
-        // Out of searches. The link is the answer for this hash — the user can
-        // follow it and see the market the app stopped asking about.
-        //
-        // `error` is cleared like everywhere else. [`decide`] treats a session
-        // in `Error` as having acted on nothing, so this can fire on the very
-        // hash the last attempt failed on — but the status published here is
-        // `Idle`, and `error` is only ever set alongside
-        // [`MercTradeStatus::Error`] (`mercenary/mod.rs`'s `MercTradeState`).
-        // Leaving the message attached to an `Idle` slice would put a failure
-        // under a link that works.
-        TriggerAction::UrlOnly => {
-            let hash = query.map(|q| q.hash.clone());
-            publish(app, |slice| {
-                slice.trade.status = MercTradeStatus::Idle;
-                slice.trade.query_hash = hash;
-                slice.trade.url = link(query);
-                slice.trade.url_anchors = link_anchors(query);
-                slice.trade.result = None;
-                slice.trade.error = None;
-                slice.trade.searches_used = used;
-            });
+        TriggerAction::PublishLink => {
+            let (Some(query), Some(league)) = (query, league.as_deref()) else { return };
+            publish(app, |slice| publish_link(&mut slice.trade, league, query));
         }
     }
+}
+
+/// Write `query`'s browser links onto the slice's trade state.
+fn publish_link(trade: &mut crate::mercenary::MercTradeState, league: &str, query: &CaptureQuery) {
+    trade.status = MercTradeStatus::Idle;
+    trade.query_hash = Some(query.hash.clone());
+    trade.url = Some(capture_url(league, query));
+    trade.url_anchors = Some(capture_url_anchors(league, query));
+    trade.result = None;
+    trade.error = None;
 }
 
 /// Close a session: the recruit window retired, so nothing is coming.
@@ -1352,11 +1047,8 @@ pub fn tick(
 /// `Idle` in the same breath, and doing that from `Done` would throw away the
 /// retired capture's answer.
 ///
-/// The publish is what the cancelled lookup's own task then defers to: it
-/// leaves the status alone unless the slice is still reading `Queued` or
-/// `Searching` (see [`spawn_lookup`]). That task can also get there FIRST, in
-/// the gap between the cancel and the publish, which is why the publish clears
-/// `error` as well as setting the status.
+/// The publish clears `error` as well as setting the status, so no cancelled
+/// message is left on a slice that reads `Idle`.
 ///
 /// `trade` itself stays on the slice: the page goes on showing the retired
 /// capture's verdict (`run::miss`), and the listings are part of that verdict.
@@ -1381,314 +1073,14 @@ pub fn close_session(app: &AppHandle) {
     }
 }
 
-/// Run one merc lookup on the shared trade queue and publish what comes back.
-///
-/// Deliberately NOT the `trade_lookup` command: that one POSTs every result to
-/// `/api/trade/submit` for the server's shared gem cache (`lib.rs`), keyed by
-/// (gem, variant), and a mercenary search has neither. This path reaches
-/// `TradeApiClient` directly, so there is no branch in it that could ever get
-/// there.
-fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
-    let league = app.state::<AppState>().ssot.lock()
-        .unwrap_or_else(|e| e.into_inner()).league.name.clone();
-    let divine_rate = *app
-        .state::<AppState>()
-        .merc.divine_rate
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let hash = query.hash.clone();
-        let emit_app = app.clone();
-        let emit_hash = hash.clone();
-        let outcome = {
-            let state = app.state::<AppState>();
-            state
-                .trade_client
-                .lookup_query(league, TradeSource::Mercenary, &label, query.body.clone(), |event| {
-                    // `Fetching` is the queue saying the request is going out
-                    // now — the difference between "waiting behind the rate
-                    // limiter" and "asking GGG", which is the whole reason the
-                    // page shows two states.
-                    if matches!(event, TradeQueueEvent::Fetching { .. }) {
-                        publish(&emit_app, |slice| {
-                            note_fetching(&mut slice.trade, &emit_hash)
-                        });
-                    }
-                    use tauri::Emitter;
-                    if let Err(e) = emit_app.emit("trade-queue", &event) {
-                        log::warn!("emit trade-queue failed: {}", e);
-                    }
-                })
-                .await
-        };
-
-        match outcome {
-            // `Done` on the queue means the FETCH succeeded, not that the
-            // lookup did — the terminal state is derived here, from the value.
-            Ok(raw) => {
-                let (result, skipped) = to_result(raw, &query, now_ms(), divine_rate);
-                if skipped > 0 {
-                    crate::app_log(
-                        &app,
-                        format!(
-                            "Merc trade: {skipped} listing(s) of {label} could not be read and were left out"
-                        ),
-                    );
-                }
-                {
-                    let state = app.state::<AppState>();
-                    let mut cache = state
-                        .merc.trade_cache
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
-                    cache_insert(&mut cache, now_ms(), result.clone());
-                }
-                // The CHEAPEST LISTING, in the seller's own currency — the first
-                // row of a `sort.price=asc` fetch. Keep the seller's ask in
-                // logs even when the conversion rate is unavailable.
-                let cheapest = result
-                    .listings
-                    .first()
-                    .map(|l| format!("{} {}", l.amount, l.currency))
-                    .unwrap_or_else(|| "none".to_string());
-                crate::app_log(
-                    &app,
-                    format!(
-                        "Merc trade: {label} — {} listed, {} shown, cheapest {cheapest}{}",
-                        result.total,
-                        result.listings.len(),
-                        if result.truncated { " (truncated query)" } else { "" },
-                    ),
-                );
-                publish(&app, |slice| accept_result(&mut slice.trade, &hash, result));
-            }
-            // A cancel is not logged as a failure; what it does to the slice
-            // is [`accept_error`]'s rule, stated there.
-            Err(e) => {
-                if e != CANCELLED {
-                    // The "not retried" half is the part a live log has to
-                    // carry: a rejected query looks identical to a transient
-                    // failure in the log line, and the two differ in whether
-                    // the session's remaining budget is about to be spent.
-                    crate::app_log(
-                        &app,
-                        format!(
-                            "Merc trade error: {label} — {e}{}",
-                            if crate::trade::is_client_error(&e) {
-                                " (rejected by GGG; not retried)"
-                            } else {
-                                ""
-                            },
-                        ),
-                    );
-                }
-                publish(&app, |slice| accept_error(&mut slice.trade, &hash, e));
-            }
-        }
-    });
-}
-
 /// Whether this status still has a lookup outstanding on the shared queue.
 ///
-/// The two questions both callers ask: [`close_session`] cancels only from
-/// here (for the reason stated there), and [`accept_error`] absorbs a
-/// `cancelled` only from here, because anywhere else something has already
-/// settled the slice.
+/// [`close_session`] cancels only from here, for the reason stated there.
 fn awaiting_lookup(status: MercTradeStatus) -> bool {
     matches!(
         status,
         MercTradeStatus::Queued | MercTradeStatus::Searching
     )
-}
-
-/// The queue says this lookup's request is going out now.
-///
-/// The hash guard is what keeps a slow lookup from relabelling the capture
-/// that replaced it, and the `Queued` guard keeps the event from reviving a
-/// session something else has already finished, cancelled or failed.
-fn note_fetching(trade: &mut crate::mercenary::MercTradeState, hash: &str) {
-    if trade.query_hash.as_deref() == Some(hash) && trade.status == MercTradeStatus::Queued {
-        trade.status = MercTradeStatus::Searching;
-    }
-}
-
-/// A lookup came back with listings.
-///
-/// A result that no longer answers the slice's question is dropped whole: the
-/// capture moved on while this was in flight (a hover-confirm, a rematch, a
-/// tier-floor change), and showing one mercenary's prices under another's link
-/// is worse than showing none.
-fn accept_result(
-    trade: &mut crate::mercenary::MercTradeState,
-    hash: &str,
-    result: MercTradeResult,
-) {
-    if trade.query_hash.as_deref() != Some(hash) {
-        return;
-    }
-    trade.status = MercTradeStatus::Done;
-    trade.result = Some(result);
-    trade.error = None;
-}
-
-/// A lookup came back with an error.
-///
-/// Dropped on a stale hash for the same reason a result is. A cancel normally
-/// comes with its own publish — [`close_session`] sets `Idle` before this task
-/// wakes — so the canceller owns the state and this leaves it alone. The one
-/// case it must NOT leave alone is a slice still reading `Queued`/`Searching`:
-/// the cancel epoch can stop a lookup whose session never published anything
-/// about it (a cancel landing between the enqueue and the snapshot), and
-/// without this that session waits for a result that is never coming.
-///
-/// A 4xx is recorded as terminal for this hash. GGG rejected the body, so the
-/// same body gets the same rejection, and [`decide`] must not spend the rest of
-/// the session's budget re-learning it (see that function's `Error` clause).
-/// `terminal_hash` is set only on the rejecting hash and never cleared: it
-/// names the query it is about, so a capture that moves on is unaffected.
-fn accept_error(trade: &mut crate::mercenary::MercTradeState, hash: &str, error: String) {
-    if trade.query_hash.as_deref() != Some(hash) {
-        return;
-    }
-    if error == CANCELLED && !awaiting_lookup(trade.status) {
-        return;
-    }
-    if crate::trade::is_client_error(&error) {
-        trade.terminal_hash = Some(hash.to_string());
-    }
-    trade.status = MercTradeStatus::Error;
-    trade.error = Some(error);
-    trade.result = None;
-}
-
-/// Shape one [`RawSearch`] into the result the slice carries, plus how many
-/// fetch entries could not be read.
-///
-/// A malformed entry is DROPPED rather than failing the lookup, unlike the gem
-/// path: the search has already been paid for out of a budget of three, and
-/// nine good listings are a better answer than an error. The count is returned
-/// so the loss is logged rather than silent.
-///
-/// The webview supplies the lookup's divine rate snapshot. Without a usable
-/// rate, divine listings remain visible in seller currency and the result's
-/// chaos statistics are unavailable. Seller amounts and GGG row order survive
-/// conversion unchanged.
-fn to_result(
-    raw: RawSearch,
-    query: &CaptureQuery,
-    fetched_at_ms: u64,
-    divine_rate: Option<f64>,
-) -> (MercTradeResult, usize) {
-    let seen = raw.items.len();
-    let divine_rate = divine_rate.filter(|rate| rate.is_finite() && *rate > 0.0);
-    let listings: Vec<MercTradeListing> =
-        raw.items.iter().filter_map(|item| parse_listing(item, divine_rate)).collect();
-    let skipped = seen - listings.len();
-    let chaos: Option<Vec<f64>> = listings.iter().map(|l| l.chaos_price).collect();
-    (
-        MercTradeResult {
-            query_hash: query.hash.clone(),
-            league: raw.league,
-            total: raw.total,
-            floor_chaos: chaos.as_ref().map(|prices| crate::trade::signals::floor_chaos_price(prices)),
-            median_chaos: chaos.as_ref().map(|prices| crate::trade::signals::median_chaos_price(prices)),
-            listings,
-            fetched_at_ms,
-            // Only a dropped CELL. Dropping the app's own tier loosening
-            // ([`CaptureQuery::loosening_dropped`]) leaves a query that asks
-            // for exactly what the panel showed, so there is nothing about it
-            // to caveat — telling the user it is "looser than the capture"
-            // would be false.
-            truncated: query.cells_dropped,
-        },
-        skipped,
-    )
-}
-
-/// One GGG fetch entry as a mercenary listing, or `None` when the fields a
-/// price needs are missing.
-///
-/// Read off the JSON rather than through a typed struct because the gem path's
-/// (`trade::client::GggFetchEntry`) is private to that module and gem-shaped —
-/// it parses item properties for level and quality, which a mercenary has none
-/// of. Only `amount` and `currency` are required: an entry without a price
-/// cannot join a floor or a median, while a missing account or timestamp costs
-/// the row a label and nothing else.
-fn parse_listing(item: &Value, divine_rate: Option<f64>) -> Option<MercTradeListing> {
-    let listing = item.get("listing")?;
-    let price = listing.get("price")?;
-    let amount = price.get("amount")?.as_f64()?;
-    let currency = price.get("currency")?.as_str()?.to_string();
-    let account = listing
-        .get("account")
-        .and_then(|a| a.get("name"))
-        .and_then(|n| n.as_str())
-        .unwrap_or_default()
-        .to_string();
-    let indexed_at = listing
-        .get("indexed")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
-    Some(MercTradeListing {
-        chaos_price: if currency == "divine" {
-            divine_rate.map(|rate| crate::trade::signals::normalize_to_chaos(amount, &currency, rate))
-        } else {
-            Some(amount)
-        },
-        currency,
-        amount,
-        account,
-        indexed_at,
-    })
-}
-
-/// The merc result cache behind `AppState.merc.trade_cache`, keyed by
-/// `(league, query hash)` and carrying the unix ms each result was fetched at.
-///
-/// Named here rather than spelled out at the field, so the key stays one
-/// decision: the two functions below are the only readers and writers.
-pub type MercResultCache = std::collections::HashMap<(String, String), (u64, MercTradeResult)>;
-
-/// The cached result for this league's `hash`, if one is still young enough to
-/// serve.
-///
-/// The league is half the key because the hash is not computed over it —
-/// [`build_capture_query`] hashes the request BODY, and the league only ever
-/// appears as a path segment ([`capture_url`]). Keyed on the hash alone, a
-/// league switch inside [`RESULT_TTL_MS`] would answer the new league's link
-/// with the old economy's prices.
-///
-/// Takes the map rather than the `AppState` that owns it: the caller holds the
-/// lock for exactly its own read, and the age rule and the key are then
-/// testable without an app handle.
-fn cache_get(
-    cache: &MercResultCache,
-    league: &str,
-    hash: &str,
-    now_ms: u64,
-) -> Option<MercTradeResult> {
-    cache
-        .get(&(league.to_string(), hash.to_string()))
-        .filter(|(at, _)| now_ms.saturating_sub(*at) < RESULT_TTL_MS)
-        .map(|(_, result)| result.clone())
-}
-
-/// Store a result under its own league and hash, dropping every entry that has
-/// aged out.
-///
-/// The league comes off the RESULT rather than off the request: `raw.league` is
-/// what GGG answered in, so a result can never be filed under a league it does
-/// not describe.
-///
-/// Pruned on insert rather than on a timer: the map only ever grows on this
-/// path, so the write is the one moment it is worth walking, and a user who
-/// captures nothing pays nothing.
-fn cache_insert(cache: &mut MercResultCache, now_ms: u64, result: MercTradeResult) {
-    cache.retain(|_, (at, _)| now_ms.saturating_sub(*at) < RESULT_TTL_MS);
-    let key = (result.league.clone(), result.query_hash.clone());
-    cache.insert(key, (now_ms, result));
 }
 
 // ---------------------------------------------------------------------------
@@ -1705,38 +1097,12 @@ pub fn merc_set_divine_rate(divine_rate: Option<f64>, app: AppHandle) {
         .unwrap_or_else(|e| e.into_inner()) = divine_rate;
 }
 
-/// Turn the captured mercenary's auto-search on or off.
-///
-/// Same shape as `merc_set_sources_off`: written to the owner, persisted, and
-/// nudged out — the value is composed onto the merc slice at read time, so
-/// there is no slice field to write and no second copy to keep in step.
-#[tauri::command]
-pub fn merc_set_trade_auto(auto: bool, app: AppHandle) -> Result<(), String> {
-    {
-        let state = app.state::<AppState>();
-        *state
-            .merc.trade_auto
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = auto;
-    }
-    crate::persist_settings(&app);
-    crate::ssot::emit_ssot(&app);
-    crate::app_log(
-        &app,
-        format!(
-            "Merc: trade auto-search {}",
-            if auto { "on" } else { "off" }
-        ),
-    );
-    Ok(())
-}
-
 /// Set the lowest support tier the captured search accepts (1..=3).
 ///
 /// The rejection is returned AND logged, like every other merc/temple setter:
 /// an `Err` alone leaves no trace a shipped build can read. Changing the floor
-/// changes the query, so the loop's next tick sees a new hash and re-searches
-/// — bounded by the session's remaining budget.
+/// changes the query, so the loop's next tick sees a new hash and republishes
+/// the link.
 #[tauri::command]
 pub fn merc_set_tier_floor(floor: u8, app: AppHandle) -> Result<(), String> {
     let accepted = match super::validate_tier_floor(floor) {
@@ -2935,7 +2301,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // The trigger policy
+    // The link policy
     // -----------------------------------------------------------------------
 
     fn query_of(tag: &str) -> CaptureQuery {
@@ -2950,755 +2316,118 @@ mod tests {
         }
     }
 
-    /// The ordinary input: auto on, league known, nothing cached.
+    /// The ordinary input: a buildable query and a resolved league.
     fn live(query: &CaptureQuery) -> TriggerInput<'_> {
-        TriggerInput {
-            auto: true,
-            query: Some(query),
-            league_resolved: true,
-            cached: false,
-        }
+        TriggerInput { query: Some(query), league_resolved: true }
     }
 
-    /// Hand the session a query and let the debounce window pass, returning
-    /// what it settles on. Only valid where the first call debounces.
-    fn after_debounce(
-        session: &mut MercTradeSession,
-        query: &CaptureQuery,
-        at: u64,
-    ) -> TriggerAction {
+    /// A ready capture whose hash moves (hover-confirms, tier-floor changes)
+    /// across many ticks gets its link published once per hash, and nothing
+    /// else: every verdict is a slice write, none is a request.
+    #[test]
+    fn a_ready_capture_publishes_its_link_once_per_hash_across_many_ticks() {
+        let mut session = MercTradeSession::new();
+        let mut actions = Vec::new();
+        for tag in ["a", "b", "c"] {
+            let query = query_of(tag);
+            for _ in 0..50 {
+                actions.push(decide(&mut session, live(&query)));
+            }
+        }
+
+        let published: Vec<usize> = actions
+            .iter()
+            .enumerate()
+            .filter(|(_, action)| **action == TriggerAction::PublishLink)
+            .map(|(at, _)| at)
+            .collect();
+        assert_eq!(published, [0, 50, 100], "one link publish per hash");
         assert_eq!(
-            decide(session, live(query), at),
-            TriggerAction::Debounce,
-            "precondition: a query that has just moved is not acted on",
+            actions.iter().filter(|a| **a == TriggerAction::None).count(),
+            147,
+            "every other tick leaves the slice alone",
         );
-        decide(session, live(query), at + DEBOUNCE_MS)
     }
 
-    /// Every hover-confirm moves the hash. Searching each one would spend the
-    /// session's whole budget correcting a single capture, so the changes
-    /// coalesce: only the query that stopped moving is searched for.
+    /// No league, no link: the trade site cannot be addressed without one, and
+    /// guessing comps the capture against another economy.
     #[test]
-    fn several_hash_changes_inside_the_debounce_window_cost_one_search() {
-        let mut session = MercTradeSession::new();
-        let (first, second, third) = (query_of("a"), query_of("b"), query_of("c"));
-
-        assert_eq!(decide(&mut session, live(&first), 0), TriggerAction::Debounce);
-        assert_eq!(decide(&mut session, live(&second), 500), TriggerAction::Debounce);
-        assert_eq!(decide(&mut session, live(&third), 1_000), TriggerAction::Debounce);
-        assert_eq!(decide(&mut session, live(&third), 3_000), TriggerAction::Enqueue);
-
-        assert_eq!(session.searches_used, 1, "three corrections, one search");
-    }
-
-    /// The loop asks ten times a second. A hash already answered asks for
-    /// nothing at all — not a re-publish, and certainly not a second search.
-    #[test]
-    fn a_hash_the_session_has_already_acted_on_asks_for_nothing() {
-        let mut session = MercTradeSession::new();
-        let query = query_of("a");
-        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
-
-        assert_eq!(decide(&mut session, live(&query), 9_000), TriggerAction::None);
-        assert_eq!(session.searches_used, 1);
-    }
-
-    /// The ceiling: after three searches the session stops asking GGG and
-    /// hands the user the link instead.
-    #[test]
-    fn the_fourth_query_of_a_session_is_answered_with_the_link_instead_of_a_search() {
-        let mut session = MercTradeSession::new();
-        let queries = [query_of("a"), query_of("b"), query_of("c"), query_of("d")];
-        let mut at = 0;
-        for query in &queries[..MAX_SEARCHES as usize] {
-            assert_eq!(after_debounce(&mut session, query, at), TriggerAction::Enqueue);
-            at += 10_000;
-        }
-
-        let action = after_debounce(&mut session, &queries[3], at);
-
-        assert_eq!(action, TriggerAction::UrlOnly);
-        assert_eq!(session.searches_used, MAX_SEARCHES, "the ceiling holds");
-    }
-
-    /// A re-detected window asks the same question as the one that retired;
-    /// the cache answers it for free, so the fresh budget stays unspent.
-    #[test]
-    fn a_cached_hash_is_published_without_spending_a_search() {
-        let mut session = MercTradeSession::new();
-        let query = query_of("a");
-
-        let action = decide(
-            &mut session,
-            TriggerInput { cached: true, ..live(&query) },
-            0,
-        );
-
-        assert_eq!(action, TriggerAction::PublishCached);
-        assert_eq!(session.searches_used, 0, "a cache hit is not a search");
-    }
-
-    /// The user's toggle. Published once — the caller asks at the capture
-    /// loop's cadence, and a re-publish is a slice clone ten times a second.
-    #[test]
-    fn auto_off_publishes_idle_once() {
-        let mut session = MercTradeSession::new();
-        let query = query_of("a");
-        let off = TriggerInput { auto: false, ..live(&query) };
-
-        assert_eq!(decide(&mut session, off, 0), TriggerAction::SetIdle);
-        assert_eq!(decide(&mut session, off, 100), TriggerAction::None);
-    }
-
-    /// No league, no search: the trade site cannot be addressed without one,
-    /// and guessing comps the capture against another economy.
-    #[test]
-    fn an_unresolved_league_waits_instead_of_searching() {
+    fn an_unresolved_league_waits_once_then_publishes_the_link_when_it_resolves() {
         let mut session = MercTradeSession::new();
         let query = query_of("a");
         let no_league = TriggerInput { league_resolved: false, ..live(&query) };
 
-        assert_eq!(decide(&mut session, no_league, 0), TriggerAction::SetWaitingLeague);
-        assert_eq!(decide(&mut session, no_league, 100), TriggerAction::None);
-        assert_eq!(session.searches_used, 0);
+        assert_eq!(decide(&mut session, no_league), TriggerAction::SetWaitingLeague);
+        assert_eq!(decide(&mut session, no_league), TriggerAction::None);
+        assert_eq!(decide(&mut session, live(&query)), TriggerAction::PublishLink);
     }
 
-    /// A capture that stops being expressible has to clear its link and
-    /// listings, and only the `NoQuery` refusal does that. Deduplicating it
-    /// against a standing auto-off would leave the previous capture's answer
-    /// on screen.
+    /// A capture that stops being expressible clears its link once, and a
+    /// query that comes back republishes its link even on an old hash.
     #[test]
-    fn a_capture_that_stops_being_expressible_publishes_again_under_a_standing_auto_off() {
+    fn a_capture_that_stops_being_expressible_clears_its_link_once() {
         let mut session = MercTradeSession::new();
         let query = query_of("a");
-        assert_eq!(
-            decide(&mut session, TriggerInput { auto: false, ..live(&query) }, 0),
-            TriggerAction::SetIdle,
-        );
+        let none = TriggerInput { query: None, league_resolved: true };
+        assert_eq!(decide(&mut session, live(&query)), TriggerAction::PublishLink);
 
-        let action = decide(
-            &mut session,
-            TriggerInput { auto: false, query: None, ..live(&query) },
-            1_000,
-        );
-
-        assert_eq!(action, TriggerAction::SetIdle, "the clear must not be swallowed");
+        assert_eq!(decide(&mut session, none), TriggerAction::SetIdle);
+        assert_eq!(decide(&mut session, none), TriggerAction::None);
+        assert_eq!(decide(&mut session, live(&query)), TriggerAction::PublishLink);
     }
 
-    /// A failed lookup is not an answer, so the hash it failed on is not one
-    /// either: a later publish retries it — against the same ceiling.
-    ///
-    /// The retry has to arrive: the failure moves the debounce clock once, and
-    /// a version that moved it on every tick that observes `Error` would sit
-    /// behind a window that never closes.
+    /// A2 (POE-392): the merc trade affordance is the browser link, so a ready
+    /// capture's slice carries both rendered links for its own hash.
     #[test]
-    fn the_hash_a_lookup_failed_on_is_searched_again() {
-        let mut session = MercTradeSession::new();
+    fn a_published_link_carries_the_capture_urls_for_its_hash() {
         let query = query_of("a");
-        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
-
-        session.state = MercTradeStatus::Error;
-
-        assert_eq!(after_debounce(&mut session, &query, 9_000), TriggerAction::Enqueue);
-        assert_eq!(session.searches_used, 2, "a retry is still a search");
-    }
-
-    /// A 4xx is GGG's verdict on the body, not a hiccup: the same query earns
-    /// the same rejection, and every 4xx counts toward GGG's separate
-    /// invalid-request ban. Before this rule the live log showed three 400
-    /// "Query is too complex" inside six seconds — a whole session budget spent
-    /// re-learning one answer.
-    #[test]
-    fn the_hash_ggg_rejected_is_never_searched_again() {
-        let mut session = MercTradeSession::new();
-        let query = query_of("a");
-        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
-        let mut trade = waiting_on(&query.hash, MercTradeStatus::Searching);
-
-        accept_error(
-            &mut trade,
-            &query.hash,
-            "Trade search failed (400): Query is too complex".to_string(),
-        );
-        session.state = trade.status;
-        session.terminal_hash = trade.terminal_hash.clone();
-
-        assert_eq!(decide(&mut session, live(&query), 9_000), TriggerAction::None);
-        assert_eq!(decide(&mut session, live(&query), 20_000), TriggerAction::None);
-        assert_eq!(
-            session.searches_used, 1,
-            "the rest of the budget must not go on a query GGG will reject again",
-        );
-    }
-
-    /// The other side of the same branch: a 503 is the server having a bad
-    /// moment and says nothing about the body, so the debounced retry stands.
-    /// The only difference from the test above is the status in the message.
-    #[test]
-    fn the_hash_a_server_error_failed_on_is_searched_again() {
-        let mut session = MercTradeSession::new();
-        let query = query_of("a");
-        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
-        let mut trade = waiting_on(&query.hash, MercTradeStatus::Searching);
-
-        accept_error(
-            &mut trade,
-            &query.hash,
-            "Trade search failed (503): upstream unavailable".to_string(),
-        );
-        session.state = trade.status;
-        session.terminal_hash = trade.terminal_hash.clone();
-
-        assert_eq!(after_debounce(&mut session, &query, 9_000), TriggerAction::Enqueue);
-        assert_eq!(session.searches_used, 2, "a transient failure is still worth a retry");
-    }
-
-    /// The rejection is remembered for the ONE body it is about. A hover-confirm
-    /// asks a different question, and THAT question's own transient failure
-    /// must still earn the debounced retry: a session that remembered merely
-    /// that something had been rejected would stay silent for the rest of its
-    /// life.
-    #[test]
-    fn a_rejection_is_remembered_for_its_own_hash_only() {
-        let mut session = MercTradeSession::new();
-        let rejected = query_of("a");
-        assert_eq!(after_debounce(&mut session, &rejected, 0), TriggerAction::Enqueue);
-        let mut trade = waiting_on(&rejected.hash, MercTradeStatus::Searching);
-        accept_error(
-            &mut trade,
-            &rejected.hash,
-            "Trade search failed (400): Query is too complex".to_string(),
-        );
-        session.state = trade.status;
-        session.terminal_hash = trade.terminal_hash.clone();
-
-        // A hover-confirm corrects a cell. The new query is searched for, and
-        // this one comes back with a 503 — transient, and about a hash the
-        // rejection was never about.
-        let corrected = query_of("b");
-        assert_eq!(after_debounce(&mut session, &corrected, 9_000), TriggerAction::Enqueue);
-        trade.query_hash = Some(corrected.hash.clone());
-        trade.status = MercTradeStatus::Searching;
-        accept_error(
-            &mut trade,
-            &corrected.hash,
-            "Trade search failed (503): upstream unavailable".to_string(),
-        );
-        session.state = trade.status;
-        session.terminal_hash = trade.terminal_hash.clone();
-
-        assert_eq!(after_debounce(&mut session, &corrected, 20_000), TriggerAction::Enqueue);
-        assert_eq!(session.searches_used, 3, "the corrected query keeps its own retry");
-    }
-
-    /// A rejected hash the session has never itself acted on is still refused.
-    /// `terminal_hash` is the whole reason the refusal is a gate and not a
-    /// qualifier on the `Error` clause: this session has no `Error` and no
-    /// `last_hash` to reason from, and the answer is the same anyway.
-    #[test]
-    fn a_hash_rejected_before_this_session_existed_is_refused_by_it_too() {
-        let query = query_of("a");
-        // Everything a retire-then-re-detect resets: budget, hashes, state. The
-        // slice's `terminal_hash` is what survives it, so `tick` re-reads it
-        // onto the fresh session.
-        let mut fresh = MercTradeSession {
-            terminal_hash: Some(query.hash.clone()),
-            ..MercTradeSession::new()
-        };
-
-        assert_eq!(decide(&mut fresh, live(&query), 0), TriggerAction::None);
-        assert_eq!(decide(&mut fresh, live(&query), 30_000), TriggerAction::None);
-        assert_eq!(
-            fresh.searches_used, 0,
-            "a new session must not re-learn a rejection the slice already carries",
-        );
-    }
-
-    /// Switching the toggle off and back on clears `last_hash` — deliberately,
-    /// so a real answer is re-published. The rejection gate sits after that
-    /// clear for exactly this case: without it the re-decide reads as a fresh
-    /// hash and spends a search on the body GGG has already refused.
-    #[test]
-    fn a_rejected_hash_is_not_re_sent_when_the_auto_search_goes_off_and_on() {
-        let mut session = MercTradeSession::new();
-        let query = query_of("a");
-        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
-        let mut trade = waiting_on(&query.hash, MercTradeStatus::Searching);
-        accept_error(
-            &mut trade,
-            &query.hash,
-            "Trade search failed (400): Query is too complex".to_string(),
-        );
-        session.state = trade.status;
-        session.terminal_hash = trade.terminal_hash.clone();
-
-        assert_eq!(
-            decide(&mut session, TriggerInput { auto: false, ..live(&query) }, 5_000),
-            TriggerAction::SetIdle,
-        );
-
-        assert_eq!(decide(&mut session, live(&query), 20_000), TriggerAction::None);
-        assert_eq!(
-            session.searches_used, 1,
-            "the toggle is not a way to spend the budget on a rejected body",
-        );
-    }
-
-    /// The gate is keyed on the HASH, not on "something was rejected". A
-    /// capture that moves on is a different question and gets its search.
-    #[test]
-    fn a_hash_the_rejection_is_not_about_is_still_enqueued() {
-        let rejected = query_of("a");
-        let mut session = MercTradeSession {
-            terminal_hash: Some(rejected.hash.clone()),
-            ..MercTradeSession::new()
-        };
-
-        let corrected = query_of("b");
-
-        assert_eq!(after_debounce(&mut session, &corrected, 0), TriggerAction::Enqueue);
-        assert_eq!(session.searches_used, 1);
-    }
-
-    /// …but not immediately. The lookup task publishes `Error` and the capture
-    /// loop comes back 100 ms later, so a retry that ignored the debounce
-    /// would spend the whole three-search budget on one transient failure
-    /// inside half a second.
-    #[test]
-    fn a_retry_waits_out_the_debounce_window_the_failure_started() {
-        let mut session = MercTradeSession::new();
-        let query = query_of("a");
-        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
-
-        session.state = MercTradeStatus::Error;
-
-        assert_eq!(decide(&mut session, live(&query), 9_000), TriggerAction::Debounce);
-        assert_eq!(
-            decide(&mut session, live(&query), 9_000 + DEBOUNCE_MS - 1),
-            TriggerAction::Debounce,
-            "the window is measured from the failure, not from the last search",
-        );
-        assert_eq!(session.searches_used, 1, "nothing is spent inside the window");
-    }
-
-    /// Leaving a settled refusal re-decides from scratch. Without that, the
-    /// `Idle` published over the answer would stand for the rest of the
-    /// capture and switching the toggle back on would go silent.
-    #[test]
-    fn switching_the_auto_search_back_on_republishes_the_answer() {
-        let mut session = MercTradeSession::new();
-        let query = query_of("a");
-        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
-        assert_eq!(
-            decide(&mut session, TriggerInput { auto: false, ..live(&query) }, 5_000),
-            TriggerAction::SetIdle,
-        );
-
-        let action = decide(
-            &mut session,
-            TriggerInput { cached: true, ..live(&query) },
-            6_000,
-        );
-
-        assert_eq!(action, TriggerAction::PublishCached);
-    }
-
-    /// The budget belongs to the capture, not to the app run: the window that
-    /// replaces this one gets its own three searches.
-    #[test]
-    fn a_new_session_starts_with_a_full_search_budget() {
-        let mut spent = MercTradeSession::new();
-        let queries = [query_of("a"), query_of("b"), query_of("c"), query_of("d")];
-        let mut at = 0;
-        for query in &queries[..MAX_SEARCHES as usize] {
-            after_debounce(&mut spent, query, at);
-            at += 10_000;
-        }
-        assert_eq!(after_debounce(&mut spent, &queries[3], at), TriggerAction::UrlOnly);
-
-        let mut fresh = MercTradeSession::new();
-
-        assert_eq!(after_debounce(&mut fresh, &queries[3], at), TriggerAction::Enqueue);
-        assert_eq!(fresh.searches_used, 1);
-    }
-
-    // -----------------------------------------------------------------------
-    // What a finished lookup does to the slice
-    // -----------------------------------------------------------------------
-
-    fn raw_search(league: &str) -> RawSearch {
-        RawSearch {
-            query_id: "qid".to_string(),
-            total: 7,
-            items: Vec::new(),
-            league: league.to_string(),
-        }
-    }
-
-    #[test]
-    fn a_two_divine_merc_listing_uses_the_supplied_rate() {
-        let raw = RawSearch {
-            items: vec![json!({"listing": {"price": {"amount": 2, "currency": "divine"}}})],
-            ..raw_search("Allflame")
-        };
-
-        let (result, _) = to_result(raw, &query_of("a"), 123, Some(200.0));
-        let wire = serde_json::to_value(result).unwrap();
-
-        assert_eq!(wire["listings"][0]["chaosPrice"], json!(400.0));
-    }
-
-    #[test]
-    fn mixed_currency_merc_statistics_use_chaos_values() {
-        let raw = RawSearch {
-            items: vec![
-                json!({"listing": {"price": {"amount": 100, "currency": "chaos"}}}),
-                json!({"listing": {"price": {"amount": 1, "currency": "divine"}}}),
-                json!({"listing": {"price": {"amount": 2, "currency": "divine"}}}),
-            ],
-            ..raw_search("Allflame")
-        };
-
-        let (result, _) = to_result(raw, &query_of("a"), 123, Some(200.0));
-        let wire = serde_json::to_value(result).unwrap();
-
-        assert_eq!(wire["floorChaos"], json!(100.0));
-        assert_eq!(wire["medianChaos"], json!(200.0));
-    }
-
-    #[test]
-    fn missing_merc_rate_retains_listings_with_unavailable_statistics() {
-        let raw = RawSearch {
-            items: vec![
-                json!({"listing": {"price": {"amount": 100, "currency": "chaos"}}}),
-                json!({"listing": {"price": {"amount": 2, "currency": "divine"}}}),
-            ],
-            ..raw_search("Allflame")
-        };
-
-        let (result, skipped) = to_result(raw, &query_of("a"), 123, None);
-        let wire = serde_json::to_value(result).unwrap();
-
-        assert_eq!(wire["floorChaos"], Value::Null);
-        assert_eq!(wire["medianChaos"], Value::Null);
-        assert_eq!(skipped, 0);
-        assert_eq!(wire["listings"].as_array().unwrap().len(), 2);
-        assert_eq!(wire["listings"][0]["amount"], json!(100.0));
-        assert_eq!(wire["listings"][1]["amount"], json!(2.0));
-        assert_eq!(wire["listings"][1]["currency"], json!("divine"));
-        assert_eq!(wire["listings"][1]["chaosPrice"], Value::Null);
-    }
-
-    #[test]
-    fn zero_merc_rate_retains_listings_with_unavailable_statistics() {
-        let raw = RawSearch {
-            items: vec![
-                json!({"listing": {"price": {"amount": 100, "currency": "chaos"}}}),
-                json!({"listing": {"price": {"amount": 2, "currency": "divine"}}}),
-            ],
-            ..raw_search("Allflame")
-        };
-
-        let (result, skipped) = to_result(raw, &query_of("a"), 123, Some(0.0));
-        let wire = serde_json::to_value(result).unwrap();
-
-        assert_eq!(wire["listings"][1]["chaosPrice"], Value::Null);
-        assert_eq!(wire["floorChaos"], Value::Null);
-        assert_eq!(wire["medianChaos"], Value::Null);
-        assert_eq!(skipped, 0);
-        assert_eq!(wire["listings"].as_array().unwrap().len(), 2);
-        assert_eq!(wire["listings"][0]["amount"], json!(100.0));
-        assert_eq!(wire["listings"][0]["currency"], json!("chaos"));
-        assert_eq!(wire["listings"][0]["chaosPrice"], json!(100.0));
-        assert_eq!(wire["listings"][1]["amount"], json!(2.0));
-        assert_eq!(wire["listings"][1]["currency"], json!("divine"));
-    }
-
-    #[test]
-    fn negative_merc_rate_retains_listings_with_unavailable_statistics() {
-        let raw = RawSearch {
-            items: vec![
-                json!({"listing": {"price": {"amount": 100, "currency": "chaos"}}}),
-                json!({"listing": {"price": {"amount": 2, "currency": "divine"}}}),
-            ],
-            ..raw_search("Allflame")
-        };
-
-        let (result, skipped) = to_result(raw, &query_of("a"), 123, Some(-200.0));
-        let wire = serde_json::to_value(result).unwrap();
-
-        assert_eq!(wire["listings"][1]["chaosPrice"], Value::Null);
-        assert_eq!(wire["floorChaos"], Value::Null);
-        assert_eq!(wire["medianChaos"], Value::Null);
-        assert_eq!(skipped, 0);
-        assert_eq!(wire["listings"].as_array().unwrap().len(), 2);
-        assert_eq!(wire["listings"][0]["amount"], json!(100.0));
-        assert_eq!(wire["listings"][0]["currency"], json!("chaos"));
-        assert_eq!(wire["listings"][0]["chaosPrice"], json!(100.0));
-        assert_eq!(wire["listings"][1]["amount"], json!(2.0));
-        assert_eq!(wire["listings"][1]["currency"], json!("divine"));
-    }
-
-    #[test]
-    fn non_finite_merc_rate_retains_listings_with_unavailable_statistics() {
-        let raw = RawSearch {
-            items: vec![
-                json!({"listing": {"price": {"amount": 100, "currency": "chaos"}}}),
-                json!({"listing": {"price": {"amount": 2, "currency": "divine"}}}),
-            ],
-            ..raw_search("Allflame")
-        };
-
-        let (result, skipped) = to_result(raw, &query_of("a"), 123, Some(f64::NAN));
-        let wire = serde_json::to_value(result).unwrap();
-
-        assert_eq!(wire["listings"][1]["chaosPrice"], Value::Null);
-        assert_eq!(wire["floorChaos"], Value::Null);
-        assert_eq!(wire["medianChaos"], Value::Null);
-        assert_eq!(skipped, 0);
-        assert_eq!(wire["listings"].as_array().unwrap().len(), 2);
-        assert_eq!(wire["listings"][0]["amount"], json!(100.0));
-        assert_eq!(wire["listings"][0]["currency"], json!("chaos"));
-        assert_eq!(wire["listings"][0]["chaosPrice"], json!(100.0));
-        assert_eq!(wire["listings"][1]["amount"], json!(2.0));
-        assert_eq!(wire["listings"][1]["currency"], json!("divine"));
-    }
-
-    #[test]
-    fn fractional_divine_merc_price_is_rounded_to_a_tenth_of_chaos() {
-        let raw = RawSearch {
-            items: vec![json!({"listing": {"price": {"amount": 1.5, "currency": "divine"}}})],
-            ..raw_search("Allflame")
-        };
-
-        let (result, _) = to_result(raw, &query_of("a"), 123, Some(133.33));
-        let wire = serde_json::to_value(result).unwrap();
-
-        assert_eq!(wire["listings"][0]["chaosPrice"], json!(200.0));
-        assert_eq!(wire["floorChaos"], json!(200.0));
-        assert_eq!(wire["medianChaos"], json!(200.0));
-    }
-
-    /// The user is told the answer is looser than the panel only when the panel
-    /// is what was cut. A dropped support CELL is that; dropping the app's own
-    /// tier loosening is not — what survives it asks for exactly the supports
-    /// the capture read, so the caveat would be false.
-    #[test]
-    fn only_a_dropped_cell_marks_the_result_as_a_looser_query() {
-        let cells = CaptureQuery {
-            cells_dropped: true,
-            ..query_of("a")
-        };
-        let loosening = CaptureQuery {
-            loosening_dropped: true,
-            ..query_of("a")
-        };
-
-        let (from_cells, _) = to_result(raw_search("Allflame"), &cells, 0, None);
-        let (from_loosening, _) = to_result(raw_search("Allflame"), &loosening, 0, None);
-
-        assert!(from_cells.truncated, "a cell the capture read was dropped");
-        assert!(
-            !from_loosening.truncated,
-            "the query still asks for exactly what the panel showed",
-        );
-    }
-
-    fn merc_result(hash: &str) -> MercTradeResult {
-        MercTradeResult {
-            query_hash: hash.to_string(),
-            league: "Allflame".to_string(),
-            total: 7,
-            listings: Vec::new(),
-            floor_chaos: Some(0.0),
-            median_chaos: Some(0.0),
-            fetched_at_ms: 0,
-            truncated: false,
-        }
-    }
-
-    /// The cache's two contracts: what a hit is, and what ages out.
-    ///
-    /// `league` is on the key because the hash is not computed over it — the
-    /// query body names the mercenary, and nothing in it says which economy the
-    /// prices came from.
-    fn cached_in(league: &str, hash: &str) -> MercTradeResult {
-        MercTradeResult {
-            league: league.to_string(),
-            ..merc_result(hash)
-        }
-    }
-
-    #[test]
-    fn a_result_is_served_back_for_the_league_and_hash_it_was_stored_under() {
-        let mut cache = MercResultCache::new();
-        cache_insert(&mut cache, 1_000, cached_in("Allflame", "hash-a"));
-
-        let hit = cache_get(&cache, "Allflame", "hash-a", 2_000);
-
-        assert_eq!(hit, Some(cached_in("Allflame", "hash-a")));
-    }
-
-    /// The regression the league half of the key exists for: the same
-    /// mercenary hashes the same in every league, so a standard-league capture
-    /// would otherwise be answered with the temp league's prices for a quarter
-    /// of an hour.
-    #[test]
-    fn the_same_hash_in_another_league_is_not_a_cache_hit() {
-        let mut cache = MercResultCache::new();
-        cache_insert(&mut cache, 1_000, cached_in("Allflame", "hash-a"));
-
-        assert_eq!(cache_get(&cache, "Standard", "hash-a", 2_000), None);
-    }
-
-    /// The TTL is what stops a re-detected window from quoting a price the
-    /// market has moved past. Read at the boundary: one ms inside the window
-    /// still serves.
-    #[test]
-    fn a_result_older_than_the_ttl_is_not_served() {
-        let mut cache = MercResultCache::new();
-        cache_insert(&mut cache, 1_000, cached_in("Allflame", "hash-a"));
-
-        assert!(cache_get(&cache, "Allflame", "hash-a", 1_000 + RESULT_TTL_MS - 1).is_some());
-        assert_eq!(cache_get(&cache, "Allflame", "hash-a", 1_000 + RESULT_TTL_MS), None);
-    }
-
-    /// The map only grows on the insert path, so the insert is where it is
-    /// walked — an app left running all league would otherwise hold every
-    /// mercenary it ever comped.
-    #[test]
-    fn an_insert_drops_the_entries_that_have_aged_out() {
-        let mut cache = MercResultCache::new();
-        cache_insert(&mut cache, 1_000, cached_in("Allflame", "hash-old"));
-
-        cache_insert(
-            &mut cache,
-            1_000 + RESULT_TTL_MS,
-            cached_in("Allflame", "hash-new"),
-        );
-
-        assert_eq!(
-            cache.keys().collect::<Vec<_>>(),
-            [&("Allflame".to_string(), "hash-new".to_string())],
-        );
-    }
-
-    fn waiting_on(hash: &str, status: MercTradeStatus) -> MercTradeState {
-        MercTradeState {
-            status,
-            query_hash: Some(hash.to_string()),
+        let mut trade = MercTradeState {
+            status: MercTradeStatus::Idle,
+            query_hash: Some("hash-old".to_string()),
+            error: Some("old".to_string()),
             ..Default::default()
-        }
-    }
+        };
 
-    #[test]
-    fn a_result_for_the_hash_the_slice_is_waiting_on_lands_as_done() {
-        let mut trade = waiting_on("hash-a", MercTradeStatus::Searching);
-
-        accept_result(&mut trade, "hash-a", merc_result("hash-a"));
-
-        assert_eq!(trade.status, MercTradeStatus::Done);
-        assert_eq!(trade.result, Some(merc_result("hash-a")));
-    }
-
-    /// The capture moved on while the lookup was in flight — a hover-confirm,
-    /// a rematch, a tier-floor change. Showing those listings would put one
-    /// mercenary's prices under another's link.
-    #[test]
-    fn a_result_answering_a_question_the_capture_has_moved_on_from_is_discarded() {
-        let mut trade = waiting_on("hash-new", MercTradeStatus::Searching);
-
-        accept_result(&mut trade, "hash-old", merc_result("hash-old"));
-
-        assert_eq!(trade.status, MercTradeStatus::Searching, "the newer lookup still owns the slice");
-        assert_eq!(trade.result, None);
-    }
-
-    /// The retire published `Idle` before this task woke, so the canceller
-    /// owns the state. Writing `cancelled` over it would show a failure under
-    /// a link that works.
-    #[test]
-    fn a_cancel_that_lands_on_a_settled_slice_changes_nothing() {
-        let mut trade = waiting_on("hash-a", MercTradeStatus::Idle);
-
-        accept_error(&mut trade, "hash-a", CANCELLED.to_string());
+        publish_link(&mut trade, "Allflame", &query);
 
         assert_eq!(trade.status, MercTradeStatus::Idle);
+        assert_eq!(trade.query_hash.as_deref(), Some("hash-a"));
+        assert_eq!(trade.url, Some(capture_url("Allflame", &query)));
+        assert_eq!(trade.url_anchors, Some(capture_url_anchors("Allflame", &query)));
+        assert_eq!(trade.result, None);
         assert_eq!(trade.error, None);
     }
 
-    /// The case it must NOT leave alone: a cancel can stop a lookup whose
-    /// session never published anything about it, and that slice would
-    /// otherwise wait for a result that is never coming.
+    /// A1 (POE-392): no merc trade request leaves the desktop. Asserted over
+    /// the production source of the merc trade path because the dispatch is
+    /// deleted, not gated: there is no seam left to count calls through, so
+    /// re-adding a lookup call anywhere in these files is what fails here.
+    /// Comment lines are stripped and the test half is split off, as in the
+    /// submit-endpoint scan below.
     #[test]
-    fn a_cancel_that_lands_while_the_slice_still_waits_ends_the_wait() {
-        let mut trade = waiting_on("hash-a", MercTradeStatus::Queued);
-
-        accept_error(&mut trade, "hash-a", CANCELLED.to_string());
-
-        assert_eq!(trade.status, MercTradeStatus::Error);
-        assert_eq!(trade.error.as_deref(), Some(CANCELLED));
-    }
-
-    /// The deference is to CANCELS only. A real failure is reported wherever
-    /// the slice stands, or a lookup that errored after a cached publish would
-    /// leave stale listings looking live.
-    #[test]
-    fn a_real_failure_is_reported_over_a_settled_slice() {
-        let mut trade = waiting_on("hash-a", MercTradeStatus::Done);
-        trade.result = Some(merc_result("hash-a"));
-
-        accept_error(&mut trade, "hash-a", "Rate limited by GGG (429)".to_string());
-
-        assert_eq!(trade.status, MercTradeStatus::Error);
-        assert_eq!(trade.error.as_deref(), Some("Rate limited by GGG (429)"));
-        assert_eq!(trade.result, None, "the listings did not survive their own error");
-    }
-
-    #[test]
-    fn a_failure_answering_a_stale_hash_is_discarded() {
-        let mut trade = waiting_on("hash-new", MercTradeStatus::Queued);
-
-        accept_error(&mut trade, "hash-old", "boom".to_string());
-
-        assert_eq!(trade.status, MercTradeStatus::Queued);
-        assert_eq!(trade.error, None);
-    }
-
-    /// `Fetching` is the queue saying the request is going out now — the
-    /// difference between "waiting behind the rate limiter" and "asking GGG".
-    #[test]
-    fn the_fetching_event_moves_a_queued_lookup_to_searching() {
-        let mut trade = waiting_on("hash-a", MercTradeStatus::Queued);
-
-        note_fetching(&mut trade, "hash-a");
-
-        assert_eq!(trade.status, MercTradeStatus::Searching);
-    }
-
-    /// A slow lookup must not relabel the capture that replaced it.
-    #[test]
-    fn the_fetching_event_of_a_superseded_lookup_leaves_the_slice_alone() {
-        let mut trade = waiting_on("hash-new", MercTradeStatus::Queued);
-
-        note_fetching(&mut trade, "hash-old");
-
-        assert_eq!(trade.status, MercTradeStatus::Queued);
-    }
-
-    /// …nor revive a session something else has already finished or cancelled.
-    #[test]
-    fn the_fetching_event_does_not_revive_a_slice_that_is_no_longer_queued() {
-        let mut trade = waiting_on("hash-a", MercTradeStatus::Error);
-
-        note_fetching(&mut trade, "hash-a");
-
-        assert_eq!(trade.status, MercTradeStatus::Error);
+    fn the_mercenary_trade_path_sends_no_trade_request() {
+        for (file, source) in [
+            ("search.rs", include_str!("search.rs")),
+            ("run.rs", include_str!("run.rs")),
+            ("mod.rs", include_str!("mod.rs")),
+        ] {
+            let production = source.split("\n#[cfg(test)]").next().expect("a production half");
+            let code: String = production
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            for needle in ["lookup_query", "spawn_lookup", "trade_client.lookup", "trade_lookup"] {
+                assert!(
+                    !code.contains(needle),
+                    "mercenary/{file} must send no trade request ({needle})",
+                );
+            }
+        }
     }
 
     /// `Queued` and `Searching` are the two statuses with something on the
-    /// shared queue, and the predicate is what `close_session` cancels from and
-    /// what [`accept_error`] absorbs a `cancelled` from.
+    /// shared queue, and the predicate is what `close_session` cancels from.
     #[test]
     fn a_lookup_is_outstanding_while_the_slice_reads_queued_or_searching() {
         assert!(awaiting_lookup(MercTradeStatus::Queued));

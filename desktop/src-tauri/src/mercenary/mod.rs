@@ -151,8 +151,10 @@ pub enum MercStatus {
     Unavailable,
 }
 
-/// Where the merc trade auto-search stands, as the page and the overlay read
-/// it (POE-202).
+/// Where the merc trade link stands, as the page and the overlay read it
+/// (POE-202). Since POE-392 the desktop sends no merc trade request, so only
+/// `Off`, `Idle` and `WaitingLeague` are published; the other variants stay
+/// for the wire shape.
 ///
 /// Lives here rather than in `search.rs` because it is a SLICE type: the
 /// windows read it off [`MercenarySlice::trade`], and every other wire type
@@ -163,8 +165,7 @@ pub enum MercStatus {
 pub enum MercTradeStatus {
     /// The module is off — nothing to say.
     Off,
-    /// Nothing to search: no capture, no query, or the user turned the
-    /// auto-search off.
+    /// No capture or no query, or the link is published.
     Idle,
     /// A query exists but the league is not resolved yet, so nothing was
     /// enqueued. Distinct from `Error`: nothing failed, the app just cannot
@@ -220,32 +221,18 @@ pub struct MercTradeState {
     /// Why the last lookup failed. Set only alongside
     /// [`MercTradeStatus::Error`].
     pub error: Option<String>,
-    /// The hash GGG REJECTED — a 4xx, which is the same answer however often
-    /// it is asked. `search::decide` refuses to retry it; a 5xx or a transport
-    /// failure leaves this `None` and keeps the debounced retry.
-    ///
-    /// Off the wire (`serde(skip)`) because it is policy, not display: the page
-    /// shows the failure through [`Self::error`], and the only reader is the
-    /// trade session, which re-reads the slice on every tick. It rides on the
-    /// slice rather than on the session because the lookup task that learns of
-    /// the rejection can reach the slice and not the session.
-    ///
-    /// Self-invalidating: it names a hash, so a capture that moves on is never
-    /// blocked by it and one that moves back is blocked again, correctly.
+    /// Off the wire (`serde(skip)`). Nothing writes it since POE-392 removed
+    /// the merc trade request; kept so the slice type is unchanged.
     #[serde(skip)]
     pub terminal_hash: Option<String>,
-    /// Searches this capture session has spent, out of
-    /// [`search::MAX_SEARCHES`]. Shown so a user who sees a stale price knows
-    /// why the app stopped asking.
+    /// Kept for the wire shape; always 0 since POE-392 (no merc search is
+    /// sent).
     pub searches_used: u8,
 }
 
-/// The shipped default for `merc_trade_auto`: the auto-search is ON.
-///
-/// Unlike the gem path's `auto_trade_enabled` (off by default,
-/// `docs/TRADE-LIFECYCLE.md` §2) this one is opt-OUT, because it is bounded by
-/// construction: at most [`search::MAX_SEARCHES`] searches per captured
-/// mercenary, only while the merc module — itself default-off — is running.
+/// The default for the persisted `merc_trade_auto` setting. Since POE-392 the
+/// setting drives nothing (no merc trade request is sent); it is kept because
+/// settings and the slice echo still read it.
 pub const DEFAULT_TRADE_AUTO: bool = true;
 
 /// The shipped default for `merc_tier_floor`: 3, the mercenary exactly as
@@ -282,33 +269,19 @@ pub struct MercState {
     /// so the page and the verdict overlay evaluate one capture against one
     /// set. Acquired alone, like every other merc-owned Mutex.
     pub(crate) sources_off: std::sync::Mutex<Vec<String>>,
-    /// Whether the captured mercenary is auto-searched on the trade site
-    /// (POE-202) — the single owner of the toggle. Read by the capture loop's
-    /// trade tick, echoed onto the `mercenary` slice by
-    /// `ssot::compose_snapshot`. Acquired alone, like every other merc Mutex.
+    /// The persisted `merc_trade_auto` setting (POE-202). Drives nothing since
+    /// POE-392; settings persistence and `ssot::compose_snapshot`'s slice echo
+    /// still read it. Acquired alone, like every other merc Mutex.
     pub(crate) trade_auto: std::sync::Mutex<bool>,
-    /// Main webview's divine rate snapshot, read when a merc lookup starts.
-    /// Only `mercenary::search::merc_set_divine_rate` writes this bridge.
+    /// Main webview's divine rate snapshot. Only
+    /// `mercenary::search::merc_set_divine_rate` writes it; nothing reads it
+    /// since POE-392 removed the merc lookup.
     pub(crate) divine_rate: std::sync::Mutex<Option<f64>>,
     /// The lowest support tier that search accepts, 1..=3 (POE-202). Its own
     /// owner beside `trade_auto` rather than a field of one struct: the
     /// two have separate commands and separate defaults, and neither is ever
     /// read without the other being available anyway.
     pub(crate) tier_floor: std::sync::Mutex<u8>,
-    /// Merc trade results keyed by `(league, query hash)`, with the unix ms
-    /// they were fetched at (POE-202).
-    ///
-    /// What makes a retire-and-re-detect of the same recruit window free: the
-    /// new capture session gets a fresh 3-search budget, but the question it
-    /// asks is byte-identical, so the cache answers it without spending any.
-    /// Entries past `mercenary::search::RESULT_TTL_MS` are dropped on the next
-    /// insert — the map only grows on that path.
-    ///
-    /// The league is half the key because the hash is not computed over it: the
-    /// query body names the mercenary, and the league is a path segment of the
-    /// search. A league switch inside one TTL would otherwise serve the old
-    /// economy's prices under the new league's link.
-    pub(crate) trade_cache: std::sync::Mutex<search::MercResultCache>,
     /// The shared icon-template pool conversation (POE-201) — the upload queue,
     /// the single-flight pull flags, and the status the page shows. Its own
     /// owner rather than a corner of `templates` because the uploader and
@@ -352,7 +325,6 @@ impl MercState {
             trade_auto: std::sync::Mutex::new(DEFAULT_TRADE_AUTO),
             divine_rate: std::sync::Mutex::new(None),
             tier_floor: std::sync::Mutex::new(DEFAULT_TIER_FLOOR),
-            trade_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             sync: std::sync::Mutex::new(sync::SyncState::default()),
             burst: std::sync::Mutex::new(trigger::BurstGate::default()),
             template_generation: std::sync::atomic::AtomicU64::new(0),
@@ -575,16 +547,14 @@ pub struct MercenarySlice {
     /// listings.
     ///
     /// Unlike [`Self::sources_off`] and [`Self::sync`] this is STORED, not
-    /// composed: the capture loop's trade tick and the lookup task both write
-    /// it through `run::publish`, so the slice keeps the writer it already
-    /// had. Only `trade.status` is overridden at read time, and only to `Off`
+    /// composed: the capture loop's trade tick writes it through
+    /// `run::publish`. Only `trade.status` is overridden at read time, and only to `Off`
     /// when the module is disabled.
     #[serde(default)]
     pub trade: MercTradeState,
-    /// Whether the auto-search runs at all — a settings ECHO of
-    /// `AppState.merc.trade_auto`, composed like [`Self::sources_off`] and for
-    /// the same reason: the page renders the toggle from it while the module
-    /// is off and no loop will ever publish it.
+    /// A settings ECHO of `AppState.merc.trade_auto`, composed like
+    /// [`Self::sources_off`]. Drives nothing since POE-392 and no page reads
+    /// it; kept for the slice wire shape.
     #[serde(default)]
     pub trade_auto: bool,
     /// The lowest support tier the search accepts, 1..=3 — a settings ECHO of

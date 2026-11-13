@@ -67,7 +67,6 @@
 	import {
 		setMercSourcesOff,
 		setMercTierFloor,
-		setMercTradeAuto,
 		ssot
 	} from '$lib/stores/ssot.svelte';
 
@@ -181,17 +180,10 @@
 		{ value: '3', label: 'exact' }
 	];
 
-	/** What Rust said no to, shown where it was said. Both setters write through
-	 *  Rust and re-read the slice, so the value the overlay reads is the same
-	 *  one. The segmented buttons render straight off `merc.tierFloor` and so
-	 *  never move ahead of it; the checkbox is the browser's own control and
-	 *  does flip on click, which is why a refusal has to be shown rather than
-	 *  left for the next poll to explain. */
+	/** What Rust said no to, shown where it was said. The setter writes through
+	 *  Rust and re-reads the slice, so the value the overlay reads is the same
+	 *  one. */
 	let tradeError = $state<string | null>(null);
-
-	async function setTradeAuto(on: boolean): Promise<void> {
-		tradeError = await setMercTradeAuto(on);
-	}
 
 	async function setTierFloor(floor: string): Promise<void> {
 		tradeError = await setMercTierFloor(Number(floor));
@@ -725,17 +717,9 @@
 			<TradeListings rows={tradeRows} rawCurrency />
 		{/if}
 
-		<!-- Both settings stay rendered with the module off (ADR-014): the page is
+		<!-- The setting stays rendered with the module off (ADR-014): the page is
 		     browsable either way. -->
 		<div class="trade-settings">
-			<label class="source-toggle">
-				<input
-					type="checkbox"
-					checked={merc.tradeAuto}
-					onchange={(e) => setTradeAuto(e.currentTarget.checked)}
-				/>
-				<span>Search automatically</span>
-			</label>
 			<span class="trade-floor">
 				<span class="meta">Support tiers</span>
 				<SegmentedButtons

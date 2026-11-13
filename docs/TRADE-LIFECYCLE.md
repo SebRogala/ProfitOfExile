@@ -83,15 +83,15 @@ Properties:
 - League comes from the Rust-owned SSOT slice, resolved from server status.
   The queue captures that league before waiting and refuses an unresolved league.
 
-### One lookup per click (gem paths)
+### One lookup per click
 
-Every native GGG gem trade request starts from a user click; the comparator does not search on detection, on compare results, or on cache age. Each click sends its own lookup through the native queue and limiter, and the desktop displays the result locally:
+Every native GGG trade request starts from a user click (POE-392); the desktop does not search on detection, on compare results, on capture, or on cache age. Each click sends its own lookup through the native queue and limiter, and the desktop displays the result locally:
 
 - Comparator per-gem trade button: one lookup for that gem.
 - Overlay refresh button (`overlay-trade-refresh`): one lookup for that gem.
 - LabPage "Refresh queue": one click, one lookup per queued item.
 
-Mercenary capture still searches automatically; see the next section.
+The mercenary capture sends no trade request; it publishes trade-site links the user opens in the browser (see the next section).
 
 ### Trade price definition
 
@@ -123,26 +123,18 @@ combines these listing sets. Submitted results accept listing corruption flags
 as supplied, however, so the shared cache does not guarantee homogeneous flags.
 POE-302 adds no corruption filter.
 
-### Mercenary capture auto-search
+### Mercenary capture trade links
 
-**Current behavior:** Implemented (POE-202). Desktop-only; the server knows nothing about mercenary listings.
+**Current behavior:** Implemented (POE-202; automatic search removed by POE-392). Desktop-only; the server knows nothing about mercenary listings.
 
-This is the only automatic path through the native lookup. When the mercenary module has fully read a recruit window, the desktop builds a trade query for that exact mercenary and searches for it without the user asking.
+When the mercenary module has fully read a recruit window, the desktop builds a trade query for that exact mercenary and publishes trade-site links for it. The desktop sends no mercenary trade request: the user opens a link and the browser runs the search. The persisted `merc_trade_auto` setting drives nothing.
 
-- It has its own toggle, `merc_trade_auto`, default **on**. It is independent of contribution consent.
-- The query the app **posts** is one `and` group holding every cell that names exactly one support, plus one `count` group of `value.min = 1` per cell that names several (an icon read the app could not narrow, or a support loosened down to the tier floor). It carries **no** `mercenary` group and so no row scoping: a mercenary with the same skills and links arranged across different rows also matches, which is an accepted false-positive class. GGG's complexity budget is what forces it — a `mercenary` group costs 21 of a budget of 35, so two of them never fit and a captured panel is four or five rows. Against that budget an `and` filter costs 1 and a `count` group costs 3 plus 2 per filter; over it, the app drops its own tier loosening first and then support cells from the last row inward. Only the second is reported to the user as a looser query than the capture asked for — a query that lost just the loosening still asks for exactly what the panel showed.
+- The flat query body (its hash identifies the capture) is one `and` group holding every cell that names exactly one support, plus one `count` group of `value.min = 1` per cell that names several (an icon read the app could not narrow, or a support loosened down to the tier floor). It carries **no** `mercenary` group and so no row scoping: a mercenary with the same skills and links arranged across different rows also matches, which is an accepted false-positive class. GGG's complexity budget is what forces it — a `mercenary` group costs 21 of a budget of 35, so two of them never fit and a captured panel is four or five rows. Against that budget an `and` filter costs 1 and a `count` group costs 3 plus 2 per filter; over it, the app drops its own tier loosening first and then support cells from the last row inward. Only the second is reported to the user as a looser query than the capture asked for — a query that lost just the loosening still asks for exactly what the panel showed.
 - The `trade ↗` **link** carries a different query (since 2026-09-06). It opens in the user's browser under the user's own login, where GGG's budget is the larger logged-in one ("Logging in will increase this limit", the API's own words, verified 2026-09-05), so it takes the guides' shape: one `and` group of the rolled skills — a recognised class's two fixed primaries left out, since every listing of the class has them (`docs/GAME-FACTS.md`, "Mercenary class primaries") — and one row-scoped `mercenary` group per linked row asking for the skill plus its links at any tier the floor admits, one link short on a row with two or more (`value.min` = 1 + cells − 1, `LINK_TOLERANCE`; measured 2026-09-06 — every link on every row found no listing, one short per row found several). It is built from the rows before the budget walk, so it keeps the loosening the posted body may have dropped. The logged-in budget is measured only as a lower bound, so a wide panel at a low floor may still be refused in the browser; that is an open experiment, not a guarantee. The posted body was kept flat because the app has no login.
 - A second shape of the same link, **anchor rows**, is published beside it (`urlAnchors`, since 2026-09-06, on trial): only the linked rows whose skill is a combat skill — a primary, a rolled secondary, or one the class table does not know — each as a `mercenary` group with the same one-link slack, and an `and` group of just those anchor skills. Utility rows (movement, auras, curses) and rows without links are left out, because a mercenary is priced by a desired combat skill and the links on that row (`docs/GAME-FACTS.md`, "Mercenary classes and their skill pools"). When nothing anchors it is the every-row link. The page shows one button per shape so the two can be judged on the same capture, plus a link to a third party's warrant price check, which takes a pasted warrant and nothing from the capture.
-- A trade session opens at the capture's first complete edge, not at the first detect: a half-read panel builds a query for a mercenary nobody has. Retiring the recruit window closes the session and cancels a lookup that is still queued or in flight; a search that had already answered keeps its result on the slice, because the retired capture's verdict stays on screen and the listings are part of it.
-- The policy is re-evaluated on the capture loop's own cadence — every 100 ms with the game focused, every second without — so the bounds are what keep it from searching on every tick:
-  - at most three searches per capture session; once the budget is spent the app stops asking GGG and hands the user the trade-site link instead;
-  - a changed query hash must hold still for two seconds before it is worth a search, because hover-confirms keep correcting cells after the capture settles;
-  - results are cached by query hash for fifteen minutes, so retiring and re-detecting the same window is answered from the cache rather than out of the new session's budget.
-- An unresolved league is not enqueued. The state is `waiting-league`; the lookup never guesses a league.
-- A lookup GGG **rejects** — any HTTP 4xx, 429 included — is not retried for that query. The rejection is a verdict on the request body, identical every time it is asked, and 4xx responses count toward GGG's separate invalid-request ban (`docs/RESEARCH-poe-trade-api.md`, "Invalid Request Threshold"). A 5xx or a transport failure keeps the debounced retry. The refusal is scoped to the rejected query hash, so a corrected capture is searched for normally.
-- The path is local by construction: it calls `TradeApiClient::lookup_query(TradeSource::Mercenary)` directly rather than the `trade_lookup` command, so no branch in it can reach `/api/trade/submit`. Mercenary results are never contributed to the shared pool, and no server feature flag governs them.
-- Mercenary and gem lookups share the one native queue and limiter. Queue events carry a `source` (`gem` or `mercenary`) and each surface ignores the other's. The queue's `Done` event means the fetch succeeded — not that a caller accepted or displayed the result.
-- Prices come back as the sellers' own amounts in the sellers' own currencies. There is no divine-to-chaos rate on the Rust side, so `chaos_price` is the raw seller number and the row order is left as GGG returned it under `sort.price=asc` — the only value ordering in this path computed by a party that knows the rates.
+- A trade session opens at the capture's first complete edge, not at the first detect: a half-read panel builds a query for a mercenary nobody has. It is re-evaluated on the capture loop's cadence and republishes the links once per query hash; a capture that stops being expressible clears them.
+- An unresolved league publishes no link. The state is `waiting-league`; the link never guesses a league.
+- Nothing on this path reaches `/api/trade/submit` or the native queue; a source-scan test in `mercenary/search.rs` (`the_mercenary_trade_path_sends_no_trade_request`) fails if a lookup call is added back.
 
 **Deferred:** the native lookup path answers a GGG 429 with an error message and does not read the response's `Retry-After` header; the only wait it observes is its own limiter's. That was deferred deliberately under POE-202 and is tracked as a follow-up.
 

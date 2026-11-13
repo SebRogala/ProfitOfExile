@@ -834,26 +834,6 @@ describe('mercenary slice', () => {
 	});
 
 	/**
-	 * The trigger loop in Rust reads the toggle every tick, so the write goes
-	 * to Rust and the echo comes back through a re-fetch. A local optimistic
-	 * write would let the page believe the auto-search is off while the loop
-	 * that actually decides is still searching.
-	 */
-	it('sends the auto flag to Rust and re-fetches rather than writing the rune', async () => {
-		const core = await import('@tauri-apps/api/core');
-		const invokeMock = vi.mocked(core.invoke);
-		invokeMock.mockResolvedValue({ league });
-
-		const rejection = await mod.setMercTradeAuto(false);
-
-		expect(rejection).toBeNull();
-		expect(invokeMock.mock.calls.filter((c) => c[0] === 'merc_set_trade_auto')).toEqual([
-			['merc_set_trade_auto', { auto: false }],
-		]);
-		expect(invokeMock.mock.calls.some((c) => c[0] === 'get_ssot')).toBe(true);
-	});
-
-	/**
 	 * Same round trip for the floor, and the argument NAME is the contract:
 	 * Tauri matches command parameters by name, so a renamed key reaches Rust
 	 * as a missing argument and the control silently does nothing.

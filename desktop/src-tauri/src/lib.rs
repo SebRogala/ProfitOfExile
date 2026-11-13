@@ -1903,7 +1903,6 @@ pub fn run() {
             mercenary::debug::merc_forget_seed,
             mercenary::debug::merc_reset_templates,
             mercenary::sources::merc_set_sources_off,
-            mercenary::search::merc_set_trade_auto,
             mercenary::search::merc_set_divine_rate,
             mercenary::search::merc_set_tier_floor,
             temple::commands::temple_set_config,
