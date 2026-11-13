@@ -308,7 +308,7 @@ mod platform {
     ///
     /// Cleared, and therefore logged, ONCE: the following captures read `None`
     /// and take the primary without a word.
-    pub fn capture_screen(app: &AppHandle) -> Result<Capture, String> {
+    pub(super) fn grab_screen(app: &AppHandle) -> Result<Capture, String> {
         let call_started = Instant::now();
         let target = *app
             .state::<crate::AppState>()
@@ -444,12 +444,40 @@ mod platform {
     /// No capture off Windows, exactly as before POE-237 — the whole OCR half
     /// of the app is Windows-only and every caller already treats this `Err`
     /// as the normal answer on a dev machine.
-    pub fn capture_screen(_app: &AppHandle) -> Result<Capture, String> {
+    pub(super) fn grab_screen(_app: &AppHandle) -> Result<Capture, String> {
         Err("Screen capture not available on this platform".to_string())
     }
 }
 
 pub use platform::*;
+
+/// Set by the first refused grab; nothing re-arms it, so a session that never
+/// accepts logs the refusal once, not once per tick.
+static REFUSAL_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Grab the screen, the only grab path in the app (POE-395, ADR-033): while
+/// the Data & privacy notice is not accepted it grabs nothing and returns
+/// `Err`, which every caller already reads as "no frame".
+pub fn capture_screen(app: &tauri::AppHandle) -> Result<Capture, String> {
+    use tauri::Manager;
+    let accepted = crate::privacy::is_accepted(&app.state::<crate::AppState>());
+    grab_if_accepted(accepted, &REFUSAL_LOGGED, |msg| crate::app_log(app, msg), || platform::grab_screen(app))
+}
+
+fn grab_if_accepted<T>(
+    accepted: bool,
+    refusal_logged: &std::sync::atomic::AtomicBool,
+    log: impl FnOnce(String),
+    grab: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    if !accepted {
+        if !refusal_logged.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            log("screen capture refused until the Data & privacy notice is accepted".to_string());
+        }
+        return Err(crate::http::NOTICE_NOT_ACCEPTED.to_string());
+    }
+    grab()
+}
 
 /// The factor [`preprocess_for_ocr`] and [`preprocess_for_ocr_fast`] upscale
 /// a crop by, on both axes, whenever the result fits the OCR engine's
@@ -864,5 +892,133 @@ mod affinity_ledger_tests {
         let (_, after) = two_threads_overlapping();
         assert_eq!(after.iter().filter(|e| **e == (1, "clear")).count(), 1, "{after:?}");
         assert_eq!(after.last(), Some(&(1, "clear")), "{after:?}");
+    }
+}
+
+#[cfg(test)]
+mod notice_gate_tests {
+    use super::grab_if_accepted;
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Runs one gated grab against a counting stand-in; returns the result.
+    fn grab(accepted: bool, flag: &AtomicBool, grabs: &Cell<u32>, logs: &Cell<u32>) -> Result<&'static str, String> {
+        grab_if_accepted(
+            accepted,
+            flag,
+            |_| logs.set(logs.get() + 1),
+            || {
+                grabs.set(grabs.get() + 1);
+                Ok("frame")
+            },
+        )
+    }
+
+    #[test]
+    fn capture_refuses_while_the_notice_is_not_accepted() {
+        let (flag, grabs, logs) = (AtomicBool::new(false), Cell::new(0), Cell::new(0));
+        assert_eq!(grab(false, &flag, &grabs, &logs), Err(crate::http::NOTICE_NOT_ACCEPTED.to_string()));
+        assert_eq!(grabs.get(), 0);
+    }
+
+    #[test]
+    fn capture_reaches_the_grab_once_accepted() {
+        let (flag, grabs, logs) = (AtomicBool::new(false), Cell::new(0), Cell::new(0));
+        assert_eq!(grab(false, &flag, &grabs, &logs), Err(crate::http::NOTICE_NOT_ACCEPTED.to_string()));
+        assert_eq!(grab(true, &flag, &grabs, &logs), Ok("frame"));
+        assert_eq!(grabs.get(), 1);
+    }
+
+    #[test]
+    fn refusal_logs_once() {
+        let (flag, grabs, logs) = (AtomicBool::new(false), Cell::new(0), Cell::new(0));
+        let _ = grab(false, &flag, &grabs, &logs);
+        let _ = grab(false, &flag, &grabs, &logs);
+        assert_eq!(logs.get(), 1);
+        assert!(flag.load(Ordering::SeqCst));
+    }
+
+    // --- Guard: the only grab path is `capture::capture_screen` ---
+
+    const GRAB_APIS: [&str; 5] = ["xcap::", "BitBlt", "GetDIBits", "PrintWindow", "GraphicsCaptureItem"];
+
+    fn without_comment_lines(source: &str) -> String {
+        source.lines().filter(|line| !line.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n")
+    }
+
+    fn grab_apis_in(code: &str) -> Vec<&'static str> {
+        GRAB_APIS.into_iter().filter(|api| code.contains(api)).collect()
+    }
+
+    /// `capture.rs` production code (before its first test module) with the
+    /// `platform` modules cut out.
+    fn capture_rs_outside_platform(source: &str) -> String {
+        let production = &source[..source.find("#[cfg(test)]").unwrap_or(source.len())];
+        let mut out = String::new();
+        let mut rest = production;
+        while let Some(at) = rest.find("mod platform {") {
+            out.push_str(&rest[..at]);
+            let body = &rest[at..];
+            let mut depth = 0usize;
+            let mut end = body.len();
+            for (i, c) in body.char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = i + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            rest = &body[end..];
+        }
+        out.push_str(rest);
+        without_comment_lines(&out)
+    }
+
+    #[test]
+    fn guard_flags_a_grab_outside_the_platform_module() {
+        let source = "mod platform { use xcap::Monitor; fn g() { BitBlt(); } }\npub fn capture_screen() {}\n#[cfg(test)]\nmod t { const X: &str = \"xcap::\"; }\n";
+        assert!(grab_apis_in(&capture_rs_outside_platform(source)).is_empty());
+        let source = "mod platform { }\nfn sneaky() { xcap::Monitor::all(); }\n";
+        assert_eq!(grab_apis_in(&capture_rs_outside_platform(source)), vec!["xcap::"]);
+    }
+
+    /// Walks the source tree at test time so a new file is covered without
+    /// being listed here.
+    #[test]
+    fn no_source_grabs_the_screen_outside_capture_platform() {
+        fn walk(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(&path, files);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    files.push(path);
+                }
+            }
+        }
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        walk(&src, &mut files);
+        assert!(files.len() > 10, "source walk found only {} files", files.len());
+        let offenders: Vec<String> = files
+            .iter()
+            .filter_map(|path| {
+                let source = std::fs::read_to_string(path).unwrap();
+                let code = if path.ends_with("capture.rs") {
+                    capture_rs_outside_platform(&source)
+                } else {
+                    without_comment_lines(&source)
+                };
+                let found = grab_apis_in(&code);
+                (!found.is_empty()).then(|| format!("{}: {:?}", path.display(), found))
+            })
+            .collect();
+        assert!(offenders.is_empty(), "grab the screen only via capture::capture_screen: {offenders:#?}");
     }
 }

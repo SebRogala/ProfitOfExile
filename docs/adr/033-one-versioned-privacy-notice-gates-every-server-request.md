@@ -81,10 +81,12 @@ Neither restates the other.
 
 ### Scope
 
-User-initiated GGG trade requests, local reading (screen and `Client.txt`)
-and the GitHub update check are outside this gate (Coordinator interim
-ruling 2026-11-13). Widening the gate needs a new decision; the acceptance
-state is readable from Rust so a later decision can use it.
+Acceptance is enforced at exactly two gates: the server HTTP client and
+`capture::capture_screen`, the only screen-grab path, which grabs nothing
+while the notice is not accepted. `Client.txt` reading, user-initiated GGG
+trade requests and the GitHub update check stay outside (Operator ruling
+2026-11-13). Readers, features and hotkeys carry no acceptance checks of
+their own. Widening the gate further needs a new decision.
 
 ## Relations
 
