@@ -3,7 +3,7 @@
 //! `modules.rs::spawn_temple` delegates here. Like the merc loop, this is a
 //! [`ModuleJoin::Thread`](crate::modules::ModuleJoin::Thread) rather than a
 //! task: screen capture and `Windows.Media.Ocr` are apartment-threaded and
-//! deadlock on the async runtime (see `spawn_gem_scan` in lib.rs). Threads
+//! deadlock on the async runtime (see `spawn_gem_scan` in lab/commands.rs). Threads
 //! cannot be aborted, so every wait goes through [`nap`], which polls
 //! `*cancel.borrow()` every 100 ms — two orders under the registry's 5 s
 //! `MODULE_THREAD_POLL_CEILING`.

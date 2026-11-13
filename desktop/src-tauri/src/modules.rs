@@ -161,7 +161,7 @@ pub enum DisabledSemantics {
 
 /// The two task shapes a module may take. Both are admitted because the WinRT
 /// apartment rule forces capture/OCR work onto a dedicated OS thread, where the
-/// async runtime deadlocks (see `spawn_gem_scan` in lib.rs).
+/// async runtime deadlocks (see `spawn_gem_scan` in lab/commands.rs).
 pub enum ModuleJoin {
     /// Async task on the Tauri runtime — abortable, so it gets a reaper.
     ///
@@ -480,7 +480,7 @@ pub fn set_module_enabled(id: String, enabled: bool, app: AppHandle) -> Result<(
 
 /// The merc OCR capture module (POE-165). A `Thread`, not a `Task`: screen
 /// capture and `Windows.Media.Ocr` are apartment-threaded and deadlock on the
-/// async runtime (see `spawn_gem_scan` in lib.rs).
+/// async runtime (see `spawn_gem_scan` in lab/commands.rs).
 ///
 /// Threads are signalled and detached, never aborted, so the loop's own poll
 /// discipline is the whole stop mechanism — `mercenary::run` waits in 100 ms

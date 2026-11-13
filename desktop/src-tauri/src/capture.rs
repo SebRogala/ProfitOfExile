@@ -507,7 +507,7 @@ pub fn ocr_upscaled_size(w: u32, h: u32, limit: Option<u32>) -> (u32, u32) {
 ///
 /// Lanczos3 on the upscale — the sharpest of the resamplers `image` offers,
 /// and the right trade for its callers, which all read small UI text on a
-/// cadence measured in seconds: the gem scan and the font scan (`lib.rs`), the
+/// cadence measured in seconds: the gem scan and the font scan (`lab/commands.rs`), the
 /// temple panel reads (`temple::panel`, `temple::commands`, `temple::run`), the
 /// merc HEADER band (`mercenary::read`), and the `test_ocr_on_image` debug
 /// command. A path that runs at the cursor's pace wants
