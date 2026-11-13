@@ -122,20 +122,34 @@ fn module_on(state: &crate::AppState, mechanic: Mechanic) -> bool {
 
 /// Applies `change`; an arm of a mechanic whose module is off shows nothing.
 pub fn apply_in(state: &crate::AppState, change: Change) -> bool {
+    apply_paused_in(state, change, &mut || {})
+}
+/// [`apply_in`] with `pause` run between the unlocked module check and the
+/// prompt edit, where a concurrent module toggle can land.
+fn apply_paused_in(state: &crate::AppState, change: Change, pause: &mut dyn FnMut()) -> bool {
     if let Change::Arm(mechanic) = change {
         if !module_on(state, mechanic) {
             return false;
         }
     }
-    edit_in(state, |p| p.apply(change))
+    pause();
+    // Lock order: the prompt mutex, then a module flag inside it. Nothing takes
+    // the prompt mutex while holding a module flag, and the check and the
+    // insertion share this guard with the disable clear below.
+    edit_in(state, |p| match change {
+        Change::Arm(mechanic) if !module_on(state, mechanic) => {}
+        _ => p.apply(change),
+    })
 }
 /// Hides the prompt of every mechanic whose module is now off.
 pub fn modules_changed_in(state: &crate::AppState) -> bool {
-    let off: Vec<Mechanic> = [Mechanic::DivineFont, Mechanic::Incursion, Mechanic::Mercenary]
-        .into_iter()
-        .filter(|m| !module_on(state, *m))
-        .collect();
-    edit_in(state, |p| off.into_iter().for_each(|m| p.end(m)))
+    edit_in(state, |p| {
+        for m in [Mechanic::DivineFont, Mechanic::Incursion, Mechanic::Mercenary] {
+            if !module_on(state, m) {
+                p.end(m);
+            }
+        }
+    })
 }
 pub fn read_done_in(state: &crate::AppState, mechanic: Mechanic, id: u64) -> bool {
     edit_in(state, |p| p.read_done(mechanic, id))
@@ -402,6 +416,17 @@ mod tests {
         set_module(&state, Mechanic::Incursion, false);
         assert!(modules_changed_in(&state));
         assert_eq!(shown_in(&state), Some(Mechanic::Mercenary));
+    }
+
+    #[test]
+    fn a_module_turned_off_during_an_arm_leaves_no_prompt() {
+        let state = crate::settings::tests::test_app_state();
+        set_module(&state, Mechanic::Incursion, true);
+        apply_paused_in(&state, Change::Arm(Mechanic::Incursion), &mut || {
+            set_module(&state, Mechanic::Incursion, false);
+            modules_changed_in(&state);
+        });
+        assert_eq!(shown_in(&state), None);
     }
 
     #[test]
