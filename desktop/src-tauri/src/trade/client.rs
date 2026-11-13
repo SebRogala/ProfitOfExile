@@ -791,10 +791,9 @@ pub(crate) mod tests {
         client.lookup_gem(Some("Mirage".into()), "Spark", "20/20", 0.0, |_| {}).await.unwrap();
 
         let expected = format!(
-            "user-agent: profitofexile/{} (contact: contact@profitofexile.top)",
+            "ProfitOfExile/{} (contact: contact@profitofexile.top)",
             env!("CARGO_PKG_VERSION")
-        )
-        .to_ascii_lowercase();
+        );
         let trade_requests: Vec<String> = stub
             .requests()
             .into_iter()
@@ -806,8 +805,12 @@ pub(crate) mod tests {
                 .find(|r| r.lines().next().is_some_and(|l| l.contains(path)))
                 .unwrap_or_else(|| panic!("no {path} request recorded: {trade_requests:?}"));
             assert!(
-                request.lines().any(|l| l.to_ascii_lowercase() == expected),
-                "{path} request lacks `{expected}`:\n{request}"
+                request.lines().any(|l| l
+                    .split_once(':')
+                    .is_some_and(|(name, value)| {
+                        name.eq_ignore_ascii_case("user-agent") && value.trim() == expected
+                    })),
+                "{path} request lacks `user-agent: {expected}`:\n{request}"
             );
         }
     }
