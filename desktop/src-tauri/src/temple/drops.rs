@@ -434,7 +434,9 @@ pub const DROPS: [LineDrops; 25] = [
         unique: None,
         // 3.30 patch note: the device has "multiple uses in higher-tier rooms";
         // sheet export 2026-11-13 gid0.csv row 23 "corrupt maps for second time
-        // (higher tier provide more uses)" (its 1/3/5? counts not adopted).
+        // (higher tier provide more uses)" (its 1/3/5? counts not adopted) and
+        // g744679169.csv row 30 "All tiers has the device, higher tiers have
+        // more uses".
         content: Some("Map drops; re-corrupt maps (uses rise by tier)"),
         note: None,
         tiers: [
@@ -861,7 +863,8 @@ pub const DROPS: [LineDrops; 25] = [
         key: "throne_of_atziri",
         unique: None,
         // 3.30 patch note: "area level 84 and contain Uber Atziri"; sheet export
-        // 2026-11-13 gid0.csv row 8 "Area level 84, uber Atziri".
+        // 2026-11-13 gid0.csv row 8 "Area level 84, uber Atziri" and
+        // g744679169.csv row 32 "area is level 84".
         content: Some("Uber Atziri, area level 84"),
         note: None,
         tiers: [
