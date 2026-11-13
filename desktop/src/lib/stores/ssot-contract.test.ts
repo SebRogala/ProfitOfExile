@@ -1,5 +1,6 @@
-// Reader of desktop/contracts/ssot-snapshot.json. The writer is the Rust test
-// ssot::tests::ssot_snapshot_contract_golden (desktop/src-tauri/src/ssot.rs);
+// Reader of desktop/contracts/ssot-snapshot.json and ssot-snapshot-unmeasured.json.
+// The writers are the Rust tests ssot::tests::ssot_snapshot_contract_*
+// (desktop/src-tauri/src/ssot.rs);
 // regenerate from the repo root with
 // `docker compose run --rm -T -e SSOT_CONTRACT_UPDATE=1 -w /app/desktop/src-tauri desktop cargo test --lib ssot::tests::ssot_snapshot_contract`.
 //
@@ -8,6 +9,7 @@
 // fails when the Rust wire keys and the table disagree.
 import { describe, it, expect } from 'vitest';
 import golden from '../../../contracts/ssot-snapshot.json';
+import unmeasuredGolden from '../../../contracts/ssot-snapshot-unmeasured.json';
 import type {
 	Anchors,
 	BossLootSlice,
@@ -138,14 +140,11 @@ describe('ssot-snapshot.json golden matches SsotSnapshot', () => {
 		expect(keysOf(screen.anchors)).toEqual(Object.keys(anchorsKeys).sort());
 	});
 
-	// ssot.svelte.ts SsotSnapshot.screen: an unset Rust Option is sent as null,
-	// never omitted. The golden's screen is measured, so the rule is held on the
-	// unset Options it does carry (MercenarySlice.capture shares the mechanism).
-	it('sends an unset Option as null rather than omitting the key', () => {
-		expect(wire).toHaveProperty('screen');
-		const temple = wire.temple as Record<string, unknown>;
-		expect(temple).toHaveProperty('calibration', null);
-		const mercenary = wire.mercenary as Record<string, unknown>;
-		expect(mercenary).toHaveProperty('capture', null);
+	// ssot.svelte.ts SsotSnapshot.screen: an unmeasured screen is sent as null,
+	// never omitted.
+	it('sends an unmeasured screen as a literal null key', () => {
+		const unmeasured = unmeasuredGolden as Record<string, unknown>;
+		expect(Object.prototype.hasOwnProperty.call(unmeasured, 'screen')).toBe(true);
+		expect(unmeasured.screen).toBeNull();
 	});
 });

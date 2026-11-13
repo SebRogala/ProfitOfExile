@@ -1,0 +1,364 @@
+{
+  "bossLoot": {
+    "enabled": true,
+    "settings": {
+      "layout": "grid",
+      "autoSaveSeconds": 10,
+      "notCounted": [
+        "Communion Support"
+      ],
+      "captureShortcut": {
+        "key": 2,
+        "shift": true,
+        "ctrl": false,
+        "alt": false
+      },
+      "previewShortcut": {
+        "key": 119,
+        "shift": true,
+        "ctrl": false,
+        "alt": false
+      }
+    },
+    "numberFormat": "auto",
+    "pending": {
+      "id": 7,
+      "attribution": {
+        "area": "Syndicate Hideout",
+        "level": 83,
+        "seed": "seed-1",
+        "profile": {
+          "boss": "Catarina",
+          "profileKey": "catarina",
+          "profileVersion": 2
+        }
+      },
+      "league": "Mirage",
+      "profile": {
+        "boss": "Catarina",
+        "name": "Catarina",
+        "fullName": "Catarina, Master of Undeath",
+        "key": "catarina",
+        "profileVersion": 2,
+        "area": "Syndicate Hideout",
+        "level": 83,
+        "groups": [],
+        "extra": [],
+        "categories": []
+      },
+      "layout": "grid",
+      "rect": [
+        10,
+        20,
+        300,
+        400
+      ],
+      "incoming": {
+        "Cane of Kulemak": 1
+      },
+      "items": {
+        "quantities": {
+          "Cane of Kulemak": 1
+        },
+        "counted": [
+          "Cane of Kulemak"
+        ]
+      },
+      "readLines": [
+        "Cane of Kulemak"
+      ],
+      "unknownLines": [
+        "Unknown Line"
+      ],
+      "ambiguous": [
+        [
+          "A",
+          "B"
+        ]
+      ],
+      "phase": "open",
+      "deadlineMs": 5000,
+      "closeAtMs": 6000,
+      "target": {
+        "boss": "Catarina",
+        "profileKey": "catarina",
+        "profileVersion": 2,
+        "id": "run-1",
+        "league": "Mirage",
+        "run": 4,
+        "date": "2026-11-01",
+        "seed": "seed-1",
+        "version": 1,
+        "items": {
+          "quantities": {
+            "Cane of Kulemak": 1
+          },
+          "counted": [
+            "Cane of Kulemak"
+          ]
+        }
+      },
+      "forceNew": true,
+      "run": 4,
+      "nextRun": 5,
+      "mergeBlocked": true,
+      "droppedPositiveKeys": [
+        "Dropped"
+      ],
+      "error": "pending error"
+    },
+    "frame": {
+      "rect": [
+        10,
+        20,
+        300,
+        400
+      ],
+      "phase": "open",
+      "attribution": {
+        "area": "Syndicate Hideout",
+        "level": 83,
+        "seed": "seed-1",
+        "profile": {
+          "boss": "Catarina",
+          "profileKey": "catarina",
+          "profileVersion": 2
+        }
+      },
+      "untilMs": 6000
+    },
+    "rebind": "capture",
+    "nowMs": 4000
+  },
+  "league": {
+    "name": "Mirage",
+    "generation": 3
+  },
+  "resolving": true,
+  "unreachable": true,
+  "normalVariant": "20/20",
+  "dedicationVariant": "21/23",
+  "dedicationPool": "skill",
+  "modules": {
+    "temple": true
+  },
+  "mercenary": {
+    "status": "off",
+    "capture": {
+      "capturedAtMs": 1700000000000,
+      "live": false,
+      "scale": 0.0,
+      "screen": [
+        1920,
+        1200
+      ],
+      "panel": null,
+      "header": {
+        "name": null,
+        "class": null,
+        "level": null,
+        "wager": null
+      },
+      "rows": [],
+      "rowsOnScreen": 0,
+      "rowsRead": 0,
+      "partial": false
+    },
+    "learnedFamilies": [
+      "fire--1"
+    ],
+    "pooledFamilies": [
+      "cold--2"
+    ],
+    "seededFamilies": [
+      "lightning"
+    ],
+    "lastError": "merc error",
+    "burstSpeaker": null,
+    "geometrySource": "default",
+    "sourcesOff": [
+      "guide-b"
+    ],
+    "sync": {
+      "lastPullMs": null,
+      "lastPull": "never",
+      "pooledSamples": 0,
+      "queuedUploads": 0,
+      "lastError": null
+    },
+    "trade": {
+      "status": "off",
+      "queryHash": null,
+      "url": null,
+      "urlAnchors": null,
+      "result": null,
+      "error": null,
+      "searchesUsed": 0
+    },
+    "tradeAuto": true,
+    "tierFloor": 2
+  },
+  "temple": {
+    "status": "idle",
+    "waitingForPanel": false,
+    "readRetry": false,
+    "layout": {
+      "slots": [],
+      "doors": [
+        "a"
+      ],
+      "uncertain": [],
+      "unresolvedIncident": [],
+      "markerError": null,
+      "current": null,
+      "scale": 1.0,
+      "ncc": 0.5,
+      "confidence": "high",
+      "origin": [
+        960,
+        713
+      ],
+      "centres": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "rois": [],
+      "diamond": null,
+      "cradle": false
+    },
+    "panel": {
+      "room": "Garrison",
+      "roomRect": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "offers": [],
+      "incursionsRemaining": 3
+    },
+    "advice": {
+      "recommendations": [],
+      "gambles": [],
+      "secondaryDoor": null,
+      "convenience": null,
+      "recommendedExit": null,
+      "mapAction": "run",
+      "warnings": [
+        "warn"
+      ],
+      "forcedKill": false
+    },
+    "mode": "advice",
+    "config": {
+      "artefactsOfTheVaal": true,
+      "scarabOfTimelines": false
+    },
+    "profile": {
+      "apexScore": 2.0,
+      "pathCost": 0.0,
+      "rerollUntilFavourable": false,
+      "r4KeepUpgradeTargets": false
+    },
+    "preset": "default",
+    "custom": {
+      "tierFraction": 0.8,
+      "cPerRarity": 1.0,
+      "dropsWeight": 1.0,
+      "comboPremium": 0.0,
+      "rooms": {}
+    },
+    "market": {
+      "asOf": null,
+      "stale": false,
+      "staleAfterMs": 7200000,
+      "unavailable": true
+    },
+    "pollMarket": {
+      "asOf": null,
+      "stale": false,
+      "staleAfterMs": 7200000,
+      "unavailable": true
+    },
+    "unknownRooms": [
+      "slot-3"
+    ],
+    "lastReadAt": 1700000000000,
+    "calibration": {
+      "screen_w": 1920,
+      "screen_h": 1200,
+      "scale": 1.0
+    },
+    "readNotice": "notice",
+    "lastError": "temple error"
+  },
+  "screen": null,
+  "placements": {
+    "temple": null,
+    "merc": null,
+    "lab": {
+      "gem": [
+        0,
+        0,
+        1920,
+        40
+      ],
+      "font": [
+        298,
+        220,
+        666,
+        681
+      ]
+    }
+  }
+}

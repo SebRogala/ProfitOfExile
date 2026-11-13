@@ -3540,44 +3540,159 @@ mod tests {
 
     // ------------------------------------------------- snapshot wire golden --
 
-    /// Writer of `desktop/contracts/ssot-snapshot.json`; the reader is
-    /// `desktop/src/lib/stores/ssot-contract.test.ts`, which checks its keys
-    /// against the TS `SsotSnapshot`. Regenerate from the repo root with
-    /// `docker compose run --rm -T -e SSOT_CONTRACT_UPDATE=1 -w /app/desktop/src-tauri desktop cargo test --lib ssot::tests::ssot_snapshot_contract`.
-    #[test]
-    fn ssot_snapshot_contract_golden() {
+    /// A snapshot whose slices carry fixed, present values. The mercenary
+    /// module stays off (one-key module map), so `burstSpeaker` is null by
+    /// `force_off`; two module keys would serialize in a random order.
+    fn contract_snapshot(screen: Option<ScreenSlice>) -> AppSsotSnapshot {
+        use crate::loot_api::{ProfileRef, RunItems, StoredRun};
+        use crate::loot_capture::{Attribution, Frame, LootSlice, PendingCapture, Phase, Rebind};
+        let profile_ref = ProfileRef {
+            boss: "Catarina".into(),
+            profile_key: "catarina".into(),
+            profile_version: 2,
+        };
+        let attribution = Attribution {
+            area: "Syndicate Hideout".into(),
+            level: 83,
+            seed: Some("seed-1".into()),
+            profile: Some(profile_ref.clone()),
+        };
+        let items = RunItems {
+            quantities: [("Cane of Kulemak".to_string(), 1)].into_iter().collect(),
+            counted: vec!["Cane of Kulemak".into()],
+        };
+        let boss_loot = LootSlice {
+            enabled: true,
+            pending: Some(PendingCapture {
+                id: 7,
+                attribution: attribution.clone(),
+                league: "Mirage".into(),
+                profile: crate::loot_profiles::LootProfile {
+                    boss: "Catarina".into(),
+                    name: "Catarina".into(),
+                    full_name: "Catarina, Master of Undeath".into(),
+                    key: "catarina".into(),
+                    version: 2,
+                    area: "Syndicate Hideout".into(),
+                    level: 83,
+                    groups: Vec::new(),
+                    extra: Vec::new(),
+                    categories: Vec::new(),
+                },
+                layout: crate::loot_capture::LootLayout::Grid,
+                rect: [10, 20, 300, 400],
+                incoming: items.quantities.clone(),
+                items: items.clone(),
+                read_lines: vec!["Cane of Kulemak".into()],
+                unknown_lines: vec!["Unknown Line".into()],
+                ambiguous: vec![vec!["A".into(), "B".into()]],
+                phase: Phase::Open,
+                deadline_ms: Some(5_000),
+                close_at_ms: Some(6_000),
+                target: Some(StoredRun {
+                    profile: profile_ref,
+                    id: "run-1".into(),
+                    league: "Mirage".into(),
+                    run: 4,
+                    date: Some("2026-11-01".into()),
+                    seed: Some("seed-1".into()),
+                    version: 1,
+                    items,
+                }),
+                force_new: true,
+                run: 4,
+                next_run: 5,
+                merge_blocked: true,
+                dropped_positive_keys: vec!["Dropped".into()],
+                error: Some("pending error".into()),
+            }),
+            frame: Some(Frame {
+                rect: [10, 20, 300, 400],
+                phase: "open".into(),
+                attribution: Some(attribution),
+                until_ms: Some(6_000),
+            }),
+            rebind: Some(Rebind::Capture),
+            now_ms: 4_000,
+            ..LootSlice::default()
+        };
         let base = AppSsotSnapshot {
+            boss_loot,
             league: LeagueSlice { name: Some("Mirage".into()), generation: 3 },
             resolving: true,
             unreachable: true,
             ..AppSsotSnapshot::default()
         };
-        // One key only: a multi-key HashMap would serialize in a random order.
         let modules: std::collections::HashMap<String, bool> =
             [(TEMPLE_MODULE_ID.to_string(), true)].into_iter().collect();
-        let screen = ScreenSlice {
-            anchors: Some(Anchors {
-                temple_entrance: Some([960, 713]),
-                merc_panel: Some([100, 200]),
+        let mercenary = crate::mercenary::MercenarySlice {
+            capture: Some(crate::mercenary::MercCapture {
+                captured_at_ms: 1_700_000_000_000,
+                screen: [1920, 1200],
+                ..Default::default()
             }),
-            ..reference_screen()
+            learned_families: vec!["fire--1".into()],
+            pooled_families: vec!["cold--2".into()],
+            seeded_families: vec!["lightning".into()],
+            last_error: Some("merc error".into()),
+            burst_speaker: Some("Fennik".into()),
+            ..Default::default()
         };
-        let snap = compose_snapshot(
+        let temple = crate::temple::slice::TempleSlice {
+            layout: Some(
+                serde_json::from_value(serde_json::json!({
+                    "slots": [], "doors": ["a"], "uncertain": [], "unresolvedIncident": [],
+                    "markerError": null, "current": null, "scale": 1.0, "ncc": 0.5,
+                    "confidence": "high", "origin": [960, 713],
+                    "centres": vec![[0, 0]; 13], "rois": [], "diamond": null
+                }))
+                .unwrap(),
+            ),
+            panel: Some(
+                serde_json::from_value(serde_json::json!({
+                    "room": "Garrison", "roomRect": [1, 2, 3, 4], "offers": [],
+                    "incursionsRemaining": 3
+                }))
+                .unwrap(),
+            ),
+            advice: Some(
+                serde_json::from_value(serde_json::json!({
+                    "recommendations": [], "gambles": [], "mapAction": "run",
+                    "warnings": ["warn"]
+                }))
+                .unwrap(),
+            ),
+            mode: Some("advice".into()),
+            unknown_rooms: vec!["slot-3".into()],
+            last_read_at: Some(1_700_000_000_000),
+            calibration: Some(crate::temple::anchor::AnchorCalibration {
+                screen_w: 1920,
+                screen_h: 1200,
+                scale: 1.0,
+            }),
+            read_notice: Some("notice".into()),
+            last_error: Some("temple error".into()),
+            ..Default::default()
+        };
+        compose_snapshot(
             base,
             "20/20".into(),
             "21/23".into(),
             "skill".into(),
             modules,
-            crate::mercenary::MercenarySlice::default(),
+            mercenary,
             vec!["guide-b".into()],
             crate::mercenary::sync::MercSyncStatus::default(),
             true,
             2,
-            crate::temple::slice::TempleSlice::default(),
-            Some(screen),
-        );
-        let actual = serde_json::to_string_pretty(&snap).unwrap() + "\n";
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/ssot-snapshot.json");
+            temple,
+            screen,
+        )
+    }
+
+    /// Writes `path` under `SSOT_CONTRACT_UPDATE=1`, otherwise fails on a diff.
+    fn check_golden(path: &str, snap: &AppSsotSnapshot) {
+        let actual = serde_json::to_string_pretty(snap).unwrap() + "\n";
         if std::env::var("SSOT_CONTRACT_UPDATE").as_deref() == Ok("1") {
             std::fs::write(path, &actual).unwrap();
             return;
@@ -3586,6 +3701,34 @@ mod tests {
         assert!(
             golden == actual,
             "{path} differs from the composed snapshot; regenerate with SSOT_CONTRACT_UPDATE=1 cargo test --lib ssot::tests::ssot_snapshot_contract"
+        );
+    }
+
+    /// Writer of `desktop/contracts/ssot-snapshot.json` (measured screen) and
+    /// `desktop/contracts/ssot-snapshot-unmeasured.json` (screen = None); the
+    /// reader is `desktop/src/lib/stores/ssot-contract.test.ts`. Regenerate
+    /// from the repo root with
+    /// `docker compose run --rm -T -e SSOT_CONTRACT_UPDATE=1 -w /app/desktop/src-tauri desktop cargo test --lib ssot::tests::ssot_snapshot_contract`.
+    #[test]
+    fn ssot_snapshot_contract_golden() {
+        let screen = ScreenSlice {
+            anchors: Some(Anchors {
+                temple_entrance: Some([960, 713]),
+                merc_panel: Some([100, 200]),
+            }),
+            ..reference_screen()
+        };
+        check_golden(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/ssot-snapshot.json"),
+            &contract_snapshot(Some(screen)),
+        );
+    }
+
+    #[test]
+    fn ssot_snapshot_contract_unmeasured_screen_golden() {
+        check_golden(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/ssot-snapshot-unmeasured.json"),
+            &contract_snapshot(None),
         );
     }
 }
