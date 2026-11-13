@@ -28,6 +28,8 @@ use tokio::sync::Notify;
 
 use crate::AppState;
 
+mod lab;
+
 /// First retry delay for the startup league fetch.
 const LEAGUE_FETCH_INITIAL_BACKOFF: Duration = Duration::from_secs(2);
 /// Ceiling for the exponential backoff — offline-at-launch keeps retrying at
@@ -364,6 +366,8 @@ pub struct MercPlacements {
 pub struct LabPlacements {
     pub gem: [i32; 4],
     pub font: [i32; 4],
+    /// The Divine Font's three gem-choice slots, left to right.
+    pub gem_slots: [[i32; 4]; 3],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -404,35 +408,12 @@ fn scale_value(value: i32, scale: f32) -> i32 {
     (value as f32 * scale).round() as i32
 }
 
-/// The gem name region for a client rect: the client's full-width top band, one
-/// name line tall — see [`crate::INVENTORY_PANEL_W_REF`] for the rule and its
-/// provenance. Never taller than the name line, by the owner's ruling; full
-/// width because the tooltip follows the hovered item across the inventory's
-/// left edge.
-fn gem_region(client: [i32; 4], scale: f32) -> [i32; 4] {
-    [
-        client[0],
-        client[1],
-        client[2].max(0),
-        scale_value(crate::GEM_NAME_BAND_H_REF, scale).max(0),
-    ]
-}
-
-/// The font panel region for a client rect: `FONT_PANEL_W_REF · scale` wide,
-/// centred in the space left of the right-docked inventory (whose width is
-/// [`crate::INVENTORY_PANEL_W_REF`] · scale), `FONT_PANEL_TOP_REF
-/// · scale` below the client's top and `FONT_PANEL_H_REF · scale` tall — see
-/// [`crate::FONT_PANEL_W_REF`] for the rule and its provenance. The centring
-/// halves in integer px, so an odd gap lands the region one px left of centre.
-fn font_region(client: [i32; 4], scale: f32) -> [i32; 4] {
-    let space_w = client[2] - scale_value(crate::INVENTORY_PANEL_W_REF, scale);
-    let w = scale_value(crate::FONT_PANEL_W_REF, scale).max(0);
-    [
-        client[0] + (space_w - w) / 2,
-        client[1] + scale_value(crate::FONT_PANEL_TOP_REF, scale),
-        w,
-        scale_value(crate::FONT_PANEL_H_REF, scale).max(0),
-    ]
+fn lab_placements(client: [i32; 4], scale: f32) -> LabPlacements {
+    LabPlacements {
+        gem: lab::gem_region(client, scale),
+        font: lab::font_region(client, scale),
+        gem_slots: lab::gem_slot_rects(client, scale),
+    }
 }
 
 /// The client an unmeasured screen is assumed to have: fullscreen 1080p, the
@@ -454,16 +435,13 @@ pub fn placements_for(screen: Option<&ScreenSlice>) -> Placements {
         return Placements {
             temple: None,
             merc: None,
-            lab: LabPlacements {
-                gem: gem_region(ASSUMED_1080P_CLIENT, crate::ASSUMED_UI_SCALE),
-                font: font_region(ASSUMED_1080P_CLIENT, crate::ASSUMED_UI_SCALE),
-            },
+            lab: lab_placements(ASSUMED_1080P_CLIENT, crate::ASSUMED_UI_SCALE),
         };
     };
 
     let scale = valid_scale(Some(screen));
     let client = screen.client;
-    let lab = LabPlacements { gem: gem_region(client, scale), font: font_region(client, scale) };
+    let lab = lab_placements(client, scale);
     let temple_seed = (
         client[0] + client[2] / 2,
         client[1] + (TEMPLE_ENTRANCE_Y_REF * scale).round() as i32,

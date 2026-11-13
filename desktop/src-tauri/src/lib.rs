@@ -122,6 +122,26 @@ pub const FONT_PANEL_TOP_REF: i32 = 244;
 /// See [`FONT_PANEL_W_REF`].
 pub const FONT_PANEL_H_REF: i32 = 757;
 
+/// The Divine Font's three gem-choice slots share the font panel's anchor: the
+/// centre of the space left of the right-docked inventory (see
+/// [`FONT_PANEL_W_REF`]). The middle slot sits `GEM_SLOT_CENTRE_DX_REF` from
+/// that centre, its neighbours `GEM_SLOT_PITCH_REF` either side,
+/// `GEM_SLOT_Y_REF` below the client's top; each is a `GEM_SLOT_ICON_REF`
+/// square.
+///
+/// **PROVISIONAL, measured off ONE frame** (screenshot-0012, 1920x1080 at
+/// ui_scale 0.90, 2026-11-13): slot centres at x 530 / 628 / 728 (99-100 px
+/// apart → 110 reference px), the middle one 3 px left of the panel centre at
+/// 631 (→ −2), y 397 (→ 441); the icons match at 48 px (→ 53). Correct these
+/// numbers in Settings → OCR Regions → Preview at 4K and 16:10, not the rule.
+pub const GEM_SLOT_PITCH_REF: i32 = 110;
+/// See [`GEM_SLOT_PITCH_REF`].
+pub const GEM_SLOT_CENTRE_DX_REF: i32 = -2;
+/// See [`GEM_SLOT_PITCH_REF`].
+pub const GEM_SLOT_Y_REF: i32 = 441;
+/// See [`GEM_SLOT_PITCH_REF`].
+pub const GEM_SLOT_ICON_REF: i32 = 53;
+
 /// What the placement layer assumes when NOTHING has measured a screen: that
 /// the game is running at 1080p. It is the `ui_scale` a 1920x1080 screen
 /// measures (1080/1200).
@@ -279,7 +299,7 @@ fn assemble_ocr_rects(
             "lab.font",
             "Font panel",
             Some(placements.lab.font),
-            Vec::new(),
+            placements.lab.gem_slots.to_vec(),
             "seed",
         ),
         ocr_rect_view(
@@ -2605,6 +2625,16 @@ mod tests {
         assert_eq!(font_view.rect, Some([298, 220, 666, 681]));
         assert_eq!(gem_view.source, "seed");
         assert_eq!(font_view.source, "seed");
+    }
+
+    #[test]
+    fn the_lab_font_preview_draws_the_three_gem_slots_as_rows() {
+        let screen = measured_screen(1920, 1080, 0.9, None);
+        let placements = crate::ssot::placements(&screen);
+        let rects = assemble_ocr_rects(&placements, Some(&screen), None);
+        let font_view = rects.iter().find(|rect| rect.key == "lab.font").unwrap();
+
+        assert_eq!(font_view.rows, vec![[506, 373, 48, 48], [605, 373, 48, 48], [704, 373, 48, 48]]);
     }
 
     #[test]

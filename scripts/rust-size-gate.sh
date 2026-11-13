@@ -23,7 +23,8 @@ check() {
 	[ "$n" -le "$2" ] || { echo "$1: $n production lines > $2"; exit 1; }
 }
 
-check ssot.rs 1800
+check ssot.rs 1765
+check ssot/lab.rs 53
 
 # temple must not reach merc internals (H4)
 ! grep -rn 'crate::mercenary::' temple/ || { echo "temple -> mercenary import"; exit 1; }

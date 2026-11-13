@@ -105,6 +105,12 @@ export interface MercPlacements {
 export interface LabPlacements {
 	gem: [number, number, number, number];
 	font: [number, number, number, number];
+	/** The Divine Font's three gem-choice slots, left to right. */
+	gemSlots: [
+		[number, number, number, number],
+		[number, number, number, number],
+		[number, number, number, number]
+	];
 }
 
 export interface Placements {
