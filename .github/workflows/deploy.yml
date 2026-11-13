@@ -17,9 +17,9 @@ jobs:
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
-      server: ${{ steps.filter.outputs.server }}
-      collector: ${{ steps.filter.outputs.collector }}
-      go: ${{ steps.filter.outputs.go }}
+      server: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.server == 'true' }}
+      collector: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.collector == 'true' }}
+      go: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.go == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3

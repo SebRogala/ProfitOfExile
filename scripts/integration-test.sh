@@ -20,7 +20,33 @@ cd "$REPO_ROOT"
 source scripts/lib/integration-env.sh
 
 LOG_DIR="$(mktemp -d)"
-trap 'rm -rf "$LOG_DIR"' EXIT
+TIMESCALE_WORKERS_PAUSED=0
+
+resume_timescale_workers() {
+	local started
+	started="$(psql_super -d "$DB_NAME" -tAc 'SELECT _timescaledb_functions.start_background_workers()')" || return 1
+	if [ "$started" != t ]; then
+		echo "FAIL: TimescaleDB workers did not start for ${DB_NAME}." >&2
+		return 1
+	fi
+	TIMESCALE_WORKERS_PAUSED=0
+}
+
+cleanup() {
+	local status=$?
+	trap - EXIT
+	if [ "$TIMESCALE_WORKERS_PAUSED" -eq 1 ]; then
+		if ! resume_timescale_workers; then
+			echo "FAIL: cleanup could not resume TimescaleDB workers for ${DB_NAME}." >&2
+			if [ "$status" -eq 0 ]; then status=1; fi
+		fi
+	fi
+	rm -rf "$LOG_DIR"
+	exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # The inventory of tests a phase is required to have run, derived from the tree
 # by FILE NAME (`*_integration_test.go`) rather than by build tag.
@@ -214,6 +240,28 @@ fi
 psql_super -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME} WITH (FORCE)"
 psql_super -d postgres -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER}"
 
+# TimescaleDB workers can race the migration tests' policy removal and aggregate
+# drops (observed CI deadlock and concurrent tuple update). Stop only this
+# disposable database's scheduler; its shutdown signals jobs without awaiting
+# their exit, so drain them before any DDL. Keep normal scheduling in phase 2.
+psql_super -d "$DB_NAME" -c 'CREATE EXTENSION IF NOT EXISTS timescaledb'
+echo "==> Pausing TimescaleDB workers for ${DB_NAME}"
+TIMESCALE_WORKERS_PAUSED=1
+stopped="$(psql_super -d "$DB_NAME" -tAc 'SELECT _timescaledb_functions.stop_background_workers()')"
+if [ "$stopped" != t ]; then
+	echo "FAIL: TimescaleDB workers did not stop for ${DB_NAME}." >&2
+	exit 1
+fi
+for attempt in {1..30}; do
+	remaining="$(psql_super -d "$DB_NAME" -tAc "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND backend_type LIKE 'TimescaleDB%'")"
+	if [ "$remaining" = 0 ]; then break; fi
+	sleep 1
+done
+if [ "$remaining" != 0 ]; then
+	echo "FAIL: TimescaleDB workers did not drain for ${DB_NAME} within 30 seconds (${remaining} remain)." >&2
+	exit 1
+fi
+
 echo "==> Phase 1: migration tests (virgin database)"
 in_app go test -tags integration -race -count=1 -v ./internal/db/migrations/... \
 	2>&1 | tee "${LOG_DIR}/migrations.log"
@@ -225,6 +273,9 @@ echo "==> Applying migrations"
 # its last test rather than a contract. Apply explicitly so phase 2 does not
 # depend on phase 1's finishing state.
 in_app go run ./cmd/migrate up
+
+echo "==> Resuming TimescaleDB workers for ${DB_NAME}"
+resume_timescale_workers
 
 echo "==> Phase 2: everything else (migrated database)"
 # -p 1: all packages share the one database. Without it the packages that apply

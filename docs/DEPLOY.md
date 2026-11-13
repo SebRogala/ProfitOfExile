@@ -71,6 +71,36 @@ This is accepted deliberately. Verifying convergence would mean polling the
 running image from CI, and the manual check below is cheap enough at this
 project's release cadence. **If a deploy matters, verify it by hand.**
 
+## Timescale migration maintenance
+
+Current procedure, verified with TimescaleDB 2.25.2 on 2026-11-13: before a
+migration removes continuous-aggregate policies or views, pause and drain the
+target database's TimescaleDB workers. Stopping the app does not stop these
+workers. The retention migration hit a deadlock and a concurrent tuple update
+in CI; [upstream records the policy-deletion lock race](https://github.com/timescale/timescaledb/issues/8636).
+
+Use the private administration connection procedure to connect as a database
+superuser to the intended database, then run:
+
+```sql
+SELECT _timescaledb_functions.stop_background_workers();
+SELECT count(*) FROM pg_stat_activity
+WHERE datname = current_database() AND backend_type LIKE 'TimescaleDB%';
+```
+
+Require `t` from the stop call and zero remaining workers before starting the
+migrating server. Wait at most 30 seconds for jobs to drain; abort if they remain.
+After migration, including a failed deployment, resume scheduling and require `t`:
+
+```sql
+SELECT _timescaledb_functions.start_background_workers();
+```
+
+Verify that scheduling resumes. These controls affect only the connected
+database; leave other databases' workers running. The integration harness uses
+the same isolation around its schema-changing phase and resumes workers before
+the application integration tests.
+
 ## Verifying a deploy landed
 
 `PROD_HOST` and `SERVER_SERVICE_ID` are placeholders — this is a public
@@ -92,14 +122,15 @@ full name goes stale immediately.
 The image tag is the deployed commit SHA. Compare it against `git rev-parse
 origin/main`. `Up <n> minutes` should be small if the deploy just ran.
 
-`/api/health` exposes a `version` field intended for exactly this, but it reads
-`"dev"` in production: the `GIT_SHA` build arg is passed by the GitHub Actions
-*validation* build, and Coolify — which performs the real build — does not pass
-it. Passing `GIT_SHA` in the Coolify build configuration would make
-`curl -s https://profitofexile.top/api/health` a one-line deploy check. Not done;
-recorded here as the cheapest path if that ever becomes worth it.
+`/api/health` exposes the full deployment revision in `version`. Compare it with
+the intended commit SHA, alongside the running image. Coolify supplies the
+runtime `SOURCE_COMMIT`; the shared resolver and its fallbacks are documented in
+[Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md#ggg-policy).
 
 ## Desktop release channels
+
+For version bumps, tagging, and push confirmation, follow the
+[desktop release procedure](../.claude/commands/release.md).
 
 `desktop.yml` triggers on `v-desktop-*` and serves two channels off one tag
 pattern:
