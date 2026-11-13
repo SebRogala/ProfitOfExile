@@ -278,6 +278,20 @@ pub struct LootOwner {
     pub preview: bool,
     pub rebind: Option<Rebind>,
 }
+pub struct LootState {
+    pub(crate) boss: Mutex<LootOwner>,
+    pub(crate) settings: Mutex<LootSettings>,
+    pub(crate) number_format: Mutex<NumberFormat>,
+}
+impl LootState {
+    pub(crate) fn new() -> Self {
+        Self {
+            boss: Mutex::new(LootOwner::default()),
+            settings: Mutex::new(LootSettings::default()),
+            number_format: Mutex::new(NumberFormat::default()),
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Frame {
@@ -790,15 +804,15 @@ pub fn snapshot(state: &crate::AppState) -> LootSlice {
         .get(MODULE_ID)
         == Some(&true);
     let settings = state
-        .boss_loot_settings
+        .loot.settings
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
     let number_format = *state
-        .number_format
+        .loot.number_format
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = state.loot.boss.lock().unwrap_or_else(|e| e.into_inner());
     LootSlice {
         enabled,
         settings,
@@ -822,11 +836,11 @@ pub fn boss_loot_set_settings(app: tauri::AppHandle, settings: LootSettings) -> 
     settings.validate()?;
     let state = app.state::<crate::AppState>();
     *state
-        .boss_loot_settings
+        .loot.settings
         .lock()
         .unwrap_or_else(|e| e.into_inner()) = settings.clone();
     {
-        let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+        let mut owner = state.loot.boss.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(p) = owner.pending.as_mut().filter(|p| p.phase == Phase::Open) {
             p.restart(&settings, now_ms());
         }
@@ -838,7 +852,7 @@ pub fn boss_loot_set_settings(app: tauri::AppHandle, settings: LootSettings) -> 
 #[tauri::command]
 pub fn set_number_format(app: tauri::AppHandle, format: NumberFormat) {
     *app.state::<crate::AppState>()
-        .number_format
+        .loot.number_format
         .lock()
         .unwrap_or_else(|e| e.into_inner()) = format;
     crate::persist_settings(&app);
@@ -860,12 +874,12 @@ pub fn boss_loot_action(
 ) -> Result<(), String> {
     let state = app.state::<crate::AppState>();
     let settings = state
-        .boss_loot_settings
+        .loot.settings
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
     {
-        let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+        let mut owner = state.loot.boss.lock().unwrap_or_else(|e| e.into_inner());
         match action {
             CaptureAction::Touch => owner.touch(id, &settings, now_ms())?,
             CaptureAction::Select { key, quantity } => {
@@ -891,7 +905,7 @@ pub async fn boss_loot_submit(app: tauri::AppHandle, id: u64) -> Result<(), Stri
         return Err("Module is off".into());
     }
     let cancel = {
-        let owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+        let owner = state.loot.boss.lock().unwrap_or_else(|e| e.into_inner());
         if !owner.pending.as_ref().is_some_and(|p| p.id == id) {
             return Err("Stale capture".into());
         }
@@ -901,12 +915,12 @@ pub async fn boss_loot_submit(app: tauri::AppHandle, id: u64) -> Result<(), Stri
             .ok_or_else(|| "Module is not running".to_string())?
     };
     let settings = state
-        .boss_loot_settings
+        .loot.settings
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
     submit_capture(
-        &state.boss_loot,
+        &state.loot.boss,
         &settings,
         &LootApi::from_state(&state).with_cancel(cancel),
         now_ms(),
@@ -920,7 +934,7 @@ pub async fn boss_loot_submit(app: tauri::AppHandle, id: u64) -> Result<(), Stri
 #[tauri::command]
 pub fn boss_loot_rebind(app: tauri::AppHandle, binding: Option<Rebind>) {
     app.state::<crate::AppState>()
-        .boss_loot
+        .loot.boss
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .rebind = binding;
@@ -1011,7 +1025,7 @@ pub fn spawn_hotkey_poller(
     crate::modules::ModuleJoin::Thread(std::thread::spawn(move || {
         let generation = {
             let state = app.state::<crate::AppState>();
-            let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+            let mut owner = state.loot.boss.lock().unwrap_or_else(|e| e.into_inner());
             if work_cancelled(&cancel) {
                 return;
             }
@@ -1030,12 +1044,12 @@ pub fn spawn_hotkey_poller(
             #[cfg(windows)]
             {
                 let settings = state
-                    .boss_loot_settings
+                    .loot.settings
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .clone();
                 let binding = state
-                    .boss_loot
+                    .loot.boss
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .rebind;
@@ -1057,7 +1071,7 @@ pub fn spawn_hotkey_poller(
                 match poll.poll(&down, foreground, binding, &settings) {
                     Some(PollAction::Capture) => platform::capture_once(&app, &cancel),
                     Some(PollAction::Preview) => {
-                        let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut owner = state.loot.boss.lock().unwrap_or_else(|e| e.into_inner());
                         owner.preview = !owner.preview;
                         if !owner.preview {
                             owner.frame = None;
@@ -1065,7 +1079,7 @@ pub fn spawn_hotkey_poller(
                     }
                     Some(PollAction::CancelBind) => {
                         state
-                            .boss_loot
+                            .loot.boss
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
                             .rebind = None
@@ -1080,7 +1094,7 @@ pub fn spawn_hotkey_poller(
                             crate::app_log(&app, error);
                         }
                         state
-                            .boss_loot
+                            .loot.boss
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
                             .rebind = None;
@@ -1093,7 +1107,7 @@ pub fn spawn_hotkey_poller(
                 platform::preview(&app, foreground);
             }
             let due = state
-                .boss_loot
+                .loot.boss
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .retire_and_due_id(now_ms());
@@ -1115,12 +1129,12 @@ pub fn spawn_hotkey_poller(
                         return;
                     }
                     let settings = state
-                        .boss_loot_settings
+                        .loot.settings
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .clone();
                     submit_capture(
-                        &state.boss_loot,
+                        &state.loot.boss,
                         &settings,
                         &LootApi::from_state(&state).with_cancel(cancel),
                         now_ms(),
@@ -1133,7 +1147,7 @@ pub fn spawn_hotkey_poller(
             }
         }
         app.state::<crate::AppState>()
-            .boss_loot
+            .loot.boss
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .stop_polling(generation);
@@ -1152,7 +1166,7 @@ mod platform {
     pub fn preview(app: &tauri::AppHandle, foreground: bool) {
         let state = app.state::<crate::AppState>();
         let game = *state.game_monitor.lock().unwrap_or_else(|e| e.into_inner());
-        let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+        let mut owner = state.loot.boss.lock().unwrap_or_else(|e| e.into_inner());
         let rect = if owner.preview && foreground {
             cursor()
                 .zip(game)
@@ -1169,7 +1183,7 @@ mod platform {
         let Some(cur) = cursor() else { return };
         let state = app.state::<crate::AppState>();
         let settings = state
-            .boss_loot_settings
+            .loot.settings
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
@@ -1179,7 +1193,7 @@ mod platform {
         let league = crate::ssot::league_name(&state).unwrap_or_default();
         // Freeze the area, seed, profile, league and identity BEFORE grabbing/OCR.
         let begin = {
-            let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+            let mut owner = state.loot.boss.lock().unwrap_or_else(|e| e.into_inner());
             if work_cancelled(cancel) {
                 return;
             }
@@ -1253,7 +1267,7 @@ mod platform {
             Ok(None) => return,
             Ok(Some((rect, lines))) => {
                 {
-                    let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut owner = state.loot.boss.lock().unwrap_or_else(|e| e.into_inner());
                     if work_cancelled(cancel) {
                         return;
                     }
@@ -1272,7 +1286,7 @@ mod platform {
                     let api = LootApi::from_state(&state).with_cancel(cancel.clone());
                     let profile = {
                         state
-                            .boss_loot
+                            .loot.boss
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
                             .pending
@@ -1283,12 +1297,12 @@ mod platform {
                     let Some(profile) = profile else { return };
                     let result = api.capture_context(&profile).await;
                     let settings = state
-                        .boss_loot_settings
+                        .loot.settings
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .clone();
                     {
-                        let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut owner = state.loot.boss.lock().unwrap_or_else(|e| e.into_inner());
                         if work_cancelled(&cancel) {
                             return;
                         }
@@ -1312,7 +1326,7 @@ mod platform {
                 });
             }
             Err(error) => {
-                let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+                let mut owner = state.loot.boss.lock().unwrap_or_else(|e| e.into_inner());
                 if work_cancelled(cancel) {
                     return;
                 }
@@ -1404,9 +1418,9 @@ mod owner_tests {
         owner.pending.as_mut().unwrap().phase = Phase::Saved;
         owner.pending.as_mut().unwrap().close_at_ms = Some(0);
         owner.frame = Some(expired_frame());
-        *state.boss_loot.lock().unwrap() = owner;
+        *state.loot.boss.lock().unwrap() = owner;
         snapshot(&state);
-        let owner = state.boss_loot.lock().unwrap();
+        let owner = state.loot.boss.lock().unwrap();
         assert_eq!(owner.pending.as_ref().map(|p| p.id), Some(id));
         assert!(owner.frame.is_some());
     }

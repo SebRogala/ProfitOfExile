@@ -339,9 +339,7 @@ pub struct AppStatus {
 pub use font_session::{FontRound, FontSessionData};
 
 pub struct AppState {
-    pub boss_loot: Mutex<loot_capture::LootOwner>,
-    pub boss_loot_settings: Mutex<loot_capture::LootSettings>,
-    pub number_format: Mutex<loot_capture::NumberFormat>,
+    pub loot: loot_capture::LootState,
     /// Hardware-based device fingerprint — computed once at startup, immutable.
     /// String is Sync so no Mutex needed.
     pub device_id: String,
@@ -2695,7 +2693,7 @@ fn spawn_log_watcher(app: AppHandle) {
         // temple would otherwise sit disarmed for the whole run — no further
         // Alva line, no further area change.
         temple::trigger::catch_up(&app, catch_up_tail.as_deref());
-        app.state::<AppState>().boss_loot.lock().unwrap_or_else(|e| e.into_inner()).catch_up(catch_up_tail.as_deref());
+        app.state::<AppState>().loot.boss.lock().unwrap_or_else(|e| e.into_inner()).catch_up(catch_up_tail.as_deref());
 
         emit_status(&app);
 
@@ -2942,7 +2940,7 @@ fn spawn_log_watcher(app: AppHandle) {
                     // the new area. Area detection also runs while OCR is idle.
                     if let Some(change) = client_log::parse_area_change(&line) {
                         let state = app.state::<AppState>();
-                        state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).observe_area(&change);
+                        state.loot.boss.lock().unwrap_or_else(|e| e.into_inner()).observe_area(&change);
                         let update = record_lab_detection(&state, |detection| detection.observe_area(change.level, change.area));
                         publish_lab_detection(&app, update);
                     }
@@ -3000,9 +2998,7 @@ pub fn run() {
         .expect("failed to build server HTTP client");
 
     let app_state = AppState {
-        boss_loot: Mutex::new(loot_capture::LootOwner::default()),
-        boss_loot_settings: Mutex::new(loot_capture::LootSettings::default()),
-        number_format: Mutex::new(loot_capture::NumberFormat::default()),
+        loot: loot_capture::LootState::new(),
         device_id: device_id.clone(),
         pair_code: Mutex::new(pair_code),
         client_txt_path: Mutex::new(String::from(

@@ -936,8 +936,8 @@ pub fn update(app: &tauri::AppHandle, f: impl FnOnce(&Settings) -> Settings) {
 
 /// Build a Settings struct from the current AppState.
 pub fn from_state(state: &crate::AppState) -> Settings {
-    let boss_loot = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let number_format = *state.number_format.lock().unwrap_or_else(|e| e.into_inner());
+    let boss_loot = state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let number_format = *state.loot.number_format.lock().unwrap_or_else(|e| e.into_inner());
     let temple = state.temple_state.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     // Bound HERE rather than inside the struct literal below: a temporary
     // guard in a literal lives to the end of the whole statement, and this
@@ -1030,8 +1030,8 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
         Ok(()) => settings.boss_loot.clone(),
         Err(reason) => { rejected.push(format!("boss loot settings: {reason}; using defaults")); Default::default() }
     };
-    *state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()) = boss_loot;
-    *state.number_format.lock().unwrap_or_else(|e| e.into_inner()) =
+    *state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()) = boss_loot;
+    *state.loot.number_format.lock().unwrap_or_else(|e| e.into_inner()) =
         crate::loot_capture::NumberFormat::migrate(settings.number_format, settings.ui_prefs.get("numberFormat"));
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = settings.client_txt_path.clone();
     *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = settings.server_url.clone();
@@ -1726,9 +1726,7 @@ pub(crate) mod tests {
     /// whether it also needs a settings touch point.
     pub(crate) fn test_app_state() -> crate::AppState {
         crate::AppState {
-            boss_loot: Mutex::new(crate::loot_capture::LootOwner::default()),
-            boss_loot_settings: Mutex::new(crate::loot_capture::LootSettings::default()),
-            number_format: Mutex::new(crate::loot_capture::NumberFormat::default()),
+            loot: crate::loot_capture::LootState::new(),
             device_id: String::new(),
             game_monitor: Mutex::new(None),
             pair_code: Mutex::new(String::new()),
