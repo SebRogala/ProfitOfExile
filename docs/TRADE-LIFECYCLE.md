@@ -182,7 +182,6 @@ The reliable target contract is:
 - Older data never replaces a newer cache entry.
 - Duplicate and stale-but-valid acknowledgements are terminal and safe.
 - Transient errors retry with bounded backoff and jitter.
-- Disabling contribution stops network submission and deletes unsent pending contribution payloads.
 - Desktop credentials use an enrolled device signing key held in the OS credential store; an observed or caller-supplied device ID is not authentication.
 - Public responses do not expose raw device fingerprints.
 
