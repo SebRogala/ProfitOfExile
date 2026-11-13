@@ -284,6 +284,10 @@ pub struct LootState {
     pub(crate) number_format: Mutex<NumberFormat>,
 }
 impl LootState {
+    /// The one construction source for `run()` and `test_app_state`.
+    /// Deliberately not a `Default` impl, like `test_app_state`: a new field
+    /// breaking this constructor is the intended signal to decide whether it
+    /// also needs a settings touch point.
     pub(crate) fn new() -> Self {
         Self {
             boss: Mutex::new(LootOwner::default()),
