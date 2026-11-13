@@ -1,0 +1,11 @@
+{
+  "runs": 41,
+  "devices": 3,
+  "nextRun": 42,
+  "items": {
+    "awakeners-orb": {
+      "drops": 5,
+      "eligibleRuns": 40
+    }
+  }
+}

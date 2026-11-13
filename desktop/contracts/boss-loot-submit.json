@@ -1,0 +1,25 @@
+{
+  "state": "created",
+  "run": {
+    "boss": "Sirus",
+    "profileKey": "sirus-uber",
+    "profileVersion": 3,
+    "id": "run-1",
+    "league": "Allflame",
+    "run": 7,
+    "date": "2026-11-01T12:00:00Z",
+    "seed": "seed-42",
+    "version": 2,
+    "items": {
+      "quantities": {
+        "awakeners-orb": 1
+      },
+      "counted": [
+        "awakeners-orb"
+      ]
+    }
+  },
+  "droppedPositiveKeys": [
+    "old-key"
+  ]
+}

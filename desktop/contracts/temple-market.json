@@ -1,0 +1,209 @@
+{
+  "league": "Allflame",
+  "asOf": "2026-11-01T12:00:00Z",
+  "floor": 10,
+  "floorRule": "floor = median of the newest room lines; above floor when the room's trailing 24h median chaos \u003e= 4x floor (newest print when no 24h prints)",
+  "categoriesSeen": [
+    "IncursionTemple",
+    "UniqueAccessory"
+  ],
+  "rooms": [
+    {
+      "name": "A (Tier 1)",
+      "line": "A",
+      "tier": 1,
+      "chaos": 10,
+      "saleDelta": 0,
+      "aboveFloor": false,
+      "listings": 700,
+      "lowConfidence": false,
+      "icon": "/api/icon/temple/Chronicle%20of%20Atzoatl"
+    },
+    {
+      "name": "B (Tier 1)",
+      "line": "B",
+      "tier": 1,
+      "chaos": 10,
+      "saleDelta": 0,
+      "aboveFloor": false,
+      "listings": 700,
+      "lowConfidence": false,
+      "icon": "/api/icon/temple/Chronicle%20of%20Atzoatl"
+    },
+    {
+      "name": "Locus of Corruption (Tier 3)",
+      "line": "Locus of Corruption",
+      "tier": 3,
+      "chaos": 853.6,
+      "saleDelta": 843.6,
+      "aboveFloor": true,
+      "listings": 2489,
+      "lowConfidence": false,
+      "icon": "/api/icon/temple/Chronicle%20of%20Atzoatl"
+    }
+  ],
+  "items": [
+    {
+      "name": "Apep's Slumber",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Apep%27s%20Slumber"
+    },
+    {
+      "name": "Apep's Supremacy",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Apep%27s%20Supremacy"
+    },
+    {
+      "name": "Architect's Hand",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Architect%27s%20Hand"
+    },
+    {
+      "name": "Coward's Chains",
+      "category": "UniqueAccessory",
+      "price": {
+        "chaos": 1,
+        "divine": 0.002,
+        "listings": 343,
+        "lowConfidence": false,
+        "windowPriced": false,
+        "windowHours": 0,
+        "windowSamples": 0
+      },
+      "unpriced": false,
+      "icon": "/api/icon/temple/Coward%27s%20Chains"
+    },
+    {
+      "name": "Coward's Legacy",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Coward%27s%20Legacy"
+    },
+    {
+      "name": "Dance of the Offered",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Dance%20of%20the%20Offered"
+    },
+    {
+      "name": "Fate of the Vaal",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Fate%20of%20the%20Vaal"
+    },
+    {
+      "name": "Mask of the Spirit Drinker",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Mask%20of%20the%20Spirit%20Drinker"
+    },
+    {
+      "name": "Mask of the Stitched Demon",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Mask%20of%20the%20Stitched%20Demon"
+    },
+    {
+      "name": "Omeyocan",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Omeyocan"
+    },
+    {
+      "name": "Sacrificial Heart",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Sacrificial%20Heart"
+    },
+    {
+      "name": "Slavedriver's Hand",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Slavedriver%27s%20Hand"
+    },
+    {
+      "name": "Soul Catcher",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Soul%20Catcher"
+    },
+    {
+      "name": "Soul Ripper",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Soul%20Ripper"
+    },
+    {
+      "name": "Story of the Vaal",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Story%20of%20the%20Vaal"
+    },
+    {
+      "name": "Tempered Flesh",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Tempered%20Flesh"
+    },
+    {
+      "name": "Tempered Mind",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Tempered%20Mind"
+    },
+    {
+      "name": "Tempered Spirit",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Tempered%20Spirit"
+    },
+    {
+      "name": "Transcendent Flesh",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Transcendent%20Flesh"
+    },
+    {
+      "name": "Transcendent Mind",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Transcendent%20Mind"
+    },
+    {
+      "name": "Transcendent Spirit",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Transcendent%20Spirit"
+    },
+    {
+      "name": "Zerphi's Heart",
+      "category": "",
+      "price": null,
+      "unpriced": true,
+      "icon": "/api/icon/temple/Zerphi%27s%20Heart"
+    }
+  ]
+}
