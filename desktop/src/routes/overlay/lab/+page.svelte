@@ -15,6 +15,7 @@
 	import LabPathstripWidget from '$lib/compass/LabPathstripWidget.svelte';
 	import LabTimerWidget from '$lib/compass/LabTimerWidget.svelte';
 	import LabComparatorWidget from '$lib/compass/LabComparatorWidget.svelte';
+	import LabFontAlertsWidget from '$lib/compass/LabFontAlertsWidget.svelte';
 	import { fontAlertsDefaultPlacement } from '$lib/compass/font-alerts-geometry';
 	import { LAB_WINDOW_LABEL } from '$lib/overlay/manager';
 	import type { OverlayDefaultGeometry } from '$lib/overlay/overlay-defaults';
@@ -58,6 +59,8 @@
 			<LabTimerWidget {configMode} label={spec.label} />
 		{:else if spec.id === 'lab.comparator'}
 			<LabComparatorWidget {configMode} label={spec.label} />
+		{:else if spec.id === 'lab.fontalerts'}
+			<LabFontAlertsWidget {configMode} label={spec.label} />
 		{/if}
 	{/snippet}
 </WidgetHost>
