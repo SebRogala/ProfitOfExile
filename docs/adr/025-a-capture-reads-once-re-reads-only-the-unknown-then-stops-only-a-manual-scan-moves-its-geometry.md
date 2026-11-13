@@ -307,14 +307,18 @@ the module is on, following [Overlay Guide § Screen reading (GGG policy)](../OV
   `detect::detect_tick(frame)`).
 - Clauses 2 and 3: a press is a round, and every press refills the budget. A press over an
   incomplete held capture re-reads only the unknown (unresolved rows, cells and header fields)
-  on its one frame; confident cells are never replaced; a complete capture reads nothing.
-  Nothing reads between presses. The three-round cap and the liveness check no longer apply to
+  on its one frame, and never replaces a confident cell, while the held capture lines up with
+  the press's layout (`read::lines_up`); one that does not reads `Full` (clause 2's merc
+  exception), which can replace a confident cell. Over a complete capture a press runs pass 1
+  and the tooltip read but no pass 2 or icon walk (`ReadPlan::Nothing`). Nothing reads between
+  presses. The three-round cap and the liveness check no longer apply to
   merc.
 - Clause 4: the full-screen locate runs on a press only on a cold start (no placement) or while
   a Recalibrate is pending (`run::locate_decision`, `FallbackKey { refit, press }`). Scan now is
   gone; Recalibrate is the manual fix.
 - Clause 5: a full round 1 runs on a new capture, a replaced panel, a Recalibrate or a
-  template-store change; any other press is an unknown-only round.
+  template-store change; a held capture that no longer lines up also reads `Full`; any other
+  press is an unknown-only round.
 
 The merc column of "Where each clause lives" above names the POE-390 homes. Normative write-up
 in [Mercenaries Lifecycle](../MERCENARIES-LIFECYCLE.md), "Per press".

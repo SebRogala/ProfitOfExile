@@ -1021,7 +1021,9 @@ touching the named path.
 - **Merc read on press** (POE-390): open a recruit window and press the read key
   once → exactly one `Merc: read on press — …` line in `app.log`. Hover a
   support the widget marks `?` and press twice within 10 s → the cell confirms.
-  Close the window and press again → `Merc: window gone`. Between presses no
+  Close the window, move the cursor outside where the panel was, and press
+  again → `Merc: window gone` (with the cursor still inside the held panel the
+  press is occluded and holds the capture). Between presses no
   merc capture line appears.
 - **Merc header, across re-detects** — **historical (superseded 2026-11-13,
   POE-390)** (added after the 2026-08-25 smoke, where

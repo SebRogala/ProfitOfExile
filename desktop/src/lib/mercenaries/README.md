@@ -158,7 +158,9 @@ change (`run::generation_changed`: a forget or reset disowned confirmations, or
 a sync corpus landed), so a `Confirmed` cell whose confirmation was disowned is
 read afresh rather than copied.
 
-Any other press over a held capture is an unknown-only round.
+A held capture that no longer lines up (`read::lines_up`) reads `Full` on
+every press, without a refill. Any other press over a held capture is an
+unknown-only round.
 
 Accepted costs: a read still incomplete waits for the next press; a wrong
 placement waits for Recalibrate; a real trailing cell that is not confident and reads dark for one

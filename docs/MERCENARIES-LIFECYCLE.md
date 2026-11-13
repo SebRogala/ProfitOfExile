@@ -35,13 +35,17 @@ Shipped: `4cd237b9`, `9a12ce5c` (POE-390).
   A placed miss is a miss; Recalibrate is the manual fix.
 - Every press refills the read budget. The first press reads the panel fully;
   a later press over the same incomplete capture re-reads only its unresolved
-  rows, cells and header fields. Confident cells are kept; a complete capture
-  reads nothing.
+  rows, cells and header fields, and keeps its confident cells, while the
+  held capture still lines up with the press's layout (`read::lines_up`);
+  one that no longer lines up is read in full, and that read can replace a
+  confident cell. Over a complete capture a press still runs pass 1 (presence,
+  REMATCH, header fold) and the tooltip read, but no pass 2 or icon walk.
 - Two tooltip reads that agree within 10 s (`PENDING_CONFIRM_TTL`), from two
   presses, learn a support.
 - A press that finds no panel with the cursor off it, or an area change,
-  retires the live capture. A press with the cursor inside the held panel is
-  occluded and holds the capture, however long since the last press.
+  retires the live capture. A press that finds no panel with the cursor inside
+  the held panel is occluded and holds the capture, however long since the
+  last press; a panel that is found is read normally wherever the cursor is.
 - `Scanning` shows only while a press read runs. Each press logs one
   `Merc: read on press — <outcome>` line. Nothing reads between presses.
 
