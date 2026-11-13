@@ -40,14 +40,43 @@ func (r *Repository) LatestGemPrices(ctx context.Context, scope league.Scope) ([
 	if snapTime == nil {
 		return nil, time.Time{}, nil
 	}
+	gems, err := r.gemsAtSnapshot(ctx, scope.ID(), *snapTime)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return gems, *snapTime, nil
+}
 
+// GemPricesAsOf returns all gem prices from the newest snapshot at or before asOf.
+// Returns (nil, zero-time, nil) when no such snapshot exists.
+func (r *Repository) GemPricesAsOf(ctx context.Context, scope league.Scope, asOf time.Time) ([]GemPrice, time.Time, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, time.Time{}, fmt.Errorf("lab repo: gem prices as of: %w", err)
+	}
+	var snapTime *time.Time
+	err := r.pool.QueryRow(ctx,
+		"SELECT MAX(time) FROM gem_snapshots WHERE league = $1 AND time <= $2", scope.ID(), asOf).Scan(&snapTime)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("lab repo: snapshot time as of: %w", err)
+	}
+	if snapTime == nil {
+		return nil, time.Time{}, nil
+	}
+	gems, err := r.gemsAtSnapshot(ctx, scope.ID(), *snapTime)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return gems, *snapTime, nil
+}
+
+func (r *Repository) gemsAtSnapshot(ctx context.Context, leagueID string, snapTime time.Time) ([]GemPrice, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT name, variant, COALESCE(chaos, 0), COALESCE(listings, 0),
 		       is_transfigured, is_corrupted, COALESCE(gem_color, ''), sample_count, sparkline_empty
 		FROM gem_snapshots
-		WHERE league = $1 AND time = $2`, scope.ID(), *snapTime)
+		WHERE league = $1 AND time = $2`, leagueID, snapTime)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("lab repo: query latest gems: %w", err)
+		return nil, fmt.Errorf("lab repo: query latest gems: %w", err)
 	}
 	defer rows.Close()
 
@@ -56,15 +85,14 @@ func (r *Repository) LatestGemPrices(ctx context.Context, scope league.Scope) ([
 		var g GemPrice
 		if err := rows.Scan(&g.Name, &g.Variant, &g.Chaos, &g.Listings,
 			&g.IsTransfigured, &g.IsCorrupted, &g.GemColor, &g.SampleCount, &g.SparklineEmpty); err != nil {
-			return nil, time.Time{}, fmt.Errorf("lab repo: scan gem: %w", err)
+			return nil, fmt.Errorf("lab repo: scan gem: %w", err)
 		}
 		gems = append(gems, g)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, time.Time{}, fmt.Errorf("lab repo: rows iteration: %w", err)
+		return nil, fmt.Errorf("lab repo: rows iteration: %w", err)
 	}
-
-	return gems, *snapTime, nil
+	return gems, nil
 }
 
 // SaveTransfigureResults batch-inserts transfigure analysis results.
