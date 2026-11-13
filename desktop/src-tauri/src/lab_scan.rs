@@ -568,19 +568,19 @@ impl FontProcessingState {
             Ok(lines) => {
                 let panel = crate::font_parser::parse_font_panel(&lines);
                 self.frame_saw_panel = panel.font_active;
-                let current = self.frame_is_current(
-                    generation,
-                    state.lab_scan.font_scan_generation.load(Ordering::SeqCst),
-                    state.lab_scan.font_scan_live_gen.load(Ordering::SeqCst),
+                crate::font_alerts::record_current_alert_read(
+                    &state.lab_scan.font_alert_seen,
+                    || {
+                        self.frame_is_current(
+                            generation,
+                            state.lab_scan.font_scan_generation.load(Ordering::SeqCst),
+                            state.lab_scan.font_scan_live_gen.load(Ordering::SeqCst),
+                        )
+                    },
+                    panel.font_active,
+                    &panel.options,
+                    Instant::now(),
                 );
-                if current {
-                    crate::font_alerts::note_alert_read(
-                        &mut state.lab_scan.font_alert_seen.lock().unwrap_or_else(|e| e.into_inner()),
-                        panel.font_active,
-                        &panel.options,
-                        Instant::now(),
-                    );
-                }
                 if !panel.font_active && !lines.is_empty() && self.loop_count % 40 == 1 {
                     crate::app_log(
                         app,

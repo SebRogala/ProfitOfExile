@@ -193,6 +193,22 @@ pub(crate) fn note_alert_read(
     }
 }
 
+/// Records a frame only if `is_current` still holds once the slot is locked:
+/// every session end bumps the generation before it clears the slot, so a
+/// frame checked under the lock cannot write after that clear.
+pub(crate) fn record_current_alert_read(
+    slot: &Mutex<AlertSeen>,
+    is_current: impl FnOnce() -> bool,
+    font_active: bool,
+    options: &[CraftOption],
+    now: Instant,
+) {
+    let mut seen = slot.lock().unwrap_or_else(|e| e.into_inner());
+    if is_current() {
+        note_alert_read(&mut seen, font_active, options, now);
+    }
+}
+
 /// The alert crafts read within [`FONT_ALERT_HOLD`] of `now`, in display order.
 pub fn alert_crafts(seen: &AlertSeen, now: Instant) -> Vec<&'static str> {
     let fresh = |t: Option<Instant>| {
@@ -383,6 +399,28 @@ mod tests {
             alert_crafts(&slot.lock().unwrap(), t0 + ms(250)),
             vec!["exchange_exceptional"]
         );
+    }
+
+    #[test]
+    fn a_frame_checked_before_a_session_end_cannot_write_after_its_reset() {
+        let t0 = Instant::now();
+        let slot = Mutex::new(AlertSeen::default());
+        let ended = std::cell::Cell::new(false);
+        // The session end (generation bump, then clear) runs once: during the
+        // check when the slot is free then, otherwise after the frame's write.
+        let check = || {
+            if let Ok(mut seen) = slot.try_lock() {
+                *seen = AlertSeen::default();
+                ended.set(true);
+                return true; // the generation read before the end
+            }
+            true
+        };
+        record_current_alert_read(&slot, check, true, &[opt("exchange_exceptional")], t0);
+        if !ended.get() {
+            clear_alert_reads(&slot);
+        }
+        assert!(alert_crafts(&slot.lock().unwrap(), t0).is_empty());
     }
 
     #[test]
