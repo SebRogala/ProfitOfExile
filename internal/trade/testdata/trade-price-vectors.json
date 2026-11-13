@@ -165,5 +165,21 @@
     ],
     "medianTop3": 50,
     "medianTop10": 55
+  },
+  {
+    "name": "two_fractional",
+    "divineRate": 200,
+    "listings": [
+      {
+        "price": 1.001,
+        "currency": "chaos"
+      },
+      {
+        "price": 1.013,
+        "currency": "chaos"
+      }
+    ],
+    "medianTop3": 1.01,
+    "medianTop10": 1.01
   }
 ]
