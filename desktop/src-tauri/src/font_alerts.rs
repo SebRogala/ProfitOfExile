@@ -6,7 +6,7 @@
 //! (`temple::market::spawn_temple_market_poll`).
 
 use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -154,72 +154,56 @@ pub fn on_server_url_changed(app: &AppHandle) {
     PRICES_NOTIFY.notify_one();
 }
 
-/// Q4 interim: ~4 frames at the 250 ms font scan interval, so one torn frame
-/// does not blink the stack. Not measured yet.
-pub const FONT_ALERT_HOLD: Duration = Duration::from_millis(1000);
-
 /// Fixed display order, exceptional above transfigure (Q2 interim; homes H2
 /// names the panel line-index alternative).
 pub const ALERT_CRAFT_TYPES: [&str; 2] = ["exchange_exceptional", "transform_direct"];
 
-/// When a current font frame last read each alert craft.
+/// The alert crafts the latest current font read listed (POE-391 H2). Each
+/// press replaces it, so an alert stays up between presses for as long as the
+/// panel showed it at the last one.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct AlertSeen {
-    exceptional: Option<Instant>,
-    transfigure: Option<Instant>,
+    exceptional: bool,
+    transfigure: bool,
 }
 
-/// An active frame refreshes the time of each alert craft it lists; a craft
-/// absent from the frame keeps its older time. An inactive frame changes nothing.
-pub(crate) fn note_alert_read(
-    seen: &mut AlertSeen,
-    font_active: bool,
-    options: &[CraftOption],
-    now: Instant,
-) {
-    if !font_active {
-        return;
-    }
-    let lists = |t: &str| options.iter().any(|o| o.option_type == t);
-    if lists(ALERT_CRAFT_TYPES[0]) {
-        seen.exceptional = Some(now);
-    }
-    if lists(ALERT_CRAFT_TYPES[1]) {
-        seen.transfigure = Some(now);
-    }
+/// An active read replaces the set with the alert crafts it lists; an inactive
+/// read (the panel is not on screen) clears it.
+pub(crate) fn note_alert_read(seen: &mut AlertSeen, font_active: bool, options: &[CraftOption]) {
+    let lists = |t: &str| font_active && options.iter().any(|o| o.option_type == t);
+    *seen = AlertSeen {
+        exceptional: lists(ALERT_CRAFT_TYPES[0]),
+        transfigure: lists(ALERT_CRAFT_TYPES[1]),
+    };
 }
 
-/// Records a frame only if `is_current` still holds once the slot is locked:
-/// every session end bumps the generation before it clears the slot, so a
-/// frame checked under the lock cannot write after that clear.
+/// Records a read only if `is_current` still holds once the slot is locked:
+/// every context end stores its token before it clears the slot, so a read
+/// checked under the lock cannot write after that clear.
 pub(crate) fn record_current_alert_read(
     slot: &Mutex<AlertSeen>,
     is_current: impl FnOnce() -> bool,
     font_active: bool,
     options: &[CraftOption],
-    now: Instant,
 ) {
     let mut seen = slot.lock().unwrap_or_else(|e| e.into_inner());
     if is_current() {
-        note_alert_read(&mut seen, font_active, options, now);
+        note_alert_read(&mut seen, font_active, options);
     }
 }
 
-/// The alert crafts read within [`FONT_ALERT_HOLD`] of `now`, in display order.
-pub fn alert_crafts(seen: &AlertSeen, now: Instant) -> Vec<&'static str> {
-    let fresh = |t: Option<Instant>| {
-        t.is_some_and(|t| now.saturating_duration_since(t) < FONT_ALERT_HOLD)
-    };
+/// The alert crafts in the set, in display order.
+pub fn alert_crafts(seen: &AlertSeen) -> Vec<&'static str> {
     ALERT_CRAFT_TYPES
         .into_iter()
         .zip([seen.exceptional, seen.transfigure])
-        .filter(|(_, t)| fresh(*t))
+        .filter(|(_, listed)| *listed)
         .map(|(craft, _)| craft)
         .collect()
 }
 
-/// Called wherever the font session data is reset, so a new lifecycle starts
-/// with no alert standing.
+/// Called on `FontOpened` and wherever the font session data is reset, so a
+/// new panel or lifecycle starts with no alert standing.
 pub(crate) fn clear_alert_reads(slot: &Mutex<AlertSeen>) {
     *slot.lock().unwrap_or_else(|e| e.into_inner()) = AlertSeen::default();
 }
@@ -231,7 +215,7 @@ pub fn get_font_alerts(state: tauri::State<AppState>) -> Vec<String> {
         .font_alert_seen
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    alert_crafts(&seen, Instant::now())
+    alert_crafts(&seen)
         .into_iter()
         .map(String::from)
         .collect()
@@ -259,10 +243,6 @@ mod tests {
         CraftOption { option_type: t.into(), text: String::new(), value: None }
     }
 
-    fn ms(n: u64) -> Duration {
-        Duration::from_millis(n)
-    }
-
     fn priced() -> ExceptionalPrices {
         serde_json::from_str(PRICED).unwrap()
     }
@@ -276,10 +256,9 @@ mod tests {
     }
 
     fn read_once(options: &[CraftOption]) -> Vec<&'static str> {
-        let t0 = Instant::now();
         let mut seen = AlertSeen::default();
-        note_alert_read(&mut seen, true, options, t0);
-        alert_crafts(&seen, t0)
+        note_alert_read(&mut seen, true, options);
+        alert_crafts(&seen)
     }
 
     #[test]
@@ -312,111 +291,72 @@ mod tests {
     }
 
     #[test]
-    fn an_alert_absent_from_later_reads_of_an_open_panel_expires() {
-        let t0 = Instant::now();
-        let mut seen = AlertSeen::default();
-        note_alert_read(&mut seen, true, &[opt("exchange_exceptional")], t0);
-        for n in 1..=4 {
-            note_alert_read(&mut seen, true, &[opt("add_quality")], t0 + ms(250 * n));
-        }
-        assert!(alert_crafts(&seen, t0 + ms(1000)).is_empty());
+    fn an_alert_stays_listed_until_the_next_read_however_long_the_gap() {
+        // No clock is involved: nothing but a read or a clear changes the set.
+        let slot = Mutex::new(AlertSeen::default());
+        record_current_alert_read(&slot, || true, true, &[opt("exchange_exceptional")]);
+        std::thread::sleep(Duration::from_millis(1100));
+        assert_eq!(alert_crafts(&slot.lock().unwrap()), vec!["exchange_exceptional"]);
     }
 
     #[test]
-    fn an_alert_still_read_stays_while_the_other_expires() {
-        let t0 = Instant::now();
+    fn a_later_read_without_an_alert_drops_it() {
         let mut seen = AlertSeen::default();
-        note_alert_read(
-            &mut seen,
-            true,
-            &[opt("exchange_exceptional"), opt("transform_direct")],
-            t0,
-        );
-        for n in 1..=4 {
-            note_alert_read(&mut seen, true, &[opt("transform_direct")], t0 + ms(250 * n));
-        }
-        assert_eq!(alert_crafts(&seen, t0 + ms(1000)), vec!["transform_direct"]);
+        note_alert_read(&mut seen, true, &[opt("exchange_exceptional"), opt("transform_direct")]);
+        note_alert_read(&mut seen, true, &[opt("transform_direct")]);
+        assert_eq!(alert_crafts(&seen), vec!["transform_direct"]);
     }
 
     #[test]
-    fn one_torn_frame_does_not_drop_an_alert() {
-        let t0 = Instant::now();
+    fn an_inactive_read_clears_the_alerts() {
         let mut seen = AlertSeen::default();
-        note_alert_read(&mut seen, true, &[opt("exchange_exceptional")], t0);
-        note_alert_read(&mut seen, true, &[opt("add_quality")], t0 + ms(250));
-        assert_eq!(alert_crafts(&seen, t0 + ms(500)), vec!["exchange_exceptional"]);
-    }
-
-    #[test]
-    fn an_alert_read_inside_the_hold_is_listed() {
-        let t0 = Instant::now();
-        let mut seen = AlertSeen::default();
-        note_alert_read(&mut seen, true, &[opt("exchange_exceptional")], t0);
-        assert_eq!(alert_crafts(&seen, t0 + ms(999)), vec!["exchange_exceptional"]);
-    }
-
-    #[test]
-    fn an_alert_unread_for_the_hold_is_dropped() {
-        let t0 = Instant::now();
-        let mut seen = AlertSeen::default();
-        note_alert_read(&mut seen, true, &[opt("exchange_exceptional")], t0);
-        assert!(alert_crafts(&seen, t0 + ms(1000)).is_empty());
-    }
-
-    #[test]
-    fn an_inactive_frame_refreshes_nothing() {
-        let t0 = Instant::now();
-        let mut seen = AlertSeen::default();
-        note_alert_read(&mut seen, true, &[opt("exchange_exceptional")], t0);
-        note_alert_read(&mut seen, false, &[opt("exchange_exceptional")], t0 + ms(750));
-        assert!(alert_crafts(&seen, t0 + ms(1000)).is_empty());
+        note_alert_read(&mut seen, true, &[opt("exchange_exceptional")]);
+        note_alert_read(&mut seen, false, &[opt("exchange_exceptional")]);
+        assert!(alert_crafts(&seen).is_empty());
     }
 
     #[test]
     fn nothing_read_lists_nothing() {
-        assert!(alert_crafts(&AlertSeen::default(), Instant::now()).is_empty());
+        assert!(alert_crafts(&AlertSeen::default()).is_empty());
     }
 
     #[test]
-    fn a_session_reset_clears_alerts_until_a_later_read() {
-        let t0 = Instant::now();
+    fn a_clear_drops_alerts_until_a_later_read() {
         let slot = Mutex::new(AlertSeen::default());
-        note_alert_read(
-            &mut slot.lock().unwrap(),
-            true,
-            &[opt("exchange_exceptional"), opt("transform_direct")],
-            t0,
-        );
+        note_alert_read(&mut slot.lock().unwrap(), true, &[opt("exchange_exceptional"), opt("transform_direct")]);
         clear_alert_reads(&slot);
-        assert!(alert_crafts(&slot.lock().unwrap(), t0).is_empty());
+        assert!(alert_crafts(&slot.lock().unwrap()).is_empty());
 
-        note_alert_read(&mut slot.lock().unwrap(), true, &[opt("exchange_exceptional")], t0 + ms(250));
-        assert_eq!(
-            alert_crafts(&slot.lock().unwrap(), t0 + ms(250)),
-            vec!["exchange_exceptional"]
-        );
+        note_alert_read(&mut slot.lock().unwrap(), true, &[opt("exchange_exceptional")]);
+        assert_eq!(alert_crafts(&slot.lock().unwrap()), vec!["exchange_exceptional"]);
     }
 
     #[test]
-    fn a_frame_checked_before_a_session_end_cannot_write_after_its_reset() {
-        let t0 = Instant::now();
+    fn a_read_for_an_ended_context_writes_nothing() {
+        let slot = Mutex::new(AlertSeen::default());
+        record_current_alert_read(&slot, || false, true, &[opt("exchange_exceptional")]);
+        assert!(alert_crafts(&slot.lock().unwrap()).is_empty());
+    }
+
+    #[test]
+    fn a_read_checked_before_a_context_end_cannot_write_after_its_clear() {
         let slot = Mutex::new(AlertSeen::default());
         let ended = std::cell::Cell::new(false);
-        // The session end (generation bump, then clear) runs once: during the
-        // check when the slot is free then, otherwise after the frame's write.
+        // The context end (token store, then clear) runs once: during the
+        // check when the slot is free then, otherwise after the read's write.
         let check = || {
             if let Ok(mut seen) = slot.try_lock() {
                 *seen = AlertSeen::default();
                 ended.set(true);
-                return true; // the generation read before the end
+                return true; // the token read before the end
             }
             true
         };
-        record_current_alert_read(&slot, check, true, &[opt("exchange_exceptional")], t0);
+        record_current_alert_read(&slot, check, true, &[opt("exchange_exceptional")]);
         if !ended.get() {
             clear_alert_reads(&slot);
         }
-        assert!(alert_crafts(&slot.lock().unwrap(), t0).is_empty());
+        assert!(alert_crafts(&slot.lock().unwrap()).is_empty());
     }
 
     #[test]

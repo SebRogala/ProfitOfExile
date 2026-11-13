@@ -819,7 +819,6 @@ remains; this path covers widget config sessions only.
 - Client.txt uses filesystem notifications with a five-second polling fallback.
 - Font panel scanning begins from the `LabFinished` navigation event. The third
   Aspirant's Trial is logged but is not the scan trigger.
-  The automatic font and gem scan breaks [Screen reading (GGG policy)](#screen-reading-ggg-policy); POE-391 replaces it.
 - The merc verdict overlay does not render `mercenary.trade` yet (POE-202).
   The search state reaches every window on the slice regardless, and both
   pieces the Mercenaries page draws it with are already cross-window for that

@@ -32,6 +32,8 @@ check ssot/lab.rs 53
 # time: a multi-line `use crate::{temple, ...}` import evades it.
 grep -rnE 'crate::(temple|mercenary)::' ssot*.rs ssot/ 2>/dev/null \
 	| grep -vE '::(slice::TempleSlice|MercenarySlice|sync::MercSyncStatus)' && { echo "ssot -> feature internals"; exit 1; }
+# lab reads only the frame the read key hands it (POE-391)
+! grep -rn 'capture_screen' lab_scan.rs lab/ font_*.rs || { echo "lab code grabs the screen outside read_hotkey"; exit 1; }
 # only settings/ and persist_settings may write the settings file (H3)
 ! grep -rn 'settings::save(' --include='*.rs' . | grep -v '^./settings/' | grep -v 'fn persist_settings' \
 	|| { echo "settings::save outside settings/ and persist_settings"; exit 1; }

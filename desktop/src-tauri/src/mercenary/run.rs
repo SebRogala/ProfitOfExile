@@ -3,7 +3,7 @@
 //! `modules.rs::spawn_mercenary` delegates here. The loop is a
 //! [`ModuleJoin::Thread`](crate::modules::ModuleJoin::Thread) because screen
 //! capture and `Windows.Media.Ocr` are apartment-threaded: the async runtime
-//! and `spawn_blocking` both deadlock on them (see `spawn_gem_scan` in lab/commands.rs).
+//! and `spawn_blocking` both deadlock on them (see `read_hotkey::spawn_read_hotkey`'s dispatcher thread).
 //! Threads cannot be aborted, so every wait in here goes through [`nap`], which
 //! polls `*cancel.borrow()` every 100 ms — two orders under the registry's 5 s
 //! ceiling.

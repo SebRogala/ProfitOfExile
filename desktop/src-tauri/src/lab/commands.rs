@@ -1,14 +1,14 @@
-//! The lab command group (POE-342): Compass and lab settings, the gem and
-//! font scan spawns, lab-mode switching and detection, and gem/font session
-//! submission to the server.
+//! The lab command group (POE-342): Compass and lab settings, the gem
+//! reader's arm and disarm, lab-mode switching and detection, and gem
+//! submission to the server. The font context lives in `font_context`.
 
 use std::sync::atomic::Ordering;
 
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
-    app_log, body_excerpt, capture, emit_status, font_alerts, font_session, gem_matcher, lab_detection,
-    lab_navigation, lab_scan, lab_state, ocr, persist_settings, AppState, FontSessionData,
+    app_log, capture, emit_status, font_alerts, font_session, gem_matcher, lab_detection,
+    lab_navigation, lab_state, ocr, persist_settings, AppState, FontSessionData,
 };
 
 #[tauri::command]
@@ -70,65 +70,40 @@ pub(crate) fn get_lab_catchup(app: AppHandle) -> serde_json::Value {
     serde_json::json!({ "events": events, "in_lab": in_lab })
 }
 
-/// Start a gem OCR scan. Used by both FontOpened and manual trigger.
-/// - Clears comparator (gems-cleared)
-/// - Bumps generation counter (cancels any running scan)
-/// - Sets state to PickingGems
-/// - Ensures the single merged Lab capture loop is running
-pub(crate) fn spawn_gem_scan(app: &AppHandle, source: &str) {
-    let state = app.state::<AppState>();
-
-    // Bump generation — the merged capture loop resets its gem-local state on
-    // the next tick.
-    let gen = state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst) + 1;
-
-    // Clear frontend comparator.
-    *state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
-    if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
-
-    // Set state to PickingGems (capture loop checks this + generation).
-    *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::PickingGems;
-    emit_status(app);
-
-    app_log(app, format!("Gem scan started ({}, gen={})", source, gen));
-
-    ensure_lab_scan(app);
+/// Arm the gem reader for a new gem choice (CRAFT): mint a token and clear the
+/// held gems, both under the `detected_gems` guard. Returns the token.
+pub(crate) fn arm_gem_context(state: &AppState) -> u64 {
+    let mut gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+    let token = font_session::next_scan_generation(&state.lab_scan.read_token_seq);
+    state.lab_scan.gem_context.store(token, Ordering::SeqCst);
+    gems.clear();
+    token
 }
 
-/// Start the one dedicated OS thread shared by gem and font OCR. The liveness
-/// token prevents a gem trigger and a font trigger from starting two monitor
-/// grabs for the same Lab tick.
-fn ensure_lab_scan(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let generation = font_session::next_scan_generation(&state.lab_scan.lab_scan_generation);
-    if state
-        .lab_scan
-        .lab_scan_live_gen
-        .compare_exchange(0, generation, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return;
+/// End the gem context under the `detected_gems` guard; `clear` also drops
+/// the held gems (CONFIRM, ZoneChanged). FontClosed keeps them for the
+/// comparator. Returns whether a context was armed.
+pub(crate) fn disarm_gem_context(state: &AppState, clear: bool) -> bool {
+    let mut gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+    let was_armed = state.lab_scan.gem_context.swap(0, Ordering::SeqCst) != 0;
+    if clear {
+        gems.clear();
     }
-    let app_capture = app.clone();
-    // Screen capture and OCR use blocking Windows COM APIs and must stay on a
-    // dedicated OS thread.
-    std::thread::spawn(move || lab_scan::run(app_capture, generation));
+    was_armed
 }
 
-#[tauri::command]
-pub(crate) async fn start_scanning(app: AppHandle) -> Result<(), String> {
-    spawn_gem_scan(&app, "manual");
-    Ok(())
-}
-
-#[tauri::command]
-pub(crate) fn stop_scanning(app: AppHandle) {
+/// The CRAFT adapter: arm, then (no lab guard held) `PickingGems`,
+/// `gems-cleared`, the status, and the vocabulary preload when none is current.
+pub(crate) fn start_gem_context(app: &AppHandle, source: &str) {
     let state = app.state::<AppState>();
-    app_log(&app, "Manual scan stopped".to_string());
-    // Bump generation to cancel any running scan.
-    state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
-    *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::Idle;
-    emit_status(&app);
+    let token = arm_gem_context(&state);
+    *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::PickingGems;
+    if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
+    emit_status(app);
+    app_log(app, format!("Gem reader armed ({}, token={}) — press the read key while hovering a gem", source, token));
+    if super::gem_vocab::current(&state.lab_scan).is_none() {
+        super::gem_vocab::spawn_gem_vocab_preload(app);
+    }
 }
 
 #[tauri::command]
@@ -171,47 +146,59 @@ pub(crate) fn set_lab_mode(mode: String, app: AppHandle) {
         return;
     }
     let state = app.state::<AppState>();
-    apply_manual_lab_mode(&state, &mode, |event| {
+    let changed = apply_manual_lab_mode(&state, &mode, |event| {
         if let Err(e) = app.emit(event, ()) {
             log::warn!("emit {} failed: {}", event, e);
         }
     });
+    if changed {
+        super::gem_vocab::spawn_gem_vocab_preload(&app);
+    }
     persist_settings(&app);
 }
 
-pub(crate) fn apply_manual_lab_mode(state: &AppState, mode: &str, mut emit: impl FnMut(&str)) {
+/// Returns whether the mode changed.
+pub(crate) fn apply_manual_lab_mode(state: &AppState, mode: &str, mut emit: impl FnMut(&str)) -> bool {
     let changed = {
         let mut detection = state.lab_scan.detection.lock().unwrap_or_else(|e| e.into_inner());
         detection.override_mode();
         change_lab_mode(state, mode)
     };
-    if changed.is_some() {
-        // A completed scan is Idle and will not restart on the generation
-        // bump: retain its gems so Comparator's mode reaction can reprice.
-        // An active scan resets its vocabulary and duplicate tracking in
-        // GemProcessingState::reset_for_generation, so discard partial picks.
-        let scanning = *state.lab_state.lock().unwrap_or_else(|e| e.into_inner())
-            == lab_state::LabState::PickingGems;
-        if scanning {
-            state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()).clear();
-        }
-        emit("lab-mode-changed");
-        if scanning {
-            emit("gems-cleared");
-        }
+    if changed.is_none() {
+        return false;
     }
+    // After the generation bump and with no other lab guard held (r2-H1;
+    // `build_status` holds `detected_gems` while it takes `font_session`): a
+    // commit that passed its generation check before the bump is wiped here,
+    // and one that checks after sees the new generation. A finished context
+    // (`gem_context` 0) keeps its gems so the comparator can reprice them.
+    let scanning = {
+        let mut gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+        let scanning = state.lab_scan.gem_context.load(Ordering::SeqCst) != 0;
+        if scanning {
+            gems.clear();
+        }
+        scanning
+    };
+    emit("lab-mode-changed");
+    if scanning {
+        emit("gems-cleared");
+    }
+    true
 }
 
-/// Called under the detection lock so a manual override cannot race an auto-switch.
+/// Called under the detection lock so a manual override cannot race an
+/// auto-switch. Bumps `gem_vocab_generation` under the `lab_settings` guard,
+/// so the (mode, generation) pair is written atomically. The caller clears the
+/// held gems after its guards are released (`apply_manual_lab_mode`,
+/// `emit_lab_mode_change`).
 fn change_lab_mode(state: &AppState, mode: &str) -> Option<String> {
     let mut lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner());
     if lab.lab_mode == mode {
         return None;
     }
     let previous = std::mem::replace(&mut lab.lab_mode, mode.to_string());
-    // GemProcessingState::reset_for_generation drops the old matcher and any
-    // pending dictionary response, then fetches vocabulary for the new mode.
-    state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+    state.lab_scan.gem_vocab_generation.fetch_add(1, Ordering::SeqCst);
     Some(previous)
 }
 
@@ -260,6 +247,7 @@ pub(crate) fn publish_lab_detection(app: &AppHandle, update: LabDetectionUpdate)
     if let Some((old, mode)) = update.mode_change {
         app_log(app, format!("Lab mode auto-switch: {} -> {} (detected {})", old, mode, update.detected.unwrap_or("Unknown")));
         emit_lab_mode_change(app);
+        super::gem_vocab::spawn_gem_vocab_preload(app);
     }
 }
 
@@ -400,7 +388,7 @@ pub(crate) async fn send_test_gems(app: AppHandle) -> Result<String, String> {
 /// alongside the market because a market alone cannot be validated: the paired
 /// view only knows its OWN mode's markets, so a market from the other mode fails
 /// its check and — before this — was dropped without a word.
-fn current_lab_mode_tag(state: &tauri::State<'_, AppState>) -> &'static str {
+fn current_lab_mode_tag(state: &AppState) -> &'static str {
     let lab_mode = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).lab_mode.clone();
     if lab_mode == "Dedication" { "dedication" } else { "normal" }
 }
@@ -413,7 +401,7 @@ fn current_lab_mode_tag(state: &tauri::State<'_, AppState>) -> &'static str {
 /// It used to be a hardcoded "20/20", which is not even one of the Dedication
 /// markets — the web view took it, failed to match it, and silently priced
 /// corrupted gems against the uncorrupted market.
-fn current_gem_variant(state: &tauri::State<'_, AppState>) -> String {
+pub(super) fn current_gem_variant(state: &AppState) -> String {
     let lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner());
     if lab.lab_mode == "Dedication" {
         lab.dedication_variant.clone()
@@ -538,70 +526,15 @@ pub(crate) async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<St
     }
 }
 
-/// Start font panel OCR in the shared Lab scan loop. Bumps the font generation
-/// to cancel the previous font session, claims its liveness token before the
-/// reset is visible to `FontOpened`, and then reuses an existing Lab thread when
-/// one is already running.
-pub(crate) fn spawn_font_scan(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let generation = font_session::next_scan_generation(&state.lab_scan.font_scan_generation);
-    state.lab_scan.font_scan_live_gen.store(generation, Ordering::SeqCst);
-
-    *state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner()) = FontSessionData::default();
-    font_alerts::clear_alert_reads(&state.lab_scan.font_alert_seen);
-    app_log(app, format!("Font scan started (gen={})", generation));
-    emit_status(app);
-
-    ensure_lab_scan(app);
-}
-
-/// Seal the round buffer left over when the session ends without another craft.
-///
-/// Tauri-side adapter over `font_session::seal_leftover_round`: locks, seals,
-/// logs and emits. Rounds are otherwise sealed by the craft-count ledger inside
-/// `lab_scan::run`; `FontOpened` seals nothing, because it fires on font open
-/// as well as on CRAFT.
-fn seal_font_round(app: &AppHandle) {
-    let state = app.state::<AppState>();
-
-    // The guard lives in this block only: `emit_status` -> `build_status` locks
-    // `font_session` to read `font_session_rounds`, and std Mutex is not
-    // re-entrant, so emitting while the guard is alive deadlocks this thread.
-    let sealed = {
-        let mut session = state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner());
-        font_session::seal_leftover_round(&mut session)
-    };
-
-    // Nothing buffered. This is the ordinary case on the send path: every
-    // ZoneChanged calls it, and most of them happen with no font session at
-    // all. `rounds` did not change, so there is nothing to log and the status
-    // the frontend already holds is still accurate.
-    let Some(sealed) = sealed else { return };
-
-    app_log(app, format!(
-        "Font round {} sealed ({} options{})",
-        sealed.number,
-        sealed.round.options.len(),
-        sealed.round.crafts_remaining.map_or(
-            ", last craft".to_string(),
-            |n| format!(", {} remaining", n),
-        ),
-    ));
-
-    // `rounds` just grew, and `font_session_rounds` is what gates the Discard
-    // affordance and its round count.
-    emit_status(app);
-}
-
 /// Throw away the accumulated font session without sending it (POE-163 D4).
 ///
 /// The escape hatch for a session captured against the wrong market: the
 /// stamp is read once at send time, so an unwanted run has to be discarded
 /// rather than corrected after the fact.
 ///
-/// Deliberately does NOT touch `font_scan_generation` (discarding data must
-/// not stop an in-progress scan) or `lab_state` (the player may still be in
-/// the lab).
+/// Deliberately does NOT touch `font_context` or `font_idle_seq` (discarding
+/// data must not disarm the font reader) or `lab_state` (the player may still
+/// be in the lab).
 #[tauri::command]
 pub(crate) fn discard_font_session(app: AppHandle) {
     let state = app.state::<AppState>();
@@ -614,71 +547,6 @@ pub(crate) fn discard_font_session(app: AppHandle) {
     font_alerts::clear_alert_reads(&state.lab_scan.font_alert_seen);
     app_log(&app, format!("Font session discarded ({} rounds)", discarded));
     emit_status(&app);
-}
-
-/// Send accumulated font session to the server and reset.
-pub(crate) fn send_font_session_data(app: &AppHandle) {
-    // Seal the round still on screen (the player left without another craft).
-    // Takes and releases the session lock itself, so it runs before ours.
-    seal_font_round(app);
-
-    let state = app.state::<AppState>();
-    let mut session = state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner());
-
-    let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let server = crate::settings::server_base(&state);
-    let lab_mode = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).lab_mode.clone();
-
-    let device_id = state.device_id.clone();
-
-    // The observed lab type is independent of the comparator override. If the
-    // watcher missed lab entry, retain the previous manual-mode fallback.
-    let lab_type = state.lab_scan.detection.lock().unwrap_or_else(|e| e.into_inner())
-        .detected_type()
-        .unwrap_or(if lab_mode == "Dedication" { "Dedication" } else { "Unknown" });
-    // Record the selected market: a fixed "20/20" previously attributed every
-    // Normal run to a market the player may not have been farming.
-    let variant = current_gem_variant(&state);
-
-    let session_data = match font_session::finalize_font_session(
-        &session,
-        lab_type,
-        variant.as_str(),
-        &device_id,
-        &pair,
-    ) {
-        Some(data) => data,
-        // No sealed rounds — nothing was captured, so there is nothing to send
-        // and nothing to reset.
-        None => return,
-    };
-
-    app_log(app, format!("Sending font session: {} rounds", session.rounds.len()));
-
-    let http = state.server_http.clone();
-
-    // Reset session.
-    *session = FontSessionData::default();
-    drop(session);
-    font_alerts::clear_alert_reads(&state.lab_scan.font_alert_seen);
-
-    let app_clone = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let url = format!("{}/api/desktop/font-session", server);
-        match http.post(&url).json(&session_data).send().await {
-            Ok(res) if res.status().is_success() => {
-                app_log(&app_clone, "Font session sent successfully".to_string());
-            }
-            Ok(res) => {
-                let status = res.status();
-                let body = res.text().await.unwrap_or_default();
-                app_log(&app_clone, format!("Font session rejected: {} — {}", status, body_excerpt(&body, 200)));
-            }
-            Err(e) => {
-                app_log(&app_clone, format!("Font session send failed: {}", e));
-            }
-        }
-    });
 }
 
 /// Why a fetched gem dictionary is unusable, or `None` when it is usable.

@@ -7,8 +7,9 @@ use std::sync::atomic::Ordering;
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::commands::{publish_lab_detection, record_lab_detection, send_font_session_data, send_gems_to_server};
-use crate::{app_log, client_log, emit_status, font_session, lab_navigation, lab_state, AppState};
+use super::commands::{disarm_gem_context, publish_lab_detection, record_lab_detection, send_gems_to_server, start_gem_context};
+use super::font_context::{disarm_font_context, finalize_font_context, rearm_font_context, start_font_context};
+use crate::{app_log, client_log, emit_status, font_alerts, font_session, lab_navigation, lab_state, AppState};
 
 /// Lab state the log watcher carries from one Client.txt line to the next.
 pub(crate) struct LabWatchState {
@@ -92,15 +93,11 @@ pub(crate) fn on_client_line(app: &AppHandle, line: &str, watch: &mut LabWatchSt
                     state.in_lab.store(false, Ordering::SeqCst);
                     app_log(app, "Lab nav: exited lab".to_string());
                     // The state machine only emits `ZoneChanged`
-                    // from FontReady/PickingGems, so a scan
-                    // spawned at LabFinished for a player who
-                    // never opened the font has no other stop.
-                    state.lab_scan.font_scan_generation.fetch_add(1, Ordering::SeqCst);
-                    let was_live = font_session::font_scan_is_live(
-                        state.lab_scan.font_scan_live_gen.swap(0, Ordering::SeqCst),
-                    );
-                    if was_live {
-                        app_log(app, "Font scan stopped (lab exited)".to_string());
+                    // from FontReady/PickingGems, so a font context
+                    // armed at LabFinished for a player who never
+                    // opened the font has no other end.
+                    if disarm_font_context(&state) {
+                        app_log(app, "Font reader disarmed (lab exited)".to_string());
                     }
                     // Emit the navigation event so frontend state resets on LabExited.
                     if let Err(e) = app.emit("lab-nav", &nav_event) {
@@ -109,9 +106,9 @@ pub(crate) fn on_client_line(app: &AppHandle, line: &str, watch: &mut LabWatchSt
                     nav_emitted = true;
                 }
                 lab_navigation::NavEvent::LabFinished => {
-                    app_log(app, "Lab nav: Izaro defeated! Starting font panel OCR".to_string());
+                    app_log(app, "Lab nav: Izaro defeated! Arming the font reader".to_string());
                     watch.font_opened_count = 0;
-                    super::commands::spawn_font_scan(app);
+                    start_font_context(app);
                 }
                 lab_navigation::NavEvent::SectionFinished => {
                     app_log(app, "Lab nav: section finished".to_string());
@@ -139,62 +136,46 @@ pub(crate) fn on_client_line(app: &AppHandle, line: &str, watch: &mut LabWatchSt
         match &event {
             lab_state::LabEvent::FontOpened => {
                 // Publish the event before anything else: the
-                // craft ledger reads this counter per OCR frame
-                // and a frame captured after the click must see
+                // craft ledger reads this counter per font read
+                // and a read captured after the click must see
                 // the new value, or the count change it carries
                 // reads as a misread.
                 state.lab_scan.font_opened_seq.fetch_add(1, Ordering::SeqCst);
+                // The panel just changed or opened: no alert from
+                // the previous read stands until the next press.
+                font_alerts::clear_alert_reads(&state.lab_scan.font_alert_seen);
                 // The event cannot seal a round — it fires on
                 // font open as well as on CRAFT, an unbounded
                 // number of times per craft. Only the panel's
                 // craft count delimits rounds (`font_ledger`).
                 watch.font_opened_count += 1;
-                // A portal trip out of the lab stops the font
-                // scan for good (`LabFinished` does not fire
-                // again on return), so the liveness token is
-                // what decides whether this event has to bring
-                // the panel OCR back.
-                let font_scan_live = font_session::font_scan_is_live(
-                    state.lab_scan.font_scan_live_gen.load(Ordering::SeqCst),
-                );
-                for effect in font_session::font_opened_effects(watch.font_opened_count, font_scan_live) {
-                    match effect {
-                        font_session::FontOpenedEffect::StartGemScan => {
-                            // Odd: CRAFT click → start gem scan
-                            watch.detected_gems.clear();
-                            super::commands::spawn_gem_scan(app, "font");
-                            app_log(app, format!("FontOpened #{} — CRAFT, gem scan started", watch.font_opened_count));
-                        }
-                        font_session::FontOpenedEffect::StopGemScan => {
-                            // Even: CONFIRM click → stop scanning, clear comparator
-                            state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
-                            *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
-                                lab_state::LabState::Idle;
-                            watch.detected_gems.clear();
-                            *state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
-                            if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
-                            app_log(app, format!("FontOpened #{} — CONFIRM, gem scan stopped", watch.font_opened_count));
-                        }
-                        font_session::FontOpenedEffect::RearmFontScan => {
-                            // `ZoneChanged` owns the session
-                            // reset, so this starts a fresh
-                            // segment rather than resuming one.
-                            app_log(app, "Font scan re-armed".to_string());
-                            super::commands::spawn_font_scan(app);
-                        }
+                match font_session::font_opened_effect(watch.font_opened_count) {
+                    font_session::FontOpenedEffect::StartGemScan => {
+                        // Odd: CRAFT click → arm the gem reader
+                        watch.detected_gems.clear();
+                        start_gem_context(app, "font");
+                        app_log(app, format!("FontOpened #{} — CRAFT, gem reader armed", watch.font_opened_count));
+                    }
+                    font_session::FontOpenedEffect::StopGemScan => {
+                        // Even: CONFIRM click → disarm, clear comparator
+                        disarm_gem_context(&state, true);
+                        *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
+                            lab_state::LabState::Idle;
+                        watch.detected_gems.clear();
+                        if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
+                        app_log(app, format!("FontOpened #{} — CONFIRM, gem reader disarmed", watch.font_opened_count));
                     }
                 }
+                // A portal trip out of the lab ends the font context
+                // (`LabFinished` does not fire again on return), so
+                // this event re-arms it when none is armed.
+                rearm_font_context(app);
             }
             lab_state::LabEvent::ZoneChanged { area } => {
                 app_log(app, format!("Zone changed: {} — stopping", area));
 
-                // Stop both gem and font scans + reset state.
-                state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
-                state.lab_scan.font_scan_generation.fetch_add(1, Ordering::SeqCst);
-                // Synchronously, not by waiting for the loop to
-                // notice: a `FontOpened` arriving in that window
-                // must still see a dead scan and re-arm it.
-                state.lab_scan.font_scan_live_gen.store(0, Ordering::SeqCst);
+                // End the gem context (clearing the comparator's gems).
+                disarm_gem_context(&state, true);
                 watch.font_opened_count = 0;
                 *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                     lab_state::LabState::Idle;
@@ -208,17 +189,17 @@ pub(crate) fn on_client_line(app: &AppHandle, line: &str, watch: &mut LabWatchSt
                     watch.detected_gems.clear();
                 }
 
-                // Send accumulated font session data to server.
-                send_font_session_data(app);
+                // End the font context: seal, send and reset the session.
+                finalize_font_context(app, None);
 
                 // Clear frontend comparator — player left the area.
-                *state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) =
-                    Vec::new();
                 if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
                 emit_status(app);
             }
             lab_state::LabEvent::FontClosed => {
                 app_log(app, "Font closed".to_string());
+                // Keep the held gems for the comparator.
+                disarm_gem_context(&state, false);
                 *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                     lab_state::LabState::Idle;
                 emit_status(app);

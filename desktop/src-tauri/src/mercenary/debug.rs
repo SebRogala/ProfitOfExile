@@ -305,7 +305,7 @@ pub fn summary_line(r: &MercDebugReport) -> String {
 ///
 /// Runs on its own OS thread rather than on the async runtime because the OCR
 /// engine is apartment-threaded — the same rule that makes the capture loop a
-/// thread module (see `spawn_gem_scan` in lab/commands.rs).
+/// thread module (see `read_hotkey::spawn_read_hotkey`'s dispatcher thread).
 #[tauri::command]
 pub async fn merc_debug_capture(
     image_path: Option<String>,

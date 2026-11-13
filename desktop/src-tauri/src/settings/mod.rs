@@ -1926,7 +1926,7 @@ pub(crate) mod tests {
         assert!(still_dir);
     }
     use super::*;
-    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
+    use std::sync::atomic::{AtomicBool, AtomicU32};
     use std::sync::Mutex;
 
     /// A bare `AppState` for tests — the same literal
@@ -1943,18 +1943,7 @@ pub(crate) mod tests {
             pair_code: Mutex::new(String::new()),
             client_txt_path: Mutex::new(String::new()),
             server_url: Mutex::new(String::new()),
-            lab_scan: crate::lab_scan::LabScanState {
-                detection: Mutex::new(crate::lab_detection::LabDetection::default()),
-                detected_gems: Mutex::new(Vec::new()),
-                gem_scan_generation: AtomicU64::new(0),
-                font_scan_generation: AtomicU64::new(0),
-                font_scan_live_gen: AtomicU64::new(0),
-                lab_scan_live_gen: AtomicU64::new(0),
-                lab_scan_generation: AtomicU64::new(0),
-                font_opened_seq: AtomicU64::new(0),
-                font_session: Mutex::new(crate::FontSessionData::default()),
-                font_alert_seen: Mutex::new(crate::font_alerts::AlertSeen::default()),
-            },
+            lab_scan: crate::lab_scan::LabScanState::new(),
             lab_state: Mutex::new(crate::lab_state::LabState::Idle),
             logs: Mutex::new(Vec::new()),
             sidebar_open: Mutex::new(true),
@@ -2032,7 +2021,7 @@ pub(crate) mod tests {
     fn manual_lab_mode_correction_discards_partial_scan_gems() {
         let state = test_app_state();
         state.lab_settings.lock().unwrap().lab_mode = "Normal".to_string();
-        *state.lab_state.lock().unwrap() = crate::lab_state::LabState::PickingGems;
+        crate::lab::commands::arm_gem_context(&state);
         *state.lab_scan.detected_gems.lock().unwrap() = vec!["Arc".to_string()];
 
         crate::apply_manual_lab_mode(&state, "Dedication", |_| {});
@@ -2068,11 +2057,11 @@ pub(crate) mod tests {
         use std::sync::atomic::Ordering;
         let state = test_app_state();
         state.lab_settings.lock().unwrap().lab_mode = "Dedication".to_string();
-        state.lab_scan.gem_scan_generation.store(7, Ordering::SeqCst);
+        state.lab_scan.gem_vocab_generation.store(7, Ordering::SeqCst);
         crate::record_lab_detection(&state, |detection| {
             detection.observe_area(75, "EndGame_Labyrinth_boss_1");
         });
-        assert_eq!(state.lab_scan.gem_scan_generation.load(Ordering::SeqCst), 8);
+        assert_eq!(state.lab_scan.gem_vocab_generation.load(Ordering::SeqCst), 8);
     }
 
     #[test]
@@ -2080,11 +2069,11 @@ pub(crate) mod tests {
         use std::sync::atomic::Ordering;
         let state = test_app_state();
         state.lab_settings.lock().unwrap().lab_mode = "Normal".to_string();
-        state.lab_scan.gem_scan_generation.store(7, Ordering::SeqCst);
+        state.lab_scan.gem_vocab_generation.store(7, Ordering::SeqCst);
         crate::record_lab_detection(&state, |detection| {
             detection.observe_area(75, "EndGame_Labyrinth_boss_1");
         });
-        assert_eq!(state.lab_scan.gem_scan_generation.load(Ordering::SeqCst), 7);
+        assert_eq!(state.lab_scan.gem_vocab_generation.load(Ordering::SeqCst), 7);
     }
 
     #[test]

@@ -269,7 +269,7 @@
 </script>
 
 <div class="dashboard">
-	<!-- Tab bar + scan controls -->
+	<!-- Tab bar + lab state -->
 	<div class="tab-bar">
 		<div class="tabs">
 			{#each TABS as tab}
@@ -314,14 +314,7 @@
 					{discardArmed ? 'Confirm discard' : `Discard font session (${store.status?.font_session_rounds ?? 0})`}
 				</Button>
 			{/if}
-			<div class="scan-controls">
-				<span class="scan-state" class:picking={store.status?.state === 'PickingGems'}>{store.status?.state || '...'}</span>
-				{#if store.status?.state === 'PickingGems'}
-					<button class="scan-btn scan-stop" onclick={() => invoke('stop_scanning').catch((e: any) => console.error('Stop scan failed:', e))}>Stop</button>
-				{:else}
-					<button class="scan-btn" onclick={() => invoke('start_scanning').catch((e: any) => console.error('Start scan failed:', e))}>Scan</button>
-				{/if}
-			</div>
+			<span class="scan-state" class:picking={store.status?.state === 'PickingGems'}>{store.status?.state || '...'}</span>
 		</div>
 	</div>
 
@@ -378,16 +371,16 @@
 </div>
 
 <style>
-	/* Tab bar + scan controls */
+	/* Tab bar + lab state */
 	.tab-bar {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		/* Wrap: this row holds six nav tabs, the lab-mode buttons, and in
-		   Dedication mode a market picker AND a pool picker, plus the scan
-		   controls. Nothing in it can shrink below its content, and the default
-		   window is 1024px (src-tauri/tauri.conf.json), so a no-wrap row pushed
-		   the Scan button out of reach. */
+		   Dedication mode a market picker AND a pool picker, plus the lab
+		   state label. Nothing in it can shrink below its content, and the
+		   default window is 1024px (src-tauri/tauri.conf.json), so a no-wrap
+		   row pushed its right end out of reach. */
 		flex-wrap: wrap;
 		gap: 8px;
 		background: var(--color-lab-surface);
@@ -423,11 +416,6 @@
 		align-items: center;
 		gap: 12px;
 	}
-	.scan-controls {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
 	.scan-state {
 		font-size: 0.75rem;
 		font-weight: 600;
@@ -435,23 +423,6 @@
 	}
 	.scan-state.picking {
 		color: var(--color-lab-green);
-	}
-	.scan-btn {
-		background: var(--color-lab-blue);
-		border: none;
-		color: #fff;
-		padding: 4px 12px;
-		font-size: 0.75rem;
-		font-weight: 600;
-		cursor: pointer;
-		font-family: inherit;
-	}
-	.scan-btn:hover {
-		opacity: 0.9;
-	}
-	.scan-stop {
-		background: var(--color-lab-yellow);
-		color: #1a1a2e;
 	}
 
 	.tab-hidden {

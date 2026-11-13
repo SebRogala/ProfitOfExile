@@ -1,88 +1,99 @@
-# Lab font OCR lifecycle — panel reads, craft rounds and gem scans
+# Lab font OCR lifecycle — panel reads, craft rounds and gem reads
 
 **Status:** current implemented behavior.
 
-**Last verified:** 2026-11-02 at `842d6a18`.
+**Last verified:** 2026-11-13 at POE-391 WI-3 (`lanethird`, parent `badd6698`).
 
-**Canonical for:** Lab font OCR, round ledger and gem tooltip scan transitions.
+**Canonical for:** Lab font OCR, round ledger and gem tooltip read transitions.
 
 **Supersedes:** duplicated lifecycle and FontOpened-parity guidance in `desktop/src/lib/README.md`.
 
 The game wording and craft-count semantics live in [Game facts](GAME-FACTS.md#divine-font).
 Screen geometry follows [ADR-020](adr/020-one-shared-screen-scale-a-module-corroborates-or-withholds.md)
 and [ADR-024](adr/024-module-ocr-positions-are-placed-from-the-screen-slice-not-located.md).
+Every read follows [Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy):
+one frame per read key press, nothing read without one.
 
-## Scan ownership
+## Reader ownership
 
-`lab_scan::LabScanState` owns separate gem and font generations and the font
-scan's explicit liveness token, `font_scan_live_gen`. `lab_scan::run` schedules
-both on one OS thread and shares one capture per eligible tick. Each processing
-state keeps its own timeouts and bookkeeping. Shipped: `7227d757`, state grouped
-in `e8cddef5`.
+Two readers are registered on the read key (`read_hotkey::READERS`):
+`LabFontReader` reads the options panel (`lab.font`) and `LabGemReader` reads
+the gem tooltip band (`lab.gem`). Client.txt events arm and disarm a context
+for each; a press grabs one frame only when at least one context is armed, and
+each armed reader consumes that frame once. There is no lab capture loop.
 
-| Event | Current transition | Shipped |
-| --- | --- | --- |
-| Final Izaro / LabFinished | Reset the parity counter and start font panel OCR. | `4d5c67d9`, `b62e4a80` |
-| FontOpened | Increment monotonic `font_opened_seq`; independently choose gem effects by parity and re-arm a dead font scan. | `479b94ec`, `827191f3` |
-| Eligible font frame | Crop/preprocess the font region, parse the panel, and pass active nonempty options to the ledger only while its generation is current. | `7227d757`, `e8cddef5` |
-| No active font panel for ten minutes | Finalize accumulated session data and release that scan generation's liveness token. | `827191f3`; current timeout in `7227d757` |
-| ZoneChanged | Stop gem/font generations, clear font liveness and parity, submit accumulated font data and clear comparator gems. | `827191f3`, `479b94ec` |
-| LabExited | Stop font OCR even if no font event or ZoneChanged was observed. | `827191f3` |
+`lab_scan::LabScanState` holds the state: `read_token_seq` (the one token
+issuer, never reset), `font_context` and `gem_context` (the armed tokens, 0 =
+unarmed), `font_idle_seq`, the gem vocabulary and its generation. A press
+captures the token at arm time; every write path re-checks it under the guard
+that owns the context (`font_session` for the font, `detected_gems` for gems),
+so a press captured before a disarm can never write into a later context.
 
-The shared scan interval is 250 ms. Gem scanning also ends on its 150-second
-timeout or after finding three distinct gems. These are code bounds, not
-guarantees that OCR will recognize a tooltip. Shipped in the shared scheduler:
-`7227d757`.
-This automatic scan breaks [Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy); POE-391 replaces it.
+| Event | Transition |
+| --- | --- |
+| Final Izaro / LabFinished | Reset the parity counter; arm a fresh font context (session reset, alerts cleared), start its idle timer and the gem vocabulary preload. |
+| FontOpened | Increment monotonic `font_opened_seq`; clear the font alerts; arm or disarm the gem context by parity; re-arm the font context when none is armed (portal return). |
+| Read key press, font context armed | Crop `lab.font` from the one frame, parse the panel, replace the alert set; an active panel bumps the idle seq and passes nonempty options to the ledger. |
+| Read key press, gem context armed | See [Gem tooltip read](#gem-tooltip-read). |
+| No font read that saw the panel for ten minutes | The idle timer finalizes the session (seal, send, reset) if its seq is still current. |
+| ZoneChanged | Disarm the gem context (clearing comparator gems) and finalize the font context: seal leftover, submit, reset. |
+| LabExited | Disarm the font context; nothing is sent. |
+| FontClosed | Disarm the gem context, keeping held gems. |
 
-Manual `start_scanning` starts a fresh gem generation and clears comparator
-gems; `stop_scanning` invalidates that generation. A replacement start also
-invalidates the old scan. Shipped: `7227d757` retains these command boundaries.
+Finalization (`lab::font_context::take_font_upload`) stores `font_context = 0`,
+clears the alerts, seals the leftover round, builds the payload and resets the
+session under one `font_session` hold, so an expiring timer and a late read
+cannot both act. Re-arm opens a new segment; a town trip can produce two
+session submissions for one lab run.
 
 ## Round ledger
 
-`CraftLedger::observe` owns craft boundaries. The first accepted count and later
-changes require two readable confirming frames. A later count change also
-requires a new `font_opened_seq`; FontOpened alone seals nothing. A missing
-count line means the last craft, while an unreadable label is ignored. Shipped:
-`479b94ec`.
+`CraftLedger::observe` owns craft boundaries. Every count is accepted on its
+first readable read: the first seeds the session, and a different count after
+a new `font_opened_seq` seals the round. A count change with no new event is
+ignored, as is an unreadable label; FontOpened alone seals nothing. A missing
+count line means the last craft.
 
-The boundary accepts changes in either direction; a round visible for fewer
-than two confirming frames can fold into a neighbouring round. `merge_options`
-unions frame options without replacing a known value with a later missing or
-disagreeing value. Shipped: `479b94ec`.
+The boundary accepts changes in either direction. A garbled first count is
+accepted too; `finalize_font_session` drops a ledger total outside 1..=20 and
+reports the number of sealed rounds instead. `merge_options` unions the reads of
+one round without replacing a known value with a later missing or disagreeing
+value. On Seal, `apply_font_frame` moves the buffered options into a round and
+opens the new round with this read's options. Finalization seals leftover
+options and reports at least the number of sealed rounds as total crafts.
 
-`apply_font_frame` buffers options during a pending count change. On Seal it
-moves the old options into a round and carries the pending options into the
-new round. A candidate that returns to the accepted count merges back into
-the current buffer. Finalization seals leftover options and reports at least
-the number of sealed rounds as total crafts. Shipped: `479b94ec`.
+ZoneChanged and idle expiry submit accumulated rounds through
+`POST /api/desktop/font-session`.
 
-ZoneChanged submits accumulated rounds through `POST /api/desktop/font-session`
-and resets the session. Idle expiry also finalizes it. Re-arm therefore opens a
-new segment; a town trip can produce two session submissions for one lab run.
-The liveness token is released by compare-exchange so an old scan cannot clear
-its replacement. Shipped: `479b94ec`, `827191f3`.
+## Gem tooltip read
 
-## Gem tooltip start/stop exception
+`font_opened_effect` arms the gem context on an odd per-run FontOpened count
+(CRAFT) and disarms it, clearing detected gems and emitting `gems-cleared`, on
+an even count (CONFIRM). This is the implemented CRAFT/CONFIRM guess; opening,
+closing and reopening the Font can disturb the parity. The font context instead
+re-arms on an explicit token, and the craft ledger uses accepted panel counts.
 
-`font_opened_effects` starts gem scanning on an odd per-run FontOpened count
-and stops it on an even count. The even handler clears detected gems and emits
-`gems-cleared`. This is the implemented CRAFT/CONFIRM guess; opening, closing
-and reopening the Font can disturb the parity. Font scan re-arming instead
-uses explicit liveness, and the craft ledger uses accepted panel counts.
-Shipped: `b62e4a80` (parity), `479b94ec` (effect extraction), preserved by
-`7227d757` / `e8cddef5`.
+A press while the gem context is armed OCRs the `lab.gem` band of that one
+frame with Lanczos3 2×, and once more bilinearly when that yields no
+candidates. It matches against the preloaded vocabulary (`lab::gem_vocab`); with
+none current the read is skipped and logged once. `commit_gem_name` adds a new
+name only while the press's token and the vocabulary generation are both still
+current; the third gem ends the context and sets the lab state Idle. A lab-mode
+change bumps the vocabulary generation and clears an armed context's gems.
 
-**Open question:** gem-scan start/stop is under discussion with the Operator.
+**Open question:** gem-read start/stop is under discussion with the Operator.
 The parity behavior above records the current implementation and resolves no
 future choice.
 
 ## Code homes
 
 - `desktop/src-tauri/src/lab/watch.rs`: navigation/log handlers.
-- `desktop/src-tauri/src/lab/commands.rs`: spawn and session submission.
-- `desktop/src-tauri/src/lab_scan.rs`: shared capture scheduler and per-frame processing.
+- `desktop/src-tauri/src/lab/font_reader.rs`: the font reader.
+- `desktop/src-tauri/src/lab/gem_reader.rs`: the gem reader and its commit.
+- `desktop/src-tauri/src/lab/font_context.rs`: font arm, disarm, read record, finalize and idle timer.
+- `desktop/src-tauri/src/lab/gem_vocab.rs`: vocabulary preload and generation checks.
+- `desktop/src-tauri/src/lab/commands.rs`: gem arm/disarm, lab mode, gem submission.
+- `desktop/src-tauri/src/lab_scan.rs`: state only.
 - `desktop/src-tauri/src/font_session.rs`: effects, buffers, sealing and finalization.
 - `desktop/src-tauri/src/font_ledger.rs`: count acceptance and round boundary.
 - `desktop/src-tauri/src/font_parser.rs`: panel and count-line interpretation.

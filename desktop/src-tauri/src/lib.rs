@@ -32,7 +32,7 @@ mod trade;
 mod updater_channel;
 
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -361,7 +361,7 @@ pub struct AppStatus {
 }
 
 pub use font_session::{FontRound, FontSessionData};
-pub(crate) use lab::commands::{fetch_gem_names, send_gems_to_server, send_font_session_data, record_lab_detection, publish_lab_detection};
+pub(crate) use lab::commands::{fetch_gem_names, send_gems_to_server, record_lab_detection, publish_lab_detection};
 #[cfg(test)]
 pub(crate) use lab::commands::apply_manual_lab_mode;
 
@@ -576,9 +576,11 @@ thread_local! {
 /// Resolve this thread's OCR recognizer, log which one it is, and push a cached
 /// language warning to the UI once per thread.
 ///
-/// Every scan thread calls this on start. The emit cannot be left to the spawn
-/// site: `spawn_font_scan` emits before the thread exists, so at that point no
-/// engine has resolved and `ocr_language_warning` is still `None`.
+/// Every scan thread calls this on start, and the lab readers on their first
+/// read on `read_hotkey::spawn_read_hotkey`'s dispatcher thread
+/// (`lab::report_engine_once`). The emit cannot be left to the arming site: a
+/// context is armed before any read has resolved an engine, so at that point
+/// `ocr_language_warning` is still `None`.
 ///
 /// The trigger is the warning being PRESENT, not this thread having been the one
 /// to cache it. Any engine resolution caches it — including one from a debug
@@ -1829,18 +1831,7 @@ pub fn run() {
             r"C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt",
         )),
         server_url: Mutex::new(String::from(settings::DEFAULT_SERVER_URL)),
-        lab_scan: lab_scan::LabScanState {
-            detection: Mutex::new(lab_detection::LabDetection::default()),
-            detected_gems: Mutex::new(Vec::new()),
-            gem_scan_generation: AtomicU64::new(0),
-            font_scan_generation: AtomicU64::new(0),
-            font_scan_live_gen: AtomicU64::new(0),
-            lab_scan_live_gen: AtomicU64::new(0),
-            lab_scan_generation: AtomicU64::new(0),
-            font_opened_seq: AtomicU64::new(0),
-            font_session: Mutex::new(FontSessionData::default()),
-            font_alert_seen: Mutex::new(font_alerts::AlertSeen::default()),
-        },
+        lab_scan: lab_scan::LabScanState::new(),
         lab_state: Mutex::new(lab_state::LabState::Idle),
         logs: Mutex::new(Vec::new()),
         sidebar_open: Mutex::new(true),
@@ -1924,8 +1915,6 @@ pub fn run() {
             get_logs,
             get_ocr_rects,
             capture_mouse_position,
-            lab::commands::start_scanning,
-            lab::commands::stop_scanning,
             trade_lookup,
             trade_cancel,
             lab::commands::send_test_gems,
@@ -2153,11 +2142,6 @@ pub fn run() {
                     if let Some(tx) = state.watcher_cancel.lock().unwrap_or_else(|e| e.into_inner()).take() {
                         let _ = tx.send(true);
                     }
-                    // Gem/font scan loops — bump generations so they exit
-                    state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
-                    state.lab_scan.font_scan_generation.fetch_add(1, Ordering::SeqCst);
-                    state.lab_scan.font_scan_live_gen.store(0, Ordering::SeqCst);
-
                     let is_maximized = window.is_maximized().unwrap_or(false);
                     // Only save position/size if not maximized (restore to normal position)
                     let win_settings = if is_maximized {
