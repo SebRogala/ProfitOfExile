@@ -455,10 +455,35 @@ pub use platform::*;
 /// accepts logs the refusal once, not once per tick.
 static REFUSAL_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Why [`capture_screen`] returned no frame.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CaptureError {
+    /// The Data & privacy notice is not accepted; nothing was grabbed and the
+    /// refusal is already logged (once per process).
+    NotAccepted,
+    /// The grab itself failed.
+    Failed(String),
+}
+
+impl std::fmt::Display for CaptureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CaptureError::NotAccepted => f.write_str(crate::http::NOTICE_NOT_ACCEPTED),
+            CaptureError::Failed(e) => f.write_str(e),
+        }
+    }
+}
+
+impl From<CaptureError> for String {
+    fn from(e: CaptureError) -> String {
+        e.to_string()
+    }
+}
+
 /// Grab the screen, the only grab path in the app (POE-395, ADR-033): while
 /// the Data & privacy notice is not accepted it grabs nothing and returns
-/// `Err`, which every caller already reads as "no frame".
-pub fn capture_screen(app: &tauri::AppHandle) -> Result<Capture, String> {
+/// [`CaptureError::NotAccepted`].
+pub fn capture_screen(app: &tauri::AppHandle) -> Result<Capture, CaptureError> {
     use tauri::Manager;
     let gate = &app.state::<crate::AppState>().privacy_gate;
     grab_if_accepted(gate, &REFUSAL_LOGGED, |msg| crate::app_log(app, msg), || platform::grab_screen(app))
@@ -470,14 +495,14 @@ fn grab_if_accepted<T>(
     refusal_logged: &std::sync::atomic::AtomicBool,
     log: impl FnOnce(String),
     grab: impl FnOnce() -> Result<T, String>,
-) -> Result<T, String> {
+) -> Result<T, CaptureError> {
     if !gate.is_open() {
         if !refusal_logged.swap(true, std::sync::atomic::Ordering::SeqCst) {
             log("screen capture refused until the Data & privacy notice is accepted".to_string());
         }
-        return Err(crate::http::NOTICE_NOT_ACCEPTED.to_string());
+        return Err(CaptureError::NotAccepted);
     }
-    grab()
+    grab().map_err(CaptureError::Failed)
 }
 
 /// The factor [`preprocess_for_ocr`] and [`preprocess_for_ocr_fast`] upscale
@@ -898,13 +923,13 @@ mod affinity_ledger_tests {
 
 #[cfg(test)]
 mod notice_gate_tests {
-    use super::grab_if_accepted;
+    use super::{grab_if_accepted, CaptureError};
     use crate::http::NoticeGate;
     use std::cell::Cell;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     /// Runs one gated grab against a counting stand-in; returns the result.
-    fn grab(gate: &NoticeGate, flag: &AtomicBool, grabs: &Cell<u32>, logs: &Cell<u32>) -> Result<&'static str, String> {
+    fn grab(gate: &NoticeGate, flag: &AtomicBool, grabs: &Cell<u32>, logs: &Cell<u32>) -> Result<&'static str, CaptureError> {
         grab_if_accepted(
             gate,
             flag,
@@ -919,8 +944,20 @@ mod notice_gate_tests {
     #[test]
     fn capture_refuses_while_the_notice_is_not_accepted() {
         let (gate, flag, grabs, logs) = (NoticeGate::default(), AtomicBool::new(false), Cell::new(0), Cell::new(0));
-        assert_eq!(grab(&gate, &flag, &grabs, &logs), Err(crate::http::NOTICE_NOT_ACCEPTED.to_string()));
+        assert_eq!(grab(&gate, &flag, &grabs, &logs), Err(CaptureError::NotAccepted));
         assert_eq!(grabs.get(), 0);
+    }
+
+    /// A failing grab once accepted is a `Failed`, not a refusal, so the read
+    /// key still warns about it; callers that format the error see its text.
+    #[test]
+    fn a_failing_grab_once_accepted_is_failed_with_its_message() {
+        let gate = NoticeGate::default();
+        gate.open();
+        let got = grab_if_accepted(&gate, &AtomicBool::new(false), |_| {}, || Err::<(), _>("no monitor".to_string()));
+        assert_eq!(got, Err(CaptureError::Failed("no monitor".to_string())));
+        assert_eq!(String::from(got.unwrap_err()), "no monitor");
+        assert_eq!(String::from(CaptureError::NotAccepted), crate::http::NOTICE_NOT_ACCEPTED);
     }
 
     /// The accept command opens a clone of the gate the app holds; the next
@@ -928,7 +965,7 @@ mod notice_gate_tests {
     #[test]
     fn capture_reaches_the_grab_once_the_same_gate_opens() {
         let (gate, flag, grabs, logs) = (NoticeGate::default(), AtomicBool::new(false), Cell::new(0), Cell::new(0));
-        assert_eq!(grab(&gate, &flag, &grabs, &logs), Err(crate::http::NOTICE_NOT_ACCEPTED.to_string()));
+        assert_eq!(grab(&gate, &flag, &grabs, &logs), Err(CaptureError::NotAccepted));
         gate.clone().open();
         assert_eq!(grab(&gate, &flag, &grabs, &logs), Ok("frame"));
         assert_eq!(grabs.get(), 1);

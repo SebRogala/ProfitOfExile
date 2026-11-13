@@ -167,16 +167,21 @@ pub fn run_armed<C>(
     armed: ArmedPress<C>,
     ctx: &C,
     sleep: &mut dyn FnMut(std::time::Duration),
-    grab: &mut dyn FnMut() -> Result<crate::capture::Capture, String>,
+    grab: &mut dyn FnMut() -> Result<crate::capture::Capture, crate::capture::CaptureError>,
 ) {
     if armed.pendings.is_empty() {
         return;
     }
     sleep(armed.delay);
-    let frame = grab().map(std::sync::Arc::new);
-    if let Err(e) = &frame {
-        log::warn!("read hotkey: screen grab failed: {e}");
-    }
+    let frame = match grab() {
+        // Nothing grabbed and already logged by capture; the press is a no-op.
+        Err(crate::capture::CaptureError::NotAccepted) => return,
+        Err(crate::capture::CaptureError::Failed(e)) => {
+            log::warn!("read hotkey: screen grab failed: {e}");
+            Err(e)
+        }
+        Ok(capture) => Ok(std::sync::Arc::new(capture)),
+    };
     for pending in armed.pendings {
         pending.consume(frame.as_ref().map_err(String::as_str), ctx);
     }
@@ -190,7 +195,7 @@ pub fn dispatch<C>(
     delay: std::time::Duration,
     ctx: &C,
     sleep: &mut dyn FnMut(std::time::Duration),
-    grab: &mut dyn FnMut() -> Result<crate::capture::Capture, String>,
+    grab: &mut dyn FnMut() -> Result<crate::capture::Capture, crate::capture::CaptureError>,
 ) {
     run_armed(arm_all(press, delay, readers, ctx), ctx, sleep, grab);
 }
@@ -227,7 +232,7 @@ pub fn run_dispatcher<C>(
     ctx: &C,
     queue: std::sync::mpsc::Receiver<ArmedPress<C>>,
     sleep: &mut dyn FnMut(std::time::Duration),
-    grab: &mut dyn FnMut() -> Result<crate::capture::Capture, String>,
+    grab: &mut dyn FnMut() -> Result<crate::capture::Capture, crate::capture::CaptureError>,
 ) {
     for armed in queue {
         run_armed(armed, ctx, sleep, grab);
@@ -299,7 +304,7 @@ mod platform {
 #[cfg(test)]
 mod dispatch_tests {
     use super::*;
-    use crate::capture::{Capture, GrabTiming};
+    use crate::capture::{Capture, CaptureError, GrabTiming};
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::Duration;
 
@@ -449,12 +454,25 @@ mod dispatch_tests {
         let mut attempts = 0;
         dispatch(press(), &[&A, &B], Duration::ZERO, &world, &mut |_| {}, &mut || {
             attempts += 1;
-            Err("no monitor".to_string())
+            Err(CaptureError::Failed("no monitor".to_string()))
         });
         assert_eq!(attempts, 1);
         let consumed = world.consumed.lock().unwrap().clone();
         let err = || Err("no monitor".to_string());
         assert_eq!(consumed, vec![("a", String::new(), err()), ("b", String::new(), err())]);
+    }
+    /// The privacy refusal is no frame for any reader (and no warn, which only
+    /// the `Failed` arm emits): no armed read is consumed, so none reports.
+    #[test]
+    fn refused_grab_reaches_no_armed_read() {
+        let world = Arc::new(World::default());
+        let mut attempts = 0;
+        dispatch(press(), &[&A, &B], Duration::ZERO, &world, &mut |_| {}, &mut || {
+            attempts += 1;
+            Err(CaptureError::NotAccepted)
+        });
+        assert_eq!(attempts, 1);
+        assert!(world.consumed.lock().unwrap().is_empty());
     }
     #[test]
     fn press_during_a_blocked_dispatch_is_sampled_and_gets_its_own_grab() {

@@ -407,7 +407,7 @@ fn debug_capture_blocking(
             (img, None, client, path.clone())
         }
         None => {
-            let grab = crate::capture::capture_screen(&app).map_err(|e| abort(&app, e))?;
+            let grab = crate::capture::capture_screen(&app).map_err(|e| abort(&app, e.to_string()))?;
             (grab.image, Some(grab.origin), grab.client, "screen".to_string())
         }
     };
