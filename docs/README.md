@@ -90,7 +90,7 @@ tier does not promote a proposal or restore a superseded clause.
 - [Boss loot lifecycle](BOSS-LOOT-LIFECYCLE.md) — capture, confirmation, Results/Runs/Settings, server API and import.
 - [Lab font OCR lifecycle](LAB-FONT-OCR-LIFECYCLE.md) — font OCR, round ledger and gem-scan lifecycle.
 - [Mercenaries lifecycle](MERCENARIES-LIFECYCLE.md) — Inspect arming, capture and triage.
-- [Device data retention](DATA-RETENTION.md) — current 2-year purge job: which rows lose their device link, which devices are deleted, and its schedule.
+- [Device data retention](DATA-RETENTION.md) — current device data retention purge job.
 - [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — mixed current/target guide with per-section labels; server gate hardening verified 2026-10-23 (POE-297).
 - [Overlay Guide](OVERLAY-GUIDE.md) — current click-through, positioning, lifecycle distinctions, and Windows regression guards.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current endpoint extension procedure, verified against the fragments implementation.

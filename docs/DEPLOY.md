@@ -182,7 +182,7 @@ This is **hiding, not securing**, and the repository is **public**:
   history and the database only. (AGENTS.md carries the general rule; this is
   its beta-channel instance.)
 
-Devices unseen for the period in [Device data retention](DATA-RETENTION.md) are deleted, roles included.
+Retention of devices and their roles: see [Device data retention](DATA-RETENTION.md).
 
 ## Desktop <-> server ordering
 

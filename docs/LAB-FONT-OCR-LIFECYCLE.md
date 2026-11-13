@@ -87,4 +87,4 @@ future choice.
 - `desktop/src-tauri/src/font_ledger.rs`: count acceptance and round boundary.
 - `desktop/src-tauri/src/font_parser.rs`: panel and count-line interpretation.
 
-Server-side `font_sessions` and `lab_runs` lose their device link after the period in [Device data retention](DATA-RETENTION.md).
+Retention of server-side `font_sessions` and `lab_runs`: see [Device data retention](DATA-RETENTION.md).
