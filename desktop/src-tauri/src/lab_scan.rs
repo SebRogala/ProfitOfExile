@@ -30,7 +30,7 @@ pub struct LabScanState {
     /// it was spawned with and acts only if it still matches.
     pub font_idle_seq: AtomicU64,
     /// The armed gem context's token, 0 = unarmed. Written only while the
-    /// `detected_gems` guard is held, the guard `commit_gem_name` checks it
+    /// `detected_gems` guard is held, the guard `commit_gem_read` checks it
     /// under.
     pub gem_context: AtomicU64,
     /// Bumped under the `detected_gems` guard by every gem arm and every gem
@@ -38,6 +38,11 @@ pub struct LabScanState {
     /// generation bump to tell a choice that changed meanwhile from one
     /// finished before it.
     pub choice_seq: AtomicU64,
+    /// The latest committed gem read, uncertain slots and their candidates
+    /// included (POE-397 C2/C3). Taken only inside the `detected_gems` guard
+    /// (order `detected_gems` → `last_gem_read`) and never held while taking
+    /// another lock; cleared wherever the held gems are cleared.
+    pub(crate) last_gem_read: Mutex<Option<crate::lab::gem_reader::LabGemRead>>,
     /// The tooltip vocabulary for the gem reader, installed by the background
     /// preload (`lab::gem_vocab`). Acquired alone.
     pub gem_vocab: Mutex<Option<crate::lab::gem_vocab::GemVocab>>,
@@ -70,6 +75,7 @@ impl LabScanState {
             font_idle_seq: AtomicU64::new(0),
             gem_context: AtomicU64::new(0),
             choice_seq: AtomicU64::new(0),
+            last_gem_read: Mutex::new(None),
             gem_vocab: Mutex::new(None),
             gem_vocab_generation: AtomicU64::new(0),
             font_opened_seq: AtomicU64::new(0),

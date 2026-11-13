@@ -4,6 +4,8 @@
 pub(crate) mod commands;
 pub(crate) mod font_context;
 pub(crate) mod font_reader;
+pub(crate) mod gem_icon_refs;
+pub(crate) mod gem_icons;
 pub(crate) mod gem_reader;
 pub(crate) mod gem_vocab;
 pub(crate) mod watch;
@@ -18,6 +20,7 @@ pub(crate) enum LogOnce {
     ShortCrop = 4,
     Unscaled = 8,
     NoVocab = 16,
+    NoIcons = 32,
 }
 
 /// True the first time `what` is asked for under `token` on this thread.

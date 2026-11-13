@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
 
+use super::gem_icon_refs;
+use super::gem_icons::GemIconRefs;
 use crate::gem_matcher::GemMatcher;
 use crate::lab_scan::LabScanState;
 use crate::{app_log, AppState};
@@ -20,6 +22,10 @@ use crate::{app_log, AppState};
 pub struct GemVocab {
     pub generation: u64,
     pub matcher: Arc<GemMatcher>,
+    /// The icon references, installed by the preload's second stage once the
+    /// art is in (POE-397); `None` until then, and the tooltip path works
+    /// without them.
+    pub(crate) refs: Option<Arc<GemIconRefs>>,
 }
 
 /// The generation and the lab mode a preload fetches for, read under one
@@ -39,15 +45,73 @@ pub(crate) fn spawn_gem_vocab_preload(app: &AppHandle) {
     let http = state.server_http.clone();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let names = crate::fetch_gem_names(&app, &server, &http, &mode).await;
+        let dict = super::commands::fetch_gem_dictionary(&app, &server, &http, &mode).await;
+        let names = dict.merged();
         let count = names.len();
         let state = app.state::<AppState>();
         if install_gem_matcher(&state.lab_scan, generation, names) {
             app_log(&app, format!("Gem reader: loaded {} gem names ({})", count, mode));
-        } else if count == 0 {
-            app_log(&app, "Gem reader: the gem dictionary loaded 0 names, so no tooltip read can match; the next CRAFT retries. The preceding 'gem names' lines say why.".to_string());
+        } else {
+            if count == 0 {
+                app_log(&app, "Gem reader: the gem dictionary loaded 0 names, so no tooltip read can match; the next CRAFT retries. The preceding 'gem names' lines say why.".to_string());
+            }
+            return;
+        }
+        let Ok(dir) = app.path().app_data_dir().map(|d| d.join("gem-art")) else {
+            app_log(&app, "Gem reader: no app data directory, so the gem icons are not loaded".to_string());
+            return;
+        };
+        let wanted: Vec<String> = dict.normal.iter().chain(&dict.transfigured).cloned().collect();
+        let mut art = gem_icon_refs::load_art(&http, &server, &dir, &wanted).await;
+        let built = tauri::async_runtime::spawn_blocking(move || {
+            gem_icon_refs::build_refs(&dict, |name| {
+                art.remove(name).unwrap_or(gem_icon_refs::ArtOutcome::Failed("not loaded".into()))
+            })
+        })
+        .await;
+        let Ok((refs, report)) = built else {
+            app_log(&app, "Gem reader: building the gem icons failed".to_string());
+            return;
+        };
+        for (name, why) in &report.failed {
+            app_log(&app, format!("Gem reader: icon for {:?} not loaded: {}", name, why));
+        }
+        app_log(
+            &app,
+            format!(
+                "Gem reader: {} normal + {} transfigured gem icons, {} dictionary names have no icon{}",
+                refs.normal.len(),
+                refs.transfigured.len(),
+                report.iconless.len(),
+                if refs.incomplete { "; some failed, so icon reads stay uncertain until the next preload" } else { "" },
+            ),
+        );
+        if !install_gem_refs(&state.lab_scan, generation, Arc::new(refs)) {
+            app_log(&app, "Gem reader: the lab mode changed while the gem icons loaded; discarded".to_string());
         }
     });
+}
+
+/// Set the icon references on the installed vocabulary if both it and the
+/// current generation are still `generation`.
+pub(crate) fn install_gem_refs(lab: &LabScanState, generation: u64, refs: Arc<GemIconRefs>) -> bool {
+    let mut slot = lab.gem_vocab.lock().unwrap_or_else(|e| e.into_inner());
+    match slot.as_mut() {
+        Some(vocab)
+            if vocab.generation == generation
+                && lab.gem_vocab_generation.load(Ordering::SeqCst) == generation =>
+        {
+            vocab.refs = Some(refs);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Whether a CRAFT should start a preload: no current vocabulary, or icon refs
+/// that loaded incomplete (the preload retries the missing art).
+pub(crate) fn needs_preload(lab: &LabScanState) -> bool {
+    current(lab).map_or(true, |vocab| vocab.refs.is_some_and(|refs| refs.incomplete))
 }
 
 /// Install a matcher built from `names` if `generation` is still current.
@@ -60,7 +124,7 @@ pub(crate) fn install_gem_matcher(lab: &LabScanState, generation: u64, names: Ve
     if lab.gem_vocab_generation.load(Ordering::SeqCst) != generation {
         return false;
     }
-    *slot = Some(GemVocab { generation, matcher: Arc::new(GemMatcher::new(names)) });
+    *slot = Some(GemVocab { generation, matcher: Arc::new(GemMatcher::new(names)), refs: None });
     true
 }
 
@@ -75,7 +139,7 @@ pub(crate) fn current(lab: &LabScanState) -> Option<GemVocab> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lab::gem_reader::{read_gem_lines, GemRead};
+    use crate::lab::gem_reader::{read_gem_frame, GemFrameRead};
     use crate::settings::tests::test_app_state;
 
     fn names(list: &[&str]) -> Vec<String> {
@@ -99,9 +163,18 @@ mod tests {
         (state, token)
     }
 
-    fn committed(read: GemRead) -> Option<Vec<String>> {
+    /// A press hovering the middle slot of a blank 1080p frame whose tooltip
+    /// OCR reads `tooltip`.
+    fn hover_press(state: &crate::AppState, token: u64, tooltip: &[&str]) -> GemFrameRead {
+        let lab = crate::ssot::placements_for(None).lab;
+        let r = lab.gem_slots[1];
+        let frame = image::DynamicImage::new_rgb8(1920, 1080);
+        read_gem_frame(state, token, &frame, (0, 0), Some((r[0] + r[2] / 2, r[1] + r[3] / 2)), &lab, |_| names(tooltip))
+    }
+
+    fn committed(read: GemFrameRead) -> Option<Vec<String>> {
         match read {
-            GemRead::Committed(commit) => Some(commit.names),
+            GemFrameRead::Read { commit: Some(commit), .. } => Some(commit.names),
             _ => None,
         }
     }
@@ -117,8 +190,7 @@ mod tests {
         assert!(install_gem_matcher(&state.lab_scan, g2, dedication_names()));
         assert!(!install_gem_matcher(&state.lab_scan, g1, normal_names()));
 
-        let read = read_gem_lines(&state, token, &names(&["Dark Pact"]));
-        assert_eq!(committed(read), Some(names(&["Dark Pact"])));
+        assert_eq!(committed(hover_press(&state, token, &["Dark Pact"])), Some(names(&["Dark Pact"])));
     }
 
     #[test]
@@ -129,13 +201,12 @@ mod tests {
         crate::apply_manual_lab_mode(&state, "Dedication", |_| {});
 
         assert!(current(&state.lab_scan).is_none());
-        assert!(matches!(read_gem_lines(&state, token, &names(&["Dark Pact"])), GemRead::NoVocab));
+        assert!(matches!(hover_press(&state, token, &["Dark Pact"]), GemFrameRead::NoVocab));
         assert!(state.lab_scan.detected_gems.lock().unwrap().is_empty());
 
         let (g2, _) = preload_snapshot(&state);
         assert!(install_gem_matcher(&state.lab_scan, g2, dedication_names()));
-        let read = read_gem_lines(&state, token, &names(&["Dark Pact"]));
-        assert_eq!(committed(read), Some(names(&["Dark Pact"])));
+        assert_eq!(committed(hover_press(&state, token, &["Dark Pact"])), Some(names(&["Dark Pact"])));
     }
 
     #[test]
@@ -146,7 +217,60 @@ mod tests {
         assert!(!install_gem_matcher(&state.lab_scan, g, Vec::new()));
 
         assert!(current(&state.lab_scan).is_none(), "the next CRAFT's preload condition must hold");
-        assert!(matches!(read_gem_lines(&state, token, &names(&["Dark Pact of Trarthus"])), GemRead::NoVocab));
+        assert!(matches!(hover_press(&state, token, &["Dark Pact of Trarthus"]), GemFrameRead::NoVocab));
         assert!(state.lab_scan.detected_gems.lock().unwrap().is_empty());
+    }
+
+    fn empty_refs() -> Arc<GemIconRefs> {
+        Arc::new(GemIconRefs { normal: Vec::new(), transfigured: Vec::new(), incomplete: false })
+    }
+
+    #[test]
+    fn icon_refs_built_under_a_stale_generation_are_not_installed() {
+        let (state, _) = armed_in("Normal");
+        let (g1, _) = preload_snapshot(&state);
+        assert!(install_gem_matcher(&state.lab_scan, g1, normal_names()));
+        crate::apply_manual_lab_mode(&state, "Dedication", |_| {});
+        let (g2, _) = preload_snapshot(&state);
+        assert!(install_gem_matcher(&state.lab_scan, g2, dedication_names()));
+
+        assert!(!install_gem_refs(&state.lab_scan, g1, empty_refs()));
+
+        assert!(current(&state.lab_scan).expect("g2 vocabulary").refs.is_none());
+    }
+
+    #[test]
+    fn icon_refs_for_the_current_generation_install_on_its_vocabulary() {
+        let (state, _) = armed_in("Normal");
+        let (g, _) = preload_snapshot(&state);
+        assert!(install_gem_matcher(&state.lab_scan, g, normal_names()));
+
+        assert!(install_gem_refs(&state.lab_scan, g, empty_refs()));
+
+        assert!(current(&state.lab_scan).expect("vocabulary").refs.is_some());
+    }
+
+    #[test]
+    fn incomplete_icon_refs_ask_the_next_craft_to_preload_again() {
+        let (state, _) = armed_in("Normal");
+        let (g, _) = preload_snapshot(&state);
+        assert!(install_gem_matcher(&state.lab_scan, g, normal_names()));
+        assert!(install_gem_refs(
+            &state.lab_scan,
+            g,
+            Arc::new(GemIconRefs { normal: Vec::new(), transfigured: Vec::new(), incomplete: true }),
+        ));
+
+        assert!(needs_preload(&state.lab_scan));
+    }
+
+    #[test]
+    fn complete_icon_refs_need_no_preload() {
+        let (state, _) = armed_in("Normal");
+        let (g, _) = preload_snapshot(&state);
+        assert!(install_gem_matcher(&state.lab_scan, g, normal_names()));
+        assert!(install_gem_refs(&state.lab_scan, g, empty_refs()));
+
+        assert!(!needs_preload(&state.lab_scan));
     }
 }

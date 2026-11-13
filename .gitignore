@@ -36,6 +36,10 @@ currency-exchange-icons-cache/
 # them with `make merc-seed-art`; the README stays committed and says so.
 desktop/src-tauri/tests/fixtures/merc-seed-art/*
 !desktop/src-tauri/tests/fixtures/merc-seed-art/README.md
+# The lab gem reader's reference art (POE-397): the same icons, the same rule.
+# Fetch them with `make lab-gem-art`.
+desktop/src-tauri/tests/fixtures/lab-gem-art/*
+!desktop/src-tauri/tests/fixtures/lab-gem-art/README.md
 desktop/src-tauri/target/
 desktop/node_modules/
 desktop/.svelte-kit/

@@ -78,6 +78,7 @@ pub(crate) fn arm_gem_context(state: &AppState) -> u64 {
     state.lab_scan.gem_context.store(token, Ordering::SeqCst);
     state.lab_scan.choice_seq.fetch_add(1, Ordering::SeqCst);
     gems.clear();
+    *state.lab_scan.last_gem_read.lock().unwrap_or_else(|e| e.into_inner()) = None;
     token
 }
 
@@ -89,6 +90,7 @@ pub(crate) fn disarm_gem_context(state: &AppState, clear: bool) -> bool {
     let was_armed = state.lab_scan.gem_context.swap(0, Ordering::SeqCst) != 0;
     if clear {
         gems.clear();
+        *state.lab_scan.last_gem_read.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
     was_armed
 }
@@ -102,7 +104,7 @@ pub(crate) fn start_gem_context(app: &AppHandle, source: &str) {
     if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
     emit_status(app);
     app_log(app, format!("Gem reader armed ({}, token={}) — press the read key while hovering a gem", source, token));
-    if super::gem_vocab::current(&state.lab_scan).is_none() {
+    if super::gem_vocab::needs_preload(&state.lab_scan) {
         super::gem_vocab::spawn_gem_vocab_preload(app);
     }
 }
@@ -191,6 +193,7 @@ pub(crate) fn apply_manual_lab_mode(state: &AppState, mode: &str, mut emit: impl
         let scanning = armed_before || state.lab_scan.choice_seq.load(Ordering::SeqCst) != seq_before;
         if scanning {
             gems.clear();
+            *state.lab_scan.last_gem_read.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
         scanning
     };
@@ -239,7 +242,12 @@ struct LabModeChange {
 }
 
 fn emit_lab_mode_change(app: &AppHandle) {
-    app.state::<AppState>().lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    {
+        let state = app.state::<AppState>();
+        let mut gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+        gems.clear();
+        *state.lab_scan.last_gem_read.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
     if let Err(e) = app.emit("lab-mode-changed", ()) {
         log::warn!("emit lab-mode-changed failed: {}", e);
     }
@@ -610,13 +618,27 @@ fn dictionary_reject_reason(failed: &[&str], loaded: usize) -> Option<String> {
     None
 }
 
-/// Fetch gem names from the server API for fuzzy matching.
-///
-/// In Normal mode: fetches transfigured gem names (contain "of").
-/// In Dedication mode: fetches BOTH corrupted skill gem names AND corrupted
-/// transfigured gem names, merged into a single vocabulary for the matcher
-/// (both font options are available per run).
+/// Fetch gem names from the server API for fuzzy matching: the merged view of
+/// [`fetch_gem_dictionary`].
 pub(crate) async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &reqwest::Client, lab_mode: &str) -> Vec<String> {
+    fetch_gem_dictionary(app, server_url, client, lab_mode).await.merged()
+}
+
+/// Fetch the gem dictionary from the server API, split by set (POE-397).
+///
+/// In Normal mode: transfigured gem names only (`normal` is empty).
+/// In Dedication mode: BOTH corrupted skill gem names AND corrupted
+/// transfigured gem names (both font options are available per run). The
+/// `transfigured=false` half carries transfigured names too; `normal` is that
+/// half minus the `transfigured=true` half. Any failure returns an empty
+/// dictionary.
+pub(crate) async fn fetch_gem_dictionary(
+    app: &AppHandle,
+    server_url: &str,
+    client: &reqwest::Client,
+    lab_mode: &str,
+) -> super::gem_icon_refs::GemDictionary {
+    use super::gem_icon_refs::GemDictionary;
     if lab_mode == "Dedication" {
         // Fetch both pools in parallel and merge.
         // Static game-data dictionary — OCR must recognise a gem whether or not the
@@ -629,14 +651,15 @@ pub(crate) async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &
             client.get(&url_transfig).send(),
         );
 
-        let mut all_names = Vec::new();
+        let mut halves: [Vec<String>; 2] = [Vec::new(), Vec::new()];
         // A half-loaded vocabulary is worse than none: the matcher rejects a
         // candidate whose winning name contains " of " when the OCR text does
         // not, so losing the plain-skill half turns a clean read of "Barrage"
         // into zero matches, not a partial one. Track each half and abort the
         // scan rather than silently shipping a truncated dictionary (POE-146).
         let mut failed: Vec<&str> = Vec::new();
-        for (label, res) in [("skills", skills_res), ("transfigured", transfig_res)] {
+        for (half, (label, res)) in [("skills", skills_res), ("transfigured", transfig_res)].into_iter().enumerate() {
+            let all_names = &mut halves[half];
             match res {
                 Ok(resp) if resp.status().is_success() => {
                     match resp.json::<serde_json::Value>().await {
@@ -671,19 +694,22 @@ pub(crate) async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &
             }
         }
 
-        if let Some(reason) = dictionary_reject_reason(&failed, all_names.len()) {
+        if let Some(reason) = dictionary_reject_reason(&failed, halves[0].len() + halves[1].len()) {
             app_log(app, format!("Dedication gem names: {}", reason));
-            return Vec::new();
+            return GemDictionary::default();
         }
 
-        // Deduplicate (transfigured names are a subset of all corrupted gems).
-        all_names.sort();
-        all_names.dedup();
-        all_names
+        let [mut normal, mut transfigured] = halves;
+        transfigured.sort();
+        transfigured.dedup();
+        normal.retain(|name| transfigured.binary_search(name).is_err());
+        normal.sort();
+        normal.dedup();
+        GemDictionary { normal, transfigured }
     } else {
         // Normal mode: transfigured gem names only.
         let url = format!("{}/api/analysis/gems/dictionary?transfigured=true", server_url);
-        match client.get(&url).send().await {
+        let transfigured = match client.get(&url).send().await {
             Ok(res) if res.status().is_success() => {
                 match res.json::<serde_json::Value>().await {
                     Ok(body) => {
@@ -697,7 +723,7 @@ pub(crate) async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &
                             // collected yet), and without this line that case
                             // produced no log output whatsoever.
                             app_log(app, format!("Gem names (transfigured): {} loaded", loaded.len()));
-                            return loaded;
+                            return GemDictionary { normal: Vec::new(), transfigured: loaded };
                         }
                         app_log(app, "Gem names: response missing 'names' field".to_string());
                         Vec::new()
@@ -716,7 +742,8 @@ pub(crate) async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &
                 app_log(app, format!("Gem names: request failed: {}", e));
                 Vec::new()
             }
-        }
+        };
+        GemDictionary { normal: Vec::new(), transfigured }
     }
 }
 

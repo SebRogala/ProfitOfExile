@@ -271,6 +271,17 @@ for the 60% lens) come from small samples. They are not measured here and must
 not be presented as such; collecting real rates across users is one reason the
 app captures the panel at all.
 
+### Gem choice screen
+
+Owner facts (2026-11-13), which the lab gem reader relies on
+([lifecycle](LAB-FONT-OCR-LIFECYCLE.md#gem-read)):
+
+- The options panel and the gem choice are sequential screens: CRAFT on an
+  option replaces the panel with the three gem slots; they are never on screen
+  together.
+- A gem-choice frame never mixes normal and transfigured gems: all three slots
+  are one set.
+
 ## Dedication craft rules
 
 Established 2026-07-30, Allflame league. There is no object called "Font of

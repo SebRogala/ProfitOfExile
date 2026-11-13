@@ -1,4 +1,4 @@
-.PHONY: help build test test-integration qa up up-collector down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-size-gate desktop-test desktop-test-js desktop-build desktop-deploy desktop-sync desktop-release-windows desktop-watch merc-seed-art
+.PHONY: help build test test-integration qa up up-collector down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-size-gate desktop-test desktop-test-js desktop-build desktop-deploy desktop-sync desktop-release-windows desktop-watch merc-seed-art lab-gem-art
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' Makefile | sed 's/:.*## /\t/' | awk -F '\t' '{printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -104,7 +104,43 @@ POE_SERVER_URL ?= https://profitofexile.localhost
 
 # TLS verification is skipped only for the local Traefik cert (.localhost); CI fetches from prod verified.
 MERC_SEED_CURL_INSECURE := $(if $(findstring .localhost,$(POE_SERVER_URL)),-k,)
-merc-seed-art: ## Fetch the merc seed gem art fixture (see its README; honours POE_SERVER_URL)
+# The lab gem reader's reference art (POE-397), same licence rule and route.
+# Only the ELIGIBLE names are fetched: gem-sets.json's normal + transfigured
+# minus its `iconless` list (dictionary names the route answers 404 for). Any
+# non-200 for an eligible name, 404 included, fails the target; the fix is a
+# refreshed gem-sets.json (see tests/fixtures/lab/README.md). A prerequisite of
+# merc-seed-art, so CI's "Fetch merc seed art" step fetches it too.
+LAB_GEM_ART_DIR := desktop/src-tauri/tests/fixtures/lab-gem-art
+LAB_GEM_SETS := desktop/src-tauri/tests/fixtures/lab/gem-sets.json
+lab-gem-art: ## Fetch the lab gem reader's reference art fixture (see its README; honours POE_SERVER_URL)
+	@mkdir -p $(LAB_GEM_ART_DIR)
+	@list=$$(mktemp); \
+	python3 -c 'import json, sys, urllib.parse; \
+	d = json.load(open(sys.argv[1])); \
+	skip = set(d["iconless"]); \
+	names = sorted(set(d["normal"] + d["transfigured"]) - skip); \
+	slug = lambda g: "".join(c.lower() if c.isalnum() and c.isascii() else "-" for c in g); \
+	print("\n".join("%s\t%s" % (slug(g), urllib.parse.quote(g, safe="")) for g in names))' \
+		$(LAB_GEM_SETS) > "$$list" || { echo "could not read $(LAB_GEM_SETS)"; exit 1; }; \
+	fetched=0; skipped=0; failed=0; \
+	while IFS="$$(printf '\t')" read -r slug enc; do \
+		[ -n "$$slug" ] || continue; \
+		out="$(LAB_GEM_ART_DIR)/$$slug.png"; \
+		if [ -s "$$out" ]; then skipped=$$((skipped+1)); continue; fi; \
+		code=$$(curl -s $(MERC_SEED_CURL_INSECURE) -o "$$out" -w '%{http_code}' --max-time 30 \
+			"$(POE_SERVER_URL)/api/icon/gems/$$enc" 2>/dev/null); \
+		if [ "$$code" = "200" ] && [ -s "$$out" ]; then \
+			fetched=$$((fetched+1)); \
+		else \
+			rm -f "$$out"; failed=$$((failed+1)); \
+			echo "  FAILED $$slug (HTTP $${code:-no response})"; \
+		fi; \
+	done < "$$list"; \
+	rm -f "$$list"; \
+	echo "lab gem art from $(POE_SERVER_URL): $$fetched fetched, $$skipped already present, $$failed failed"; \
+	[ "$$failed" -eq 0 ]
+
+merc-seed-art: lab-gem-art ## Fetch the merc seed gem art fixture, and the lab gem art (see their READMEs; honours POE_SERVER_URL)
 	@mkdir -p $(MERC_SEED_ART_DIR)
 	@list=$$(mktemp); \
 	python3 -c 'import json, sys, urllib.parse; \
