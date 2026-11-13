@@ -10,6 +10,7 @@ import type { CurrencyExchangeHorizon } from '$lib/exchange/view';
 import type { PersistedString } from '$lib/prefs.svelte';
 import { divineRate as sharedDivineRate } from '$lib/stores/divine-rate.svelte';
 import { applySnapshot, ssot } from '$lib/stores/ssot.svelte';
+import { applyServerSlice } from '$lib/stores/server-base.svelte';
 import {
 	createHarvestController,
 	productionDependencies,
@@ -736,6 +737,7 @@ describe('productionDependencies wiring', () => {
 			json: async () => response
 		}));
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		applyServerSlice({ url: 'https://server.test', defaultUrl: 'https://server.test' });
 		try {
 			const deps = productionDependencies();
 			const [prices, families] = await Promise.all([

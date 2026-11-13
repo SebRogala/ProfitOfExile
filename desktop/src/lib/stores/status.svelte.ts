@@ -14,6 +14,7 @@ import { listen } from '@tauri-apps/api/event';
 import { loadEntitlements, refreshEntitlements, resetEntitlements } from '$lib/stores/entitlements.svelte';
 import { syncDivineRateToServer } from '$lib/stores/divine-rate.svelte';
 import { checkForUpdate } from '$lib/updater/check';
+import { onServerUrlChange } from '$lib/stores/server-base.svelte';
 
 /** Shape of the Rust AppStatus struct emitted via "status-changed" events. */
 export interface AppStatus {
@@ -95,8 +96,8 @@ export async function initStatusStore(): Promise<() => void> {
 	// Subscribe to backend events first (so we don't miss any)
 	const unlistenStatus = await listen<AppStatus>('status-changed', (event) => {
 		setStatus(event.payload);
-		noteServerUrl(event.payload?.server_url);
 	});
+	const unlistenServer = onServerUrlChange(noteServerUrl);
 
 	const unlistenLogs = await listen('logs-changed', (event) => {
 		store.logs = event.payload as string[];
@@ -105,7 +106,6 @@ export async function initStatusStore(): Promise<() => void> {
 	// Then do initial load as fallback
 	try {
 		setStatus(await invoke<AppStatus>('get_status'));
-		noteServerUrl(store.status?.server_url);
 	} catch (e) {
 		console.warn('[store] initial get_status failed:', e);
 	}
@@ -126,13 +126,15 @@ export async function initStatusStore(): Promise<() => void> {
 
 	return () => {
 		unlistenStatus();
+		unlistenServer();
 		unlistenLogs();
 		clearInterval(updateInterval);
 	};
 }
 
 /**
- * The `server_url` the last status carried, or null before the first one.
+ * React to the saved server (the SSOT snapshot's `server` slice, POE-383).
+ * `previous` is null for the first url this store hears.
  *
  * A CHANGE means the grant on screen — hidden modules and update channel — came
  * from a server the app is no longer talking to: the local server and
@@ -140,23 +142,16 @@ export async function initStatusStore(): Promise<() => void> {
  * the grant and asks the new server at once, instead of drawing the previous
  * server's answers until the 30-minute tick, a restart, or an exchange update.
  * The divine rate is synced on the first status and on a change; its store
- * withdraws a rate another server answered before it asks. The first status
+ * withdraws a rate another server answered before it asks. The first url
  * is the saved server becoming known. Startup asks for the grant on its own.
- * A status that repeats the url is ignored, because `status-changed` fires on
- * every state mutation.
+ * A repeated url never reaches here (`onServerUrlChange`).
  */
-let knownServerUrl: string | null = null;
-
-function noteServerUrl(url: string | undefined): void {
-	if (url === undefined) return;
-	if (knownServerUrl === null) {
-		void syncDivineRateToServer();
-	} else if (url !== knownServerUrl) {
+function noteServerUrl(_url: string, previous: string | null): void {
+	if (previous !== null) {
 		resetEntitlements();
 		void refreshEntitlements();
-		void syncDivineRateToServer();
 	}
-	knownServerUrl = url;
+	void syncDivineRateToServer();
 }
 
 /**

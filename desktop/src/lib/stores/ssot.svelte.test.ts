@@ -1698,3 +1698,68 @@ describe('league generation delivery', () => {
 		expect(live).toHaveBeenCalledTimes(1);
 	});
 });
+
+/**
+ * The snapshot's server slice is the one server base every window builds on
+ * (POE-383) — overlays included, which start no status store. Real store, real
+ * carrier and real `$lib/api`; only Tauri and `fetch` are mocked.
+ */
+describe('the server slice', () => {
+	let mod: typeof import('./ssot.svelte');
+	let invokeMock: ReturnType<typeof vi.mocked<typeof import('@tauri-apps/api/core').invoke>>;
+	let fetchMock: ReturnType<typeof vi.fn>;
+
+	const saved = { url: 'https://saved.example', defaultUrl: 'https://default.example' };
+
+	beforeEach(async () => {
+		vi.resetModules();
+		vi.clearAllMocks();
+		vi.useFakeTimers();
+		const core = await import('@tauri-apps/api/core');
+		invokeMock = vi.mocked(core.invoke);
+		fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
+		vi.stubGlobal('fetch', fetchMock);
+		mod = await import('./ssot.svelte');
+	});
+
+	afterEach(() => {
+		mod.stopSsotStore();
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it("a polled snapshot's server becomes the icon and request base", async () => {
+		invokeMock.mockImplementation(async (command: string) =>
+			command === 'get_ssot' ? { league: { name: 'Mirage' }, server: saved } : undefined,
+		);
+		const { getIconUrl } = await import('$lib/icons');
+		const { fetchMarketOverview } = await import('$lib/api');
+
+		await mod.fetchSsot('poll');
+		await fetchMarketOverview();
+
+		expect(getIconUrl('gems', 'Arc')).toBe('https://saved.example/api/icon/gems/Arc');
+		expect(String(fetchMock.mock.calls[0][0])).toBe('https://saved.example/api/analysis/market-overview');
+	});
+
+	it('a failed first get_ssot recovers on the next poll', async () => {
+		let calls = 0;
+		invokeMock.mockImplementation(async (command: string) => {
+			if (command !== 'get_ssot') return undefined;
+			calls += 1;
+			if (calls === 1) throw new Error('ipc down');
+			return { league: { name: 'Mirage' }, server: saved };
+		});
+		const { fetchMarketOverview } = await import('$lib/api');
+
+		mod.startSsotStore();
+		const pending = fetchMarketOverview();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(fetchMock).not.toHaveBeenCalled();
+
+		await vi.advanceTimersByTimeAsync(3000);
+		await pending;
+
+		expect(String(fetchMock.mock.calls[0][0])).toBe('https://saved.example/api/analysis/market-overview');
+	});
+});

@@ -27,6 +27,8 @@
  *   // Read: ssot.modules['mercenary'] ?? false  (absent key = not yet known)
  *   // Read: ssot.mercenary  (Merc OCR status, last capture, enabled-guide echo)
  *   // Read: ssot.temple  (temple board, advice and settings echo; no direct write)
+ *   // The `server` slice is not kept here: applySnapshot hands it to
+ *   //   $lib/stores/server-base.svelte (getServerUrl / whenServerUrl).
  *   // Write: setNormalVariant(v) / setDedicationSelection(variant, pool)
  *   // Write: setModuleEnabled(id, enabled)
  *   // Write: setMercSourcesOff(offList) — which guides take part in the verdict
@@ -37,6 +39,7 @@
  *   // Overlay windows: call startSsotStore() from an $effect and return its
  *   //   cleanup (onMount is unreliable in overlay windows).
  */
+import { applyServerSlice } from '$lib/stores/server-base.svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { DEDICATION_VARIANTS, VARIANTS } from '$lib/api';
@@ -683,6 +686,7 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	if (snap.bossLoot !== undefined) ssot.bossLoot = snap.bossLoot;
 	applyMercenary(snap.mercenary);
 	applyTemple(snap.temple);
+	applyServerSlice(snap.server);
 	// NOT fail-closed on absence, unlike the two module slices above — this one
 	// is deliberately DROPPABLE. `ssot::drop_if_mismatched` clears it on the
 	// first capture whose dimensions disagree with the remembered measurement

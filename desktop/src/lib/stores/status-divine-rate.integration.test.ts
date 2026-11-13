@@ -1,10 +1,11 @@
 /**
  * The saved server reaches the divine rate through the real stores (POE-286).
  *
- * `status.svelte.ts` reads `server_url` from the status it stores, and the
- * divine rate asks the server `getApiBase()` names. The order inside the
- * `status-changed` handler decides which URL that read sees, so this runs both
- * real stores and the real `$lib/api` port, mocking only Tauri and `fetch`.
+ * The saved server arrives on the SSOT snapshot (POE-383): `applySnapshot`
+ * hands it to the server-base carrier, which notifies `status.svelte.ts`, and
+ * the divine rate and entitlements ask the server `getApiBase()` names. The
+ * carrier must hold the new url BEFORE it notifies, so this runs the real
+ * stores and the real `$lib/api` port, mocking only Tauri and `fetch`.
  *
  * A separate file rather than `status.svelte.test.ts`: that file mocks the
  * divine-rate store as a whole, and this test is the one place the two meet.
@@ -25,11 +26,17 @@ vi.mock('@tauri-apps/api/event', () => ({
 	})
 }));
 
-// Static imports: the stores' module state (status.svelte.ts knownServerUrl,
-// divine-rate.svelte.ts rate/generation) lives for the whole file, so a second
-// test needs vi.resetModules + dynamic imports or its own file.
+// Static imports: divine-rate.svelte.ts rate/generation lives for the whole
+// file; the server carrier is reset per test.
 import { initStatusStore } from './status.svelte';
 import { currentDivineRate } from './divine-rate.svelte';
+import { applySnapshot, type SsotSnapshot } from './ssot.svelte';
+import { resetServerBaseForTests } from './server-base.svelte';
+
+/** A snapshot carrying just the server slice. */
+function snapshotFor(url: string): SsotSnapshot {
+	return { league: { name: null }, server: { url, defaultUrl: 'https://default.example' } } as SsotSnapshot;
+}
 
 const DIVINE_PATH = '/currency-exchange/divine-rate';
 
@@ -53,6 +60,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
 	vi.useFakeTimers();
+	resetServerBaseForTests();
 	mocks.handlers = {};
 	// `get_status` and `get_logs` come back empty; the store then waits for an event.
 	mocks.invoke.mockReset();
@@ -74,12 +82,11 @@ afterEach(() => {
 });
 
 describe('the divine rate follows the saved server', () => {
-	it('asks the saved server for the divine rate once the status names it', async () => {
+	it('asks the saved server for the divine rate once the snapshot names it', async () => {
 		cleanup = await initStatusStore();
 
-		mocks.handlers['status-changed']({
-			payload: { server_url: 'https://saved.example' }
-		});
+		applySnapshot(snapshotFor('https://saved.example'));
+		await flush();
 
 		const rateUrls = fetchMock.mock.calls
 			.map(([url]) => String(url))
@@ -93,5 +100,21 @@ describe('the divine rate follows the saved server', () => {
 		await flush();
 
 		expect(currentDivineRate()).toBe(351.08);
+	});
+
+	it('sends the requests a server change fires to the new server', async () => {
+		cleanup = await initStatusStore();
+		mocks.handlers['status-changed']({ payload: { device_id: 'dev-1', server_url: 'https://a.example' } });
+		applySnapshot(snapshotFor('https://a.example'));
+		await flush();
+		fetchMock.mockClear();
+
+		applySnapshot(snapshotFor('https://b.example'));
+		await flush();
+
+		const hosts = (needle: string) =>
+			fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.includes(needle)).map((url) => new URL(url).host);
+		expect(hosts('/device/me')).toEqual(['b.example']);
+		expect(hosts(DIVINE_PATH)).toEqual(['b.example']);
 	});
 });

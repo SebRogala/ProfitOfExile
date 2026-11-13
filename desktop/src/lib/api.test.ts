@@ -8,7 +8,14 @@ vi.mock('$lib/stores/status.svelte', () => ({
 	store: { status: { server_url: 'https://server.test', device_id: 'device-abc123' } }
 }));
 
-const { displayVariant, signalTransitionLabel, fetchCurrencyExchangePlays, fetchDivineRate, fetchHarvest, mapCompareRow, collectiveParams, fetchRankingsPage } = await import('./api');
+const { displayVariant, signalTransitionLabel, fetchCurrencyExchangePlays, fetchDivineRate, fetchHarvest, mapCompareRow, collectiveParams, fetchRankingsPage, fetchMarketOverview, fetchCompare } = await import('./api');
+const { applyServerSlice, resetServerBaseForTests, SERVER_URL_WAIT_MS } = await import('$lib/stores/server-base.svelte');
+
+/** The server every fetcher test talks to, delivered the way the SSOT snapshot delivers it. */
+function seedServer(): void {
+	applyServerSlice({ url: 'https://server.test', defaultUrl: 'https://default.test' });
+}
+seedServer();
 
 import type { CurrencyExchangeLeg, CurrencyExchangeResponse, RankingsQuery } from './api';
 
@@ -876,5 +883,63 @@ describe('fetchFontEV lens', () => {
 
 	it('maps an absent lens key (older server) to null', async () => {
 		expect((await fetchWith({ safe: [] })).lens).toBeNull();
+	});
+});
+
+/**
+ * Before the first SSOT snapshot the server is unknown (POE-383, D3). A request
+ * waits for it, bounded, and then fails the way a request to an unreachable
+ * host fails, so each caller's own error path runs unchanged.
+ */
+describe('a request before the server is known', () => {
+	let originalFetch: typeof globalThis.fetch;
+	let fetchMock: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		resetServerBaseForTests();
+		originalFetch = globalThis.fetch;
+		fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ count: 0, data: [] }) }));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+		vi.useRealTimers();
+		resetServerBaseForTests();
+		seedServer();
+	});
+
+	it('get waits for the first server url before fetching', async () => {
+		const pending = fetchMarketOverview();
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(fetchMock).not.toHaveBeenCalled();
+
+		applyServerSlice({ url: 'https://saved.example', defaultUrl: 'https://default.test' });
+		await pending;
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(String(fetchMock.mock.calls[0][0])).toBe('https://saved.example/api/analysis/market-overview');
+	});
+
+	it('get rejects like a failed fetch when no url arrives in time', async () => {
+		const pending = fetchMarketOverview();
+		const outcome = expect(pending).rejects.toThrow('server url not known');
+
+		await vi.advanceTimersByTimeAsync(SERVER_URL_WAIT_MS);
+
+		await outcome;
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('fetchCompare rejects while waiting when its signal aborts', async () => {
+		const controller = new AbortController();
+		const pending = fetchCompare(['Arc'], '20/20', controller.signal);
+		const outcome = expect(pending).rejects.toBe('closed');
+
+		controller.abort('closed');
+
+		await outcome;
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

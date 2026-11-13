@@ -1,9 +1,11 @@
 /**
  * Lab Dashboard API service — desktop edition.
- * Fetches real data from the Go backend using store.status.server_url.
+ * Fetches real data from the Go backend at the saved server, which Rust carries
+ * on the SSOT snapshot (`$lib/stores/server-base.svelte`, POE-383).
  */
 
 import { store } from '$lib/stores/status.svelte';
+import { getServerUrl, whenServerUrl } from '$lib/stores/server-base.svelte';
 import type { TradeLookupResult } from './tradeApi';
 import type { ExchangePriceRead, HarvestFamilyData } from '$lib/harvest/seam';
 import { getVersion } from '@tauri-apps/api/app';
@@ -695,15 +697,17 @@ function deviceHeaders(): Record<string, string> {
 }
 
 /**
- * Returns the API base URL from the Rust backend settings.
- * Called fresh on every request so it picks up server_url changes (e.g. after settings edit).
+ * The API base URL (`<saved server>/api`), or null before the first SSOT
+ * snapshot has carried the server. Read fresh on every call so a Settings edit
+ * applies on the next request.
  */
-export function getApiBase(): string {
-	return (store.status?.server_url || import.meta.env.VITE_SERVER_URL || 'https://profitofexile.localhost') + '/api';
+export function getApiBase(): string | null {
+	const server = getServerUrl();
+	return server === null ? null : `${server}/api`;
 }
 
 async function get<T>(path: string, params?: Record<string, string | string[]>): Promise<T> {
-	const url = new URL(`${getApiBase()}${path}`);
+	const url = new URL(`${await whenServerUrl()}/api${path}`);
 	if (params) {
 		for (const [k, v] of Object.entries(params)) {
 			if (Array.isArray(v)) for (const each of v) url.searchParams.append(k, each);
@@ -1099,7 +1103,7 @@ export async function fetchGemNames(query: string, mode?: string): Promise<strin
 }
 
 export async function fetchCompare(gems: string[], variant: string, signal?: AbortSignal, mode?: string): Promise<CompareGem[]> {
-	const url = new URL(`${getApiBase()}/analysis/compare`);
+	const url = new URL(`${await whenServerUrl(signal)}/api/analysis/compare`);
 	url.searchParams.set('gems', gems.join(','));
 	url.searchParams.set('variant', variant);
 	if (mode === 'dedication') {

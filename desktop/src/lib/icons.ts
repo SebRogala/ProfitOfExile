@@ -3,8 +3,8 @@ import { getApiBase } from '$lib/api';
 /** The source-map category exposed by the server's typed icon route. */
 export type IconType = 'gems' | 'items' | 'temple' | 'currency-exchange';
 
-/** Returns the configured server endpoint URL for an icon. */
-export function getIconUrl(type: IconType, name: string): string {
-	// getApiBase() already includes the "/api" suffix.
-	return `${getApiBase()}/icon/${type}/${encodeURIComponent(name)}`;
+/** The server endpoint URL for an icon, or null while the server is not known yet. */
+export function getIconUrl(type: IconType, name: string): string | null {
+	const base = getApiBase();
+	return base === null ? null : `${base}/icon/${type}/${encodeURIComponent(name)}`;
 }

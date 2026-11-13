@@ -52,6 +52,7 @@
 	import { persisted } from '$lib/prefs.svelte';
 	import { LOCAL_SERVER_URL, serverToggle } from '$lib/server-toggle';
 	import { getApiBase } from '$lib/api';
+	import { serverBase } from '$lib/stores/server-base.svelte';
 	import { CHAOS_ID, DIVINE_ID, currencyIconPath, iconSrc } from '$lib/exchange/view';
 	import { divineRate } from '$lib/stores/divine-rate.svelte';
 	import { divineRateView } from '$lib/stores/divine-rate';
@@ -65,12 +66,12 @@
 	} = $props();
 
 	/**
-	 * The production target this build was given, or '' when it was built
-	 * without one (docs/DEV-SETUP.md, "Build-time variables"). NOT defaulted to
-	 * the local url: that default is what made the DEBUG/PROD button a one-way
-	 * door — see `server-toggle.ts`.
+	 * The production target this build was given (Rust `DEFAULT_SERVER_URL`
+	 * on the SSOT snapshot), '' until the first snapshot. A build without
+	 * POE_SERVER_URL reports the local url here, which `serverToggle` reads as
+	 * no target (docs/DEV-SETUP.md, "Build-time variables").
 	 */
-	const BUILT_PROD_URL: string = import.meta.env.VITE_SERVER_URL || '';
+	const BUILT_PROD_URL: string = $derived(serverBase.defaultUrl);
 
 	/**
 	 * The url the app left when it last flipped to DEBUG — the way back for a

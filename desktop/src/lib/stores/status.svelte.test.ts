@@ -164,51 +164,54 @@ describe('initStatusStore', () => {
 });
 
 /**
- * What a `server_url` change does to the grant on screen.
+ * What a server change does to the grant on screen.
  *
  * The local server and production hold different roles for the same device,
  * so the modules drawn for one must not survive a switch to the other, and the
- * new server must be asked now rather than on the 30-minute tick.
+ * new server must be asked now rather than on the 30-minute tick. The server
+ * arrives on the SSOT snapshot (POE-383), the one carrier every window shares.
  */
-describe('a server_url change', () => {
-	/** A status carrying just what the switch reads. */
-	function status(serverUrl: string) {
-		return { payload: { server_url: serverUrl } };
-	}
 
+/** Deliver a server url the way `applySnapshot` does. */
+async function server(url: string): Promise<void> {
+	const { applyServerSlice } = await import('./server-base.svelte');
+	applyServerSlice({ url, defaultUrl: 'https://default.example' });
+}
+
+describe('a server change', () => {
 	it('withdraws the grant and asks the new server at once', async () => {
 		mocks.loadEntitlements.mockResolvedValue(undefined);
 		const { initStatusStore } = await import('./status.svelte');
 		await initStatusStore();
-		mocks.handlers['status-changed'](status('https://prod.example'));
+		await server('https://prod.example');
 
-		mocks.handlers['status-changed'](status('https://profitofexile.localhost'));
+		await server('https://profitofexile.localhost');
 
 		expect(mocks.resetEntitlements).toHaveBeenCalledTimes(1);
 		expect(mocks.refreshEntitlements).toHaveBeenCalledTimes(1);
 	});
 
-	it('does not read the first status as a switch', async () => {
+	it('does not read the first url as a switch', async () => {
 		// Startup asks on its own; a reset here would race the startup load.
 		mocks.loadEntitlements.mockResolvedValue(undefined);
 		const { initStatusStore } = await import('./status.svelte');
 		await initStatusStore();
 
-		mocks.handlers['status-changed'](status('https://prod.example'));
+		await server('https://prod.example');
 
 		expect(mocks.resetEntitlements).not.toHaveBeenCalled();
 		expect(mocks.refreshEntitlements).not.toHaveBeenCalled();
 	});
 
-	it('ignores a status that repeats the url', async () => {
-		// `status-changed` fires on every state mutation, not only this one.
+	it('ignores a snapshot that repeats the url', async () => {
+		// The snapshot is polled every 3 s; most polls repeat the url.
 		mocks.loadEntitlements.mockResolvedValue(undefined);
 		const { initStatusStore } = await import('./status.svelte');
 		await initStatusStore();
-		mocks.handlers['status-changed'](status('https://prod.example'));
+		await server('https://prod.example');
 
-		mocks.handlers['status-changed'](status('https://prod.example'));
-		mocks.handlers['status-changed'](status('https://prod.example'));
+		await server('https://prod.example');
+		await server('https://prod.example');
 
 		expect(mocks.resetEntitlements).not.toHaveBeenCalled();
 	});
@@ -221,11 +224,38 @@ describe('a server_url change', () => {
 		mocks.loadEntitlements.mockResolvedValue(undefined);
 		const { initStatusStore } = await import('./status.svelte');
 		await initStatusStore();
-		mocks.handlers['status-changed'](status('https://prod.example'));
+		await server('https://prod.example');
 
-		mocks.handlers['status-changed'](status('https://profitofexile.localhost'));
+		await server('https://profitofexile.localhost');
 
 		expect(order).toEqual(['reset', 'refresh']);
+	});
+
+	it('is not read from status-changed', async () => {
+		// One carrier (H1): a status that names another server_url is not a
+		// switch; only the snapshot's server slice is.
+		mocks.loadEntitlements.mockResolvedValue(undefined);
+		const { initStatusStore } = await import('./status.svelte');
+		await initStatusStore();
+		mocks.handlers['status-changed']({ payload: { server_url: 'https://prod.example' } });
+		await server('https://prod.example');
+
+		mocks.handlers['status-changed']({ payload: { server_url: 'https://other.example' } });
+
+		expect(mocks.resetEntitlements).not.toHaveBeenCalled();
+		expect(mocks.refreshEntitlements).not.toHaveBeenCalled();
+	});
+
+	it('stops reacting once the store is cleaned up', async () => {
+		mocks.loadEntitlements.mockResolvedValue(undefined);
+		const { initStatusStore } = await import('./status.svelte');
+		const cleanup = await initStatusStore();
+		await server('https://prod.example');
+
+		cleanup();
+		await server('https://profitofexile.localhost');
+
+		expect(mocks.resetEntitlements).not.toHaveBeenCalled();
 	});
 });
 
@@ -234,18 +264,13 @@ describe('a server_url change', () => {
  * a rate must be withdrawn; this module only asks it to sync on the first url
  * and on every change.
  */
-describe('the divine rate across server_url', () => {
-	/** A status carrying just what the rate reads. */
-	function status(serverUrl: string) {
-		return { payload: { server_url: serverUrl } };
-	}
-
-	it('syncs the divine rate once the first status lands', async () => {
+describe('the divine rate across server changes', () => {
+	it('syncs the divine rate once the first url lands', async () => {
 		mocks.loadEntitlements.mockResolvedValue(undefined);
 		const { initStatusStore } = await import('./status.svelte');
 		await initStatusStore();
 
-		mocks.handlers['status-changed'](status('https://prod.example'));
+		await server('https://prod.example');
 
 		expect(mocks.syncDivineRateToServer).toHaveBeenCalledTimes(1);
 	});
@@ -254,9 +279,9 @@ describe('the divine rate across server_url', () => {
 		mocks.loadEntitlements.mockResolvedValue(undefined);
 		const { initStatusStore } = await import('./status.svelte');
 		await initStatusStore();
-		mocks.handlers['status-changed'](status('https://prod.example'));
+		await server('https://prod.example');
 
-		mocks.handlers['status-changed'](status('https://profitofexile.localhost'));
+		await server('https://profitofexile.localhost');
 
 		expect(mocks.syncDivineRateToServer).toHaveBeenCalledTimes(2);
 	});
@@ -265,10 +290,10 @@ describe('the divine rate across server_url', () => {
 		mocks.loadEntitlements.mockResolvedValue(undefined);
 		const { initStatusStore } = await import('./status.svelte');
 		await initStatusStore();
-		mocks.handlers['status-changed'](status('https://prod.example'));
+		await server('https://prod.example');
 
-		mocks.handlers['status-changed'](status('https://prod.example'));
-		mocks.handlers['status-changed'](status('https://prod.example'));
+		await server('https://prod.example');
+		await server('https://prod.example');
 
 		expect(mocks.syncDivineRateToServer).toHaveBeenCalledTimes(1);
 	});

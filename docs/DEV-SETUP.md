@@ -209,9 +209,10 @@ remove file`. First build ~7 min cold, incremental afterwards. It is a
 dev-salt device on prod unless `APP_FINGERPRINT_SECRET` is set (below).
 
 **Which server it talks to.** The Rust default for `server_url` is the
-build-time `POE_SERVER_URL` and the web side's is `VITE_SERVER_URL`
-(`settings.rs`, `api.ts`); unset, both are `https://profitofexile.localhost`.
-The Settings page persists a `server_url` override at runtime, and a dev build
+build-time `POE_SERVER_URL` (`settings/mod.rs` `DEFAULT_SERVER_URL`); unset, it
+is `https://profitofexile.localhost`. The web side has no default of its own:
+every window reads the saved url from the SSOT snapshot
+(`desktop/src/lib/stores/server-base.svelte.ts`). The Settings page persists a `server_url` override at runtime, and a dev build
 also has the DEBUG/PROD button in the top bar, which flips between the local
 server and the production target (`server-toggle.ts`). Two things about that
 override are easy to trip over:
@@ -238,8 +239,7 @@ but differently, and on a fresh machine the differences look like bugs:
 
 | Variable | Set | Unset |
 |---|---|---|
-| `VITE_SERVER_URL` | the DEBUG/PROD button has a production target | once on DEBUG the button has nowhere to go back to: its tooltip says so and a click opens Settings, where a url can be typed. The url the app left is remembered (pref `devServerReturnUrl`), so after one flip from a url typed into Settings the button finds its way back on its own |
-| `POE_SERVER_URL` | the Rust default `server_url` is production | the default is the local server; moot once `settings.json` carries an override |
+| `POE_SERVER_URL` | the Rust default `server_url` is production, and the DEBUG/PROD button has a production target | the default is the local server (moot once `settings.json` carries an override); once on DEBUG the button has nowhere to go back to: its tooltip says so and a click opens Settings, where a url can be typed. The url the app left is remembered (pref `devServerReturnUrl`), so after one flip from a url typed into Settings the button finds its way back on its own |
 | `APP_FINGERPRINT_SECRET` | the device id is the one the installed release build has on this PC | the id is hashed with a fixed dev salt (`fingerprint.rs`), so the dev build is a **different device** on every server: it starts as a plain `user` there and sees no hidden modules until that id is identified and promoted on its own ([DEPLOY.md](DEPLOY.md), "Who is on the beta channel"). The identify dialog (Ctrl+Shift+F11) says "dev-salt build" under the id in that case |
 
 Set them as Windows *user* environment variables (System Properties, or

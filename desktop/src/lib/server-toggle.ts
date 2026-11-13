@@ -2,7 +2,8 @@
  * What the top bar's DEBUG/PROD button does next.
  *
  * The button flips a dev build between the local server and a production one.
- * The production target is whatever `VITE_SERVER_URL` was at build time, and a
+ * The production target is the build's default server (Rust
+ * `settings::DEFAULT_SERVER_URL`, from `POE_SERVER_URL` at build time), and a
  * build made without it — every fresh Windows checkout until the variable is
  * set (docs/DEV-SETUP.md, "Build-time variables") — has none. Before this
  * module the fallback for a missing target was the LOCAL url itself, so one
@@ -25,7 +26,7 @@
  * `overlay/clickthrough-report.ts` uses.
  */
 
-/** The local server every dev build defaults to (`settings.rs`, `api.ts`). */
+/** The local server every dev build defaults to (`settings/mod.rs` `DEFAULT_SERVER_URL` without `POE_SERVER_URL`). */
 export const LOCAL_SERVER_URL = 'https://profitofexile.localhost';
 
 /** What the button shows and does. `target === null` means the click goes to Settings. */
@@ -64,7 +65,7 @@ export function serverToggle(current: string, builtProdUrl: string, remembered: 
 		label: 'DEBUG',
 		target: null,
 		title:
-			'No production server to switch back to: this build had no VITE_SERVER_URL ' +
+			'No production server to switch back to: this build had no POE_SERVER_URL ' +
 			'and the app has not left the local server since it started. Click to open ' +
 			'Settings and edit the server URL, or set the variable before `npx tauri dev`.'
 	};

@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 
 // api.ts pulls in Tauri + the status store at module load; neither is needed for
-// the connection lifecycle under test.
+// the connection lifecycle under test. The server comes from the SSOT carrier.
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: async () => '0.0.0-test' }));
-vi.mock('$lib/stores/status.svelte', () => ({ store: { status: { server_url: 'https://hub.test' } } }));
+vi.mock('$lib/stores/status.svelte', () => ({ store: { status: null } }));
 
 const { connectMercure, CURRENCY_EXCHANGE_UPDATED_TOPIC, HARVEST_UPDATED_TOPIC } = await import('./api');
+const { applyServerSlice } = await import('$lib/stores/server-base.svelte');
+applyServerSlice({ url: 'https://hub.test', defaultUrl: 'https://hub.test' });
 
 const TOKEN_RESPONSE = {
 	ok: true,

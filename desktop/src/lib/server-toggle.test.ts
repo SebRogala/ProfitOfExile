@@ -37,7 +37,7 @@ describe('on the local server', () => {
 	});
 
 	it('still goes back when only the remembered url exists', () => {
-		// A build with no VITE_SERVER_URL — every fresh checkout — after one
+		// A build with no POE_SERVER_URL — every fresh checkout — after one
 		// flip from a Settings-typed production url.
 		expect(serverToggle(LOCAL_SERVER_URL, '', PROD).target).toBe(PROD);
 	});
@@ -48,7 +48,7 @@ describe('on the local server', () => {
 		const t = serverToggle(LOCAL_SERVER_URL, '', '');
 		expect(t.target).toBeNull();
 		expect(t.label).toBe('DEBUG');
-		expect(t.title).toMatch(/VITE_SERVER_URL/);
+		expect(t.title).toMatch(/POE_SERVER_URL/);
 		expect(t.title).toMatch(/Settings/);
 	});
 
