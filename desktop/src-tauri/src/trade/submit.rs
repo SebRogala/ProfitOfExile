@@ -96,6 +96,15 @@ mod trade_submit_tests {
     }
 
     async fn submit_responses_in_league(responses: &[(u16, &str)], current_name: &str) -> (Vec<String>, usize, Vec<String>) {
+        let result = crate::trade::signals::build_result("Gem", "20/20", "League A", "", 0, vec![], 0, 0.0);
+        submit_captured(&result, responses, current_name).await
+    }
+
+    async fn submit_captured(
+        result: &crate::trade::types::TradeLookupResult,
+        responses: &[(u16, &str)],
+        current_name: &str,
+    ) -> (Vec<String>, usize, Vec<String>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/api/trade/submit", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -124,8 +133,7 @@ mod trade_submit_tests {
         let current = Mutex::new(Some(current_name.to_string()));
         let scheduled = Mutex::new(0);
         let logs = Mutex::new(Vec::new());
-        let result = crate::trade::signals::build_result("Gem", "20/20", "League A", "", 0, vec![], 0.0);
-        submit_trade_result(&reqwest::Client::new(), &url, &result,
+        submit_trade_result(&reqwest::Client::new(), &url, result,
             RecordingResolver { current: &current, scheduled: &scheduled },
             |line| logs.lock().unwrap().push(line),
         ).await;
@@ -138,6 +146,41 @@ mod trade_submit_tests {
         }
         assert_eq!(current.into_inner().unwrap().as_deref(), Some(current_name), "a hint never replaces authoritative league state");
         (requests, scheduled.into_inner().unwrap(), logs.into_inner().unwrap())
+    }
+
+    fn listing(seller: &str, price: f64) -> serde_json::Value {
+        serde_json::json!({
+            "listing": {
+                "indexed": "2026-08-26T10:00:00Z",
+                "account": {"name": seller},
+                "price": {"amount": price, "currency": "chaos"},
+            },
+            "item": {"corrupted": false, "properties": []},
+        })
+    }
+
+    #[tokio::test]
+    async fn trade_submit_posts_the_seller_count_without_seller_names() {
+        use crate::trade::client::tests::{search_ok, stub_api, stub_client};
+        let fetch = serde_json::json!({"result": [
+            listing("Alice", 10.0), listing("Bob", 11.0), listing("Alice", 12.0),
+        ]});
+        let stub = stub_api(search_ok(), fetch).await;
+        let result = stub_client(&stub)
+            .lookup_gem_with_mode(Some("League A".into()), "Empower Support", "20/20", 0.0, false, |_| {})
+            .await
+            .expect("the stub answers both phases");
+
+        let (requests, _, _) = submit_captured(&result, &[(200, "{}")], "League A").await;
+
+        assert_eq!(requests.len(), 1);
+        let body = requests[0].split_once("\r\n\r\n").unwrap().1;
+        let json: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(json["signals"]["uniqueAccounts"], 2);
+        let listings = json["listings"].as_array().unwrap();
+        assert_eq!(listings.len(), 3);
+        assert!(listings.iter().all(|l| l.get("account").is_none()), "no seller name is submitted: {body}");
+        assert!(!body.contains("Alice") && !body.contains("Bob"), "no seller name is submitted: {body}");
     }
 
     #[tokio::test]

@@ -28,7 +28,6 @@ export interface TradeListingDetail {
 	price: number;
 	currency: string;
 	chaosPrice: number;
-	account: string;
 	indexedAt: string;
 	gemLevel: number;
 	gemQuality: number;
@@ -125,7 +124,8 @@ export interface TradeListingRow {
 	currency: string;
 	/** Raw seller amount in `currency`. */
 	amount: number;
-	account: string;
+	/** Seller name; mercenary listings only, gem lookups carry no names. */
+	account?: string;
 	indexedAt: string;
 }
 
@@ -134,7 +134,6 @@ export function toListingRow(detail: TradeListingDetail): TradeListingRow {
 		chaosPrice: detail.chaosPrice,
 		currency: detail.currency,
 		amount: detail.price,
-		account: detail.account,
 		indexedAt: detail.indexedAt
 	};
 }

@@ -345,9 +345,13 @@ impl TradeApiClient {
             .await?;
 
         let mut listings = Vec::with_capacity(raw.items.len());
+        let mut sellers = std::collections::HashSet::with_capacity(raw.items.len());
         for item in raw.items {
             match serde_json::from_value::<GggFetchEntry>(item) {
-                Ok(entry) => listings.push(parse_listing_entry(entry)),
+                Ok(entry) => {
+                    sellers.insert(entry.listing.account.name.clone());
+                    listings.push(parse_listing_entry(entry));
+                }
                 Err(e) => {
                     let error = format!("Trade fetch parse failed: {}", e);
                     emit(TradeQueueEvent::Error {
@@ -367,6 +371,7 @@ impl TradeApiClient {
             &raw.query_id,
             raw.total as i32,
             listings,
+            sellers.len() as i32,
             divine_chaos_rate,
         ))
     }
@@ -715,7 +720,6 @@ fn parse_listing_entry(entry: GggFetchEntry) -> TradeListingDetail {
         price: entry.listing.price.amount,
         currency: entry.listing.price.currency,
         chaos_price: 0.0, // normalized later in build_result
-        account: entry.listing.account.name,
         indexed_at: entry.listing.indexed,
         gem_level,
         gem_quality,
@@ -863,7 +867,7 @@ pub(crate) mod tests {
 
     /// A loopback HTTP/1.1 server answering the two trade endpoints with canned
     /// JSON, and recording every request it was sent.
-    struct StubApi {
+    pub(crate) struct StubApi {
         base_url: String,
         requests: Arc<Mutex<Vec<String>>>,
     }
@@ -877,7 +881,7 @@ pub(crate) mod tests {
 
     /// Serve `search` to `/api/trade/search/...` and `fetch` to
     /// `/api/trade/fetch/...`, for as many requests as arrive.
-    async fn stub_api(search: serde_json::Value, fetch: serde_json::Value) -> StubApi {
+    pub(crate) async fn stub_api(search: serde_json::Value, fetch: serde_json::Value) -> StubApi {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("loopback bind");
@@ -1075,13 +1079,13 @@ pub(crate) mod tests {
     }
 
     /// One shared client pointed at the local GGG stub.
-    fn stub_client(stub: &StubApi) -> Arc<TradeApiClient> {
+    pub(crate) fn stub_client(stub: &StubApi) -> Arc<TradeApiClient> {
         let mut client = TradeApiClient::new(&crate::http::ProxyConfig::none());
         client.base_url = stub.base_url.clone();
         Arc::new(client)
     }
 
-    fn search_ok() -> serde_json::Value {
+    pub(crate) fn search_ok() -> serde_json::Value {
         serde_json::json!({"id": "qid-1", "result": ["r1"], "total": 42})
     }
 
@@ -1200,10 +1204,10 @@ pub(crate) mod tests {
         let listing = &result.listings[0];
         assert_eq!(listing.price, 12.5);
         assert_eq!(listing.currency, "chaos");
-        assert_eq!(listing.account, "Seller");
         assert_eq!(listing.gem_level, 20);
         assert_eq!(listing.gem_quality, 23);
         assert!(listing.corrupted);
+        assert_eq!(result.signals.unique_accounts, 1);
     }
 
     /// The gem query still reaches GGG: the body the gem builder produced is

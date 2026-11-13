@@ -29,7 +29,6 @@ pub struct TradeListingDetail {
     pub price: f64,
     pub currency: String,
     pub chaos_price: f64,
-    pub account: String,
     pub indexed_at: DateTime<Utc>,
     pub gem_level: i32,
     pub gem_quality: i32,
@@ -45,7 +44,7 @@ pub struct TradeSignals {
     pub unique_accounts: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SellerConcentration {
     Normal,

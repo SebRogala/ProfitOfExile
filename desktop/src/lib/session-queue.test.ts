@@ -7,7 +7,6 @@ function listing(overrides: Partial<TradeListingDetail> = {}): TradeListingDetai
 		price: 2,
 		currency: 'divine',
 		chaosPrice: 480,
-		account: 'Seller',
 		indexedAt: '2026-10-20T10:00:00Z',
 		gemLevel: 20,
 		gemQuality: 20,

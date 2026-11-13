@@ -1,5 +1,4 @@
 use chrono::Utc;
-use std::collections::HashSet;
 
 use super::types::{CheapestStaleness, SellerConcentration, TradeListingDetail, TradeLookupResult, TradeSignals};
 
@@ -24,6 +23,7 @@ pub fn build_result(
     query_id: &str,
     total: i32,
     mut listings: Vec<TradeListingDetail>,
+    unique_accounts: i32,
     divine_rate: f64,
 ) -> TradeLookupResult {
     for l in &mut listings {
@@ -55,7 +55,7 @@ pub fn build_result(
         .map(|l| l.chaos_price)
         .collect();
     let median_top3 = median_chaos_price(&cheapest);
-    let signals = compute_signals(&listings);
+    let signals = compute_signals(&listings, unique_accounts);
 
     TradeLookupResult {
         gem: gem.to_string(),
@@ -75,18 +75,15 @@ pub fn build_result(
     }
 }
 
-/// Compute market health signals from the top listings.
+/// Compute market health signals from the top listings and the count of
+/// distinct sellers among them (seller names are never kept).
 /// Mirrors Go's ComputeSignals in types.go.
-pub fn compute_signals(listings: &[TradeListingDetail]) -> TradeSignals {
+pub fn compute_signals(listings: &[TradeListingDetail], unique_accounts: i32) -> TradeSignals {
     if listings.is_empty() {
         return TradeSignals::default();
     }
 
-    let mut seen = HashSet::new();
-    for l in listings {
-        seen.insert(l.account.as_str());
-    }
-    let unique = seen.len() as i32;
+    let unique = unique_accounts;
 
     let concentration = match unique {
         u if u >= 8 => SellerConcentration::Normal,
@@ -157,7 +154,7 @@ mod tests {
 
     #[test]
     fn zero_result_lookup_serializes_captured_league_without_url() {
-        let built = build_result("Gem", "20/20", "League A", "", 0, vec![], 0.0);
+        let built = build_result("Gem", "20/20", "League A", "", 0, vec![], 0, 0.0);
         let json = serde_json::to_value(built).unwrap();
         assert_eq!(json["tradeUrl"], "");
         assert_eq!(json["league"], "League A");
@@ -191,13 +188,52 @@ mod tests {
             price: raw.price,
             currency: raw.currency.clone(),
             chaos_price: 0.0,
-            account: "seller".to_string(),
             indexed_at: Utc::now(),
             gem_level: 20,
             gem_quality: 20,
             corrupted: false,
         }).collect();
-        build_result("Gem", "20/20", "Test League", "query", 10, listings, vector.divine_rate)
+        build_result("Gem", "20/20", "Test League", "query", 10, listings, 1, vector.divine_rate)
+    }
+
+    fn concentration_for(unique_accounts: i32) -> SellerConcentration {
+        let listings: Vec<TradeListingDetail> = (0..10).map(|_| TradeListingDetail {
+            price: 10.0,
+            currency: "chaos".to_string(),
+            chaos_price: 10.0,
+            indexed_at: Utc::now(),
+            gem_level: 20,
+            gem_quality: 20,
+            corrupted: false,
+        }).collect();
+        compute_signals(&listings, unique_accounts).seller_concentration
+    }
+
+    #[test]
+    fn eight_sellers_read_as_normal() {
+        assert_eq!(concentration_for(8), SellerConcentration::Normal);
+    }
+
+    #[test]
+    fn seven_sellers_read_as_concentrated() {
+        assert_eq!(concentration_for(7), SellerConcentration::Concentrated);
+    }
+
+    #[test]
+    fn five_sellers_read_as_concentrated() {
+        assert_eq!(concentration_for(5), SellerConcentration::Concentrated);
+    }
+
+    #[test]
+    fn four_sellers_read_as_monopoly() {
+        assert_eq!(concentration_for(4), SellerConcentration::Monopoly);
+    }
+
+    #[test]
+    fn no_listings_read_as_normal_with_zero_sellers() {
+        let signals = compute_signals(&[], 6);
+        assert_eq!(signals.seller_concentration, SellerConcentration::Normal);
+        assert_eq!(signals.unique_accounts, 0);
     }
 
     #[test]

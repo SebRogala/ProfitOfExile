@@ -24,7 +24,6 @@ function gemDetail(overrides: Partial<TradeListingDetail> = {}): TradeListingDet
 		price: 5,
 		currency: 'divine',
 		chaosPrice: 1250,
-		account: 'SellerOne',
 		indexedAt: '2026-08-26T01:00:00Z',
 		gemLevel: 21,
 		gemQuality: 23,
@@ -55,7 +54,6 @@ describe('toListingRow', () => {
 			chaosPrice: 1250,
 			currency: 'divine',
 			amount: 5,
-			account: 'SellerOne',
 			indexedAt: '2026-08-26T01:00:00Z'
 		});
 	});
@@ -69,7 +67,6 @@ describe('toListingRow', () => {
 	it('leaves the gem-specific fields out of the shared row', () => {
 		const row = toListingRow(gemDetail());
 		expect(Object.keys(row).sort()).toEqual([
-			'account',
 			'amount',
 			'chaosPrice',
 			'currency',

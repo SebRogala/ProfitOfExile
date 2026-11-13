@@ -119,7 +119,7 @@
 					{#if tradeResult.listings?.length > 0}
 						<div class="log-list" style="max-height: 100px; margin-top: 0.5rem;">
 							{#each tradeResult.listings as l}
-								<div class="log-line">{l.price} {l.currency} &mdash; {l.account}</div>
+								<div class="log-line">{l.price} {l.currency}</div>
 							{/each}
 						</div>
 					{/if}
