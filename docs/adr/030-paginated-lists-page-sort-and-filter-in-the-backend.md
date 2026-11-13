@@ -90,15 +90,17 @@ production measurements): gem queries at 27,648,000 gem_snapshots (1,440
 hourly ticks) — "the slowest single query is the 1000-row search page at
 34.3 ms"; currency-exchange `PlaysPage` at "2 horizons x 2,000 plays
 (`MaxPlays` x horizons, the production bound)" — "the slowest is the search's
-stage count at 35.9 ms". Measured 2026-11-12/13 with `EXPLAIN (ANALYZE,
-BUFFERS)`, median of 3 warm runs; no index added.
+stage count at 35.9 ms" (the slowest single run; its median of 3 warm runs
+is 35.4 ms). Measured 2026-11-12/13 with `EXPLAIN (ANALYZE, BUFFERS)`; the
+gem figure is a median of 3 warm runs; no index added.
 
 Legacy requests from released desktop builds (Observed): a request without
-`pageSize` is served the pre-ADR response. The exchange handler routes it to
-the cache body (`internal/server/handlers/currency_exchange.go:217`,
-`internal/exchange/plays_page.go:76-77`); the collective handlers keep the
-legacy params and bounds (`internal/server/handlers/collective.go:120`,
-`:344`), ranked by the same SQL. The legacy path stays until a minimum
+`pageSize` keeps working. The exchange handler serves it the pre-ADR cache
+body unchanged (`internal/server/handlers/currency_exchange.go:217`,
+`internal/exchange/plays_page.go:76-77`). The collective handlers keep the
+legacy params, bounds and ordering (`internal/server/handlers/collective.go:120`,
+`:344`), now ranked in SQL, and their envelope gains an additive `total`
+field (`:150-158`, `:393-401`). The legacy path stays until a minimum
 desktop version retires it (Inferred from the plan; not yet scheduled).
 
 A new paginated list adds page, sort and filter parameters to its endpoint
