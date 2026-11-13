@@ -817,8 +817,9 @@ remains; this path covers widget config sessions only.
 - Game focus is determined in Rust by a `GetForegroundWindow` poller; Client.txt
   focus events are not the authority.
 - Client.txt uses filesystem notifications with a five-second polling fallback.
-- Font panel scanning begins from the `LabFinished` navigation event. The third
-  Aspirant's Trial is logged but is not the scan trigger.
+- The `LabFinished` navigation event arms the font context; the read key
+  triggers each capture and OCR of the panel. The third Aspirant's Trial is
+  logged but does not arm anything.
 - The merc verdict overlay does not render `mercenary.trade` yet (POE-202).
   The search state reaches every window on the slice regardless, and both
   pieces the Mercenaries page draws it with are already cross-window for that

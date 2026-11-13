@@ -208,6 +208,8 @@ pub(crate) fn commit_gem_name(state: &AppState, captured: u64, vocab_gen: u64, n
         {
             return None;
         }
+        #[cfg(test)]
+        after_commit_check(state);
         gems.push(name.to_string());
         let complete = gems.len() >= MAX_GEMS;
         if complete {
@@ -225,6 +227,23 @@ pub(crate) fn commit_gem_name(state: &AppState, captured: u64, vocab_gen: u64, n
     }
     let status = crate::build_status(state);
     Some(GemCommit { names, added: name.to_string(), complete, status })
+}
+
+/// Test seam: runs inside `commit_gem_name` after its checks passed, while the
+/// `detected_gems` guard is held, for the state it was installed for. No
+/// other arrangement pauses a commit between its generation check and its push.
+#[cfg(test)]
+type CommitHook = Box<dyn Fn() + Send>;
+#[cfg(test)]
+static AFTER_COMMIT_CHECK: std::sync::Mutex<Option<(usize, CommitHook)>> = std::sync::Mutex::new(None);
+#[cfg(test)]
+fn after_commit_check(state: &AppState) {
+    let hook = AFTER_COMMIT_CHECK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((key, f)) = hook.as_ref() {
+        if *key == state as *const AppState as usize {
+            f();
+        }
+    }
 }
 
 /// The lock-free adapter: emit, send and log a commit.
@@ -400,5 +419,48 @@ mod tests {
 
         assert!(late.is_none(), "a g1 commit after the flip must produce no publishable GemCommit");
         assert!(held(&state).is_empty(), "the flip clears and the stale commit must not refill");
+    }
+
+    #[test]
+    fn a_third_commit_past_its_check_when_the_mode_flips_leaves_no_stale_gems() {
+        // Two g1 gems held; the third commit passes its checks, then the mode
+        // flip bumps the generation and waits for the gem guard; the commit
+        // completes 3/3 (context 0) and only then does the flip's clear run.
+        let state = Arc::new(test_app_state());
+        state.lab_settings.lock().unwrap().lab_mode = "Normal".to_string();
+        let token = arm_gem_context(&state);
+        let g1 = with_vocab(&state);
+        commit_gem_name(&state, token, g1, "Blade Vortex of the Scythe").unwrap();
+        commit_gem_name(&state, token, g1, "Reave of Refraction").unwrap();
+
+        let (checked_tx, checked_rx) = std::sync::mpsc::channel::<()>();
+        let checked_tx = std::sync::Mutex::new(checked_tx);
+        let watched = state.clone();
+        *AFTER_COMMIT_CHECK.lock().unwrap() = Some((
+            Arc::as_ptr(&state) as usize,
+            Box::new(move || {
+                checked_tx.lock().unwrap().send(()).unwrap();
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                while watched.lab_scan.gem_vocab_generation.load(Ordering::SeqCst) == g1 {
+                    assert!(std::time::Instant::now() < deadline, "the mode flip never bumped");
+                    std::thread::yield_now();
+                }
+            }),
+        ));
+        let committer = {
+            let state = state.clone();
+            std::thread::spawn(move || commit_gem_name(&state, token, g1, "Blade Flurry of Incision").map(|c| c.complete))
+        };
+        checked_rx.recv_timeout(Duration::from_secs(5)).expect("the third commit never passed its checks");
+        let flipper = {
+            let state = state.clone();
+            std::thread::spawn(move || crate::apply_manual_lab_mode(&state, "Dedication", |_| {}))
+        };
+        let completed = committer.join().unwrap();
+        let flipped = flipper.join().unwrap();
+        *AFTER_COMMIT_CHECK.lock().unwrap() = None;
+
+        assert_eq!((completed, flipped), (Some(true), true), "the arrangement must reproduce the race");
+        assert!(held(&state).is_empty(), "g1 gems completed across the flip must not survive it");
     }
 }
