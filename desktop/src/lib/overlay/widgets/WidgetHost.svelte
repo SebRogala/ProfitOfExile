@@ -54,6 +54,7 @@
 		resized,
 		seedRect,
 		sizeToPersist,
+		unstoredDefaults,
 		widgetGeometry,
 		type HostFrame,
 		type HostSize,
@@ -120,6 +121,9 @@
 		 * an unstored widget's position and for what config mode seeds one at.
 		 * A widget with a STORED placement is untouched by this: the user's
 		 * placement outranks any default, game-anchored or not.
+		 *
+		 * For a `derivedDefaultOnly` widget a null answer means "not drawn"
+		 * outside config mode, not "use the registry's": see `unstoredDefaults`.
 		 */
 		defaultsFor?: (spec: WidgetSpec, frame: HostFrame) => OverlayDefaultGeometry | null;
 	} = $props();
@@ -239,12 +243,23 @@
 	 * is the registry's own. The `defaults` field is the only thing that moves,
 	 * which keeps the answer inside `placementFor` and `seedRect` rather than
 	 * adding a fourth branch to either.
+	 *
+	 * Null for a `derivedDefaultOnly` widget with nothing stored, outside config
+	 * mode, when the module offers no default this frame (`unstoredDefaults`):
+	 * the widget is not drawn. `inConfig` is passed explicitly by `enterConfig`,
+	 * which seeds before it sets `configMode`.
 	 */
-	function shipped(spec: WidgetSpec): WidgetSpec {
+	function shipped(spec: WidgetSpec, inConfig: boolean = configMode): WidgetSpec | null {
 		// READ ONLY. The remembering is `$effect`'s job below — writing here
 		// would be a state write inside `placed`'s derivation.
-		const override = defaultsFor?.(spec, frame) ?? lastDefaults[spec.id];
-		return override ? { ...spec, defaults: override } : spec;
+		const defaults = unstoredDefaults(
+			spec,
+			defaultsFor?.(spec, frame) ?? null,
+			lastDefaults[spec.id],
+			{ hasStored: !!stored[spec.id], configMode: inConfig }
+		);
+		if (!defaults) return null;
+		return defaults === spec.defaults ? spec : { ...spec, defaults };
 	}
 
 	/**
@@ -373,7 +388,9 @@
 			for (const spec of specs) {
 				const box = nodes[spec.id]?.getBoundingClientRect();
 				const measured = box ? { x: box.left, y: box.top, w: box.width, h: box.height } : null;
-				const seed = seedRect(shipped(spec), stored[spec.id], measured, scaleFactor, host);
+				// Config mode always yields a spec (`unstoredDefaults`), so the
+				// fallback to the registry's is never taken.
+				const seed = seedRect(shipped(spec, true) ?? spec, stored[spec.id], measured, scaleFactor, host);
 				// `null` means the stored rectangle cannot be converted because the
 				// scale factor has not resolved. No draft entry, so no frame is drawn
 				// for that widget — and Save refuses at scale 0 anyway, so there is
@@ -668,9 +685,12 @@
 				// In config mode the draft IS the rectangle, size included: the
 				// frame the user is dragging has to be the box they see, not a
 				// content measurement that changes under them.
+				const unstored = rect ? null : shipped(spec);
 				const placement: WidgetPlacement | null = rect
 					? { x: rect.x, y: rect.y, width: rect.w, height: rect.h, maxWidth: null }
-					: placementFor(shipped(spec), stored[spec.id], scaleFactor, host);
+					: unstored
+						? placementFor(unstored, stored[spec.id], scaleFactor, host)
+						: null;
 				return { spec, placement };
 			})
 			.filter((entry) => entry.placement !== null) as {

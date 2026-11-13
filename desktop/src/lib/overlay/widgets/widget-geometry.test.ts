@@ -22,10 +22,11 @@ import {
 	resized,
 	seedRect,
 	sizeToPersist,
+	unstoredDefaults,
 	visibilityRow,
 	widgetGeometry
 } from './widget-geometry';
-import type { WidgetSpec } from './widget-registry';
+import { WIDGETS, type WidgetSpec } from './widget-registry';
 
 const HOST = { width: 1920, height: 1080 };
 
@@ -985,5 +986,44 @@ describe('the size Save writes', () => {
 
 	it('leaves the position alone whichever way the size goes', () => {
 		expect(sizeToPersist(RESIZABLE, RECT, false, undefined)).toMatchObject({ x: 250, y: 40 });
+	});
+});
+
+describe('unstoredDefaults', () => {
+	const fontAlerts = WIDGETS.find((widget) => widget.id === 'lab.fontalerts')!;
+	const timer = WIDGETS.find((widget) => widget.id === 'lab.timer')!;
+	/** An earlier derived answer — the left fallback beside a 1080p font region. */
+	const A = { x: 26, y: 220, w: 260, h: 260 };
+	const PLAY = { hasStored: false, configMode: false };
+
+	it('does not fall back for a derived-only widget whose module stops offering a default', () => {
+		expect(unstoredDefaults(fontAlerts, null, A, PLAY)).toBeNull();
+	});
+
+	it('does not use the registry rectangle for a derived-only widget with no default yet', () => {
+		expect(unstoredDefaults(fontAlerts, null, undefined, PLAY)).toBeNull();
+	});
+
+	it('seeds config mode for a derived-only widget from the remembered default', () => {
+		expect(unstoredDefaults(fontAlerts, null, A, { hasStored: false, configMode: true })).toEqual(A);
+	});
+
+	it('keeps a stored derived-only widget placeable without a default', () => {
+		expect(
+			unstoredDefaults(fontAlerts, null, undefined, { hasStored: true, configMode: false })
+		).toEqual({ x: 976, y: 220, w: 260, h: 260 });
+	});
+
+	it("uses the module's current default when it offers one", () => {
+		expect(unstoredDefaults(fontAlerts, { x: 976, y: 220, w: 260, h: 260 }, A, PLAY)).toEqual({
+			x: 976,
+			y: 220,
+			w: 260,
+			h: 260
+		});
+	});
+
+	it('still falls back to the remembered default for an ordinary widget', () => {
+		expect(unstoredDefaults(timer, null, A, PLAY)).toEqual(A);
 	});
 });

@@ -40,7 +40,8 @@ describe('the Overlay Positions groups', () => {
 			['lab.comparator', true],
 			['lab.compass', true],
 			['lab.pathstrip', true],
-			['lab.timer', true]
+			['lab.timer', true],
+			['lab.fontalerts', true]
 		]);
 		expect(lab?.configureModule).toBe(LAB_WINDOW_LABEL);
 	});

@@ -631,3 +631,24 @@ export function placementFor(
 		maxWidth: fillUnsized || sized || widthOnly ? null : ceiling
 	};
 }
+
+/**
+ * The default an UNSTORED widget is placed or seeded at this frame, or null
+ * for "do not draw it".
+ *
+ * The module's current offer wins. Without one, a `derivedDefaultOnly` widget
+ * outside config mode with nothing stored gets null — its last offer and the
+ * registry rectangle may both cover a region the module reads now (ADR-019).
+ * Every other case keeps the host's rule: the remembered offer, else the
+ * registry's. A stored widget never reads the position, only the spec.
+ */
+export function unstoredDefaults(
+	spec: WidgetSpec,
+	offered: OverlayDefaultGeometry | null,
+	remembered: OverlayDefaultGeometry | undefined,
+	opts: { hasStored: boolean; configMode: boolean }
+): OverlayDefaultGeometry | null {
+	if (offered) return offered;
+	if (spec.derivedDefaultOnly && !opts.hasStored && !opts.configMode) return null;
+	return remembered ?? spec.defaults;
+}

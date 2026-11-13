@@ -337,8 +337,8 @@ the timer, compass, path-strip and comparator widgets.
   widgets share one lab nav session owned by the lab window page, while each
   widget keeps its own visibility and in-lab rule, so they can stay hidden
   outside a lab without hiding the window that hosts them.
-- **The shipped widget list.** Eight: three temple widgets, the Lab comparator,
-  Lab compass, Lab map, Lab timer and the Merc verdict:
+- **The shipped widget list.** Nine: three temple widgets, the Lab comparator,
+  Lab compass, Lab map, Lab timer, the Lab font alerts and the Merc verdict:
   `temple.offers` — the OFFER BOXES (POE-249), `anchored`, one box per architect
   block on the side panel in the panel's OWN order (box `i` mirrors `offers[i]`,
   so "upper = the upgrade" is the common case and not a rule), stacked in the
@@ -379,6 +379,9 @@ the timer, compass, path-strip and comparator widgets.
   `lab.timer` — the LAB TIMER widget, user-placed and persisted in
   `Settings.widgets`, filling its shipped 160×50 box until it is resized; the
   digits scale with that box.
+  `lab.fontalerts` — the Divine Font craft alert stack (POE-328), user-placed,
+  display-only, default right of `placements.lab.font` via
+  `fontAlertsDefaultPlacement` (left fallback, null on the empty-set rule).
   **Faint is the alternative** is one rule across the temple's widgets: the
   conditional door, the unchosen kill and the offer box the advisor did not pick
   are all drawn and all dimmed, so everything at full strength is a thing to do
@@ -491,6 +494,11 @@ the timer, compass, path-strip and comparator widgets.
   would persist a position the widget has never been in. The remembered answer is
   the seed instead. When there has been no board at all this session the registry
   number is still the seed, and the config bar says so rather than pretending.
+  A widget marked `derivedDefaultOnly` (POE-328, `lab.fontalerts`) is the
+  exception in play: unstored and outside config mode, a null answer means it is
+  NOT DRAWN — neither the remembered answer nor the registry rectangle stands in,
+  because either could cover a region the module reads now (`unstoredDefaults`);
+  config mode and a stored placement behave as above.
 - **Nothing may cover a read region** (POE-244). The temple OCRs the side panel,
   the budget line and the panel's diamond, both boxes on every plate, and the beam
   patch at every corridor midpoint — 42 rectangles on a full board, published as

@@ -50,7 +50,8 @@ describe('every declared widget', () => {
 			'lab.comparator',
 			'lab.compass',
 			'lab.pathstrip',
-			'lab.timer'
+			'lab.timer',
+			'lab.fontalerts'
 		]);
 	});
 
@@ -128,6 +129,20 @@ describe('the lab module', () => {
 			resizable: true,
 			fill: true
 		});
+	});
+
+	it('lab.fontalerts is a content-sized Lab widget at the 1080p default', () => {
+		const fontAlerts = widgetsFor('lab').find((widget) => widget.id === 'lab.fontalerts');
+		expect(fontAlerts).toMatchObject({
+			id: 'lab.fontalerts',
+			module: 'lab',
+			label: 'Font alerts',
+			defaults: { x: 976, y: 220, w: 260, h: 260 },
+			resizable: false,
+			derivedDefaultOnly: true
+		});
+		expect(fontAlerts?.fill).toBeUndefined();
+		expect(fontAlerts?.anchored).toBeUndefined();
 	});
 });
 

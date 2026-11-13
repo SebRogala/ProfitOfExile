@@ -92,6 +92,17 @@ export interface WidgetSpec {
 	 * placeable widget — and its position is not.
 	 */
 	anchored?: boolean;
+	/**
+	 * Drawn unconfigured ONLY at a default the module derives now
+	 * (`defaultsFor` non-null this frame). When the module answers null —
+	 * its read region is unknown or no safe spot exists — the widget is not
+	 * drawn outside config mode: neither the remembered default nor
+	 * `defaults` stands in, because either could cover a region the module
+	 * reads (ADR-019; the registry carve-out does not apply). A stored
+	 * placement still draws, and config mode still seeds from the remembered
+	 * default, else `defaults`. Enforced by `unstoredDefaults`.
+	 */
+	derivedDefaultOnly?: boolean;
 }
 
 /**
@@ -302,6 +313,20 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// draws an unresized box at the shipped 160 × 50, the old default window.
 		resizable: true,
 		fill: true
+	},
+	{
+		id: 'lab.fontalerts',
+		module: 'lab',
+		label: 'Font alerts',
+		// The 1080p answer of `fontAlertsDefaultPlacement`, and only the
+		// config-mode seed: with `derivedDefaultOnly` an unconfigured stack is
+		// never drawn here in play. `w` is the stack's drawn width; `h` is above
+		// the tallest stack (exceptional ≈160 + 6 + transfigure ≈80 = 246,
+		// prototype sizes), oversized on purpose — the safe direction, as the
+		// waiting notice's comment above explains. Content-sized, display-only.
+		defaults: { x: 976, y: 220, w: 260, h: 260 },
+		resizable: false,
+		derivedDefaultOnly: true
 	}
 ];
 
