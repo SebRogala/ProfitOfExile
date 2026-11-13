@@ -453,6 +453,7 @@ mod platform {
     }
 }
 
+#[cfg(windows)]
 pub use platform::*;
 
 /// Set by the first refused grab; nothing re-arms it, so a session that never

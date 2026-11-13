@@ -5,7 +5,5 @@ pub mod signals;
 pub mod submit;
 pub mod types;
 
-pub use client::{
-    is_client_error, RawSearch, TradeApiClient, TradeQueueEvent, TradeSource, CANCELLED,
-};
-pub use types::{MercTradeListing, MercTradeResult, TradeLookupResult};
+pub use client::{TradeApiClient, TradeQueueEvent, TradeSource, CANCELLED};
+pub use types::{MercTradeResult, TradeLookupResult};

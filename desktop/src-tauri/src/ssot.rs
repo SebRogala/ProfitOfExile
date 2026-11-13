@@ -639,6 +639,7 @@ const MERCENARY_MODULE_ID: &str = "mercenary";
 /// The module id the temple slice belongs to (see `modules.rs::MODULES`).
 const TEMPLE_MODULE_ID: &str = "temple";
 
+#[cfg(any(windows, test))]
 pub fn league_name(state: &AppState) -> Option<String> {
     state.ssot.lock().unwrap_or_else(|e| e.into_inner()).league.name.clone()
 }

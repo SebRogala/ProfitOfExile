@@ -267,6 +267,7 @@ impl CellSig {
 
     /// How many channels take part in the correlation. 657 under the default
     /// mask; two signatures with different counts never correlate.
+    #[cfg(test)]
     pub fn active(&self) -> usize {
         self.active
     }
@@ -442,6 +443,7 @@ pub struct CellCandidates {
     /// `(i % SHIFT_SPAN, i / SHIFT_SPAN)`; a caller that re-derived it that way
     /// would then report the wrong offset with the right score, which no
     /// scoring assertion can catch. Two vectors built in one loop cannot drift.
+    #[cfg(test)]
     shifts: Vec<(i32, i32)>,
     /// Indices into [`Self::shifted`] of the coarse subset, `dx,dy ∈ {-2,0,2}`.
     coarse: Vec<usize>,
@@ -456,6 +458,7 @@ impl CellCandidates {
     pub fn unaligned(sig: CellSig) -> Self {
         Self {
             shifted: vec![sig],
+            #[cfg(test)]
             shifts: vec![(0, 0)],
             coarse: vec![0],
             centre: 0,
@@ -494,6 +497,7 @@ impl CellCandidates {
     /// shift is dropped (see [`Self::shifts`]). The POE-208 calibration tests
     /// read this — a mis-mapped shift there would move the measured optimum
     /// without failing anything.
+    #[cfg(test)]
     pub fn aligned(&self) -> impl Iterator<Item = (&CellSig, (i32, i32))> {
         self.shifted.iter().zip(self.shifts.iter().copied())
     }
@@ -517,6 +521,7 @@ pub fn cell_candidates(
     }
 
     let mut shifted = Vec::with_capacity((SHIFT_SPAN * SHIFT_SPAN) as usize);
+    #[cfg(test)]
     let mut shifts = Vec::with_capacity((SHIFT_SPAN * SHIFT_SPAN) as usize);
     let mut coarse = Vec::with_capacity(9);
     let mut centre = 0usize;
@@ -532,6 +537,7 @@ pub fn cell_candidates(
             };
             let i = shifted.len();
             shifted.push(sig);
+            #[cfg(test)]
             shifts.push((dx, dy));
             if dx == 0 && dy == 0 {
                 centre = i;
@@ -543,6 +549,7 @@ pub fn cell_candidates(
     }
     Some(CellCandidates {
         shifted,
+        #[cfg(test)]
         shifts,
         coarse,
         centre,
@@ -1006,10 +1013,12 @@ impl TemplateStore {
             .count()
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.templates.is_empty()
     }
 
+    #[cfg(test)]
     pub fn templates(&self) -> &[Template] {
         &self.templates
     }
@@ -1655,6 +1664,7 @@ impl TemplateStore {
         out
     }
 
+    #[cfg(test)]
     pub fn get(&self, family: &str, tier: u8) -> Option<&Template> {
         self.templates
             .iter()

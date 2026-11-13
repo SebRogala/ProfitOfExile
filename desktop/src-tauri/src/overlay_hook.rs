@@ -1376,16 +1376,6 @@ pub use win::{
     set_has_content, set_hot_rects, set_noactivate, unregister,
 };
 
-/// Whether `label` is currently being arranged by the user — always false where
-/// there is no hook to leave alone.
-///
-/// Compiled off Windows so `set_overlay_clickthrough` reads the same guard on
-/// every platform instead of duplicating a `cfg` around its call site.
-#[cfg(not(windows))]
-pub fn config_mode(_label: &str) -> bool {
-    false
-}
-
 #[cfg(test)]
 mod hit_test_tests {
     use super::{hit_test, register_in, set_has_content_in, HookedWindow, HotRect, PressLatch};

@@ -53,6 +53,7 @@ pub const CANCELLED: &str = "cancelled";
 /// cancel have no status, and none of them is a decision the caller can make
 /// about GGG's answer. The parse is what rejects them — reqwest's message
 /// parenthesises the URL it failed on, and a URL is not a number.
+#[cfg(test)]
 pub fn error_status(error: &str) -> Option<u16> {
     let open = error.find('(')?;
     let rest = &error[open + 1..];
@@ -87,6 +88,7 @@ pub fn error_status(error: &str) -> Option<u16> {
 /// re-detect opens alike.
 ///
 /// 5xx and transport failures are the transient case and stay retryable.
+#[cfg(test)]
 pub fn is_client_error(error: &str) -> bool {
     matches!(error_status(error), Some(400..=499))
 }

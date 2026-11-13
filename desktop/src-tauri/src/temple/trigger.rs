@@ -223,6 +223,7 @@ pub enum StandDown {
     Waiting,
     /// The sheet was read and then closed: this cycle is finished (WI-1, owner
     /// 2026-09-07). The next START phrase begins a fresh one.
+    #[cfg_attr(not(test), allow(dead_code))]
     CycleComplete,
     /// A non-START [`ALVA_SPEAKER`] line: the incursion is over, or another has
     /// begun.

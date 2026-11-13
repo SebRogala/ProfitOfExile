@@ -72,6 +72,7 @@ impl LootApi {
         self.check_cancel()?;
         result
     }
+    #[cfg(any(windows, test))]
     pub async fn capture_context(&self, profile: &ProfileRef) -> Result<(Option<StoredRun>, u64), ApiError> {
         Ok((self.latest(profile).await?, self.stats(profile, "own").await?.next_run))
     }
