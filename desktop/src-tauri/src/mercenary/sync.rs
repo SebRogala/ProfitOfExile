@@ -841,6 +841,31 @@ pub fn spawn_repull(app: &AppHandle) {
     tauri::async_runtime::spawn(pull_and_apply(app.clone()));
 }
 
+/// Start a pull because the Data & Privacy notice was just accepted (POE-395).
+///
+/// Every pull before acceptance was refused at the server client's gate, but
+/// the refused startup pull still stamped the throttle clock. This takes the
+/// re-pull's claim without [`REPULL_THROTTLE_MS`], so accepting within a minute
+/// of module start still pulls. Single-flight and suppression rules hold.
+///
+/// The caller stays on its own thread — this returns immediately.
+pub fn spawn_accept_pull(app: &AppHandle) {
+    if !with_state(app, |s| claim_accept_pull(s, super::run::now_ms())) {
+        return;
+    }
+    tauri::async_runtime::spawn(pull_and_apply(app.clone()));
+}
+
+/// [`claim_repull`] minus the throttle.
+fn claim_accept_pull(state: &mut SyncState, now_ms: u64) -> bool {
+    if state.pull_suppressed_this_start || state.pulling {
+        return false;
+    }
+    state.pulling = true;
+    state.last_pull_started_ms = now_ms;
+    true
+}
+
 /// Claim the module-start pull. `true` when the caller owns the REQUEST.
 ///
 /// Pure over [`SyncState`] because the two claims it takes are the load seam's
@@ -2863,6 +2888,41 @@ mod tests {
         };
 
         assert!(!claim_repull(&mut state, 800_000));
+    }
+
+    /// POE-395: the startup pull was refused at the privacy gate seconds ago;
+    /// accepting must still pull, and the corpus is handed back to be applied.
+    #[test]
+    fn an_accept_pull_after_a_blocked_startup_pull_runs_and_its_corpus_is_applied() {
+        let mut state = SyncState::default();
+        assert!(claim_pull(&mut state, 900_000));
+        state.startup_claim = false; // the seam let go
+        record_pull(&mut state, 900_010, None);
+
+        assert!(claim_accept_pull(&mut state, 900_020));
+        let (to_apply, discarded) = record_pull(
+            &mut state,
+            900_030,
+            Some(PullOutcome::Corpus(one_corpus(), Some("\"e1\"".into()))),
+        );
+
+        assert!(to_apply.is_some(), "the accept pull's corpus must be applied");
+        assert!(!discarded);
+    }
+
+    #[test]
+    fn an_accept_pull_while_a_pull_is_in_flight_is_refused() {
+        let mut state = SyncState { pulling: true, ..SyncState::default() };
+
+        assert!(!claim_accept_pull(&mut state, 900_000));
+    }
+
+    #[test]
+    fn an_accept_pull_on_a_suppressed_start_is_refused() {
+        let mut state = SyncState { pull_suppressed_this_start: true, ..SyncState::default() };
+
+        assert!(!claim_accept_pull(&mut state, 900_000));
+        assert!(!state.pulling);
     }
 
     // -----------------------------------------------------------------------

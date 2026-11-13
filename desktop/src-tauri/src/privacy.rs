@@ -104,7 +104,7 @@ pub fn accept_privacy_revision(app: AppHandle, revision: u32) -> Result<AcceptRe
     // Wake what failed closed at the gate instead of waiting for its backoff.
     crate::ssot::rearm_league(app.clone());
     crate::font_alerts::on_server_url_changed(&app);
-    crate::mercenary::sync::spawn_repull(&app);
+    crate::mercenary::sync::spawn_accept_pull(&app);
     Ok(AcceptResult { persisted: outcome.persisted })
 }
 
