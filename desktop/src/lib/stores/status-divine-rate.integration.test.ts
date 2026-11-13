@@ -29,7 +29,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 // Static imports: divine-rate.svelte.ts rate/generation lives for the whole
 // file; the server carrier is reset per test.
 import { initStatusStore } from './status.svelte';
-import { currentDivineRate } from './divine-rate.svelte';
+import { currentDivineRate, refreshDivineRate } from './divine-rate.svelte';
 import { applySnapshot, type SsotSnapshot } from './ssot.svelte';
 import { resetServerBaseForTests } from './server-base.svelte';
 
@@ -116,5 +116,35 @@ describe('the divine rate follows the saved server', () => {
 			fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.includes(needle)).map((url) => new URL(url).host);
 		expect(hosts('/device/me')).toEqual(['b.example']);
 		expect(hosts(DIVINE_PATH)).toEqual(['b.example']);
+	});
+});
+
+/**
+ * A rate read started before the first server slice waits in `$lib/api`, then
+ * goes to that server. It must still be recorded as that server's answer, or a
+ * later switch cannot withdraw it (review r1 P2).
+ */
+describe('a divine rate read made before the server is known', () => {
+	it('is withdrawn when the app switches to another server', async () => {
+		const answers: Array<() => Promise<Response>> = [
+			async () => ({ ok: true, json: async () => ({ divineChaosRate: 351.08, priceHour: '2026-10-13T08:00:00Z', warm: true }) }) as unknown as Response,
+			async () => { throw new Error('A down'); },
+			async () => { throw new Error('B down'); }
+		];
+		fetchMock.mockImplementation((url: string) =>
+			String(url).includes(DIVINE_PATH) ? answers.shift()!() : new Promise<Response>(() => {})
+		);
+
+		const startup = refreshDivineRate();
+		applySnapshot(snapshotFor('https://a.example'));
+		await startup;
+		expect(currentDivineRate()).toBe(351.08);
+
+		cleanup = await initStatusStore();
+		await flush();
+		applySnapshot(snapshotFor('https://b.example'));
+		await flush();
+
+		expect(currentDivineRate()).toBeNull();
 	});
 });

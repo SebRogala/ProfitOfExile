@@ -75,10 +75,12 @@ export function resetDivineRate(): void {
 export async function refreshDivineRate(): Promise<void> {
 	const mine = ++generation;
 	readInFlight = true;
-	const base = getApiBase();
 	try {
 		const next = normalizeDivineRate(await fetchDivineRate());
 		if (mine !== generation) return;
+		// Read after the answer: a read started before the first server slice
+		// waits for it, and a server change mid-read supersedes it (generation).
+		const base = getApiBase();
 		divineRate.divineChaosRate = next.divineChaosRate;
 		divineRate.priceHour = next.priceHour;
 		divineRate.updatedAt = next.updatedAt;
