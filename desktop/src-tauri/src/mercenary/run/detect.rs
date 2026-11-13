@@ -1,7 +1,8 @@
 //! Staged mercenary detection pipeline.
 //!
-//! `run` owns cadence, session lifetime and hover work. This child owns one
-//! detection's capture/location, registration, read and reconciliation stages.
+//! `run` owns the press worker, session lifetime and the tooltip read. This
+//! child owns one panel read of a pressed frame: location, registration, read
+//! and reconciliation stages.
 
 use std::time::Instant;
 
@@ -68,7 +69,6 @@ struct ReadStage {
 
 fn placed_read_with<O, E>(
     placement: Option<([i32; 4], f32)>,
-    probed_lines: Option<Vec<crate::ocr::OcrLineBox>>,
     view: &image::DynamicImage,
     frame: geometry::Frame,
     merc_geometry: &MercGeometry,
@@ -82,10 +82,7 @@ where
     let Some((panel, scale)) = placement else {
         return Ok(None);
     };
-    let lines = match probed_lines {
-        Some(lines) => lines,
-        None => frame.to_screen(recognize(view)?),
-    };
+    let lines = frame.to_screen(recognize(view)?);
     let layout = geometry::placed_layout(
         &lines,
         panel,
@@ -300,45 +297,23 @@ fn signature_merge_inputs(
     )
 }
 
-/// One detect tick: grab the screen, OCR it, and publish what it holds.
+/// One panel read of a pressed frame: OCR it and publish what it holds.
 ///
-/// `cursor` is the loop's ONE read for this iteration, taken before the hover
-/// confirm and so before this grab — which is what the header-withholding rule
-/// below needs it to be. It is up to one hover-OCR older than the frame it
-/// judges, and that is the honest trade against a second read: two reads inside
-/// one iteration let the hold decision and the withholding decision disagree
-/// about where the cursor is, and a disagreement there publishes a tooltip's
-/// text as the mercenary's name.
+/// `frame` is the press's one grab (POE-390); nothing here takes another.
+/// `cursor` is the cursor at the press — where it was while the frame was
+/// taken — which is what the header-withholding rule below needs it to be.
 ///
-/// `grabbed` is the frame a probe has already taken this iteration. Passing it
-/// in is what makes a probe hit cost one grab rather than two, and — the part
-/// that matters — what makes the detect read the SAME pixels the probe accepted
-/// on. Re-grabbing would leave a window that closed in the millisecond between
-/// them looking like a probe that lied.
-///
-/// `gate` is the step this tick was served for — a Scan now
-/// (`GateStep::FullDetect`) is one half of what makes a tick manual
-/// ([`manual_tick`]), and so of whether a placed miss may buy the full-screen
-/// locate ([`locate_decision`]).
+/// `press_seq` is the worker's press counter: each press opens a new
+/// full-screen locate opportunity ([`FallbackKey`], [`locate_decision`]).
 pub(super) fn detect_tick(
     app: &AppHandle,
     session: &mut Session,
     cursor: Option<(i32, i32)>,
     cancel: &watch::Receiver<bool>,
-    grabbed: Option<crate::capture::Capture>,
-    probed_lines: Option<Vec<crate::ocr::OcrLineBox>>,
-    tick_started: Option<Instant>,
-    gate: trigger::GateStep,
+    frame: &crate::capture::Capture,
+    press_seq: u64,
 ) -> DetectTick {
-    let location = match capture_location(
-        app,
-        session,
-        cursor,
-        grabbed,
-        probed_lines,
-        tick_started,
-        gate,
-    ) {
+    let location = match capture_location(app, session, cursor, frame, press_seq) {
         Ok(location) => location,
         Err(tick) => return tick,
     };
@@ -354,28 +329,16 @@ fn capture_location(
     app: &AppHandle,
     session: &mut Session,
     cursor: Option<(i32, i32)>,
-    grabbed: Option<crate::capture::Capture>,
-    probed_lines: Option<Vec<crate::ocr::OcrLineBox>>,
-    tick_started: Option<Instant>,
-    gate: trigger::GateStep,
+    grab: &crate::capture::Capture,
+    press_seq: u64,
 ) -> Result<CaptureLocation, DetectTick> {
-
-    let started = tick_started.unwrap_or_else(Instant::now);
-    let grab = match grabbed {
-        Some(grab) => grab,
-        None => match crate::capture::capture_screen(app) {
-            Ok(grab) => grab,
-            Err(e) => {
-                fail(app, session, format!("Merc: screen capture failed — {e}"));
-                return Err(detect_report(Some(miss(app, session, true)), true));
-            }
-        },
-    };
-    // The display travels with the pixels, whether this tick grabbed them or a
-    // probe did (POE-237): both halves come off one `Capture`, so the id
-    // published below always names the monitor the scale was measured on.
+    let started = Instant::now();
+    // The display travels with the pixels (POE-237): both halves come off one
+    // `Capture`, so the id published below always names the monitor the scale
+    // was measured on.
     let grabbed_on = (grab.monitor_id, grab.origin, grab.client);
-    let img = grab.image;
+    // One copy per press: the frame is shared with the other readers.
+    let img = grab.image.clone();
     let (iw, ih) = {
         use image::GenericImageView;
         img.dimensions()
@@ -394,10 +357,11 @@ fn capture_location(
     let placement = merc_placement(app);
     let crop = placement.map(|(panel, scale)| geometry::placed_panel_crop(panel, scale, screen));
     let mut full_frame = crop.is_none();
-    let key = fallback_key(app);
+    let key = FallbackKey { refit: refit_counter(app), press: press_seq };
     // Off the key's own counter read, so the verdict and the budget it may
-    // spend are about the same Recalibrate.
-    let manual = manual_tick(gate, session.refit_located, key.refit);
+    // spend are about the same Recalibrate. A pending Recalibrate is the only
+    // thing that makes a placed miss manual (ruling 2).
+    let manual = refit_requested(session.refit_located, key.refit);
 
     let cropped = crop.map(|r| img.crop_imm(r[0] as u32, r[1] as u32, r[2] as u32, r[3] as u32));
     let mut view: &image::DynamicImage = cropped.as_ref().unwrap_or(&img);
@@ -416,10 +380,8 @@ fn capture_location(
         .fitted
         .map(|fit| fit.pitch)
         .unwrap_or_else(|| placement.map_or(session.geometry.row_pitch, |(_, scale)| session.geometry.row_pitch * scale));
-    // THE PLACED READ, on the crop: the probe's own lines when a probe took
-    // them this iteration, so a probed tick pays no second OCR whatever the
-    // probe saw. `None` on a cold start, which has no rect to crop and reads
-    // nothing before the locate below.
+    // THE PLACED READ, on the crop. `None` on a cold start, which has no rect
+    // to crop and reads nothing before the locate below.
     //
     // TRANSLATED THE INSTANT IT COMES BACK. Windows OCR reports boxes in the
     // pixels it was handed, and every rule below this line — the known-panel
@@ -427,7 +389,6 @@ fn capture_location(
     // real cursor against — is screen-absolute. See `geometry::Frame`.
     let placed_read = match placed_read_with(
         placement,
-        probed_lines,
         view,
         frame,
         &session.geometry,
@@ -438,7 +399,7 @@ fn capture_location(
         Ok(placed_read) => placed_read,
         Err(e) => {
             fail(app, session, format!("Merc: OCR failed — {e}"));
-            return Err(detect_report(Some(miss(app, session, true)), full_frame));
+            return Err(detect_report(None, full_frame));
         }
     };
 
@@ -460,7 +421,7 @@ fn capture_location(
                 Ok(lines) => frame.to_screen(lines),
                 Err(e) => {
                     fail(app, session, format!("Merc: OCR failed — {e}"));
-                    return Err(detect_report(Some(miss(app, session, true)), full_frame));
+                    return Err(detect_report(None, full_frame));
                 }
             };
             let layout =
@@ -478,7 +439,7 @@ fn capture_location(
         // counted miss costs no OCR. (`locate_decision` answers the two trust
         // arms only for a placed read, so `(_, None)` is this same case.)
         (LocateDecision::ColdStartSpent, _) | (_, None) => {
-            return Err(detect_report(Some(miss(app, session, false)), full_frame));
+            return Err(detect_report(Some(miss(app, session)), full_frame));
         }
     };
     let used_fallback = located_by.is_some();
@@ -520,27 +481,26 @@ fn capture_location(
                 );
             }
             // A tooltip the player just opened sits ON the panel and hides the rows
-            // the detect needs. The cursor is the proof — the game opens one only
-            // under it — so this tick is not evidence the window closed.
-            // No layout means no rect from THIS frame; the session's is all there
-            // is. See [`cursor_on_panel`].
-            let in_panel = cursor_on_panel(
+            // the detect needs; the decision is [`judge_no_layout`]'s.
+            let outcome = match judge_no_layout(
+                session,
                 placement.map(|(panel, _)| panel),
-                session.panel,
                 cursor,
-            );
-            let live = session.state.live;
-            if session.occlusion.on_occluded(live, in_panel, Instant::now()) == MissKind::Occluded {
-                if session.occlusion.announce() {
-                    crate::app_log(
-                        app,
-                        "Merc: panel occluded (cursor over it) — holding the capture".to_string(),
-                    );
+                Instant::now(),
+            ) {
+                NoLayout::Occluded { announce } => {
+                    if announce {
+                        crate::app_log(
+                            app,
+                            "Merc: panel occluded (cursor over it) — holding the capture".to_string(),
+                        );
+                    }
+                    return Err(detect_report(Some(DetectOutcome::Occluded), full_frame));
                 }
-                return Err(detect_report(Some(DetectOutcome::Occluded), full_frame));
-            }
-            // Logged once per focus session: a loop that never detects would
-            // otherwise leave no trace of having looked at all.
+                NoLayout::Counted(outcome) => outcome,
+            };
+            // Logged once per press: a press that finds nothing would otherwise
+            // leave no trace of having looked at all.
             if !session.miss_logged {
                 session.miss_logged = true;
                 let skills = lines
@@ -560,7 +520,8 @@ fn capture_location(
                     ),
                 );
             }
-            return Err(detect_report(Some(miss(app, session, false)), full_frame));
+            miss_effects(app, outcome);
+            return Err(detect_report(Some(outcome), full_frame));
         }
     };
     Ok(CaptureLocation {
@@ -610,7 +571,7 @@ fn register_geometry<E: DetectionEffects>(
     // tick whose fit declines leaves the layout on the OCR cue it was built
     // with (`geometry::MercLayout` reads `ScaleSource::Ocr` until something
     // registers it). The locate decision above only PEEKED at its own counter
-    // read ([`manual_tick`]), which `refit_located` records just below; this
+    // read ([`refit_requested`]), which `refit_located` records just below; this
     // re-reads the counter AT THE FIT, which is what ssot's bump-before-write
     // ordering relies on.
     let refit = consume_refit(session, effects.refit_counter());
@@ -1149,30 +1110,20 @@ fn reconcile_and_publish(
     // that can correct a confident wrong match.
     let complete = capture_complete(&result.capture);
     if session.state.note_complete(complete) {
-        crate::app_log(
-            app,
-            format!(
-                "Merc: capture complete — OCR paused (liveness every {} s)",
-                LIVENESS_INTERVAL.as_secs()
-            ),
-        );
+        crate::app_log(app, "Merc: capture complete".to_string());
         // The settle edge OPENS a trade session if this capture has none yet
         // (POE-202). Here rather than at the first detect because a half-read
         // panel builds a query for a mercenary nobody has, and each of those
         // would cost one of three searches.
         //
-        // `get_or_insert_with`, never a fresh session: `note_complete` is a
-        // rising edge, but `LoopState::resume` drops `complete` whenever a Scan
-        // now arms over a finished window (a voice line cannot reach it:
-        // `trigger::capture_held`), so one capture crosses this edge as often
-        // as the player triggers a re-read. A new session per edge would hand
-        // that capture a new 3-search budget each time, which is unbounded
-        // searching dressed up as a ceiling. ONE session per capture: opened
-        // here, cleared only by the retire in [`miss`].
+        // `get_or_insert_with`, never a fresh session: one capture can cross
+        // this edge more than once (a re-read that loses a field, then regains
+        // it), and a new session per edge would hand that capture a new
+        // 3-search budget each time. ONE session per capture: opened here,
+        // cleared only by a retire ([`retire_state`]).
         //
-        // A capture whose rounds ran out incomplete opens none here. If a hover
-        // completes it later, the next liveness tick's carried capture is
-        // complete and crosses this edge then.
+        // An incomplete capture opens none here. If a hover completes it, the
+        // next press's carried capture is complete and crosses this edge then.
         session.trade.get_or_insert_with(MercTradeSession::new);
     }
     // THE ROUND, counted after the read so the line says what happened. A
@@ -1183,21 +1134,11 @@ fn reconcile_and_publish(
         if replaced_after_read {
             session.state.refill_rounds();
         }
-        let spent = session.state.note_round();
+        session.state.note_round();
         crate::app_log(
             app,
-            round_line(
-                session.state.rounds,
-                &plan,
-                pass2_ms,
-                icons_ms,
-                complete,
-                session.state.rounds_left(),
-            ),
+            round_line(session.state.rounds, &plan, pass2_ms, icons_ms, complete),
         );
-        if spent && !complete {
-            crate::app_log(app, rounds_spent_line(&result.capture));
-        }
     }
     let mut publication = AppPublicationSink { app };
     publish_settled(&mut publication, result.capture, complete, remember_origin);
@@ -1410,7 +1351,7 @@ mod tests {
             used_fallback: false,
             located_panel: None,
             remember_origin: None,
-            key: FallbackKey { refit: 0, gate: 0 },
+            key: FallbackKey { refit: 0, press: 0 },
             took: 4,
             how: "full",
         }
@@ -1434,40 +1375,6 @@ mod tests {
         assert!(read.is_some());
         assert_eq!(effects.publication.events, vec!["read-start", "full-read"]);
         assert!(effects.publication.first_look_capture.is_none());
-    }
-
-    #[test]
-    fn placed_capture_reuses_supplied_probe_lines() {
-        let image = image::DynamicImage::new_rgba8(200, 200);
-        let frame = geometry::Frame::full([200, 200]);
-        let geometry = MercGeometry::default();
-        let probe_lines = vec![crate::ocr::OcrLineBox {
-            text: "Ice Shot".into(),
-            x: 20,
-            y: 40,
-            w: 60,
-            h: 16,
-        }];
-        let ocr_calls = std::cell::Cell::new(0);
-
-        let placed = placed_read_with(
-            Some(([0, 0, 200, 200], 1.0)),
-            Some(probe_lines.clone()),
-            &image,
-            frame,
-            &geometry,
-            None,
-            geometry.row_pitch,
-            |_| {
-                ocr_calls.set(ocr_calls.get() + 1);
-                Err("probe lines should avoid a second OCR")
-            },
-        )
-        .expect("supplied lines do not invoke OCR")
-        .expect("a placed capture has a placed read");
-
-        assert_eq!(ocr_calls.get(), 0);
-        assert_eq!(placed.1, probe_lines);
     }
 
     #[test]

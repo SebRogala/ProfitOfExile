@@ -178,14 +178,6 @@ pub(super) fn open_session(
     crate::app_log(app, "Merc: capture loop started".to_string());
     crate::report_ocr_engine(app);
 
-    // The gate outlives the loop — it is `AppState`, and the module can be
-    // switched off and on again inside one session. Whatever it was holding
-    // when the last loop stopped is about a screen from before the module was
-    // off: an armed probe would fire on this loop's first tick for a window
-    // that closed minutes ago, and a Scan now would be served long after the
-    // player stopped waiting for it. A fresh loop starts owing nothing.
-    trigger::disarm(app);
-
     let data_dir = app.path().app_data_dir().ok();
     let (geometry, geometry_source, geometry_err) = match &data_dir {
         Some(dir) => super::super::load_override(dir),

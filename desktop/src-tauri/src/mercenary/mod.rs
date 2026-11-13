@@ -37,6 +37,7 @@ pub mod cellfit;
 pub mod debug;
 pub mod geometry;
 pub mod icons;
+pub mod press;
 pub mod read;
 pub mod run;
 pub mod search;
@@ -288,11 +289,11 @@ pub struct MercState {
     /// the pull run on tasks that must not hold the store's mutex across a
     /// network round-trip. Acquired alone, like every other merc-owned Mutex.
     pub(crate) sync: std::sync::Mutex<sync::SyncState>,
-    /// The merc OCR burst gate (POE-198) — the single owner of "should the
-    /// capture loop be looking right now". Armed by the Client.txt log watcher
-    /// (a mercenary's voice line) or by `merc_scan_now`, read and disarmed by
-    /// the capture loop. Acquired alone, like every other module-owned Mutex.
-    pub(crate) burst: std::sync::Mutex<trigger::BurstGate>,
+    /// The merc read worker's inbox (POE-390): pressed frames from the read
+    /// key and area changes from Client.txt. `Some` only while the module
+    /// thread runs with an open session; `None` means a press grabs nothing on
+    /// merc's account. Acquired alone, like every other module-owned Mutex.
+    pub(crate) inbox: std::sync::Mutex<Option<std::sync::mpsc::Sender<press::MercInbox>>>,
     /// Bumped whenever the template store is EDITED by the user
     /// (`merc_forget_template` / `merc_reset_templates`). The capture loop
     /// watches it to drop the confirmations it is still re-applying from
@@ -326,7 +327,7 @@ impl MercState {
             divine_rate: std::sync::Mutex::new(None),
             tier_floor: std::sync::Mutex::new(DEFAULT_TIER_FLOOR),
             sync: std::sync::Mutex::new(sync::SyncState::default()),
-            burst: std::sync::Mutex::new(trigger::BurstGate::default()),
+            inbox: std::sync::Mutex::new(None),
             template_generation: std::sync::atomic::AtomicU64::new(0),
             refit: std::sync::atomic::AtomicU64::new(0),
         }
@@ -506,18 +507,10 @@ pub struct MercenarySlice {
     #[serde(default)]
     pub seeded_families: Vec<String>,
     pub last_error: Option<String>,
-    /// Who the module HEARD, for the burst it is scanning under (2026-08-25).
-    ///
-    /// `Some` only alongside [`MercStatus::Scanning`], and only for a
-    /// Client.txt burst — Scan now names nobody. Written by the same publish
-    /// that arms the status ([`trigger::arm`]) so the strip can say "heard
-    /// Fennik, of Unshakeable Faith · scanning…" the moment the voice line
-    /// lands, instead of "waiting" until the loop's next tick.
-    ///
-    /// Not an echo of the gate: the gate is a burst state machine with its own
-    /// expiry and the slice is what the windows read, so the speaker is written
-    /// and cleared with the status it qualifies. A speaker without `Scanning`
-    /// would be a name the strip attaches to the wrong thing.
+    /// Who the module heard before a scan (2026-08-25). Nothing writes it
+    /// since POE-390: an Inspect line publishes no speaker and no `Scanning`,
+    /// and the read key's `Scanning` names nobody, so it stays `None`. Kept on
+    /// the slice because removing it is a Rust↔TS contract change (deferred).
     #[serde(default)]
     pub burst_speaker: Option<String>,
     /// `"default"` or `"file"` — which [`MercGeometry`] the module is running.

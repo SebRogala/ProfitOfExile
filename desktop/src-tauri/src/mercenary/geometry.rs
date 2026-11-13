@@ -1590,7 +1590,6 @@ pub fn luma(r: u8, gch: u8, b: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     use crate::mercenary::vocab::MercVocab;
     use image::{DynamicImage, Rgba, RgbaImage};
@@ -3176,7 +3175,7 @@ mod tests {
         let cursor = (873, 985 + layout.row_pitch as i32);
 
         assert_eq!(
-            crate::mercenary::run::miss_kind(true, contains(rect, cursor), Duration::ZERO),
+            crate::mercenary::run::miss_kind(true, contains(rect, cursor)),
             crate::mercenary::run::MissKind::Occluded,
         );
     }

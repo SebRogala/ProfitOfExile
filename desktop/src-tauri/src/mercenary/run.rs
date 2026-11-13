@@ -1,62 +1,57 @@
-//! The merc capture loop (POE-165 D5, D6) — the module's Windows glue.
+//! The merc read worker (POE-165 D5, D6; POE-390) — the module's Windows glue.
 //!
-//! `modules.rs::spawn_mercenary` delegates here. The loop is a
-//! [`ModuleJoin::Thread`](crate::modules::ModuleJoin::Thread) because screen
-//! capture and `Windows.Media.Ocr` are apartment-threaded: the async runtime
-//! and `spawn_blocking` both deadlock on them (see `read_hotkey::spawn_read_hotkey`'s dispatcher thread).
-//! Threads cannot be aborted, so every wait in here goes through [`nap`], which
-//! polls `*cancel.borrow()` every 100 ms — two orders under the registry's 5 s
-//! ceiling.
+//! `modules.rs::spawn_mercenary` delegates here. The worker is a
+//! [`ModuleJoin::Thread`](crate::modules::ModuleJoin::Thread) because
+//! `Windows.Media.Ocr` is apartment-threaded: the async runtime and
+//! `spawn_blocking` both deadlock on it (see `read_hotkey::spawn_read_hotkey`'s
+//! dispatcher thread). Threads cannot be aborted, so every wait in here is
+//! bounded by [`TICK`] and checks `*cancel.borrow()` — two orders under the
+//! registry's 5 s ceiling.
+//!
+//! # One press, one frame
+//!
+//! The module takes no screen grab of its own. A press of the app-wide read key
+//! grabs one frame on the dispatcher thread, and the merc reader
+//! (`super::press`) hands it, with the cursor at the press, to this worker's
+//! inbox. [`read_press`] then reads that one frame twice at most: the panel
+//! read ([`detect::detect_tick`]) and, when the cursor sits on a captured cell,
+//! the hovered tooltip ([`hover_read`]). Policy: docs/OVERLAY-GUIDE.md
+//! § "Screen reading (GGG policy)".
+//!
+//! Between presses the worker runs the trade tick on its idle timeout, which
+//! reads no screen.
 //!
 //! # What is pure and what is not
 //!
-//! The cadence, the retirement rule, the log deduplicator, the hover rect and
+//! The retire rule, the read budget, the log deduplicator, the hover rect and
 //! the cursor hit-test are plain functions over plain data, tested here on
-//! Linux. Everything platform-specific arrives through three calls that return
-//! `Err` off Windows — `capture::capture_screen`, `ocr::recognize_lines`,
-//! `crate::capture_mouse_position` — so the loop body itself carries no `cfg`
-//! and compiles identically on both hosts.
-//!
-//! # Nothing runs until something asks
-//!
-//! The loop does NO screen work of its own (POE-198). A known Client.txt
-//! Inspect text — a multi-word click line, or a one-word grunt licensed by the
-//! same speaker's previous known multi-word mercenary line — or the page's Scan
-//! now button arms the gate in [`super::trigger`]; only then does it look, and
-//! only while the game is the foreground window.
-//!
-//! The two asks buy different looks (POE-204 WI-C). A qualifying Inspect line
-//! buys two [`probe_tick`]s — a placed-crop OCR at 500 ms and, if that saw no
-//! recruit chrome, one more at 1.5 s — and then the gate stands down when no
-//! window was found. FirstApproach is the walk-up and does not arm this gate;
-//! Inspect is the click that opens the recruit window.
-//! Scan now arms one detect: the placed crop is read first and a crop failure
-//! escalates to the one full fallback. Either way, the first detected
-//! window disarms the gate and the live behaviour below takes over unchanged;
-//! a gate that finds nothing says so once and the loop goes back to waiting.
+//! Linux. Everything platform-specific arrives through calls that return `Err`
+//! off Windows — `ocr::recognize_lines`, `crate::capture_mouse_position` — so
+//! the worker carries no `cfg` and compiles identically on both hosts.
 //!
 //! # A tooltip is not a closed window
 //!
 //! Hovering a cell opens a game tooltip ON the panel, and the rows underneath
-//! it stop being readable — so the detect that follows a hover finds no layout
-//! at all. Two of those retire the capture. Two rules keep the player's work
-//! through that (2026-08-25 smoke):
+//! it stop being readable — so a press over a tooltip finds no layout at all.
+//! Two rules keep the player's work through that (2026-08-25 smoke):
 //!
-//! - a detect that finds nothing while the cursor is inside the live capture's
+//! - a press that finds nothing while the cursor is inside the live capture's
 //!   panel rect is [`DetectOutcome::Occluded`] — no miss counted, nothing
-//!   published, the capture held — until [`OCCLUDED_MAX`] of CONTINUOUS
-//!   occlusion, after which every tick counts again and the ordinary two-miss
-//!   retire lands one cadence later ([`OcclusionRun`]);
+//!   published, the capture held, however long since the last press
+//!   ([`judge_no_layout`]);
 //! - a retire hands its confirmations AND its header to a one-slot
-//!   [`Retained`] instead of dropping them, and the next detect takes them back
+//!   [`Retained`] instead of dropping them, and the next read takes them back
 //!   only on positive evidence that the panel is the same one
 //!   ([`same_panel_positive`], not the live path's abstaining rule).
 //!
+//! A live capture retires on a press that finds no layout with the cursor off
+//! the panel, and on a Client.txt area change.
+//!
 //! # Read-only, always
 //!
-//! Hover-confirm READS the cursor position; it never moves it and never sends
-//! input. Injecting input into the PoE client is against GGG's ToS, and this
-//! module is the one place in the app that would be tempted.
+//! The tooltip read READS the cursor position; it never moves it and never
+//! sends input. Injecting input into the PoE client is against GGG's ToS, and
+//! this module is the one place in the app that would be tempted.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -76,8 +71,7 @@ use crate::ocr::OcrLineBox;
 use super::icons::{CellSig, LearnOutcome, LoadedStore, Origin, Rekeyed, TemplateStore};
 use super::read::{
     build_planned, capture_complete, carry_capture, fold_header, fold_unresolved_header,
-    header_fields_text, panel_replaced, pass2_planned, pass2_texts, plan_read, same_panel_positive,
-    unresolved_header_fields, ReadPlan,
+    panel_replaced, pass2_planned, pass2_texts, plan_read, same_panel_positive, ReadPlan,
 };
 // The row identity lives with the reader that produces it (POE-207): the crop
 // cache is built in `read.rs` and consumed here, and both have to spell the key
@@ -92,99 +86,32 @@ use super::{
     MercCapture, MercGeometry, MercHeader, MercRow, MercSkillRead, MercStatus, MercSupportRead,
     MercenarySlice, ReadState, ScaleSource,
 };
+use super::press::{MercInbox, PressedMercFrame};
 
-/// Loop quantum. Every wait is built out of these so a stop signal is honoured
-/// within one of them, whatever the cadence above it says.
+/// Worker quantum: the inbox wait between idle ticks, and every nap's slice,
+/// so a stop signal is honoured within one of them.
 const TICK: Duration = Duration::from_millis(100);
-/// Detect cadence while no window is captured (D6).
-///
-/// Since POE-204 WI-C almost nothing runs at it. The gate answers a voice line
-/// with two placed-crop probes rather than a cadence of detects, and Scan now with one
-/// detect; what is left for this constant is the SECOND detect of a hunt that
-/// has not landed yet — a probe hit whose detect found nothing, on the tick
-/// after. It is kept at 1 s because the backoff below still measures against
-/// it, and because a hunt with nothing to hunt for now ends in one iteration
-/// rather than ten seconds of them.
-const DETECT_INTERVAL: Duration = Duration::from_millis(1000);
-/// Detect cadence after the backoff has fired.
-const DETECT_INTERVAL_SLOW: Duration = Duration::from_millis(3000);
-/// Re-detect cadence while a window IS captured.
-const REDETECT_INTERVAL: Duration = Duration::from_millis(2000);
-/// Detect cadence while a captured window has nothing left to re-read
-/// (2026-08-25; POE-278).
-///
-/// A complete capture ([`super::read::capture_complete`]) has nothing left for
-/// another pass to improve, and a capture whose [`RETRIES`] rounds are spent
-/// gets no more reads (ADR-025 clause 3), so the only question left is whether
-/// the window is still on screen — and that is worth one detect every ten
-/// seconds, not one every two. That detect is the placed-crop pass 1 and
-/// nothing more ([`ReadPlan::Nothing`]): it proves the window is there,
-/// notices a REMATCH, and folds a header field still unread; pass 2 and the
-/// icon walk do not run. The cost of the slower answer is bounded and stated:
-/// a window that closes is noticed up to `2 × this` late (two misses retire
-/// it), which delays the strip's "recruit window gone" marker and nothing else.
-const LIVENESS_INTERVAL: Duration = Duration::from_millis(10_000);
-/// Hover-confirm cadence while a window is captured.
-const HOVER_INTERVAL: Duration = Duration::from_millis(400);
-/// A FULL-frame detect slower than this backs the detect cadence off.
-///
-/// Two things are excluded from the measurement, and both for one reason: what
-/// the backoff decides is [`DETECT_INTERVAL`] vs [`DETECT_INTERVAL_SLOW`], and
-/// those two cadences govern nothing but the full-screen HUNT for a window.
-///
-/// - **Not the hover confirm** that shares the iteration with the detect.
-///   MEASURED 2026-08-26 (app.log 09:40:06): one 4504 ms reading of
-///   detect+hover latched the backoff for the life of the thread, so every
-///   FIRST detect after a voice line waited [`DETECT_INTERVAL_SLOW`] — 3 s of
-///   "nothing happening" bought by a number that was mostly a tooltip OCR the
-///   backoff has no say over.
-/// - **Not the placed crop**. A crop of a placed panel is a fraction of a
-///   full-screen OCR by construction, so feeding it into the hunt backoff would
-///   decay the backoff on evidence about a cheaper question. Placed reads run
-///   while a window is live, where the cadence is [`REDETECT_INTERVAL`] and the
-///   backoff has no say either way. See [`LoopState::note_tick_duration`].
+/// A read slower than this always writes its stage-timing line
+/// ([`detect::detect_tick`]), debug mode or not.
 const SLOW_TICK: Duration = Duration::from_millis(1500);
-/// Consecutive detects at or under [`SLOW_TICK`] that clear the backoff.
-///
-/// The backoff used to be sticky for the life of the thread, on the reasoning
-/// that "this machine is slow" does not become false. The placed re-detect
-/// (POE-204 WI-B) makes it false on purpose — the same machine that took
-/// 4.5 s on a full-screen tick reads a crop of the known panel in a fraction
-/// of it — and a slow FIRST detect would otherwise hold the 3 s hunt cadence
-/// over every later window of the session. Three in a row rather than one so a
-/// single fast frame between slow ones cannot flap the cadence, and with it the
-/// log line that announces the cadence.
-const BACKOFF_DECAY_DETECTS: u8 = 3;
-/// How long to idle between focus checks while the game is not focused.
+/// How long the `unavailable` worker naps between stop checks.
 const UNFOCUSED_NAP: Duration = Duration::from_millis(1000);
-/// How long to idle between gate checks while nothing has asked for a scan
-/// (POE-198). Short because it is the latency a burst pays before its first
-/// detect, and cheap because the check is one mutex read — no screen, no OCR.
-const IDLE_NAP: Duration = Duration::from_millis(250);
-/// Consecutive failed detections that retire a live capture (D6).
-const RETIRE_AFTER: u8 = 2;
-/// How long a live capture may be held through detects that find nothing while
-/// the cursor sits inside the panel (2026-08-25 smoke).
-///
-/// The tolerance cannot be unbounded: a window closed with the cursor parked
-/// where it used to be would never retire, and the strip would show a verdict
-/// for a panel that is not on screen. Fifteen seconds is far longer than any
-/// tooltip read and far shorter than a session, so the visible cost of the cap
-/// firing is the ordinary two-miss retire arriving late.
-const OCCLUDED_MAX: Duration = Duration::from_secs(15);
-/// How long a retired capture's confirmations stay available to a re-detect of
+/// Counted misses that retire a live capture (ruling 4): one press that finds
+/// no layout with the cursor off the panel.
+const RETIRE_AFTER: u8 = 1;
+/// How long a retired capture's confirmations stay available to a re-read of
 /// the SAME panel (2026-08-25 smoke).
 ///
-/// Long enough to cover a retire the player caused by hovering (~4 s from
-/// tooltip to re-detect), short enough that a panel reopened much later is read
-/// fresh rather than inheriting a stale session's opinions.
+/// Long enough to cover a retire the player caused, short enough that a panel
+/// reopened much later is read fresh rather than inheriting a stale session's
+/// opinions.
 const RETAINED_TTL: Duration = Duration::from_secs(60);
-/// Distinct error messages logged before the loop starts suppressing them.
+/// Distinct error messages logged before the worker starts suppressing them.
 const MAX_DISTINCT_ERRORS: usize = 12;
 
-/// Spawn the capture loop. Called through `MODULES` — see `modules.rs`.
+/// Spawn the read worker. Called through `MODULES` — see `modules.rs`.
 pub fn spawn(app: AppHandle, cancel: watch::Receiver<bool>) -> ModuleJoin {
-    ModuleJoin::Thread(std::thread::spawn(move || run_loop(app, cancel)))
+    ModuleJoin::Thread(std::thread::spawn(move || run_worker(app, cancel)))
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +135,7 @@ pub enum DetectOutcome {
     Occluded,
 }
 
-/// What a detect that found no layout means for the live capture.
+/// What a press that found no layout means for the live capture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MissKind {
     /// Count it: advance the retire counter and publish it.
@@ -217,54 +144,32 @@ pub enum MissKind {
     Occluded,
 }
 
-/// Whether a detect that found nothing is evidence the window is gone.
+/// Whether a press that found nothing is evidence the window is gone.
 ///
 /// MEASURED 2026-08-25 (app.log 19:03): hovering a support cell opened a
-/// tooltip ON the panel, the next two detects read 55 OCR lines and 14 skill
-/// candidates but no layout, [`RETIRE_AFTER`] fired, and the confirmation the
-/// hover had just made went away with the capture — the cell flipped back to ✕
-/// while the player was still looking at it.
+/// tooltip ON the panel, the next reads found 55 OCR lines and 14 skill
+/// candidates but no layout, and the capture retired with the window open.
 ///
 /// The cursor is the proof. The game only opens a tooltip under the cursor, so
 /// a cursor inside the panel's own bounds is the one thing that separates "the
 /// panel is covered" from "the panel is gone" without another screen grab.
-///
-/// `occluded_for` is how long the CURRENT occlusion run has been going, and
-/// [`OCCLUDED_MAX`] caps it so a window closed with the cursor parked over it
-/// still retires. A cursor outside the panel, or no live capture, is an
-/// ordinary miss whatever the clock says.
-pub fn miss_kind(live: bool, cursor_in_panel: bool, occluded_for: Duration) -> MissKind {
-    if live && cursor_in_panel && occluded_for < OCCLUDED_MAX {
+/// There is no duration cap (D9): the accepted cost is that a window closed
+/// with the cursor parked over its rect stays up until a press with the cursor
+/// elsewhere, or an area change.
+pub fn miss_kind(live: bool, cursor_in_panel: bool) -> MissKind {
+    if live && cursor_in_panel {
         MissKind::Occluded
     } else {
         MissKind::Miss
     }
 }
 
-/// One continuous run of detects that found nothing while the cursor sat on the
-/// panel — the clock [`miss_kind`] measures against, and the once-per-run gate
-/// for the log line.
+/// One run of presses that found nothing while the cursor sat on the panel —
+/// the once-per-run gate for the "occluded" log line.
 ///
-/// A type rather than a field on [`Session`] because the run has exactly one
-/// subtle rule and it was got wrong the first time: **a run that hits the cap
-/// stays OPEN.** Clearing it on the miss it just produced restarts the clock,
-/// so the next tick is occluded again and the two-miss retire needs two full
-/// caps to land — ~30 s at the 2 s re-detect cadence and ~50 s at the liveness
-/// cadence. TAKE ITEM sits inside [`super::geometry::panel_bounds`] — since
-/// `PANEL_FOOTER_PITCHES` extended that rect over the footer, and NOT before:
-/// the one-pitch rect this comment was written against stopped above the
-/// buttons, so a cursor on TAKE ITEM was outside the panel and the bug it
-/// describes could not fire from there. It can now, which is what the cap is
-/// for: without the open-run rule a closed window's `done` verdict would stay
-/// on screen for the better part of a minute while the cursor rested on the
-/// button that closed it.
-///
-/// The run ends on the four things that actually end it: the panel is found
-/// again ([`Self::on_hit`]), the cursor leaves the panel (handled inside
-/// [`Self::on_occluded`], which is already told where the cursor is), the
-/// capture retires ([`Self::on_retired`]), and the game goes behind us
-/// ([`Self::on_focus_lost`], because no detect runs there and the clock would
-/// otherwise count minutes nothing looked at).
+/// The run ends when the panel is found again ([`Self::on_hit`]), the cursor
+/// leaves the panel (inside [`Self::on_occluded`]), or the capture retires
+/// ([`Self::on_retired`]).
 #[derive(Debug, Default)]
 pub struct OcclusionRun {
     /// When the open run started. `None` — no run open.
@@ -274,27 +179,16 @@ pub struct OcclusionRun {
 }
 
 impl OcclusionRun {
-    /// Fold one detect that found no layout into the run.
+    /// Fold one press that found no layout into the run.
     ///
-    /// `now` is a parameter rather than an `Instant::now()` inside so the cap
-    /// and its aftermath are testable as a sequence without sleeping.
+    /// `now` is a parameter rather than an `Instant::now()` inside so tests
+    /// inject time.
     pub fn on_occluded(&mut self, live: bool, cursor_in_panel: bool, now: Instant) -> MissKind {
-        let elapsed = self
-            .started
-            .map(|since| now.saturating_duration_since(since))
-            .unwrap_or_default();
-        match miss_kind(live, cursor_in_panel, elapsed) {
+        match miss_kind(live, cursor_in_panel) {
             MissKind::Occluded => {
                 self.started.get_or_insert(now);
                 MissKind::Occluded
             }
-            // The cursor is still on the panel, so this Miss is the CAP firing.
-            // The run stays open: every later tick must count too, or the
-            // retire this cap exists to allow never arrives.
-            MissKind::Miss if live && cursor_in_panel => MissKind::Miss,
-            // The cursor left (or nothing is live) — whatever was covering the
-            // panel is no longer the explanation, so the next occlusion is a
-            // new run with a fresh cap.
             MissKind::Miss => {
                 self.reset();
                 MissKind::Miss
@@ -312,24 +206,8 @@ impl OcclusionRun {
         self.reset();
     }
 
-    /// The game is no longer the foreground window, so no detect runs.
-    pub fn on_focus_lost(&mut self) {
-        self.reset();
-    }
-
-    /// Whether a run is open — a detect has already come back with no layout
-    /// while the cursor sat on the panel, and none of the four things that end
-    /// a run has happened since.
-    ///
-    /// Read by [`detect_step`], which stops holding the re-detect once this is
-    /// true: the hold's premise is that the cursor makes the detect redundant,
-    /// and an open run is that premise already disproved.
-    pub fn is_open(&self) -> bool {
-        self.started.is_some()
-    }
-
     /// The once-per-run log gate: `true` the first time it is asked in each
-    /// run, `false` for every later tick of that same run.
+    /// run, `false` for every later press of that same run.
     pub fn announce(&mut self) -> bool {
         if self.started.is_none() || self.announced {
             return false;
@@ -344,78 +222,37 @@ impl OcclusionRun {
     }
 }
 
-/// The loop's capture state machine: what cadence to run at, and when a live
-/// capture has been missing long enough to retire.
+/// The worker's capture state machine: whether a capture is live, when it
+/// retires, and the read-round counter.
 ///
-/// Separated from the loop so the two rules that decide whether the page shows
-/// a stale window — retire after two misses, back off after a slow tick — are
-/// testable without a screen, an OCR engine or a clock.
+/// Separated from the worker so the retire rule is testable without a screen,
+/// an OCR engine or a clock.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct LoopState {
     /// A capture is on screen.
     pub live: bool,
-    /// Consecutive failed detections since the last successful one.
+    /// Consecutive counted misses since the last successful read.
     pub misses: u8,
-    /// The slow-detect backoff has fired.
-    ///
-    /// NOT sticky since POE-204 WI-B — see [`BACKOFF_DECAY_DETECTS`].
-    pub backed_off: bool,
-    /// Consecutive detects at or under [`SLOW_TICK`] while backed off. Reset by
-    /// any slow detect, and by the decay it feeds.
-    pub fast_detects: u8,
     /// The live capture is fully read — every row, every cell, the header.
-    ///
-    /// NOT sticky, unlike [`Self::backed_off`]: it is a statement about the
-    /// capture on screen, so it is cleared when that capture retires and when
-    /// Scan now asks for another look ([`Self::resume`]).
+    /// Cleared when that capture retires.
     pub complete: bool,
-    /// Reading rounds the live capture's budget has had (POE-278, ADR-025
-    /// clauses 2, 3 and 5): `0` until its first read, and after every refill.
-    ///
-    /// The merc twin of the temple's `BoardRead::retries_left`. A round is a
-    /// detect tick whose [`ReadPlan`] reads something ([`ReadPlan::reads`]) —
-    /// round 1 is the full read, rounds 2 and 3 re-read only what the kept
-    /// capture leaves unknown. [`Self::note_round`] counts one;
-    /// [`Self::refill_rounds`] starts the budget over.
+    /// Reading rounds the live capture has had (POE-278, ADR-025): `0` until
+    /// its first read, and after every refill. Round 1 is the full read; every
+    /// later press re-reads only what the kept capture leaves unknown. Kept for
+    /// the round line.
     pub rounds: u8,
 }
 
-/// Extra reading rounds an INCOMPLETE capture is worth, on top of the first
-/// (ADR-025 clause 2) — three reads in all.
+/// Extra reading rounds an INCOMPLETE capture is worth per read, on top of
+/// the first (ADR-025 clause 2).
 ///
-/// Owner-decided on POE-278 and shared with the temple (`temple::run::RETRIES`),
-/// by contract rather than by code. The reads a later round recovers are the
-/// ones a redraw fixes: a row read under a fading tooltip, a cell whose art was
-/// still drawing. Past three the cause is the read itself, and the hover — the
-/// player naming the cell — is the answer, not another 2 s of OCR. What each
-/// later round reads is [`super::read::plan_read`]'s answer, so this bounds the
-/// ROUNDS, not the calls.
+/// Shared with the temple (`temple::run::RETRIES`) by contract rather than by
+/// code. Since POE-390 every press refills the budget (D6), so a held
+/// incomplete capture is re-read on every press; this is the budget each such
+/// read hands [`super::read::plan_read`].
 pub const RETRIES: u8 = 2;
 
 impl LoopState {
-    /// How long to wait before the next detect tick.
-    ///
-    /// A live capture re-detects on its own cadence (2 s) and is NOT subject to
-    /// the backoff: the backoff exists to stop a slow machine spending all its
-    /// time hunting for a window, and a live window has already been found.
-    ///
-    /// A live capture with nothing left to re-read — COMPLETE, or with its
-    /// [`RETRIES`] rounds spent — drops to the liveness cadence, whose detect
-    /// re-reads nothing ([`LIVENESS_INTERVAL`]). The 2026-08-25 smoke showed
-    /// what pointless re-reads cost: the header blinked between two OCR
-    /// readings of the same unchanged pixels every two seconds.
-    pub fn detect_interval(&self) -> Duration {
-        if self.live && self.paused() {
-            LIVENESS_INTERVAL
-        } else if self.live {
-            REDETECT_INTERVAL
-        } else if self.backed_off {
-            DETECT_INTERVAL_SLOW
-        } else {
-            DETECT_INTERVAL
-        }
-    }
-
     /// Fold one detect result into the state.
     pub fn on_detect(&mut self, found: bool) -> DetectOutcome {
         if found {
@@ -431,14 +268,7 @@ impl LoopState {
         } else {
             self.misses += 1;
             if self.misses >= RETIRE_AFTER {
-                self.live = false;
-                self.misses = 0;
-                // The completeness belonged to the capture that just went
-                // away. Carrying it would leave the next window being hunted
-                // at the liveness cadence. So did the round budget: the next
-                // window's first read is its round 1.
-                self.complete = false;
-                self.rounds = 0;
+                self.retire();
                 DetectOutcome::Retired
             } else {
                 DetectOutcome::Missed
@@ -446,84 +276,23 @@ impl LoopState {
         }
     }
 
+    /// The capture went away: clear what belonged to it. The completeness and
+    /// the round count are the capture's, so the next window's first read is
+    /// its round 1.
+    pub fn retire(&mut self) {
+        self.live = false;
+        self.misses = 0;
+        self.complete = false;
+        self.rounds = 0;
+    }
+
     /// Fold the completeness of the capture just published into the state.
     ///
-    /// `true` the one tick it BECOMES complete, so the caller says so once
-    /// rather than on every liveness check. A capture that stops being complete
-    /// (a cell the player hovered away from, a re-read that lost the class)
-    /// puts the loop straight back on the working cadence.
+    /// `true` the one read it BECOMES complete, so the caller says so once.
     pub fn note_complete(&mut self, complete: bool) -> bool {
         let became = complete && !self.complete;
         self.complete = complete;
         became
-    }
-
-    /// **Scan now** asked for another look at the captured window. `true` when
-    /// this actually resumed a paused read, so the caller logs the transition
-    /// and not every armed tick.
-    ///
-    /// One caller, and it is the gate's `FullDetect` step (`run_loop`). A VOICE
-    /// LINE cannot reach here: `trigger::capture_held` drops a line arriving
-    /// over a `live`/`done` capture before it can arm, and `trigger::
-    /// disarm_probe` takes the slot away on every live tick for the line that
-    /// races that check. So the only thing that resumes a paused read is a
-    /// person pressing the button — which is the whole of what "scan a window
-    /// that is already open" can mean.
-    ///
-    /// A paused read is one [`Self::paused`] names — complete, or with its
-    /// [`RETRIES`] rounds spent (POE-278) — the two the liveness cadence runs
-    /// for. Both go back to [`REDETECT_INTERVAL`] here, so both are resumed.
-    ///
-    /// The miss counter is cleared WHEN THIS RESUMES SOMETHING, because that is
-    /// the moment the cadence changes and [`RETIRE_AFTER`] counts ticks, not
-    /// time. MEASURED 2026-08-26 (app.log 09:41:52 → 09:41:57), on the shape
-    /// this replaced: one miss at the 10 s liveness cadence, an arm four
-    /// seconds later, and the first re-detect at the 2 s cadence made two —
-    /// "window gone" while the recruit window was on screen, restored seven
-    /// seconds afterwards. Two misses are meant to be evidence of a window that
-    /// closed; a miss counted before the cadence changed is not part of that
-    /// evidence.
-    ///
-    /// The clear happens on the TRANSITION only, so a Scan now over a capture
-    /// that is NOT paused leaves the misses alone. There they are the evidence:
-    /// they were counted at the cadence still running, two of them mean the
-    /// window closed, and zeroing them on each press would let a player leaning
-    /// on the button hold a closed window's capture on screen indefinitely.
-    ///
-    /// The ROUND BUDGET starts over on every call, paused or not (POE-278,
-    /// ADR-025 clause 5): Scan now over an incomplete capture — rounds left or
-    /// rounds spent — buys a fresh full read too. Here rather than on the
-    /// detect's own path so a Scan now whose tick misses still owes the next
-    /// hit its round 1.
-    pub fn resume(&mut self) -> bool {
-        let was = self.paused();
-        self.complete = false;
-        self.refill_rounds();
-        if was {
-            self.misses = 0;
-        }
-        was
-    }
-
-    /// Whether the read is PAUSED: complete, or out of rounds while
-    /// incomplete. The one predicate behind both [`Self::detect_interval`]'s
-    /// liveness cadence and [`Self::resume`]'s miss clear, so what the cadence
-    /// treats as paused and what a Scan now treats as resumed cannot drift
-    /// apart.
-    pub fn paused(&self) -> bool {
-        self.complete || self.rounds_spent()
-    }
-
-    /// Reading rounds the budget still allows, the next one included: `RETRIES
-    /// + 1` before round 1, `0` once the budget is spent.
-    pub fn rounds_left(&self) -> u8 {
-        (RETRIES + 1).saturating_sub(self.rounds)
-    }
-
-    /// The budget is spent: no round is left to re-read an incomplete capture,
-    /// and the detect runs at [`LIVENESS_INTERVAL`] reading nothing.
-    pub fn rounds_spent(&self) -> bool {
-        self.rounds_left() == 0
     }
 
     /// Whether the next read is round 1 of its budget — which reads everything,
@@ -539,150 +308,20 @@ impl LoopState {
         self.rounds = 0;
     }
 
-    /// Count one reading round. `true` on the round that SPENDS the budget, so
-    /// the caller says so once rather than on every liveness tick after it.
-    pub fn note_round(&mut self) -> bool {
+    /// Count one reading round.
+    pub fn note_round(&mut self) {
         self.rounds = self.rounds.saturating_add(1);
-        self.rounds == RETRIES + 1
-    }
-
-    /// Record how long a DETECT took — not the hover confirm that shares the
-    /// iteration with it, which is why the loop times `detect_tick` alone and
-    /// runs the hover before it.
-    ///
-    /// `full_frame` is the gate, not a label: a tick that OCR'd a crop of a
-    /// known panel says nothing about what a full-screen hunt costs on this
-    /// machine, in either direction, so it moves neither the backoff nor the
-    /// decay run behind it. See [`SLOW_TICK`].
-    ///
-    /// `Some` on the ticks the cadence actually moves, so the caller logs each
-    /// transition once and nothing in between.
-    pub fn note_tick_duration(
-        &mut self,
-        full_frame: bool,
-        took: Duration,
-    ) -> Option<BackoffChange> {
-        if !full_frame {
-            return None;
-        }
-        if took > SLOW_TICK {
-            self.fast_detects = 0;
-            return (!std::mem::replace(&mut self.backed_off, true))
-                .then_some(BackoffChange::BackedOff);
-        }
-        if !self.backed_off {
-            return None;
-        }
-        self.fast_detects += 1;
-        if self.fast_detects < BACKOFF_DECAY_DETECTS {
-            return None;
-        }
-        self.backed_off = false;
-        self.fast_detects = 0;
-        Some(BackoffChange::Recovered)
     }
 }
 
-/// A move of the detect cadence, reported by [`LoopState::note_tick_duration`]
-/// so the log carries both directions and neither is printed twice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BackoffChange {
-    /// A slow detect put the hunt on [`DETECT_INTERVAL_SLOW`].
-    BackedOff,
-    /// [`BACKOFF_DECAY_DETECTS`] fast detects took it back off again.
-    Recovered,
-}
-
-/// What one loop iteration does about the detect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DetectStep {
-    /// Detect this iteration.
-    Run,
-    /// The cadence is not up yet.
-    Wait,
-    /// The cursor is inside a captured cell: the player is reading a tooltip,
-    /// and the hover confirm is the work that matters. See [`detect_step`].
-    HoldForConfirm,
-}
-
-/// Whether this iteration detects, and why not when it does not.
-///
-/// The hold is the latency fix of POE-204 WI-B. MEASURED 2026-08-26 (app.log
-/// 09:40:06-09:40:57): confirms landed 4-10 s apart while the player hovered
-/// cell after cell, because each one had to wait behind a re-detect of a panel
-/// that had not moved — a full-screen grab and a full-screen OCR, 4.5 s on the
-/// measured machine, for an answer the cursor already gave. A cursor inside a
-/// captured cell is proof the window is on screen, so the detect it would
-/// displace has nothing to add.
-///
-/// **A hold is not a miss.** It does not reach [`LoopState::on_detect`] at all,
-/// so it cannot advance the retire counter — which matters, because the hold
-/// fires exactly when a tooltip is up and that is the frame the detect fails on
-/// (WI-A's phantom retire). Holding is the stronger version of that fix: the
-/// frame is never taken.
-///
-/// **The hold has a ceiling**, and it is [`LIVENESS_INTERVAL`]. A cursor parked
-/// on a cell must not stop the loop ever noticing a window that closed — the
-/// player can alt-tab, or close the panel with the mouse still over where it
-/// was — so once a whole liveness interval has passed since the last detect,
-/// the detect runs whatever the cursor is doing. The `since_detect` clock is
-/// NOT reset by a hold, which is what makes that ceiling arrive.
-///
-/// **An open occlusion run cancels the hold** (`occluded`, POE-204 WI-B
-/// review). The hold rests on the cursor being proof the window is on screen;
-/// once a detect has come back with no layout while the cursor was on the
-/// panel, that proof is exactly what is in question, and holding turns the
-/// answer into a 10 s cadence. Composed with [`OcclusionRun`]'s own cap the
-/// arithmetic was: ceiling detect, then [`OCCLUDED_MAX`] of held ticks at 10 s
-/// each, then two more 10 s ticks to retire — 40 s of `done` verdict for a
-/// window that closed. Dropping the hold puts those ticks back on
-/// [`REDETECT_INTERVAL`], which is the cadence the cap was sized against, and
-/// the same close retires in 28 s. It costs one placed-crop detect every 2 s
-/// while a tooltip is up, and only after one has already failed.
-pub fn detect_step(
-    state: &LoopState,
-    cursor_on_cell: bool,
-    occluded: bool,
-    since_detect: Duration,
-) -> DetectStep {
-    if since_detect < state.detect_interval() {
-        DetectStep::Wait
-    } else if state.live && cursor_on_cell && !occluded && since_detect < LIVENESS_INTERVAL {
-        DetectStep::HoldForConfirm
-    } else {
-        DetectStep::Run
-    }
-}
-
-/// What one detect tick reports back to the loop.
+/// What one panel read reports back to the worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DetectTick {
-    /// What it did to the capture state. `None` when the tick bailed on the
-    /// stop signal after pass 1 — neither a hit nor a miss (see
-    /// [`burst_satisfied`]).
+    /// What it did to the capture state. `None` when the read bailed — on the
+    /// stop signal, or on an OCR failure — neither a hit nor a miss.
     pub outcome: Option<DetectOutcome>,
-    /// Whether this tick OCR'd the WHOLE screen and nothing else — the only
-    /// kind of tick whose duration the backoff may read. A placed crop is
-    /// excluded. See [`SLOW_TICK`].
+    /// Whether this read OCR'd the WHOLE screen.
     pub full_frame: bool,
-}
-
-impl DetectTick {
-    /// What a PROBE reports, whatever it saw.
-    ///
-    /// `full_frame: false` is the load-bearing half: a placed-crop OCR says nothing
-    /// about what a full-screen hunt costs on this machine, and the probe runs
-    /// twice per voice line in an arena full of mercenaries — reporting `true`
-    /// would decay a backoff the hunt earned, on evidence about a cheaper
-    /// question, within seconds. `outcome: None` rather than
-    /// [`DetectOutcome::Missed`]: a probe that saw no chrome has not detected
-    /// anything and has not missed anything either.
-    ///
-    /// Named here rather than written inline at [`probe_tick`]'s two return
-    /// sites so both say the same thing and a test can read the claim.
-    pub fn probe() -> Self {
-        Self { outcome: None, full_frame: false }
-    }
 }
 
 fn detect_report(outcome: Option<DetectOutcome>, full_frame: bool) -> DetectTick {
@@ -832,109 +471,6 @@ fn row_mismatch_line(rows_on_screen: usize, rows_read: usize) -> Option<String> 
             "Merc: row mismatch — {rows_on_screen} rows on screen, {rows_read} read"
         )
     })
-}
-
-/// What the loop does with one iteration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LoopStep {
-    /// The game is not the foreground window — nothing on screen to read.
-    Unfocused,
-    /// The game is in front, and nothing has asked for a scan.
-    Idle,
-    /// The gate is armed but its next probe is not due yet.
-    ///
-    /// A third state rather than a second `Idle`, and it exists for one number:
-    /// [`IDLE_NAP`] is 250 ms, so a probe due at [`trigger::PROBE_DELAY_MS`]
-    /// would be served at the next 250 ms boundary — a 500 ms probe fired at
-    /// 750 ms, half again late on a gate whose whole design is two deadlines.
-    /// Waiting naps [`TICK`] instead.
-    Waiting,
-    /// Look at the screen this iteration.
-    Work,
-}
-
-/// Whether this iteration does any screen work, and why not when it does not.
-///
-/// The three negative answers are deliberately different states rather than one
-/// "skip": they nap for different lengths (a focus check can wait a second, an
-/// armed gate cannot wait a quarter of one), and they are the whole of
-/// POE-198's promise — no OCR runs unless the gate asked or a capture is
-/// already live. A predicate rather than an `if` chain in the loop body so that
-/// promise is testable without a screen.
-///
-/// A LIVE capture works whatever the gate says: retirement takes two misses and
-/// the liveness check is a detect like any other, so dropping to Idle under a
-/// resting gate would strand a window on screen for good.
-pub fn next_step(live: bool, gate: trigger::GateStep, focused: bool) -> LoopStep {
-    if !focused {
-        LoopStep::Unfocused
-    } else if live
-        || matches!(gate, trigger::GateStep::Probe | trigger::GateStep::FullDetect)
-    {
-        LoopStep::Work
-    } else if gate == trigger::GateStep::Waiting {
-        LoopStep::Waiting
-    } else {
-        LoopStep::Idle
-    }
-}
-
-/// What a working iteration points at the screen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Look {
-    /// Nothing this iteration — the live cadence is not up.
-    None,
-    /// The gate's cheap placed-panel crop ([`probe_tick`]).
-    Probe,
-    /// A detect ([`detect_tick`]).
-    Detect,
-}
-
-/// Which of the two looks this iteration takes, if either.
-///
-/// The precedence is what keeps the probe cheap. Read top to bottom:
-///
-/// - **Scan now first.** A person asked for a detect; it reads the placed crop
-///   and escalates to the full-screen locate only if that read misses — one of
-///   the two manual looks that may re-locate a placed panel
-///   ([`locate_decision`]).
-/// - **A live capture next, on its own cadence.** [`detect_step`] owns that
-///   cadence and its hold, and a gate armed over a live window (which
-///   `trigger::capture_held` makes rare, not impossible — a line can land in
-///   the gap between the arm and the detect that captures) must not displace a
-///   re-detect with a probe that has nothing to add.
-/// - **Then the probe.** This is the only branch that reaches [`probe_tick`],
-///   which is what makes "a voice line costs one placed-crop OCR" a property of one
-///   function rather than of the loop body's shape.
-pub fn look_step(live: bool, gate: trigger::GateStep, detect: DetectStep) -> Look {
-    if gate == trigger::GateStep::FullDetect {
-        Look::Detect
-    } else if live {
-        if detect == DetectStep::Run {
-            Look::Detect
-        } else {
-            Look::None
-        }
-    } else if gate == trigger::GateStep::Probe {
-        Look::Probe
-    } else {
-        Look::None
-    }
-}
-
-/// Whether a detect tick's outcome means the gate found what it was armed for.
-///
-/// NOT `LoopState::live`, which is still true after the first of the two misses
-/// that retire a capture: a gate armed for a SECOND mercenary while the first
-/// one's window was still on screen would disarm itself on a tick that found
-/// nothing. `None` is a tick that bailed on the stop signal without detecting —
-/// and it is also what a probe that saw no chrome reports, which is the same
-/// claim: nothing was detected and nothing was missed.
-pub fn burst_satisfied(outcome: Option<DetectOutcome>) -> bool {
-    matches!(
-        outcome,
-        Some(DetectOutcome::Captured) | Some(DetectOutcome::Refreshed)
-    )
 }
 
 /// How many times a cell that ALREADY reads as `Matched` may be re-OCR'd by the
@@ -1421,23 +957,24 @@ fn consume_refit(session: &mut Session, current: u64) -> Refit {
 ///   correctness, not freshness.
 ///
 /// The others are decided elsewhere: a new capture and a replaced panel leave
-/// no kept capture ([`round_plan`]), and Scan now refills in
-/// [`LoopState::resume`].
+/// no kept capture ([`round_plan`]).
 fn refills_budget(refit: &Refit, templates_moved: bool) -> bool {
     templates_moved || matches!(refit, Refit::Dropped(_) | Refit::NothingHeld)
 }
 
-/// The plan for the round this tick runs, with the budget bookkeeping that
-/// decides it (POE-278, ADR-025 clauses 2, 3 and 5).
+/// The plan for the round this press runs, with the budget bookkeeping that
+/// decides it (POE-278, ADR-025; D6 amended by POE-390).
 ///
 /// `refill` is [`refills_budget`]'s answer; a missing kept capture — a first
-/// look, a retire, a panel replaced on this tick — refills too. Round 1 of a
+/// look, a retire, a panel replaced on this read — refills too. Round 1 of a
 /// budget is handed NO kept capture, which is what makes it a full read
-/// whatever the loop holds: that is the point of a refill.
+/// whatever the worker holds.
 ///
-/// A round spent on a geometry mismatch ([`plan_read`]'s `Full` for a kept
-/// capture that no longer lines up) refills nothing, so a jittery geometry
-/// spends the budget like any other round.
+/// Every press refills the budget for a held capture: the round counter is
+/// clamped to 1 and the plan gets the full [`RETRIES`] budget, so a press over
+/// an incomplete held capture re-reads its unresolved rows, cells and header
+/// fields on its one frame however many presses came before it. Confident
+/// cells are never replaced (`read::build_planned`).
 fn round_plan(
     state: &mut LoopState,
     kept: Option<&MercCapture>,
@@ -1450,7 +987,10 @@ fn round_plan(
         state.refill_rounds();
     }
     let kept = kept.filter(|_| !state.owes_full_read());
-    plan_read(kept, state.rounds_left(), panel, layout, g)
+    if kept.is_some() {
+        state.rounds = state.rounds.min(1);
+    }
+    plan_read(kept, RETRIES, panel, layout, g)
 }
 
 /// Whether this frame's PASS-1 view is a different recruit window than the
@@ -1475,55 +1015,15 @@ fn replaced_on_sight(
 }
 
 /// The one line a reading round writes (POE-278), the temple read line's merc
-/// twin: which round of the budget this was, what the plan read, what the two
-/// OCR-bearing stages cost, and whether the capture is complete or how many
-/// rounds it still has. A round that reads nothing writes no line.
-///
-/// `round` and `rounds_left` are [`LoopState`]'s AFTER [`LoopState::note_round`]
-/// counted this round.
-fn round_line(
-    round: u8,
-    plan: &ReadPlan,
-    pass2_ms: u128,
-    icons_ms: u128,
-    complete: bool,
-    rounds_left: u8,
-) -> String {
-    let verdict = if complete {
-        "complete".to_string()
-    } else {
-        format!("incomplete, {rounds_left} rounds left")
-    };
+/// twin: which round this was, what the plan read, what the two OCR-bearing
+/// stages cost, and whether the capture is complete. A round that reads
+/// nothing writes no line. `round` is [`LoopState`]'s AFTER
+/// [`LoopState::note_round`] counted this round.
+fn round_line(round: u8, plan: &ReadPlan, pass2_ms: u128, icons_ms: u128, complete: bool) -> String {
+    let verdict = if complete { "complete" } else { "incomplete" };
     format!(
-        "Merc: read round {round} of {} — {} — pass 2 {pass2_ms} ms, icons {icons_ms} ms; \
-         {verdict}",
-        RETRIES + 1,
+        "Merc: read round {round} — {} — pass 2 {pass2_ms} ms, icons {icons_ms} ms; {verdict}",
         plan.describe(),
-    )
-}
-
-/// Said once, on the round that spends the budget over a capture still
-/// incomplete: what is still unread, that OCR is paused at the liveness
-/// cadence, and that a hover can still resolve a cell (ADR-025's accepted
-/// cost — the rounds are not extended to buy the rest back).
-fn rounds_spent_line(capture: &MercCapture) -> String {
-    let rows = capture
-        .rows
-        .iter()
-        .filter(|row| !super::read::confident(row.skill.state))
-        .count();
-    let cells = capture
-        .rows
-        .iter()
-        .flat_map(|row| row.supports.iter())
-        .filter(|cell| !super::read::confident(cell.state))
-        .count();
-    format!(
-        "Merc: {} reading rounds spent — still unread: {rows} rows, {cells} cells, header {} — \
-         OCR paused (liveness every {} s); hovering a cell can still resolve it",
-        RETRIES + 1,
-        header_fields_text(&unresolved_header_fields(&capture.header)),
-        LIVENESS_INTERVAL.as_secs(),
     )
 }
 
@@ -1933,22 +1433,11 @@ pub fn live_status(complete: bool) -> MercStatus {
     }
 }
 
-/// Publish `Scanning` together with the mercenary the burst heard.
-///
-/// The reconciliation path's counterpart to the arming site's own publish.
-/// [`trigger::scan_outranks`] lets that site announce over `Idle` and nothing
-/// else, so a gate armed while the slice held any other status is announced
-/// HERE instead — on the first tick after the slice falls back to a waiting
-/// status, with the gate still armed and still owed its probes.
-///
-/// The name is read off the GATE rather than remembered here, which is why it
-/// is an argument and not a field: a speaker kept on this side would outlive
-/// the line it belongs to and the strip would go on naming a mercenary the
-/// module stopped looking for.
-pub fn publish_scanning(app: &AppHandle, speaker: Option<String>) {
+/// Publish `Scanning` with no speaker: a press read is running.
+pub fn publish_scanning(app: &AppHandle) {
     publish(app, |slice| {
         slice.status = MercStatus::Scanning;
-        slice.burst_speaker = speaker;
+        slice.burst_speaker = None;
     });
 }
 
@@ -1999,12 +1488,12 @@ struct Retained {
 }
 
 /// Identity of one full-screen locate opportunity ([`locate_decision`]). A
-/// Recalibrate (`merc.refit`) or a fresh voice line / Scan now arm (the trigger
-/// generation) opens a new one.
+/// Recalibrate (`merc.refit`) or a new press (the worker's press counter)
+/// opens a new one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FallbackKey {
     refit: u64,
-    gate: u64,
+    press: u64,
 }
 
 /// One full-screen locate per key — the spend behind [`locate_decision`], which
@@ -2110,11 +1599,10 @@ enum LocateDecision {
 /// | placed    | miss or column moved  | no     | never                 |
 ///
 /// `placed` is the SSOT placement with what the crop read against it, `None` on
-/// a cold start. `manual` is [`manual_tick`]: Scan now, or a Recalibrate this
-/// session has not acted on yet.
+/// a cold start. `manual` is a Recalibrate this session has not acted on yet
+/// ([`refit_requested`], ruling 2).
 ///
-/// Every tick no person asked for — a voice-line probe, a live re-detect —
-/// trusts the placement and proceeds on the placed read, so its miss goes
+/// Every other press trusts the placement and proceeds on the placed read, so its miss goes
 /// through the ordinary occlusion handling and [`miss`]. Before POE-278 a
 /// probe miss and a live [`PlacedRead::ColumnMoved`] each bought the locate,
 /// and on app.log 2026-09-10 the second moved a live capture's anchor: a
@@ -2124,7 +1612,7 @@ enum LocateDecision {
 /// (`temple::run::cold_sweep_reason`: a placed miss sweeps under Re-arm only).
 ///
 /// The accepted trade-off: a placement that really is wrong stays wrong until
-/// the player presses Scan now or Recalibrate — which is what the column line
+/// the player presses Recalibrate — which is what the column line
 /// tells them to do.
 fn locate_decision(
     placed: Option<(([i32; 4], f32), PlacedRead)>,
@@ -2153,22 +1641,10 @@ fn locate_decision(
     }
 }
 
-/// Whether a person asked for this tick: it serves a Scan now
-/// (`GateStep::FullDetect`), or the Recalibrate counter differs from the value
-/// the locate decision last treated as acted on. A voice-line probe is not a
-/// person asking, whatever it found.
-///
-/// A PEEK at the counter, not a spend: `Session::refit_located` moves only once
-/// a layout exists, so a pending press stays manual across the misses before
-/// it.
-fn manual_tick(gate: trigger::GateStep, refit_seen: u64, refit_now: u64) -> bool {
-    gate == trigger::GateStep::FullDetect || refit_requested(refit_seen, refit_now)
-}
-
-/// Said when a tick trusts the placement over a column contradiction
+/// Said when a read trusts the placement over a column contradiction
 /// ([`LocateDecision::TrustPlacementOverColumn`]).
 const MERC_COLUMN_TRUSTED_LINE: &str = "Merc: placed panel column disagrees with the read — \
-     trusting the placement; Scan now or Recalibrate re-locates (POE-271)";
+     trusting the placement; Recalibrate re-locates (POE-271)";
 
 /// The column line, once per key. Not debug-gated, because it is the one trace
 /// of a placement the loop is choosing to trust over the read, and it names
@@ -2336,330 +1812,70 @@ fn matcher_geometry_warnings(g: &MercGeometry) -> Vec<String> {
     out
 }
 
-fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
+/// What the worker's one callback is handed: an idle timeout, or one inbox
+/// message. One callback, so one closure holds the only `&mut Session` (D10).
+pub enum WorkerEvent {
+    Idle,
+    Message(MercInbox),
+}
+
+/// The worker's receive loop: each message exactly once, in order, and an
+/// [`WorkerEvent::Idle`] on every [`TICK`] with nothing sent. Returns on
+/// `stop()` or once every sender is gone.
+pub fn worker_loop(
+    rx: &std::sync::mpsc::Receiver<MercInbox>,
+    stop: &dyn Fn() -> bool,
+    on: &mut dyn FnMut(WorkerEvent),
+) {
+    use std::sync::mpsc::RecvTimeoutError;
+    loop {
+        if stop() {
+            return;
+        }
+        match rx.recv_timeout(TICK) {
+            Ok(message) => {
+                if stop() {
+                    return;
+                }
+                on(WorkerEvent::Message(message));
+            }
+            Err(RecvTimeoutError::Timeout) => on(WorkerEvent::Idle),
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
+fn run_worker(app: AppHandle, cancel: watch::Receiver<bool>) {
     let mut session = match session_open::open_session(&app, &cancel) {
         Ok(session) => session,
         Err(e) => return unavailable(&app, &cancel, e),
     };
+    let (tx, rx) = std::sync::mpsc::channel();
+    super::press::install_inbox(&app, Some(tx));
 
-    // Backdated so the first iteration detects immediately rather than after a
-    // full cadence of doing nothing.
-    let mut last_detect = Instant::now() - DETECT_INTERVAL_SLOW;
-    let mut last_hover = Instant::now() - HOVER_INTERVAL;
-
-    loop {
-        if *cancel.borrow() {
-            break;
-        }
-
-        // Gate bookkeeping runs BEFORE the focus gate: a gate armed while the
-        // player is reading this app must still give up on its own schedule,
-        // and the badge must say "scanning" while it waits for the game to come
-        // back — that wait is the alt-tab case the trigger exists to cover.
-        let now = now_ms();
-        // A LIVE capture takes the voice-line slot away first. `capture_held`
-        // keeps a line from arming over a window on screen, but it reads the
-        // PUBLISHED status from the log-watcher thread — so a line landing
-        // between the detect that captures and the publish that says so arms a
-        // gate this loop will never probe (a live re-detect outranks the probe,
-        // `look_step`), and ten seconds later that gate would print a
-        // stand-down for a window the player is looking at. The Scan now slot
-        // survives: its grace is a promise to the player, and `take_stood_down`
-        // below is what still reports it.
-        if session.state.live {
-            trigger::disarm_probe(&app);
-        }
-        if let Some(stood_down) = trigger::take_stood_down(&app, now) {
-            crate::app_log(&app, stood_down.line());
-            // A Scan now can give up while a window is on screen. The
-            // waiting-status reconciliation below only runs when nothing is
-            // live, so without this the slice would keep whatever the gate left
-            // behind and the strip would go on reporting a scan that is over.
-            if session.state.live {
-                publish_status(&app, live_status(session.state.complete));
-            }
-        }
-        let gate = trigger::step(&app, now);
-        // Scan now over a paused window — fully read, or out of reading rounds
-        // (POE-278) — means the player believes something changed on screen
-        // that the paused loop would not have looked for: they recruited, or
-        // rematched, or want the unread cells tried again. Resuming here rather than in the detect
-        // keeps the pause a property of the STATE machine, which is where its
-        // cadence is decided.
-        //
-        // A VOICE LINE no longer reaches this: `trigger::capture_held` drops it
-        // before it can arm (rule 5). MEASURED 2026-08-26 09:41:52-09:41:57 —
-        // the arm resumed the read, the resumed cadence spent its first tick on
-        // a frame a tooltip was covering, and "window gone" was published over
-        // a window that was plainly open.
-        if gate == trigger::GateStep::FullDetect && session.state.resume() {
-            crate::app_log(
-                &app,
-                "Merc: Scan now over a paused capture (complete or rounds spent) — OCR resumed"
-                    .to_string(),
-            );
-        }
-        if !session.state.live {
-            // Read before writing: `publish` clones the whole slice to tell
-            // whether anything changed, and this runs several times a second in
-            // the state where the module is supposed to be doing nothing.
-            let want = if gate == trigger::GateStep::Resting {
-                MercStatus::Idle
-            } else {
-                MercStatus::Scanning
+    let mut press_seq: u64 = 0;
+    worker_loop(&rx, &|| *cancel.borrow(), &mut |event| match event {
+        WorkerEvent::Idle => trade_tick(&app, &mut session),
+        WorkerEvent::Message(MercInbox::Press(pressed)) => {
+            press_seq += 1;
+            let mut effects = AppPressEffects {
+                app: &app,
+                session: &mut session,
+                cancel: &cancel,
+                press_seq,
+                outcome: None,
+                tooltip: false,
             };
-            if status(&app) != want {
-                if want == MercStatus::Scanning {
-                    // Off the GATE, not remembered: this branch is reached
-                    // after a retire cleared the speaker, and the line that is
-                    // still armed is the one that knows whose voice it was.
-                    publish_scanning(&app, trigger::speaker(&app));
-                } else {
-                    publish_status(&app, want);
-                }
+            read_press(&mut effects, pressed);
+        }
+        WorkerEvent::Message(MercInbox::AreaChanged) => {
+            if session.state.live {
+                retire_now(&app, &mut session, "area changed");
             }
         }
+    });
 
-        // The trade tick, BEFORE the focus gate and on every iteration.
-        //
-        // Before the gate because the results are read in THIS app: the player
-        // alt-tabs to the Mercenaries page to look at them, which is exactly
-        // when `game_focused` goes false — a tick behind the gate would stall
-        // the debounce for as long as the user was reading. Every iteration
-        // because that is what makes the debounce work without a timer; see
-        // `search::tick`, which does nothing at all until the query has
-        // actually moved.
-        //
-        // Gated on COMPLETE, not merely on an open session: a Scan now over a
-        // paused capture (`LoopState::resume`) puts it back on the working
-        // cadence, and the read that follows passes through half-filled rows.
-        // A query built from one of those describes a mercenary nobody has,
-        // and it would cost one of three searches to learn that.
-        if session.state.complete {
-            if let (Some(capture), Some(trade)) =
-                (session.current.as_ref(), session.trade.as_mut())
-            {
-                search::tick(&app, capture, &session.vocab, trade, session.revision, now);
-            }
-        }
-
-        match next_step(session.state.live, gate, game_focused(&app)) {
-            // No capture while alt-tabbed: the recruit window is not on screen,
-            // and a full-screen OCR every second would be pure heat.
-            LoopStep::Unfocused => {
-                session.miss_logged = false;
-                session.occlusion.on_focus_lost();
-                if !nap(&cancel, UNFOCUSED_NAP) {
-                    break;
-                }
-                continue;
-            }
-            // Nothing on screen and nobody asking: no grab, no OCR. This is the
-            // module's resting state, and it is the whole point of POE-198.
-            LoopStep::Idle => {
-                session.miss_logged = false;
-                if !nap(&cancel, IDLE_NAP) {
-                    break;
-                }
-                continue;
-            }
-            // A voice line is armed and its probe is not due yet. One quantum,
-            // not an idle nap: see [`LoopStep::Waiting`].
-            LoopStep::Waiting => {
-                session.miss_logged = false;
-                if !nap(&cancel, TICK) {
-                    break;
-                }
-                continue;
-            }
-            LoopStep::Work => {}
-        }
-
-        // ONE cursor read per iteration, and it happens FIRST — the claim is
-        // now true (POE-204 WI-B review: `detect_tick` used to take a second
-        // read of its own). THREE readers depend on it: the hover confirm, the
-        // detect gate below, and the detect's own header-withholding rule,
-        // which asks where the cursor was while the frame was taken. Reading it
-        // twice inside one iteration lets them answer about different
-        // positions.
-        //
-        // Only on the iterations one of them actually asks, so the loop's
-        // 100 ms quantum does not turn into a 10 Hz cursor poll. NOT gated on a
-        // live capture, unlike the hover: the FIRST detect of a window is
-        // exactly the one whose header a tooltip corrupts (2026-08-26), and
-        // that read needs the cursor with nothing captured yet.
-        let hover_due = session.state.live && last_hover.elapsed() >= HOVER_INTERVAL;
-        // The gate's two asks count as "due" alongside the live cadence. A Scan
-        // now over a PAUSED capture is the case that needs saying: its detect
-        // runs off the gate rather than off `detect_interval`, so keying the
-        // cursor read on the cadence alone would hand that detect a `None`
-        // cursor and switch the header-withholding rule off for exactly the
-        // frame a player is most likely to have a tooltip open on.
-        let detect_due = last_detect.elapsed() >= session.state.detect_interval()
-            || matches!(gate, trigger::GateStep::Probe | trigger::GateStep::FullDetect);
-        let cursor = if hover_due || detect_due {
-            read_cursor(&app, &mut session)
-        } else {
-            None
-        };
-        // An unreadable cursor is not an excuse: no evidence the player is
-        // confirming means the detect runs, exactly as `cursor_on_panel`
-        // refuses to excuse a miss it cannot prove.
-        let on_cell = match (session.current.as_ref(), cursor) {
-            (Some(capture), Some(c)) => cell_at(capture, c).is_some(),
-            _ => false,
-        };
-
-        // HOVER BEFORE DETECT. It used to run after, so a confirm got at most
-        // one slot per detect and the detect was costing 4.5 s — measured
-        // 2026-08-26, confirms 4-10 s apart while the player hovered cell
-        // after cell. The hover is the read the player is waiting on; the
-        // detect is a question the cursor has already answered.
-        //
-        // It keeps running over a COMPLETED capture, unlike the detect: "every
-        // cell was read" is not "every cell was read right", and the tooltip is
-        // the only thing that can correct a confident wrong match. Its idle
-        // cost is one cursor read per 400 ms — the grab and the OCR are behind
-        // the cursor hit-test — and the re-read of a cell that already matched
-        // is bounded by [`HoverBudget`].
-        if let Some(c) = cursor.filter(|_| hover_due) {
-            // STAMPED BEFORE THE CALL. Stamping it after made the hover's
-            // period `HOVER_INTERVAL` PLUS the tick's own grab, preprocess and
-            // OCR — measured at 4-10 s between confirmations on 2026-08-26,
-            // for a cadence that reads 400 ms. The clock the player feels is
-            // how often the cursor is looked at, not how long the last look
-            // took.
-            //
-            // A hover whose read overruns 400 ms is then due again the instant
-            // it returns, and `HoverBudget` does NOT bound that on its own: it
-            // charges `Confirmed` and `Matched` cells, and an `Unknown` cell —
-            // exactly the cell a player rests on while waiting for a tooltip —
-            // is unlimited. Stamped before and never after, the loop would sit
-            // on a tooltip-less cell at a 100% duty cycle, one full-screen grab
-            // and one OCR after another.
-            //
-            // So the stamp is REPLACED when the tick confirmed nothing. That
-            // splits the two cases the player cares about, and gives each the
-            // clock it wants: a cell with no tooltip yet is re-read every
-            // 400 ms PLUS the read, an idle poll with a bounded duty cycle; a
-            // cell whose tooltip DID answer keeps the before-stamp, so the
-            // next read of it is due immediately and the budget is what stops
-            // it — which is the case the budget was written for.
-            last_hover = Instant::now();
-            if !hover_tick(&app, &mut session, c) {
-                last_hover = Instant::now();
-            }
-        }
-
-        // A stop that arrived during the hover must not buy a screen grab and
-        // an OCR call: the detect is as expensive as the hover, and a detached
-        // thread cannot be aborted out of it.
-        if *cancel.borrow() {
-            break;
-        }
-
-        // What this iteration points at the screen: the gate's placed crop, the live
-        // cadence's detect, or nothing. See [`look_step`] for the precedence.
-        let look = look_step(
-            session.state.live,
-            gate,
-            detect_step(
-                &session.state,
-                on_cell,
-                session.occlusion.is_open(),
-                last_detect.elapsed(),
-            ),
-        );
-
-        // The probe, and the frame and lines it hands on whether it saw the
-        // chrome or not. The detect below reads the placed layout off those
-        // same lines in THIS iteration — a hit captures, a miss is a miss — so
-        // on a placed screen a voice line costs one grab and one crop OCR
-        // whatever the probe saw; only a pending Recalibrate makes its miss a
-        // manual one ([`locate_decision`]). With no placement the probe OCRs
-        // nothing and hands the frame to the cold-start locate.
-        let mut probed: Option<crate::capture::Capture> = None;
-        let mut probed_lines: Option<Vec<crate::ocr::OcrLineBox>> = None;
-        // When the probe's GRAB started, on the iterations a hit hands that
-        // grab to the detect below. See the timing comment there.
-        let mut probe_started: Option<Instant> = None;
-        if look == Look::Probe {
-            let started = Instant::now();
-            let (tick, image, lines) = probe_tick(&app, &mut session);
-            trigger::note_probe(&app, now);
-            // Reported for the same reason a detect is, and it is always a
-            // no-op: a placed-crop OCR carries `full_frame: false`, which is precisely
-            // the duration the backoff must not read. Going through the state
-            // machine anyway is what stops a later reader deciding the probe is
-            // the exempt path.
-            session.state.note_tick_duration(tick.full_frame, Duration::ZERO);
-            probed = image;
-            probed_lines = lines;
-            probe_started = probed.is_some().then_some(started);
-        }
-
-        // Timed around the DETECT alone. The hover above is not part of what
-        // "this machine cannot hunt at 1 Hz" measures, and folding it in is
-        // what latched the backoff on 2026-08-26. The tick then says whether
-        // its frame was the whole screen, which is the other half of the same
-        // rule — see [`SLOW_TICK`].
-        //
-        // On the PROBE-HIT path the clock starts before the probe's grab, not
-        // here: the detect then runs on that grab and reuses its translated
-        // lines. That reading feeds the backoff for the whole crop tick; only
-        // a cold start or a manual tick's crop miss escalates to full-screen
-        // OCR ([`locate_decision`]).
-        if look == Look::Detect || probed.is_some() {
-            let started = probe_started.unwrap_or_else(Instant::now);
-            let tick = detect::detect_tick(
-                &app,
-                &mut session,
-                cursor,
-                &cancel,
-                probed,
-                probed_lines,
-                probe_started,
-                gate,
-            );
-            let took = started.elapsed();
-            last_detect = Instant::now();
-            // A Scan now is owed ONE detect, and this was it — whatever it
-            // found. Leaving it armed on a miss would turn the button into the
-            // 60 s hunt the gate exists to remove.
-            if gate == trigger::GateStep::FullDetect {
-                trigger::note_full_detect(&app);
-            }
-            if burst_satisfied(tick.outcome) {
-                // The gate did its job. Disarming here rather than letting it
-                // stand down is what keeps the stand-down log honest, and what
-                // sends the loop back to waiting once this window retires.
-                trigger::disarm(&app);
-            }
-            match session.state.note_tick_duration(tick.full_frame, took) {
-                Some(BackoffChange::BackedOff) => crate::app_log(
-                    &app,
-                    format!(
-                        "Merc: capture tick took {} ms — detect cadence backing off to {} s",
-                        took.as_millis(),
-                        DETECT_INTERVAL_SLOW.as_secs()
-                    ),
-                ),
-                Some(BackoffChange::Recovered) => crate::app_log(
-                    &app,
-                    format!(
-                        "Merc: {BACKOFF_DECAY_DETECTS} fast detects — detect cadence back to {} s",
-                        DETECT_INTERVAL.as_secs()
-                    ),
-                ),
-                None => {}
-            }
-        }
-
-        if !nap(&cancel, TICK) {
-            break;
-        }
-    }
-
+    super::press::install_inbox(&app, None);
     // A retired capture must not be left claiming it is on screen. Best-effort
     // by contract: on app exit the process is gone before this runs, which is
     // why `status` — forced to `off` by the SSOT composer once the module is
@@ -2676,6 +1892,119 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         }
     });
     crate::app_log(&app, "Module mercenary: stopped".to_string());
+}
+
+/// The trade tick, on every idle timeout (D7). It reads no screen.
+///
+/// Gated on COMPLETE: a query built from a half-read capture describes a
+/// mercenary nobody has, and it would cost one of three searches to learn that.
+/// `search::tick` does nothing at all until the query has actually moved.
+fn trade_tick(app: &AppHandle, session: &mut Session) {
+    if !session.state.complete {
+        return;
+    }
+    if let (Some(capture), Some(trade)) = (session.current.as_ref(), session.trade.as_mut()) {
+        search::tick(app, capture, &session.vocab, trade, session.revision, now_ms());
+    }
+}
+
+/// The effects one press read runs, in the order [`read_press`] calls them.
+trait PressEffects {
+    fn begin(&mut self);
+    fn fail(&mut self, msg: String);
+    /// The panel read of the pressed frame. `None` when it bailed (stop
+    /// signal, OCR failure).
+    fn panel_read(&mut self, frame: &crate::capture::Capture, cursor: Option<(i32, i32)>) -> Option<DetectOutcome>;
+    /// Whether `cursor` sits on a cell of the capture the panel read left.
+    fn cell_under(&mut self, cursor: (i32, i32)) -> bool;
+    fn tooltip_read(&mut self, frame: &crate::capture::Capture, cursor: (i32, i32));
+    fn end(&mut self);
+}
+
+/// One press = one frame: the panel read, then — when the cursor at the press
+/// sits on a captured cell — the tooltip read of the SAME frame (H1, H2).
+///
+/// The cell is looked up after the panel read: on an occluded press that is
+/// the held capture from an earlier press, on a first press this press's fresh
+/// one. A failed grab reads nothing and counts no miss (D5).
+fn read_press<E: PressEffects>(effects: &mut E, pressed: PressedMercFrame) {
+    let frame = match pressed.frame {
+        Ok(frame) => frame,
+        Err(e) => {
+            effects.fail(format!("Merc: screen capture failed — {e}"));
+            return;
+        }
+    };
+    effects.begin();
+    effects.panel_read(&frame, pressed.cursor);
+    if let Some(cursor) = pressed.cursor {
+        if effects.cell_under(cursor) {
+            effects.tooltip_read(&frame, cursor);
+        }
+    }
+    effects.end();
+}
+
+struct AppPressEffects<'a> {
+    app: &'a AppHandle,
+    session: &'a mut Session,
+    cancel: &'a watch::Receiver<bool>,
+    press_seq: u64,
+    outcome: Option<DetectOutcome>,
+    tooltip: bool,
+}
+
+impl PressEffects for AppPressEffects<'_> {
+    fn begin(&mut self) {
+        // Each press logs its miss once.
+        self.session.miss_logged = false;
+        // `Scanning` only while a press read runs, and only over a resting
+        // status (ruling 5).
+        if trigger::scan_outranks(status(self.app)) {
+            publish_scanning(self.app);
+        }
+    }
+
+    fn fail(&mut self, msg: String) {
+        fail(self.app, self.session, msg);
+        crate::app_log(self.app, "Merc: read on press — error".to_string());
+    }
+
+    fn panel_read(&mut self, frame: &crate::capture::Capture, cursor: Option<(i32, i32)>) -> Option<DetectOutcome> {
+        let tick = detect::detect_tick(self.app, self.session, cursor, self.cancel, frame, self.press_seq);
+        self.outcome = tick.outcome;
+        tick.outcome
+    }
+
+    fn cell_under(&mut self, cursor: (i32, i32)) -> bool {
+        self.session.current.as_ref().and_then(|c| cell_at(c, cursor)).is_some()
+    }
+
+    fn tooltip_read(&mut self, frame: &crate::capture::Capture, cursor: (i32, i32)) {
+        self.tooltip = true;
+        hover_read(self.app, self.session, frame, cursor);
+    }
+
+    fn end(&mut self) {
+        if status(self.app) == MercStatus::Scanning {
+            let want = if self.session.state.live {
+                live_status(self.session.state.complete)
+            } else {
+                MercStatus::Idle
+            };
+            publish_status(self.app, want);
+        }
+        let outcome = match self.outcome {
+            Some(DetectOutcome::Captured) => "Captured",
+            Some(DetectOutcome::Refreshed) => "Refreshed",
+            Some(DetectOutcome::Missed) => "Missed",
+            Some(DetectOutcome::Retired) => "Retired",
+            Some(DetectOutcome::Occluded) => "Occluded",
+            None => "error",
+        };
+        let tooltip = if self.tooltip { ", tooltip read" } else { "" };
+        crate::app_log(self.app, format!("Merc: read on press — {outcome}{tooltip}"));
+    }
 }
 
 /// Park the module as `unavailable` and idle until the stop signal.
@@ -2696,15 +2025,6 @@ fn unavailable(app: &AppHandle, cancel: &watch::Receiver<bool>, reason: String) 
     });
     while nap(cancel, UNFOCUSED_NAP) {}
     crate::app_log(app, "Module mercenary: stopped".to_string());
-}
-
-fn game_focused(app: &AppHandle) -> bool {
-    // The RAW foreground read, not `game_focused`: that one is held over our
-    // own windows so overlay clicks keep the overlays up, and under it this
-    // loop captured the app itself.
-    app.state::<AppState>()
-        .game_in_foreground
-        .load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// The status as last published — one enum out from under the lock, so the
@@ -2779,10 +2099,6 @@ fn merc_placement(app: &AppHandle) -> Option<([i32; 4], f32)> {
     Some((merc.panel, screen.ui_scale))
 }
 
-fn fallback_key(app: &AppHandle) -> FallbackKey {
-    FallbackKey { refit: refit_counter(app), gate: trigger::generation(app) }
-}
-
 fn grow_rect(held: Option<[i32; 4]>, fresh: Option<[i32; 4]>) -> Option<[i32; 4]> {
     match (held, fresh) {
         (Some(held), Some(fresh)) => {
@@ -2808,7 +2124,7 @@ const MERC_GEOMETRY_NOTICE_LINE: &str =
 /// placement, so there is nothing to contradict. This is the only producer of
 /// the origin [`detect::publish_settled`] hands `ssot::remember_anchor`, and
 /// [`locate_decision`] yields [`LocateReason::ManualMiss`] only on a manual
-/// tick, so the anchor moves on Scan now or Recalibrate and nothing else.
+/// read, so the anchor moves on Recalibrate and nothing else.
 fn fallback_panel(
     reason: LocateReason,
     layout: &Result<geometry::MercLayout, geometry::DetectMiss>,
@@ -2854,158 +2170,117 @@ fn fail(app: &AppHandle, session: &mut Session, msg: String) {
     publish(app, |slice| slice.last_error = Some(msg));
 }
 
-/// A detect tick that produced no layout — because nothing was on screen, or
-/// because the screen grab or the OCR failed.
+/// What a press that found no layout decided ([`judge_no_layout`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoLayout {
+    /// The cursor is on the live capture's panel: held, nothing counted.
+    /// `announce` is the once-per-run log gate.
+    Occluded { announce: bool },
+    /// A counted miss, with what it did to the capture.
+    Counted(DetectOutcome),
+}
+
+/// The no-layout decision, on the session alone (r1 #5).
 ///
-/// A failed grab counts as a failed DETECTION, not as a separate kind of
-/// event: the loop cannot see the recruit window either way, and a capture kept
-/// alive through repeated failures would leave the page showing a verdict for a
-/// window that closed two minutes ago. The error itself is already in
-/// `last_error` and in the log.
-fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome {
+/// No layout means no rect from THIS frame; the session's is all there is,
+/// alongside the placement. See [`cursor_on_panel`].
+fn judge_no_layout(
+    session: &mut Session,
+    placed_panel: Option<[i32; 4]>,
+    cursor: Option<(i32, i32)>,
+    now: Instant,
+) -> NoLayout {
+    let in_panel = cursor_on_panel(placed_panel, session.panel, cursor);
+    let live = session.state.live;
+    if session.occlusion.on_occluded(live, in_panel, now) == MissKind::Occluded {
+        return NoLayout::Occluded { announce: session.occlusion.announce() };
+    }
+    NoLayout::Counted(count_miss(session))
+}
+
+/// The state half of a counted miss: fold it into [`LoopState`] and, on a
+/// retire, move the capture to the retained slot.
+fn count_miss(session: &mut Session) -> DetectOutcome {
     let outcome = session.state.on_detect(false);
+    if outcome == DetectOutcome::Retired {
+        retire_state(session);
+    }
+    outcome
+}
+
+/// The state moves of a retire.
+///
+/// The confirmations move to the retained slot rather than being dropped: the
+/// SAME window is often read again seconds later (2026-08-25 smoke). They only
+/// come back onto a panel something POSITIVELY says is this one — see
+/// [`restore_retained`]. Nothing confirmed means nothing to protect, and the
+/// slot holds a whole capture for [`RETAINED_TTL`], so that case drops it all.
+fn retire_state(session: &mut Session) {
+    session.state.retire();
+    session.occlusion.on_retired();
+    let capture = session.current.take();
+    let confirmed = std::mem::take(&mut session.confirmed);
+    let hover_budget = std::mem::take(&mut session.hover_budget);
+    session.retained = match (capture, confirmed.is_empty()) {
+        (Some(capture), false) => Some(Retained { capture, confirmed, hover_budget, at: Instant::now() }),
+        _ => None,
+    };
+    session.panel = None;
+    session.header_guard = None;
+    session.sigs.clear();
+    // An uncorroborated claim is about a cell on a window that is gone.
+    session.pending_confirm = None;
+    // The trade budget dies with the window. The `trade` state on the slice
+    // stays, like the capture it belongs to: the page keeps showing the
+    // retired mercenary's verdict.
+    session.trade = None;
+}
+
+/// A press that produced no layout, counted.
+fn miss(app: &AppHandle, session: &mut Session) -> DetectOutcome {
+    let outcome = count_miss(session);
+    miss_effects(app, outcome);
+    outcome
+}
+
+/// The log and publish half of a counted miss.
+fn miss_effects(app: &AppHandle, outcome: DetectOutcome) {
     let retired = outcome == DetectOutcome::Retired;
     if retired {
-        // ONLY here, and never on a counted miss that did not retire: a run
-        // that hit the cap must stay open so its second miss lands one cadence
-        // later. See [`OcclusionRun`].
-        session.occlusion.on_retired();
-        let capture = session.current.take();
-        let confirmed = std::mem::take(&mut session.confirmed);
-        let hover_budget = std::mem::take(&mut session.hover_budget);
-        // The confirmations move to the retained slot rather than being
-        // dropped: a retire is very often a tooltip the loop could not see
-        // past, and the SAME window is re-detected seconds later (2026-08-25
-        // smoke). They only come back onto a panel something POSITIVELY says
-        // is this one — see [`restore_retained`]. Nothing confirmed
-        // means nothing to protect, and the slot holds a whole capture for
-        // [`RETAINED_TTL`], so that case keeps the old drop-everything path.
-        session.retained = match (capture, confirmed.is_empty()) {
-            (Some(capture), false) => Some(Retained {
-                capture,
-                confirmed,
-                hover_budget,
-                at: Instant::now(),
-            }),
-            _ => None,
-        };
-        session.panel = None;
-        session.header_guard = None;
-        session.sigs.clear();
-        // With the crops. An uncorroborated claim is about a cell on a window
-        // that is gone, and the confirmations that DO survive a retire survive
-        // because a second read already agreed with them.
-        session.pending_confirm = None;
-        // The budget dies with the window. Cancels a merc lookup still on the
-        // shared queue — and only then, see `search::close_session`. The
-        // `trade` state itself stays on the slice, like the capture it belongs
-        // to: the page keeps showing the retired mercenary's verdict, and the
-        // listings are part of that verdict.
-        session.trade = None;
+        // Cancels a merc lookup still on the shared queue — see
+        // `search::close_session`.
         search::close_session(app);
         crate::app_log(app, "Merc: window gone".to_string());
-    }
-    if !retired && errored {
-        // Nothing to say: the error is already in `last_error`, and the capture
-        // stands until it has been missed twice.
-        return outcome;
     }
     publish(app, |slice| {
         if retired {
             slice.status = MercStatus::Idle;
-            // The window this scan was armed for is gone; a name beside a
-            // status that is no longer `scanning` belongs to nothing.
             slice.burst_speaker = None;
             if let Some(capture) = slice.capture.as_mut() {
                 capture.live = false;
                 capture.panel = None;
             }
         }
-        // A clean miss — the loop looked and saw no recruit window — means the
-        // last error is over. Leaving it set would keep a one-off OCR failure
-        // on the page for the rest of the session.
-        if !errored {
-            slice.last_error = None;
-        }
+        // A clean miss — the press looked and saw no recruit window — means the
+        // last error is over.
+        slice.last_error = None;
     });
-    outcome
 }
 
-/// One targeted probe: is the recruit window's chrome on screen?
-///
-/// The platform still captures a whole monitor, but the voice gate OCRs the
-/// SSOT-placed crop. A null slice skips probe OCR and hands the frame to the one
-/// full detect allowed by the fallback budget; this prevents a cold-start probe
-/// plus detect from becoming two full-screen OCRs.
-///
-/// A placed probe hands its frame AND its lines on whatever it saw: the detect
-/// reads the placed layout off those lines, so a hit costs no second OCR, and a
-/// miss escalates to the full-screen locate only while a Recalibrate is pending
-/// ([`locate_decision`]); otherwise it costs nothing beyond the probe.
-fn probe_tick(
-    app: &AppHandle,
-    session: &mut Session,
-) -> (DetectTick, Option<crate::capture::Capture>, Option<Vec<crate::ocr::OcrLineBox>>) {
-    let tick = DetectTick::probe();
-
-    let started = Instant::now();
-    let grab = match crate::capture::capture_screen(app) {
-        Ok(grab) => grab,
-        Err(e) => {
-            fail(app, session, format!("Merc: screen capture failed — {e}"));
-            return (tick, None, None);
+/// Retire the live capture now, for `why` (a Client.txt area change).
+fn retire_now(app: &AppHandle, session: &mut Session, why: &str) {
+    retire_state(session);
+    search::close_session(app);
+    crate::app_log(app, format!("Merc: window gone — {why}"));
+    publish(app, |slice| {
+        slice.status = MercStatus::Idle;
+        slice.burst_speaker = None;
+        if let Some(capture) = slice.capture.as_mut() {
+            capture.live = false;
+            capture.panel = None;
         }
-    };
-    let img = &grab.image;
-    let (iw, ih) = {
-        use image::GenericImageView;
-        img.dimensions()
-    };
-    if let Some(line) = admit_oversize_frame(&mut session.errors, iw, ih, crate::ocr::max_image_dimension()) {
-        crate::app_log(app, line);
-    }
-    let screen = [iw, ih];
-    let grabbed_on = (grab.monitor_id, grab.origin, grab.client);
-    crate::ssot::drop_if_mismatched(app, (iw, ih), grabbed_on.1, grabbed_on.2);
-    let Some((panel, scale)) = merc_placement(app) else {
-        if debug_mode(app) {
-            crate::app_log(
-                app,
-                "Merc: probe has no placed panel — handing the frame to the cold fallback"
-                    .to_string(),
-            );
-        }
-        return (tick, Some(grab), None);
-    };
-    let crop = geometry::placed_panel_crop(panel, scale, screen);
-    let cropped = img.crop_imm(crop[0] as u32, crop[1] as u32, crop[2] as u32, crop[3] as u32);
-    let frame = geometry::Frame::cropped((crop[0], crop[1]), screen);
-
-    // Through the frame like every other OCR result, though nothing downstream
-    // of `probe_hit` reads a box: ONE seam between OCR space and screen space,
-    // taken by every line vector that leaves the engine, is what keeps the next
-    // reader from being the exempt one (`geometry::Frame`).
-    let lines = match crate::ocr::recognize_lines(&cropped) {
-        Ok(lines) => frame.to_screen(lines),
-        Err(e) => {
-            fail(app, session, format!("Merc: OCR failed — {e}"));
-            return (tick, None, None);
-        }
-    };
-    let hit = geometry::probe_hit(&lines, &session.geometry);
-    if debug_mode(app) {
-        crate::app_log(
-            app,
-            format!(
-                "Merc: probe on the {} frame {crop:?} took {} ms, {} lines — {}",
-                frame.describe(),
-                started.elapsed().as_millis(),
-                lines.len(),
-                if hit { "chrome found" } else { "no chrome" },
-            ),
-        );
-    }
-    (tick, Some(grab), Some(lines))
+        slice.last_error = None;
+    });
 }
 
 /// The screen slice a detect tick publishes for `screen` at `scale`.
@@ -3219,14 +2494,8 @@ fn restore_retained(session: &mut Session, next: &MercCapture) -> Restore {
 
 /// The cursor, with a failed read surfaced once.
 ///
-/// One reader for the whole iteration, with ONE named exception: the hover
-/// confirm and the detect gate ([`detect_step`]) are two questions about the
-/// same cursor, and two reads would let them answer about different positions,
-/// so the loop reads it once at the top and hands the answer to both. The
-/// exception is [`hover_tick`]'s read immediately AFTER its screen grab, which
-/// asks a different question — whether the cursor was still in the cell while
-/// the frame carrying the tooltip was taken — and cannot be answered by a value
-/// read before the grab.
+/// The press carries the cursor at the press; this is [`hover_read`]'s one
+/// read of its own, which asks whether the cursor is still in the cell.
 fn read_cursor(app: &AppHandle, session: &mut Session) -> Option<(i32, i32)> {
     match crate::capture_mouse_position() {
         Ok(c) => Some(c),
@@ -3237,29 +2506,24 @@ fn read_cursor(app: &AppHandle, session: &mut Session) -> Option<(i32, i32)> {
     }
 }
 
-/// One hover tick: if the cursor sits in an unconfirmed captured cell, read the
-/// tooltip and let it name the cell (D5).
+/// The tooltip read of a pressed frame: if the cursor at the press sits in a
+/// captured cell, read the tooltip in `frame` and let it name the cell (D5).
 ///
-/// `cursor` — the position everything up to the grab is decided on — comes from
-/// the loop, not from a read of this tick's own. The tick then takes ONE read of
-/// its own, straight after the grab, to ask whether the cursor was still in the
-/// cell while the frame was taken; see the comment at that read and
-/// [`read_cursor`].
+/// `frame` is the press's one grab; nothing here takes another. The read then
+/// asks, with one cursor read of its own, whether the cursor is still in the
+/// cell now that the worker has the frame; see the comment at that read.
 ///
-/// Returns whether this tick actually CONFIRMED a cell. The loop uses that to
-/// decide which clock the next hover is due on: see the stamp at the call
-/// site. Every early exit — no capture, no cell under the cursor, a spent
-/// budget, a failed grab, a tooltip that named nothing — is a `false`.
-fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> bool {
+/// Returns whether this read actually CONFIRMED a cell. Every early exit — no
+/// capture, no cell under the cursor, a spent budget, a tooltip that named
+/// nothing — is a `false`.
+fn hover_read(app: &AppHandle, session: &mut Session, frame: &crate::capture::Capture, cursor: (i32, i32)) -> bool {
     let Some(capture) = session.current.clone() else {
         return false;
     };
     let Some((ri, si)) = cell_at(&capture, cursor) else {
         return false;
     };
-    // The budget is charged HERE, before the screen grab and the OCR that
-    // follow it — everything above this line is one cursor read, which is what
-    // makes leaving the tick running over a finished capture cheap.
+    // The budget is charged HERE, before the OCR that follows it.
     let cell_key = (row_key(&capture.rows[ri].skill), capture.rows[ri].supports[si].slot);
     if !session
         .hover_budget
@@ -3272,30 +2536,16 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
         return false;
     };
 
-    // A FRESH grab: the tooltip is only on screen now, and was not in the
-    // detect frame. The template still comes from the detect frame's crop.
-    let grab_started = Instant::now();
-    let img = match crate::capture::capture_screen(app) {
-        Ok(grab) => grab.image,
-        Err(e) => {
-            fail(app, session, format!("Merc: hover capture failed — {e}"));
-            return false;
-        }
-    };
-    let grab_ms = grab_started.elapsed().as_millis();
-    // THE DELIBERATE SECOND CURSOR READ (POE-207). The loop reads the cursor
-    // once per iteration on purpose — see [`read_cursor`] — because the hover,
-    // the detect gate and the header-withholding rule must agree about where it
-    // was. This read is not one of those three: it asks a question only
-    // answerable AFTER the grab, namely whether the cursor was still in the
-    // cell while the frame that carries the tooltip was being taken. A cursor
-    // that has moved on means the tooltip in this frame may belong to the cell
-    // it left — the lag that filed 19 wrong templates on 2026-08-26 — so the
-    // read is thrown away before it costs an OCR.
+    let img = &frame.image;
+    // THE DELIBERATE SECOND CURSOR READ (POE-207, M6). Everything above was
+    // decided on the cursor at the press. This read asks whether the cursor is
+    // still in the cell now that the worker has the frame. A cursor that has
+    // moved on means the tooltip in this frame may belong to the cell it left —
+    // the lag that filed 19 wrong templates on 2026-08-26 — so the read is
+    // thrown away before it costs an OCR. A cursor read is not a screen read.
     //
-    // An UNREADABLE cursor is not evidence of movement, so it does not discard:
-    // the same rule the detect gate applies one level up. `read_cursor` has
-    // already surfaced the failure once.
+    // An UNREADABLE cursor is not evidence of movement, so it does not discard.
+    // `read_cursor` has already surfaced the failure once.
     if let Some(after) = read_cursor(app, session) {
         if cell_at(&capture, after) != Some((ri, si)) {
             // NOT charged to the cell, for the same reason a guard-discarded
@@ -3341,17 +2591,14 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
         }
     };
     let ocr_ms = ocr_started.elapsed().as_millis();
-    // Where the 400 ms cadence actually goes. Three numbers rather than one
-    // total: the grab is a whole-screen copy the loop cannot avoid, the
-    // preprocess is the part this change traded accuracy for, and the OCR is
-    // the part that scales with the region — which is why the region's size is
-    // on the line too.
+    // Where the tooltip read's time goes: the preprocess is the part this
+    // path traded accuracy for, and the OCR is the part that scales with the
+    // region — which is why the region's size is on the line too.
     if debug_mode(app) {
         crate::app_log(
             app,
             format!(
-                "Merc: hover read {}×{} px — grab {grab_ms} ms, preprocess {preprocess_ms} ms, \
-                 OCR {ocr_ms} ms",
+                "Merc: hover read {}×{} px — preprocess {preprocess_ms} ms, OCR {ocr_ms} ms",
                 region[2], region[3]
             ),
         );
@@ -3846,7 +3093,7 @@ mod tests {
 
     #[test]
     fn a_fallback_budget_spends_one_locate_per_key() {
-        let key = FallbackKey { refit: 4, gate: 9 };
+        let key = FallbackKey { refit: 4, press: 9 };
         let mut budget = FallbackBudget::default();
 
         assert!(budget.take(key));
@@ -3856,17 +3103,17 @@ mod tests {
     /// The placement of the 2026-09-10 incident:
     /// `merc: placed panel [725,552,498,428] contradicted by detect …`.
     const INCIDENT_PLACEMENT: ([i32; 4], f32) = ([725, 552, 498, 428], 1.0);
-    const LOCATE_KEY: FallbackKey = FallbackKey { refit: 4, gate: 9 };
+    const LOCATE_KEY: FallbackKey = FallbackKey { refit: 4, press: 9 };
 
-    /// A live re-detect with no Recalibrate pending: nothing armed, and the
-    /// locate decision last treated the counter it reads now as acted on.
+    /// A press with no Recalibrate pending: the locate decision last treated
+    /// the counter it reads now as acted on.
     fn unasked() -> bool {
-        manual_tick(trigger::GateStep::Resting, 4, 4)
+        refit_requested(4, 4)
     }
 
-    /// A tick served for Scan now, with no Recalibrate pending.
-    fn scan_now() -> bool {
-        manual_tick(trigger::GateStep::FullDetect, 4, 4)
+    /// A press while a Recalibrate is pending.
+    fn recalibrate_pending() -> bool {
+        refit_requested(3, 4)
     }
 
     #[test]
@@ -3891,42 +3138,42 @@ mod tests {
     }
 
     #[test]
-    fn scan_now_with_a_crop_miss_locates_against_the_placement() {
-        let mut budget = FallbackBudget::default();
-        let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Missed));
-
-        assert_eq!(
-            locate_decision(placed, scan_now(), &mut budget, LOCATE_KEY),
-            LocateDecision::Locate(LocateReason::ManualMiss { placed: INCIDENT_PLACEMENT }),
-        );
-    }
-
-    #[test]
     fn a_pending_recalibrate_with_a_crop_miss_locates_against_the_placement() {
         let mut budget = FallbackBudget::default();
         let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Missed));
-        let recalibrate_pending = manual_tick(trigger::GateStep::Resting, 3, 4);
 
         assert_eq!(
-            locate_decision(placed, recalibrate_pending, &mut budget, LOCATE_KEY),
+            locate_decision(placed, recalibrate_pending(), &mut budget, LOCATE_KEY),
             LocateDecision::Locate(LocateReason::ManualMiss { placed: INCIDENT_PLACEMENT }),
         );
     }
 
+    /// Ruling 2: a placed miss on a press with no Recalibrate pending is a miss.
     #[test]
-    fn a_voice_probe_tick_is_not_manual() {
-        assert!(!manual_tick(trigger::GateStep::Probe, 4, 4));
-    }
-
-    #[test]
-    fn a_voice_probe_miss_trusts_the_placement() {
+    fn a_placed_miss_without_a_pending_recalibrate_trusts_the_placement() {
         let mut budget = FallbackBudget::default();
         let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Missed));
-        let voice_probe = manual_tick(trigger::GateStep::Probe, 4, 4);
 
         assert_eq!(
-            locate_decision(placed, voice_probe, &mut budget, LOCATE_KEY),
+            locate_decision(placed, unasked(), &mut budget, LOCATE_KEY),
             LocateDecision::TrustPlacement,
+        );
+    }
+
+    /// Each press opens a new cold-start locate: the key carries the press.
+    #[test]
+    fn a_new_press_buys_a_new_cold_start() {
+        let mut budget = FallbackBudget::default();
+        let press = |n| FallbackKey { refit: 4, press: n };
+
+        assert_eq!(
+            locate_decision(None, unasked(), &mut budget, press(1)),
+            LocateDecision::Locate(LocateReason::ColdStart),
+        );
+        assert_eq!(locate_decision(None, unasked(), &mut budget, press(1)), LocateDecision::ColdStartSpent);
+        assert_eq!(
+            locate_decision(None, unasked(), &mut budget, press(2)),
+            LocateDecision::Locate(LocateReason::ColdStart),
         );
     }
 
@@ -3951,7 +3198,7 @@ mod tests {
         locate_decision(moved, unasked(), &mut budget, LOCATE_KEY);
 
         assert_eq!(
-            locate_decision(moved, scan_now(), &mut budget, LOCATE_KEY),
+            locate_decision(moved, recalibrate_pending(), &mut budget, LOCATE_KEY),
             LocateDecision::Locate(LocateReason::ManualMiss { placed: INCIDENT_PLACEMENT }),
         );
     }
@@ -3960,10 +3207,8 @@ mod tests {
     fn a_manual_tick_whose_placed_read_hit_does_not_locate() {
         let mut budget = FallbackBudget::default();
         let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Hit));
-        let scan_now_and_recalibrate = manual_tick(trigger::GateStep::FullDetect, 3, 4);
-
         assert_eq!(
-            locate_decision(placed, scan_now_and_recalibrate, &mut budget, LOCATE_KEY),
+            locate_decision(placed, recalibrate_pending(), &mut budget, LOCATE_KEY),
             LocateDecision::TrustPlacement,
         );
     }
@@ -3972,10 +3217,10 @@ mod tests {
     fn a_manual_miss_locates_once_per_key() {
         let mut budget = FallbackBudget::default();
         let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Missed));
-        locate_decision(placed, scan_now(), &mut budget, LOCATE_KEY);
+        locate_decision(placed, recalibrate_pending(), &mut budget, LOCATE_KEY);
 
         assert_eq!(
-            locate_decision(placed, scan_now(), &mut budget, LOCATE_KEY),
+            locate_decision(placed, recalibrate_pending(), &mut budget, LOCATE_KEY),
             LocateDecision::TrustPlacement,
             "the key's one locate is spent; the tick keeps its own placed miss",
         );
@@ -4062,9 +3307,9 @@ mod tests {
     fn a_new_key_says_the_column_line_again() {
         let mut said = None;
         column_trusted_line(&mut said, LOCATE_KEY);
-        let next_arm = FallbackKey { refit: 4, gate: 10 };
+        let next_press = FallbackKey { refit: 4, press: 10 };
 
-        assert_eq!(column_trusted_line(&mut said, next_arm), Some(MERC_COLUMN_TRUSTED_LINE));
+        assert_eq!(column_trusted_line(&mut said, next_press), Some(MERC_COLUMN_TRUSTED_LINE));
     }
 
     #[test]
@@ -4077,15 +3322,15 @@ mod tests {
     }
 
     #[test]
-    fn a_new_refit_or_gate_generation_gets_a_new_fallback_budget() {
-        let first = FallbackKey { refit: 4, gate: 9 };
-        let next_refit = FallbackKey { refit: 5, gate: 9 };
-        let next_gate = FallbackKey { refit: 4, gate: 10 };
+    fn a_new_refit_or_press_gets_a_new_fallback_budget() {
+        let first = FallbackKey { refit: 4, press: 9 };
+        let next_refit = FallbackKey { refit: 5, press: 9 };
+        let next_press = FallbackKey { refit: 4, press: 10 };
         let mut budget = FallbackBudget::default();
 
         assert!(budget.take(first));
         assert!(budget.take(next_refit));
-        assert!(budget.take(next_gate));
+        assert!(budget.take(next_press));
     }
 
     #[test]
@@ -4147,59 +3392,6 @@ mod tests {
         );
     }
 
-    /// A window that blinks for one tick must NOT be retired — the page would
-    /// drop a verdict the user is still looking at. Two consecutive misses is
-    /// the rule (D6).
-    #[test]
-    fn one_missed_detection_keeps_the_capture_live() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-
-        let outcome = st.on_detect(false);
-
-        assert_eq!(outcome, DetectOutcome::Missed);
-        assert!(st.live, "one miss must not retire a live capture");
-    }
-
-    #[test]
-    fn two_consecutive_missed_detections_retire_the_capture() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-        st.on_detect(false);
-
-        let outcome = st.on_detect(false);
-
-        assert_eq!(outcome, DetectOutcome::Retired);
-        assert!(!st.live);
-    }
-
-    /// The misses must be CONSECUTIVE: a hit between two misses resets the
-    /// count, or a flickering read would retire a window that never left.
-    #[test]
-    fn a_successful_detection_between_misses_resets_the_miss_count() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-        st.on_detect(false);
-
-        assert_eq!(st.on_detect(true), DetectOutcome::Refreshed);
-        assert_eq!(st.on_detect(false), DetectOutcome::Missed);
-        assert!(st.live, "the earlier miss must not count toward this one");
-    }
-
-    /// Retiring twice in a row must not need four misses the second time.
-    #[test]
-    fn the_miss_count_resets_after_a_retirement() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-        st.on_detect(false);
-        st.on_detect(false);
-
-        st.on_detect(true);
-        st.on_detect(false);
-
-        assert_eq!(st.on_detect(false), DetectOutcome::Retired);
-    }
-
     /// A miss with nothing live is a no-op, not a retirement — otherwise the
     /// idle loop would log "window gone" every second forever.
     #[test]
@@ -4217,292 +3409,6 @@ mod tests {
 
         assert_eq!(st.on_detect(true), DetectOutcome::Captured);
         assert_eq!(st.on_detect(true), DetectOutcome::Refreshed);
-    }
-
-    /// The idle cadence is 1 s; a live one re-detects at 2 s (D6).
-    #[test]
-    fn a_live_capture_re_detects_on_the_slower_cadence() {
-        let mut st = LoopState::default();
-        assert_eq!(st.detect_interval(), DETECT_INTERVAL);
-
-        st.on_detect(true);
-
-        assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
-    }
-
-    /// A detect that OCR'd the whole screen — the only frame kind the backoff
-    /// is allowed to read. See [`SLOW_TICK`].
-    const FULL: bool = true;
-    /// A detect that OCR'd a crop of a known panel.
-    const CROP: bool = false;
-
-    /// The backoff fires once and only once, and only above the threshold.
-    #[test]
-    fn a_slow_detect_tick_backs_the_idle_cadence_off_once() {
-        let mut st = LoopState::default();
-
-        assert_eq!(st.note_tick_duration(FULL, SLOW_TICK), None, "at the threshold is not over it");
-        assert_eq!(st.detect_interval(), DETECT_INTERVAL);
-        assert_eq!(
-            st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1)),
-            Some(BackoffChange::BackedOff),
-        );
-        assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW);
-        assert_eq!(
-            st.note_tick_duration(FULL, Duration::from_secs(9)),
-            None,
-            "the backoff line is logged once, not on every slow tick",
-        );
-    }
-
-    /// The decay. MEASURED 2026-08-26 (app.log 09:40:06): ONE 4504 ms reading
-    /// latched the backoff for the life of the thread, and every first detect
-    /// after a voice line from then on waited 3 s. Once the machine is
-    /// demonstrably keeping up again — which the placed-crop detect is what
-    /// makes possible — the hunt goes back to 1 Hz.
-    #[test]
-    fn a_run_of_fast_detects_takes_the_backoff_off_again() {
-        let mut st = LoopState::default();
-        st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1));
-        assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW, "arrange: backed off");
-
-        for _ in 1..BACKOFF_DECAY_DETECTS {
-            assert_eq!(st.note_tick_duration(FULL, SLOW_TICK), None, "one fast detect is not a trend");
-            assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW);
-        }
-
-        assert_eq!(st.note_tick_duration(FULL, SLOW_TICK), Some(BackoffChange::Recovered));
-        assert_eq!(st.detect_interval(), DETECT_INTERVAL);
-    }
-
-    /// The run has to be CONSECUTIVE, or a machine alternating fast and slow
-    /// detects would flap the cadence — and with it the log line that
-    /// announces it.
-    #[test]
-    fn a_slow_detect_restarts_the_run_the_decay_counts() {
-        let mut st = LoopState::default();
-        st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1));
-        for _ in 1..BACKOFF_DECAY_DETECTS {
-            st.note_tick_duration(FULL, SLOW_TICK);
-        }
-
-        assert_eq!(
-            st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1)),
-            None,
-            "already backed off — nothing to announce",
-        );
-
-        assert_eq!(st.note_tick_duration(FULL, SLOW_TICK), None, "the run starts over");
-        assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW);
-    }
-
-    /// Recovery is announced once, exactly like the backoff.
-    #[test]
-    fn a_recovered_cadence_is_not_announced_again_on_the_next_fast_detect() {
-        let mut st = LoopState::default();
-        st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1));
-        for _ in 0..BACKOFF_DECAY_DETECTS {
-            st.note_tick_duration(FULL, SLOW_TICK);
-        }
-        assert_eq!(st.detect_interval(), DETECT_INTERVAL, "arrange: recovered");
-
-        assert_eq!(st.note_tick_duration(FULL, SLOW_TICK), None);
-    }
-
-    /// The crop gate. A placed-crop detect is a fraction of a full-screen OCR by
-    /// construction, so a slow one is not evidence that hunting at 1 Hz is
-    /// unaffordable — and the cadence it would slow down does not run while a
-    /// panel is known anyway.
-    #[test]
-    fn a_slow_cropped_re_detect_does_not_back_the_hunt_off() {
-        let mut st = LoopState::default();
-
-        assert_eq!(st.note_tick_duration(CROP, Duration::from_secs(9)), None);
-        assert_eq!(st.detect_interval(), DETECT_INTERVAL, "the hunt is untouched");
-    }
-
-    /// The PROBE is on the same side of that gate, and it is the one that
-    /// would break it fastest: a placed-crop OCR is nearly free and the gate fires two
-    /// of them per voice line, so a probe reporting `full_frame: true` would
-    /// take a backoff off within seconds of walking through an arena — on
-    /// evidence about a known panel rather than a full-screen hunt.
-    #[test]
-    fn a_probes_tick_never_decays_the_backoff() {
-        let mut st = LoopState::default();
-        st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1));
-        assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW, "arrange: backed off");
-
-        for _ in 0..BACKOFF_DECAY_DETECTS * 2 {
-            assert_eq!(
-                st.note_tick_duration(DetectTick::probe().full_frame, Duration::ZERO),
-                None,
-            );
-        }
-
-        assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW);
-    }
-
-    /// …and the same in the other direction: fast crops must not decay a
-    /// backoff the full-screen hunt earned, or the cadence would recover on
-    /// evidence about a cheaper question.
-    #[test]
-    fn fast_cropped_re_detects_do_not_decay_the_backoff() {
-        let mut st = LoopState::default();
-        st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1));
-
-        for _ in 0..BACKOFF_DECAY_DETECTS * 2 {
-            assert_eq!(st.note_tick_duration(CROP, Duration::from_millis(50)), None);
-        }
-
-        assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW);
-    }
-
-    // -- whether an iteration detects at all --------------------------------
-
-    /// No occlusion run is open: the detect the hold would displace has not yet
-    /// failed. Every hold test below is in this state.
-    const CLEAR: bool = false;
-    /// A detect HAS already come back with no layout while the cursor sat on
-    /// the panel.
-    const OCCLUDED: bool = true;
-
-    /// The cadence still gates everything: a hold is a decision taken when a
-    /// detect was otherwise DUE, not a reason to look early.
-    #[test]
-    fn an_iteration_inside_the_cadence_waits_whatever_the_cursor_is_doing() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-
-        assert_eq!(
-            detect_step(&st, true, CLEAR, REDETECT_INTERVAL - Duration::from_millis(1)),
-            DetectStep::Wait,
-        );
-    }
-
-    /// The latency fix. MEASURED 2026-08-26 (app.log 09:40:06-09:40:57):
-    /// confirms landed 4-10 s apart because each waited behind a 4.5 s
-    /// re-detect of a panel that had not moved. A cursor inside a captured cell
-    /// is proof the window is on screen.
-    #[test]
-    fn a_cursor_inside_a_captured_cell_holds_the_re_detect() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-
-        assert_eq!(detect_step(&st, true, CLEAR, REDETECT_INTERVAL), DetectStep::HoldForConfirm);
-    }
-
-    /// With the cursor off the grid there is nothing being confirmed, and the
-    /// re-detect is the only thing watching the window.
-    #[test]
-    fn a_cursor_off_the_grid_does_not_hold_the_re_detect() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-
-        assert_eq!(detect_step(&st, false, CLEAR, REDETECT_INTERVAL), DetectStep::Run);
-    }
-
-    /// Nothing captured means no cell to be inside and nothing to confirm — the
-    /// hunt must not be holdable, or an armed burst could never find a window.
-    #[test]
-    fn nothing_live_is_never_held() {
-        let st = LoopState::default();
-
-        assert_eq!(detect_step(&st, true, CLEAR, DETECT_INTERVAL), DetectStep::Run);
-    }
-
-    /// The ceiling. A cursor parked on a cell must not stop the loop ever
-    /// noticing a window that closed, so a whole liveness interval without a
-    /// detect ends the hold whatever the cursor is doing.
-    #[test]
-    fn a_cursor_parked_on_a_cell_still_gets_its_liveness_re_detect() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-
-        assert_eq!(detect_step(&st, true, CLEAR, LIVENESS_INTERVAL), DetectStep::Run);
-    }
-
-    /// A hold is NOT a miss. Composed the way the loop composes them: the hold
-    /// never reaches `on_detect`, so it cannot advance the retire counter — and
-    /// it fires exactly when a tooltip is up, which is the frame the detect
-    /// fails on. Without the hold these two iterations are two misses and the
-    /// capture the player is confirming retires under them.
-    #[test]
-    fn holding_the_re_detect_while_the_player_confirms_never_retires_the_capture() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-        let mut since = Duration::ZERO;
-
-        for _ in 0..RETIRE_AFTER {
-            since += REDETECT_INTERVAL;
-            if detect_step(&st, true, CLEAR, since) == DetectStep::Run {
-                // What a detect under a tooltip returns.
-                st.on_detect(false);
-                since = Duration::ZERO;
-            }
-        }
-
-        assert!(st.live, "the window the player is hovering is still on screen");
-        assert_eq!(st.misses, 0, "a held iteration is not evidence of a closed window");
-    }
-
-    /// A cursor parked on a cell must not hold a CLOSED window's verdict on
-    /// screen for ever — and the schedule it comes off on is the composition of
-    /// three rules, not `detect_step`'s ceiling alone. Composed here the way
-    /// the loop composes it, because the arithmetic over `detect_step` and
-    /// `on_detect` by themselves describes a path no closed window takes: a
-    /// cursor on a cell is a cursor inside the panel, so every failed detect
-    /// goes through [`OcclusionRun`] first and is HELD, not counted, until the
-    /// cap.
-    ///
-    /// The 28 s is [`LIVENESS_INTERVAL`] for the held ceiling to arrive
-    /// (10 s), then [`OCCLUDED_MAX`] of occluded ticks rounded up to the
-    /// [`REDETECT_INTERVAL`] grid the hold-suppression puts them back on
-    /// (16 s), then one more cadence for the second of [`RETIRE_AFTER`]
-    /// misses (2 s). Without the suppression those last three ticks are 10 s
-    /// apart and the same close takes 40 s.
-    #[test]
-    fn a_window_closed_under_a_parked_cursor_retires_once_the_occlusion_cap_has_passed() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-        let mut run = OcclusionRun::default();
-        let start = Instant::now();
-        let (mut since, mut elapsed, mut retired_at) = (Duration::ZERO, Duration::ZERO, None);
-
-        // The loop's own quantum, so the cadences fall where they really fall.
-        while elapsed < Duration::from_secs(120) {
-            since += TICK;
-            elapsed += TICK;
-            if detect_step(&st, true, run.is_open(), since) != DetectStep::Run {
-                continue;
-            }
-            since = Duration::ZERO;
-            // A detect that found no layout, with the cursor inside the panel:
-            // exactly what `detect_tick` does with one.
-            if run.on_occluded(st.live, true, start + elapsed) == MissKind::Occluded {
-                continue;
-            }
-            if st.on_detect(false) == DetectOutcome::Retired {
-                run.on_retired();
-                retired_at = Some(elapsed);
-                break;
-            }
-        }
-
-        assert_eq!(retired_at, Some(Duration::from_secs(28)));
-        assert!(!st.live);
-    }
-
-    /// The hold's premise is that the cursor proves the window is on screen. A
-    /// detect that already came back with no layout under that cursor is that
-    /// premise disproved, so the loop stops holding and goes back to the
-    /// re-detect cadence — which is the cadence [`OCCLUDED_MAX`] is sized
-    /// against.
-    #[test]
-    fn an_open_occlusion_run_ends_the_hold() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-
-        assert_eq!(detect_step(&st, true, OCCLUDED, REDETECT_INTERVAL), DetectStep::Run);
     }
 
     // -- the off-tick template-store write ----------------------------------
@@ -4649,132 +3555,6 @@ mod tests {
             done_rx.recv_timeout(Duration::from_millis(300)).is_err(),
             "two queued confirms are one write, not two",
         );
-    }
-
-    /// The backoff governs the HUNT, not a found window: a live capture keeps
-    /// its 2 s re-detect even on a slow machine.
-    #[test]
-    fn the_backoff_does_not_slow_a_live_capture() {
-        let mut st = LoopState::default();
-        st.note_tick_duration(FULL, Duration::from_secs(3));
-        st.on_detect(true);
-
-        assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
-    }
-
-    /// The 2026-08-25 fix: a capture with nothing left to read drops from the
-    /// 2 s re-read to the 10 s liveness check. Those re-reads are what made the
-    /// header blink between two OCR readings of the same unchanged pixels.
-    #[test]
-    fn a_completed_capture_drops_to_the_liveness_cadence() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-        assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
-
-        assert!(st.note_complete(true), "the pause is announced on the tick it starts");
-
-        assert_eq!(st.detect_interval(), LIVENESS_INTERVAL);
-    }
-
-    /// Said once, not on every liveness check — the loop keeps publishing a
-    /// complete capture for as long as the window is on screen.
-    #[test]
-    fn a_capture_that_is_still_complete_is_not_announced_again() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-        st.note_complete(true);
-
-        assert!(!st.note_complete(true));
-    }
-
-    /// Not sticky, unlike the backoff: a re-read that lost a field has
-    /// something to find again, so the working cadence comes back.
-    #[test]
-    fn a_capture_that_stops_being_complete_returns_to_the_working_cadence() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-        st.note_complete(true);
-
-        st.note_complete(false);
-
-        assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
-    }
-
-    /// Scan now over a completed capture means the player believes something on
-    /// screen changed that the paused loop would not have looked for — they
-    /// recruited, or rematched. It is the only caller: a voice line over a
-    /// held capture never arms (`trigger::capture_held`, `disarm_probe`).
-    #[test]
-    fn a_new_burst_resumes_a_paused_capture() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-        st.note_complete(true);
-
-        assert!(st.resume(), "the resume is announced only when it resumed something");
-
-        assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
-        assert!(!st.resume(), "a second press over a capture being read says nothing");
-    }
-
-    /// A resume changes the CADENCE, and [`RETIRE_AFTER`] counts ticks rather
-    /// than time — so a miss accumulated at the 10 s liveness cadence is not
-    /// part of the evidence that a window seen 2 s ago has closed. MEASURED
-    /// 2026-08-26 (app.log 09:41:52 → 09:41:57) on the shape this replaced: one
-    /// liveness miss, an arm four seconds later, one re-detect miss, "window
-    /// gone" — with the recruit window still open, and restored seven seconds
-    /// afterwards.
-    #[test]
-    fn a_resume_clears_the_misses_the_previous_cadence_counted() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-        st.note_complete(true);
-        st.on_detect(false);
-
-        st.resume();
-
-        assert_eq!(
-            st.on_detect(false),
-            DetectOutcome::Missed,
-            "the first miss after a resume is the first miss, not the second",
-        );
-        assert!(st.live);
-    }
-
-    /// A resume that resumes NOTHING must leave the miss counter alone. Scan
-    /// now is reachable while the loop is already re-detecting, and there the
-    /// misses are the evidence: they were counted at the cadence still running,
-    /// and two of them mean the window closed. Zeroing on every press would let
-    /// a player leaning on the button hold a closed window's capture on screen
-    /// indefinitely.
-    #[test]
-    fn a_burst_over_a_capture_already_being_read_keeps_its_misses() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-        st.on_detect(false);
-
-        assert!(!st.resume(), "arrange: nothing was paused, so nothing resumed");
-
-        assert_eq!(
-            st.on_detect(false),
-            DetectOutcome::Retired,
-            "the second consecutive miss still retires",
-        );
-    }
-
-    /// The completeness belongs to the capture, not to the thread: the next
-    /// window must be hunted at the hunting cadence, not at the liveness one.
-    #[test]
-    fn retiring_a_completed_capture_clears_the_pause() {
-        let mut st = LoopState::default();
-        st.on_detect(true);
-        st.note_complete(true);
-
-        for _ in 0..RETIRE_AFTER {
-            st.on_detect(false);
-        }
-
-        assert!(!st.complete);
-        assert_eq!(st.detect_interval(), DETECT_INTERVAL);
     }
 
     /// The status of a window already on screen, from the loop's own state.
@@ -6500,198 +5280,15 @@ mod tests {
     /// `nap` slices every wait into `TICK`s and clamps the last one, so TICK
     /// under the ceiling is the compliance argument. The per-constant check is
     /// the backstop for a wait that is ever slept RAW rather than through
-    /// `nap` — that one blocks for its whole length.
-    ///
-    /// [`LIVENESS_INTERVAL`] is deliberately NOT in the list, and it is the
-    /// constant that shows what the list actually means: at 10 s it is over the
-    /// ceiling, and it is safe anyway because a CADENCE is not a wait. The loop
-    /// naps `TICK` at a time and asks at each wake whether the cadence has
-    /// elapsed, so a longer cadence costs a stop signal nothing. Sleeping one
-    /// raw is what the rule forbids.
+    /// `nap` — that one blocks for its whole length. The worker's inbox wait
+    /// is one `TICK` (`worker_loop`).
     #[test]
     fn every_wait_stays_under_the_module_poll_ceiling() {
         let ceiling = crate::modules::MODULE_THREAD_POLL_CEILING;
         assert!(TICK < ceiling, "TICK {TICK:?} must stay well under {ceiling:?}");
-        for wait in [
-            TICK,
-            IDLE_NAP,
-            UNFOCUSED_NAP,
-            HOVER_INTERVAL,
-            DETECT_INTERVAL,
-            DETECT_INTERVAL_SLOW,
-            REDETECT_INTERVAL,
-        ] {
+        for wait in [TICK, UNFOCUSED_NAP] {
             assert!(wait < ceiling, "{wait:?} must stay under the {ceiling:?} ceiling");
         }
-    }
-
-    /// POE-198's promise in one assertion: with no capture live and a resting
-    /// gate, the loop does no screen work at all.
-    #[test]
-    fn a_focused_loop_with_nothing_asked_of_it_does_no_work() {
-        assert_eq!(next_step(false, trigger::GateStep::Resting, true), LoopStep::Idle);
-    }
-
-    #[test]
-    fn a_due_probe_makes_a_focused_loop_work() {
-        assert_eq!(next_step(false, trigger::GateStep::Probe, true), LoopStep::Work);
-    }
-
-    #[test]
-    fn a_scan_now_makes_a_focused_loop_work() {
-        assert_eq!(next_step(false, trigger::GateStep::FullDetect, true), LoopStep::Work);
-    }
-
-    /// The state IDLE_NAP would round up. A gate waiting for a 500 ms probe
-    /// naps a quantum, so the probe lands within 100 ms of its deadline rather
-    /// than at the next 250 ms boundary — and it must not be Work either, or an
-    /// armed gate would grab the screen at 10 Hz for the half second before its
-    /// probe is due.
-    #[test]
-    fn a_gate_waiting_for_its_probe_neither_works_nor_takes_the_idle_nap() {
-        assert_eq!(next_step(false, trigger::GateStep::Waiting, true), LoopStep::Waiting);
-    }
-
-    /// The gate waits for the game rather than being spent on our own window —
-    /// the alt-tab case the trigger exists to cover.
-    #[test]
-    fn an_armed_gate_does_not_work_while_the_game_is_not_in_front() {
-        for gate in [
-            trigger::GateStep::Probe,
-            trigger::GateStep::FullDetect,
-            trigger::GateStep::Waiting,
-        ] {
-            assert_eq!(next_step(false, gate, false), LoopStep::Unfocused, "{gate:?}");
-        }
-    }
-
-    /// A live capture keeps its own cadence with a resting gate: retirement
-    /// takes two misses, and dropping to Idle after one would strand it.
-    #[test]
-    fn a_live_capture_keeps_working_without_a_gate() {
-        assert_eq!(next_step(true, trigger::GateStep::Resting, true), LoopStep::Work);
-    }
-
-    #[test]
-    fn an_unfocused_game_stops_a_live_capture_too() {
-        assert_eq!(next_step(true, trigger::GateStep::FullDetect, false), LoopStep::Unfocused);
-    }
-
-    /// A paused capture still WORKS — the liveness check is a detect tick like
-    /// any other, and what makes it cheap is its cadence, not a skipped step.
-    /// Idling here instead would leave a retired window on screen for good.
-    #[test]
-    fn a_completed_capture_still_works_so_the_liveness_check_can_run() {
-        let paused = LoopState { live: true, complete: true, ..LoopState::default() };
-
-        assert_eq!(next_step(paused.live, trigger::GateStep::Resting, true), LoopStep::Work);
-        assert_eq!(paused.detect_interval(), LIVENESS_INTERVAL);
-    }
-
-    // -- what a working iteration points at the screen ----------------------
-
-    /// The gate's own promise, in the one function that can break it: a voice
-    /// line buys the PLACED CROP, never the 39-line full screen. Anything that reached
-    /// `Look::Detect` here would be the burst back, one probe at a time.
-    #[test]
-    fn a_due_probe_looks_at_the_crop_and_not_the_screen() {
-        assert_eq!(
-            look_step(false, trigger::GateStep::Probe, DetectStep::Run),
-            Look::Probe,
-        );
-    }
-
-    /// Scan now bypasses the voice probe. It reads the placed crop directly;
-    /// a crop miss can still spend the one full-screen fallback.
-    #[test]
-    fn scan_now_runs_a_detect() {
-        assert_eq!(
-            look_step(false, trigger::GateStep::FullDetect, DetectStep::Wait),
-            Look::Detect,
-        );
-    }
-
-    /// Over a HELD capture Scan now is a full RE-detect and nothing else — it
-    /// runs even where the live cadence says wait, which is the whole of what
-    /// "scan a window that is already open" can mean.
-    #[test]
-    fn scan_now_re_detects_a_held_capture_off_cadence() {
-        assert_eq!(
-            look_step(true, trigger::GateStep::FullDetect, DetectStep::Wait),
-            Look::Detect,
-        );
-    }
-
-    /// A live capture keeps its own cadence: `detect_step` owns the hold and
-    /// the liveness interval, and the gate must not displace a re-detect with a
-    /// probe that has nothing to add.
-    #[test]
-    fn a_live_capture_re_detects_rather_than_probing() {
-        assert_eq!(
-            look_step(true, trigger::GateStep::Probe, DetectStep::Run),
-            Look::Detect,
-        );
-    }
-
-    #[test]
-    fn a_live_capture_that_is_holding_for_a_confirm_looks_at_nothing() {
-        assert_eq!(
-            look_step(true, trigger::GateStep::Resting, DetectStep::HoldForConfirm),
-            Look::None,
-        );
-    }
-
-    /// POE-198's promise at the other end of the loop: a resting gate with
-    /// nothing captured touches the screen not at all.
-    #[test]
-    fn a_resting_gate_over_no_capture_looks_at_nothing() {
-        assert_eq!(
-            look_step(false, trigger::GateStep::Resting, DetectStep::Run),
-            Look::None,
-        );
-    }
-
-    /// A burst armed for a SECOND mercenary while the first one's window is
-    /// still live must survive a tick that found nothing: after one miss the
-    /// capture is STILL live, so liveness cannot stand in for a hit.
-    #[test]
-    fn a_missed_tick_under_a_live_capture_does_not_satisfy_the_burst() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-
-        let outcome = state.on_detect(false);
-
-        assert_eq!(outcome, DetectOutcome::Missed);
-        assert!(state.live, "one miss must not retire the capture");
-        assert!(!burst_satisfied(Some(outcome)));
-    }
-
-    #[test]
-    fn a_detected_window_satisfies_the_burst() {
-        let mut state = LoopState::default();
-
-        assert!(burst_satisfied(Some(state.on_detect(true))));
-    }
-
-    #[test]
-    fn a_re_read_of_a_live_window_satisfies_the_burst() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-
-        assert!(burst_satisfied(Some(state.on_detect(true))));
-    }
-
-    #[test]
-    fn a_retiring_tick_does_not_satisfy_the_burst() {
-        let mut state = LoopState { live: true, misses: RETIRE_AFTER - 1, ..LoopState::default() };
-
-        assert_eq!(state.on_detect(false), DetectOutcome::Retired);
-        assert!(!burst_satisfied(Some(DetectOutcome::Retired)));
-    }
-
-    /// A tick that bailed on the stop signal detected nothing and missed
-    /// nothing; treating it as a hit would disarm a burst that never looked.
-    #[test]
-    fn a_cancelled_tick_does_not_satisfy_the_burst() {
-        assert!(!burst_satisfied(None));
     }
 
     /// A row whose skill did not resolve still needs a stable identity, or its
@@ -7021,54 +5618,25 @@ mod tests {
     // -- occlusion: a tooltip is not a closed window -----------------------
 
     /// MEASURED 2026-08-25: the hover the user just made opened a tooltip over
-    /// the panel, the detect under it read no layout, and two of those retired
-    /// the capture — taking the confirmation with it. The cursor is what tells
-    /// the two apart.
+    /// the panel, the read under it found no layout, and the capture retired —
+    /// taking the confirmation with it. The cursor is what tells the two apart.
     #[test]
-    fn a_detect_that_fails_under_the_cursor_holds_the_capture() {
-        assert_eq!(
-            miss_kind(true, true, Duration::ZERO),
-            MissKind::Occluded
-        );
+    fn a_read_that_fails_under_the_cursor_holds_the_capture() {
+        assert_eq!(miss_kind(true, true), MissKind::Occluded);
     }
 
-    /// Nothing is covering the panel from over there, so this tick really is
+    /// Nothing is covering the panel from over there, so this press really is
     /// evidence the window went away.
     #[test]
-    fn a_detect_that_fails_away_from_the_panel_is_an_ordinary_miss() {
-        assert_eq!(miss_kind(true, false, Duration::ZERO), MissKind::Miss);
-    }
-
-    /// The cap, at its boundary: a window closed with the cursor parked where
-    /// it used to be must still retire, or the strip shows a verdict for a
-    /// panel that is not on screen.
-    #[test]
-    fn an_occlusion_run_at_the_cap_stops_holding_the_capture() {
-        assert_eq!(miss_kind(true, true, OCCLUDED_MAX), MissKind::Miss);
-    }
-
-    /// One tick under the cap is still held — the boundary is exclusive, and
-    /// without this the cap would be off by one whole tick.
-    #[test]
-    fn an_occlusion_run_just_under_the_cap_still_holds_the_capture() {
-        assert_eq!(
-            miss_kind(true, true, OCCLUDED_MAX - TICK),
-            MissKind::Occluded
-        );
+    fn a_read_that_fails_away_from_the_panel_is_an_ordinary_miss() {
+        assert_eq!(miss_kind(true, false), MissKind::Miss);
     }
 
     /// With no capture live there is nothing to occlude: the cursor happens to
     /// be where a panel USED to be, which is not a reason to invent one.
     #[test]
     fn a_cursor_over_no_capture_is_never_occluded() {
-        assert_eq!(miss_kind(false, true, Duration::ZERO), MissKind::Miss);
-    }
-
-    /// An occluded tick found no window, so a burst armed for a second
-    /// mercenary must keep looking.
-    #[test]
-    fn an_occluded_tick_does_not_satisfy_the_burst() {
-        assert!(!burst_satisfied(Some(DetectOutcome::Occluded)));
+        assert_eq!(miss_kind(false, true), MissKind::Miss);
     }
 
     // -- confirmations across a retire -------------------------------------
@@ -7335,34 +5903,27 @@ mod tests {
         );
     }
 
-    /// The cap, measured from the run's START and not from this tick.
+    /// No wall-clock cap (D9): a press minutes after the run opened, with the
+    /// cursor still on the panel, is still occluded.
     #[test]
-    fn a_run_that_reaches_the_cap_counts_the_miss() {
+    fn a_run_held_past_the_old_fifteen_second_cap_still_holds() {
         let t0 = Instant::now();
         let mut run = OcclusionRun::default();
         run.on_occluded(true, true, t0);
-        run.on_occluded(true, true, t0 + Duration::from_secs(2));
 
-        assert_eq!(run.on_occluded(true, true, t0 + OCCLUDED_MAX), MissKind::Miss);
+        assert_eq!(run.on_occluded(true, true, t0 + Duration::from_secs(300)), MissKind::Occluded);
     }
 
-    /// THE REGRESSION THIS TYPE EXISTS FOR. Clearing the run on the miss it
-    /// just produced restarts the clock, so the next tick is occluded again and
-    /// the two-miss retire needs TWO full caps — ~30 s at the re-detect cadence
-    /// and ~50 s at the liveness one. TAKE ITEM is inside the panel rect, so
-    /// that left a closed window's verdict on screen while the cursor rested on
-    /// the button that closed it.
+    /// The log line is once per run, not once per press.
     #[test]
-    fn a_capped_run_stays_capped_so_the_second_miss_lands_one_cadence_later() {
+    fn an_occlusion_run_is_announced_once() {
         let t0 = Instant::now();
         let mut run = OcclusionRun::default();
         run.on_occluded(true, true, t0);
-        assert_eq!(run.on_occluded(true, true, t0 + OCCLUDED_MAX), MissKind::Miss);
+        assert!(run.announce());
+        run.on_occluded(true, true, t0 + Duration::from_secs(1));
 
-        assert_eq!(
-            run.on_occluded(true, true, t0 + OCCLUDED_MAX + Duration::from_secs(2)),
-            MissKind::Miss
-        );
+        assert!(!run.announce());
     }
 
     /// The cursor leaving the panel ends the run, so a later hover starts with
@@ -7387,21 +5948,6 @@ mod tests {
         let mut run = OcclusionRun::default();
         run.on_occluded(true, true, t0);
         run.on_hit();
-
-        assert_eq!(
-            run.on_occluded(true, true, t0 + Duration::from_secs(20)),
-            MissKind::Occluded
-        );
-    }
-
-    /// No detect runs while the game is behind us, so the clock must not count
-    /// the alt-tab.
-    #[test]
-    fn losing_focus_ends_the_run() {
-        let t0 = Instant::now();
-        let mut run = OcclusionRun::default();
-        run.on_occluded(true, true, t0);
-        run.on_focus_lost();
 
         assert_eq!(
             run.on_occluded(true, true, t0 + Duration::from_secs(20)),
@@ -7533,43 +6079,10 @@ mod tests {
         st
     }
 
-    #[test]
-    fn the_third_round_spends_the_budget_and_says_so_once() {
-        let mut st = read_rounds(0);
-
-        let said: Vec<bool> = (0..4).map(|_| st.note_round()).collect();
-
-        assert_eq!(said, vec![false, false, true, false]);
-        assert!(st.rounds_spent());
-    }
-
-    #[test]
-    fn round_one_leaves_two_rounds_for_what_it_left_unknown() {
-        let st = read_rounds(1);
-
-        assert_eq!(st.rounds_left(), RETRIES);
-        assert!(!st.rounds_spent());
-    }
-
-    /// Criterion 3's other stop: a capture that stayed incomplete through its
-    /// three rounds is only checked for presence.
-    #[test]
-    fn a_capture_whose_rounds_are_spent_drops_to_the_liveness_cadence() {
-        let st = read_rounds(RETRIES + 1);
-        assert!(!st.complete, "arrange: the capture is still incomplete");
-
-        assert_eq!(st.detect_interval(), LIVENESS_INTERVAL);
-    }
-
-    #[test]
-    fn a_capture_with_rounds_left_keeps_the_working_cadence() {
-        assert_eq!(read_rounds(RETRIES).detect_interval(), REDETECT_INTERVAL);
-    }
-
     /// The budget belongs to the capture: the next window is read from round 1.
     #[test]
     fn a_retire_starts_the_next_windows_budget_over() {
-        let mut st = read_rounds(RETRIES + 1);
+        let mut st = read_rounds(RETIRE_AFTER_ROUNDS);
 
         for _ in 0..RETIRE_AFTER {
             st.on_detect(false);
@@ -7578,44 +6091,8 @@ mod tests {
         assert!(st.owes_full_read());
     }
 
-    /// Scan now over an incomplete capture with rounds left resumes no pause —
-    /// and still buys a fresh read.
-    #[test]
-    fn scan_now_refills_the_budget_of_a_capture_it_did_not_resume() {
-        let mut st = read_rounds(1);
-
-        assert!(!st.resume(), "arrange: nothing was complete, so nothing resumed");
-
-        assert!(st.owes_full_read());
-    }
-
-    /// A capture out of rounds is paused as much as a complete one: Scan now
-    /// resumes it, and says so.
-    #[test]
-    fn scan_now_over_a_capture_out_of_rounds_resumes_it() {
-        let mut st = read_rounds(RETRIES + 1);
-
-        assert!(st.resume());
-    }
-
-    /// The 2026-08-26 sequence (app.log 09:41:52 → 09:41:57) on the pause
-    /// POE-278 added: one miss at the liveness cadence, Scan now, and the first
-    /// miss at the working cadence. The liveness miss is not part of the
-    /// evidence that a window seen 2 s ago has closed.
-    #[test]
-    fn a_scan_now_over_a_capture_out_of_rounds_clears_the_liveness_miss() {
-        let mut st = read_rounds(RETRIES + 1);
-        assert_eq!(st.on_detect(false), DetectOutcome::Missed, "arrange: one liveness miss");
-
-        st.resume();
-
-        assert_eq!(
-            st.on_detect(false),
-            DetectOutcome::Missed,
-            "the first miss after the resume is the first miss, not the second",
-        );
-        assert!(st.live);
-    }
+    /// Any old count of rounds; the retire must clear it.
+    const RETIRE_AFTER_ROUNDS: u8 = RETRIES + 1;
 
     #[test]
     fn a_recalibrate_that_dropped_a_registration_refills_the_budget() {
@@ -7705,11 +6182,10 @@ mod tests {
         assert_eq!(plan_for(&mut st, Some(&kept), true), ReadPlan::Full);
     }
 
-    /// A geometry that no longer lines up reads in full, and each of those
-    /// reads is a round: after round 3 the loop stops reading however much the
-    /// geometry jitters.
+    /// A geometry that no longer lines up reads in full, and a press stays
+    /// eligible to read however often the geometry jitters (D6).
     #[test]
-    fn a_geometry_mismatch_reads_in_full_and_spends_the_budget() {
+    fn a_geometry_mismatch_reads_in_full_on_every_press() {
         let mut kept = kept_capture(&detected_layout(), ReadState::Unknown);
         kept.panel = Some([KEPT_PANEL[0] + 200, KEPT_PANEL[1], KEPT_PANEL[2], KEPT_PANEL[3]]);
         let mut st = read_rounds(1);
@@ -7724,12 +6200,70 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(plans, vec![ReadPlan::Full, ReadPlan::Full, ReadPlan::Nothing]);
+        assert_eq!(plans, vec![ReadPlan::Full, ReadPlan::Full, ReadPlan::Full]);
     }
 
-    /// The trade session opens on the complete edge (POE-202). A capture whose
-    /// rounds ran out incomplete and that a hover then completed still crosses
-    /// that edge, on the liveness tick that carries it.
+    /// The held capture the per-press tests read over: every row and cell
+    /// matched except one support cell, and the class unread.
+    fn incomplete_kept() -> MercCapture {
+        let mut kept = kept_capture(&detected_layout(), ReadState::Matched);
+        kept.rows[1].supports[0].state = ReadState::Unknown;
+        kept.header.class = None;
+        kept
+    }
+
+    /// Each press refills the budget (D6, r1 #1): with the old three-round
+    /// budget long spent, a press over an incomplete held capture still
+    /// re-reads exactly the unresolved cell and header field.
+    #[test]
+    fn a_press_over_an_exhausted_budget_re_reads_the_unresolved_fields() {
+        let kept = incomplete_kept();
+        let mut st = read_rounds(RETRIES + 1);
+
+        match plan_for(&mut st, Some(&kept), false) {
+            ReadPlan::Partial { cells, header, .. } => {
+                assert_eq!(cells, 1);
+                assert_eq!(header, vec![super::super::read::HeaderField::Class]);
+            }
+            other => panic!("expected a partial re-read, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_incomplete_capture_is_re_read_on_every_press() {
+        let kept = incomplete_kept();
+        let mut st = read_rounds(RETRIES + 1);
+
+        let plans: Vec<bool> = (0..3)
+            .map(|_| {
+                let plan = plan_for(&mut st, Some(&kept), false);
+                st.note_round();
+                matches!(plan, ReadPlan::Partial { .. })
+            })
+            .collect();
+
+        assert_eq!(plans, vec![true, true, true]);
+    }
+
+    #[test]
+    fn a_press_over_a_complete_held_capture_reads_nothing() {
+        let kept = kept_capture(&detected_layout(), ReadState::Matched);
+        let mut st = read_rounds(RETRIES + 1);
+
+        assert_eq!(plan_for(&mut st, Some(&kept), false), ReadPlan::Nothing);
+    }
+
+    #[test]
+    fn a_refilled_press_over_an_incomplete_capture_reads_in_full() {
+        let kept = incomplete_kept();
+        let mut st = read_rounds(RETRIES + 1);
+
+        assert_eq!(plan_for(&mut st, Some(&kept), true), ReadPlan::Full);
+    }
+
+    /// The trade session opens on the complete edge (POE-202). A capture that a
+    /// tooltip read completed still crosses that edge, on the next press that
+    /// carries it.
     #[test]
     fn a_hover_that_completes_a_spent_capture_crosses_the_complete_edge() {
         let layout = detected_layout();
@@ -7756,16 +6290,15 @@ mod tests {
         assert!(st.note_complete(capture_complete(&carried)));
     }
 
-    /// A panel dropped on a liveness tick — the pass-1 REMATCH check over a
-    /// capture whose rounds were spent — leaves no kept capture, and the new
-    /// window gets the whole budget.
+    /// A panel dropped by the pass-1 REMATCH check leaves no kept capture, and
+    /// the new window's read is its round 1.
     #[test]
-    fn a_dropped_capture_starts_a_spent_budget_over() {
+    fn a_dropped_capture_starts_the_round_count_over() {
         let mut st = read_rounds(RETRIES + 1);
 
         plan_for(&mut st, None, false);
 
-        assert_eq!(st.rounds_left(), RETRIES + 1);
+        assert!(st.owes_full_read());
     }
 
     /// The tick the registration changes, a copied cell's cached crop was cut
@@ -7836,7 +6369,7 @@ mod tests {
     // -- what a round says in the log ---------------------------------------
 
     #[test]
-    fn the_round_line_names_the_round_what_it_re_read_and_what_is_left() {
+    fn the_round_line_names_the_round_and_what_it_re_read() {
         let plan = ReadPlan::Partial {
             rows: vec![super::super::read::RowPlan::Read, super::super::read::RowPlan::Cells],
             cells: 2,
@@ -7844,31 +6377,248 @@ mod tests {
         };
 
         assert_eq!(
-            round_line(2, &plan, 120, 40, false, 1),
-            "Merc: read round 2 of 3 — re-read 1 rows, 2 cells, header class — pass 2 120 ms, \
-             icons 40 ms; incomplete, 1 rounds left",
+            round_line(2, &plan, 120, 40, false),
+            "Merc: read round 2 — re-read 1 rows, 2 cells, header class — pass 2 120 ms, \
+             icons 40 ms; incomplete",
         );
     }
 
     #[test]
     fn a_round_that_completes_the_capture_says_complete() {
         assert_eq!(
-            round_line(1, &ReadPlan::Full, 900, 300, true, RETRIES),
-            "Merc: read round 1 of 3 — full — pass 2 900 ms, icons 300 ms; complete",
+            round_line(1, &ReadPlan::Full, 900, 300, true),
+            "Merc: read round 1 — full — pass 2 900 ms, icons 300 ms; complete",
+        );
+    }
+
+    // -- the retire rule (ruling 4) -------------------------------------------
+
+    #[test]
+    fn one_counted_miss_retires_a_live_capture() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+
+        assert_eq!(st.on_detect(false), DetectOutcome::Retired);
+        assert!(!st.live);
+    }
+
+    #[test]
+    fn a_miss_with_nothing_live_is_a_miss() {
+        let mut st = LoopState::default();
+
+        assert_eq!(st.on_detect(false), DetectOutcome::Missed);
+    }
+
+    #[test]
+    fn a_retire_clears_what_belonged_to_the_capture() {
+        let mut st = read_rounds(2);
+        st.note_complete(true);
+
+        st.retire();
+
+        assert_eq!(st, LoopState::default());
+    }
+
+    // -- one press, one frame (POE-390) ----------------------------------------
+
+    fn frame(monitor_id: u32) -> std::sync::Arc<crate::capture::Capture> {
+        std::sync::Arc::new(crate::capture::Capture {
+            image: image::DynamicImage::new_rgb8(1, 1),
+            monitor_id,
+            origin: (0, 0),
+            client: [0, 0, 1, 1],
+            timing: crate::capture::GrabTiming::default(),
+        })
+    }
+
+    fn pressed(monitor_id: u32, cursor: Option<(i32, i32)>) -> PressedMercFrame {
+        PressedMercFrame { frame: Ok(frame(monitor_id)), cursor }
+    }
+
+    #[derive(Debug, PartialEq)]
+    enum Call {
+        Begin,
+        Fail,
+        Panel(u32),
+        Tooltip(u32),
+        End,
+    }
+
+    /// Records each effect with the monitor id of the frame it was handed.
+    #[derive(Default)]
+    struct RecordingPress {
+        calls: Vec<Call>,
+        /// What `cell_under` answers.
+        on_cell: bool,
+        /// The panel read leaves a capture with a cell under the cursor.
+        panel_makes_cell: bool,
+        panel: Option<DetectOutcome>,
+    }
+
+    impl PressEffects for RecordingPress {
+        fn begin(&mut self) {
+            self.calls.push(Call::Begin);
+        }
+        fn fail(&mut self, _msg: String) {
+            self.calls.push(Call::Fail);
+        }
+        fn panel_read(&mut self, frame: &crate::capture::Capture, _cursor: Option<(i32, i32)>) -> Option<DetectOutcome> {
+            self.calls.push(Call::Panel(frame.monitor_id));
+            if self.panel_makes_cell {
+                self.on_cell = true;
+            }
+            self.panel
+        }
+        fn cell_under(&mut self, _cursor: (i32, i32)) -> bool {
+            self.on_cell
+        }
+        fn tooltip_read(&mut self, frame: &crate::capture::Capture, _cursor: (i32, i32)) {
+            self.calls.push(Call::Tooltip(frame.monitor_id));
+        }
+        fn end(&mut self) {
+            self.calls.push(Call::End);
+        }
+    }
+
+    fn read_one(mut effects: RecordingPress, press: PressedMercFrame) -> Vec<Call> {
+        read_press(&mut effects, press);
+        effects.calls
+    }
+
+    #[test]
+    fn a_press_on_a_held_cell_reads_the_panel_then_the_tooltip_of_the_same_frame() {
+        let effects = RecordingPress { on_cell: true, ..RecordingPress::default() };
+
+        assert_eq!(
+            read_one(effects, pressed(1, Some((5, 5)))),
+            vec![Call::Begin, Call::Panel(1), Call::Tooltip(1), Call::End]
         );
     }
 
     #[test]
-    fn the_spent_line_names_what_is_still_unread() {
-        let mut capture = kept_capture(&detected_layout(), ReadState::Matched);
-        capture.rows[0].skill.state = ReadState::LowConfidence;
-        capture.rows[1].supports[0].state = ReadState::Ambiguous;
-        capture.header.class = None;
+    fn a_press_off_the_grid_reads_only_the_panel() {
+        assert_eq!(
+            read_one(RecordingPress::default(), pressed(1, Some((5, 5)))),
+            vec![Call::Begin, Call::Panel(1), Call::End]
+        );
+    }
+
+    #[test]
+    fn a_press_with_no_cursor_reads_no_tooltip() {
+        let effects = RecordingPress { on_cell: true, ..RecordingPress::default() };
+
+        assert_eq!(read_one(effects, pressed(1, None)), vec![Call::Begin, Call::Panel(1), Call::End]);
+    }
+
+    /// A first press: the panel read makes the capture whose cell is under the
+    /// cursor, so the cell is looked up after it (H2 c, d).
+    #[test]
+    fn a_first_press_reads_the_tooltip_over_the_capture_its_panel_read_made() {
+        let effects = RecordingPress { panel_makes_cell: true, ..RecordingPress::default() };
 
         assert_eq!(
-            rounds_spent_line(&capture),
-            "Merc: 3 reading rounds spent — still unread: 1 rows, 1 cells, header class — OCR \
-             paused (liveness every 10 s); hovering a cell can still resolve it",
+            read_one(effects, pressed(1, Some((5, 5)))),
+            vec![Call::Begin, Call::Panel(1), Call::Tooltip(1), Call::End]
         );
+    }
+
+    #[test]
+    fn an_occluded_press_still_reads_the_tooltip_over_the_held_capture() {
+        let effects =
+            RecordingPress { on_cell: true, panel: Some(DetectOutcome::Occluded), ..RecordingPress::default() };
+
+        assert_eq!(
+            read_one(effects, pressed(1, Some((5, 5)))),
+            vec![Call::Begin, Call::Panel(1), Call::Tooltip(1), Call::End]
+        );
+    }
+
+    /// D5: a failed grab reads nothing and counts no miss.
+    #[test]
+    fn a_failed_grab_only_fails() {
+        let press = PressedMercFrame { frame: Err("no monitor".to_string()), cursor: Some((5, 5)) };
+
+        assert_eq!(read_one(RecordingPress::default(), press), vec![Call::Fail]);
+    }
+
+    /// The production no-layout rule and cell lookup over a real `Session`,
+    /// with each press's panel read modelled as a frame that found no layout.
+    struct SessionPress<'s> {
+        session: &'s mut Session,
+        now: Instant,
+        judged: Option<NoLayout>,
+        tooltips: Vec<u32>,
+    }
+
+    impl PressEffects for SessionPress<'_> {
+        fn begin(&mut self) {}
+        fn fail(&mut self, _msg: String) {}
+        fn panel_read(&mut self, _frame: &crate::capture::Capture, cursor: Option<(i32, i32)>) -> Option<DetectOutcome> {
+            let judged = judge_no_layout(self.session, None, cursor, self.now);
+            self.judged = Some(judged);
+            Some(match judged {
+                NoLayout::Occluded { .. } => DetectOutcome::Occluded,
+                NoLayout::Counted(outcome) => outcome,
+            })
+        }
+        fn cell_under(&mut self, cursor: (i32, i32)) -> bool {
+            self.session.current.as_ref().and_then(|c| cell_at(c, cursor)).is_some()
+        }
+        fn tooltip_read(&mut self, frame: &crate::capture::Capture, _cursor: (i32, i32)) {
+            self.tooltips.push(frame.monitor_id);
+        }
+        fn end(&mut self) {}
+    }
+
+    const HELD_PANEL: [i32; 4] = [90, 90, 200, 200];
+    const ON_HELD_CELL: (i32, i32) = (110, 110);
+
+    /// A live capture with one cell at `ON_HELD_CELL`, one confirmation, and
+    /// its panel rect.
+    fn live_session() -> Session {
+        let mut session = bare_session();
+        session.state.on_detect(true);
+        session.current = Some(capture_with(vec![row(0, "skill.a", vec![cell(0, [100, 100, 44, 44])])]));
+        session.panel = Some(HELD_PANEL);
+        session.confirmed.insert(("skill.a".to_string(), 0), confirmation());
+        session
+    }
+
+    fn press_at(session: &mut Session, now: Instant, monitor_id: u32, cursor: (i32, i32)) -> (Option<NoLayout>, Vec<u32>) {
+        let mut effects = SessionPress { session, now, judged: None, tooltips: Vec::new() };
+        read_press(&mut effects, pressed(monitor_id, Some(cursor)));
+        (effects.judged, effects.tooltips)
+    }
+
+    /// r1 #2: an occluded press holds the capture however long after the
+    /// first, and each press's own frame serves the tooltip.
+    #[test]
+    fn occluded_presses_keep_the_capture_and_read_each_ones_tooltip() {
+        let mut session = live_session();
+        let t0 = Instant::now();
+
+        let (judged, tooltips) = press_at(&mut session, t0, 1, ON_HELD_CELL);
+        assert!(matches!(judged, Some(NoLayout::Occluded { .. })));
+        assert!(session.current.is_some());
+        assert_eq!(tooltips, vec![1]);
+
+        let (judged, tooltips) = press_at(&mut session, t0 + Duration::from_secs(16), 2, ON_HELD_CELL);
+        assert!(matches!(judged, Some(NoLayout::Occluded { .. })));
+        assert!(session.state.live);
+        assert!(session.current.is_some());
+        assert_eq!(tooltips, vec![2]);
+    }
+
+    #[test]
+    fn a_press_off_the_panel_retires_the_capture_into_the_retained_slot() {
+        let mut session = live_session();
+
+        let (judged, tooltips) = press_at(&mut session, Instant::now(), 1, (1000, 1000));
+
+        assert_eq!(judged, Some(NoLayout::Counted(DetectOutcome::Retired)));
+        assert!(session.current.is_none());
+        assert!(session.retained.is_some());
+        assert!(session.panel.is_none());
+        assert!(tooltips.is_empty());
     }
 }

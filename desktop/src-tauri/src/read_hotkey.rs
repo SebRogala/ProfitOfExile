@@ -147,6 +147,7 @@ pub const READERS: &[&dyn ScreenReader<tauri::AppHandle>] = &[
     &crate::temple::press::TEMPLE_READER,
     &crate::lab::font_reader::LabFontReader,
     &crate::lab::gem_reader::LabGemReader,
+    &crate::mercenary::press::MERC_READER,
 ];
 
 /// A press with its readers already armed, waiting for its grab.
