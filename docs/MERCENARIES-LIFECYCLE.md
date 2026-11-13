@@ -92,6 +92,7 @@ follow the [Overlay Guide](OVERLAY-GUIDE.md).
 
 - `desktop/src-tauri/src/mercenary/trigger.rs`: text matching, speaker history and probe gate.
 - `desktop/src-tauri/src/mercenary/run.rs` and `run/detect.rs`: loop, read budget, hover and publication.
+- `desktop/src-tauri/src/mercenary/run/session_open.rs`: session open, including the ordered template-store open (purge, reset, load, re-key, seeds, corpus merge).
 - `desktop/src-tauri/src/mercenary/read.rs`: read plans, confidence and capture merge.
 - `desktop/src/lib/mercenaries/verdict.ts`: pure triage result tree.
 - `desktop/src/lib/pages/MercenariesPage.svelte`: main page projection.
