@@ -12,6 +12,7 @@ import (
 
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
+	"profitofexile/internal/price/resolve"
 	"profitofexile/internal/trade"
 )
 
@@ -194,7 +195,7 @@ func parseCollectiveLegacy(r *http.Request) (lab.CollectiveQuery, string) {
 		limit = min(n, lab.CollectiveMaxPageSize)
 	}
 	return lab.CollectiveQuery{
-		Variant:      normalizeVariant(params.Get("variant")),
+		Variant:      resolve.NormalizeVariant(params.Get("variant")),
 		SparkVariant: params.Get("variant"),
 		Budget:       budget,
 		Search:       params.Get("search"),
@@ -240,7 +241,7 @@ func parseCollectivePage(r *http.Request) (lab.CollectiveQuery, string) {
 		return q, "pool is only valid with mode=dedication"
 	}
 	q.SparkVariant = params.Get("variant")
-	q.Variant = normalizeVariant(q.SparkVariant)
+	q.Variant = resolve.NormalizeVariant(q.SparkVariant)
 	if color := params.Get("color"); color != "ALL" {
 		q.Color = color
 	}
@@ -490,7 +491,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 			return
 		}
 
-		variant = normalizeVariant(r.URL.Query().Get("variant"))
+		variant = resolve.NormalizeVariant(r.URL.Query().Get("variant"))
 
 		// Fast path: serve from cache.
 		var transfigure []lab.TransfigureResult

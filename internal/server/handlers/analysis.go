@@ -15,19 +15,9 @@ import (
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
+	"profitofexile/internal/price/resolve"
 	"profitofexile/internal/trade"
 )
-
-// normalizeVariant converts frontend variant format ("1/0", "20/0") to DB format
-// ("1", "20"). The DB stores variants without the "/0" suffix for zero-quality gems.
-// Variants with quality ("1/20", "20/20") pass through unchanged.
-// TODO: Remove this once POE-52 normalizes DB storage to full "level/quality" format.
-func normalizeVariant(v string) string {
-	if strings.HasSuffix(v, "/0") {
-		return strings.TrimSuffix(v, "/0")
-	}
-	return v
-}
 
 // parseDedicationVariant reads the Dedication pool variant from the request.
 // Clients may send it with or without the corrupted suffix ("21/20" or
@@ -102,7 +92,7 @@ func validateTier(w http.ResponseWriter, tier string) bool {
 // Uses in-memory cache when available, falls back to DB query.
 func TransfigureAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		variant := normalizeVariant(r.URL.Query().Get("variant"))
+		variant := resolve.NormalizeVariant(r.URL.Query().Get("variant"))
 
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
@@ -191,7 +181,7 @@ func TransfigureAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sc
 // estimates.
 func DoubleCorruptAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		variant := normalizeVariant(r.URL.Query().Get("variant"))
+		variant := resolve.NormalizeVariant(r.URL.Query().Get("variant"))
 		if variant != "" && !lab.IsDoubleCorruptVariant(variant) {
 			// Named but unmodelled: answering with every variant would silently
 			// serve a different market than the one asked for.
@@ -296,7 +286,7 @@ func DoubleCorruptAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.
 // tradeCache, independent of the variant filter; tradeCache may be nil.
 func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.TradeCache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		variant := normalizeVariant(r.URL.Query().Get("variant"))
+		variant := resolve.NormalizeVariant(r.URL.Query().Get("variant"))
 
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
@@ -532,7 +522,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 			return
 		}
 		input := lab.TrendQuery{
-			Variant:  normalizeVariant(r.URL.Query().Get("variant")),
+			Variant:  resolve.NormalizeVariant(r.URL.Query().Get("variant")),
 			Signal:   r.URL.Query().Get("signal"),
 			Window:   r.URL.Query().Get("window"),
 			Advanced: r.URL.Query().Get("advanced"),
@@ -567,7 +557,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 // Uses in-memory cache when available, falls back to DB query.
 func QualityAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		variant := normalizeVariant(r.URL.Query().Get("variant"))
+		variant := resolve.NormalizeVariant(r.URL.Query().Get("variant"))
 
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
@@ -749,7 +739,7 @@ func AnalysisStatus(cache *lab.Cache, divineRate *exchange.DivineRateReader, sco
 func SignalHistory(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
-		variant := normalizeVariant(r.URL.Query().Get("variant"))
+		variant := resolve.NormalizeVariant(r.URL.Query().Get("variant"))
 		if name == "" || variant == "" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -920,7 +910,7 @@ func MarketContextAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.
 // Uses in-memory cache when available, falls back to DB query.
 func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		variant := normalizeVariant(r.URL.Query().Get("variant"))
+		variant := resolve.NormalizeVariant(r.URL.Query().Get("variant"))
 		tier := r.URL.Query().Get("tier")
 		if !validateTier(w, tier) {
 			return
@@ -1048,7 +1038,7 @@ func filterGemFeatures(all []lab.GemFeature, variant, tier string, limit int) []
 // Uses in-memory cache when available, falls back to DB query.
 func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		variant := normalizeVariant(r.URL.Query().Get("variant"))
+		variant := resolve.NormalizeVariant(r.URL.Query().Get("variant"))
 		tier := r.URL.Query().Get("tier")
 		if !validateTier(w, tier) {
 			return
