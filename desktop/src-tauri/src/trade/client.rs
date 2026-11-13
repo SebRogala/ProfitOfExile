@@ -23,7 +23,8 @@ const TRADE_API_BASE_URL: &str = "https://www.pathofexile.com";
 const TRADE_CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Identifiable User-Agent with contact, as GGG's developer docs require.
-/// Observed 2026-11-13 (curl, Standard): search + fetch both 200 with this UA.
+/// Observed 2026-11-13, Standard, curl and this reqwest client: search + fetch
+/// both 200 with this UA, no rate-limit penalty.
 const TRADE_USER_AGENT: &str = concat!(
     "ProfitOfExile/",
     env!("CARGO_PKG_VERSION"),
