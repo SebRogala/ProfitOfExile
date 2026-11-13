@@ -35,27 +35,34 @@ pub struct ReadPromptSnapshot {
     pub seq: u64,
 }
 
-/// The active mechanics in arm order, and the arm count.
+/// The active mechanics in arm order, each with the `seq` it was armed at,
+/// and the arm count.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReadPromptState {
-    active: Vec<Mechanic>,
+    active: Vec<(Mechanic, u64)>,
     seq: u64,
 }
 
 impl ReadPromptState {
     /// Shows `mechanic` as a new prompt, even when it was already active.
     pub fn arm(&mut self, mechanic: Mechanic) {
-        self.active.retain(|m| *m != mechanic);
-        self.active.push(mechanic);
         self.seq += 1;
+        self.active.retain(|(m, _)| *m != mechanic);
+        self.active.push((mechanic, self.seq));
     }
-    /// A read of `mechanic` succeeded.
-    pub fn read_done(&mut self, mechanic: Mechanic) {
-        self.active.retain(|m| *m != mechanic);
+    /// The identity of `mechanic`'s live arm, taken when a press is accepted
+    /// so its read completes only that arm.
+    pub fn armed_id(&self, mechanic: Mechanic) -> Option<u64> {
+        self.active.iter().find(|(m, _)| *m == mechanic).map(|(_, id)| *id)
+    }
+    /// A read of `mechanic`'s arm `id` succeeded. A newer arm of the same
+    /// mechanic, made while that read ran, stays shown.
+    pub fn read_done(&mut self, mechanic: Mechanic, id: u64) {
+        self.active.retain(|entry| *entry != (mechanic, id));
     }
     /// The context of `mechanic` ended.
     pub fn end(&mut self, mechanic: Mechanic) {
-        self.active.retain(|m| *m != mechanic);
+        self.active.retain(|(m, _)| *m != mechanic);
     }
     /// The player changed area. Only the mercenary prompt ends here: the
     /// temple arms on an area line and the lab ends through its own seams.
@@ -70,7 +77,7 @@ impl ReadPromptState {
     }
     pub fn snapshot(&self) -> ReadPromptSnapshot {
         ReadPromptSnapshot {
-            mechanic: self.active.last().copied(),
+            mechanic: self.active.last().map(|(m, _)| *m),
             seq: self.seq,
         }
     }
@@ -101,8 +108,11 @@ fn edit_in(state: &crate::AppState, edit: impl FnOnce(&mut ReadPromptState)) -> 
 pub fn apply_in(state: &crate::AppState, change: Change) -> bool {
     edit_in(state, |p| p.apply(change))
 }
-pub fn read_done_in(state: &crate::AppState, mechanic: Mechanic) -> bool {
-    edit_in(state, |p| p.read_done(mechanic))
+pub fn read_done_in(state: &crate::AppState, mechanic: Mechanic, id: u64) -> bool {
+    edit_in(state, |p| p.read_done(mechanic, id))
+}
+pub fn armed_id_in(state: &crate::AppState, mechanic: Mechanic) -> Option<u64> {
+    state.read_prompt.lock().unwrap_or_else(|e| e.into_inner()).armed_id(mechanic)
 }
 pub fn area_changed_in(state: &crate::AppState) -> bool {
     edit_in(state, ReadPromptState::area_changed)
@@ -118,8 +128,12 @@ pub fn apply(app: &AppHandle, change: Option<Change>) {
         emit_if(app, apply_in(&app.state::<crate::AppState>(), change));
     }
 }
-pub fn read_done(app: &AppHandle, mechanic: Mechanic) {
-    emit_if(app, read_done_in(&app.state::<crate::AppState>(), mechanic));
+/// A read of the arm `id` (from [`armed_id_in`] at the press) succeeded;
+/// `None` (nothing was armed at the press) clears nothing.
+pub fn read_done(app: &AppHandle, mechanic: Mechanic, id: Option<u64>) {
+    if let Some(id) = id {
+        emit_if(app, read_done_in(&app.state::<crate::AppState>(), mechanic, id));
+    }
 }
 pub fn area_changed(app: &AppHandle) {
     emit_if(app, area_changed_in(&app.state::<crate::AppState>()));
@@ -200,9 +214,9 @@ mod tests {
         let mut prompt = ReadPromptState::default();
         prompt.arm(Mechanic::Incursion);
         prompt.arm(Mechanic::Mercenary);
-        prompt.read_done(Mechanic::Mercenary);
+        prompt.read_done(Mechanic::Mercenary, prompt.armed_id(Mechanic::Mercenary).unwrap());
         assert_eq!(prompt.snapshot().mechanic, Some(Mechanic::Incursion));
-        prompt.read_done(Mechanic::Incursion);
+        prompt.read_done(Mechanic::Incursion, prompt.armed_id(Mechanic::Incursion).unwrap());
         assert_eq!(prompt.snapshot().mechanic, None);
     }
 
@@ -231,11 +245,36 @@ mod tests {
         let mut temple = Temple::new();
         temple.line(&alva_start(NOW));
         assert_eq!(temple.shown(), Some(Mechanic::Incursion));
-        temple.prompt.read_done(Mechanic::Incursion);
+        let a = temple.prompt.armed_id(Mechanic::Incursion).unwrap();
+        temple.prompt.read_done(Mechanic::Incursion, a);
         assert_eq!(temple.shown(), None);
         let transition = temple.line(&temple_line(NOW));
         assert_eq!(transition, Transition::Extended(ArmReason::TempleArea));
         assert_eq!(temple.shown(), Some(Mechanic::Incursion));
+    }
+
+    #[test]
+    fn a_read_of_an_older_arm_leaves_a_temple_re_arm_made_during_it() {
+        let mut temple = Temple::new();
+        temple.line(&alva_start(NOW));
+        let a = temple.prompt.armed_id(Mechanic::Incursion).unwrap();
+        temple.line(&temple_line(NOW));
+        temple.prompt.read_done(Mechanic::Incursion, a);
+        assert_eq!(temple.shown(), Some(Mechanic::Incursion));
+        let b = temple.prompt.armed_id(Mechanic::Incursion).unwrap();
+        temple.prompt.read_done(Mechanic::Incursion, b);
+        assert_eq!(temple.shown(), None);
+    }
+
+    #[test]
+    fn a_mercenary_arm_during_a_temple_read_does_not_spoil_its_completion() {
+        let mut temple = Temple::new();
+        temple.line(&alva_start(NOW));
+        let a = temple.prompt.armed_id(Mechanic::Incursion).unwrap();
+        temple.prompt.arm(Mechanic::Mercenary);
+        temple.prompt.read_done(Mechanic::Incursion, a);
+        temple.prompt.end(Mechanic::Mercenary);
+        assert_eq!(temple.shown(), None);
     }
 
     #[test]
@@ -280,7 +319,8 @@ mod tests {
     fn the_app_state_path_reports_a_change_only_when_the_snapshot_moved() {
         let state = crate::settings::tests::test_app_state();
         assert!(apply_in(&state, Change::Arm(Mechanic::Mercenary)));
-        assert!(!read_done_in(&state, Mechanic::Incursion));
+        let merc = armed_id_in(&state, Mechanic::Mercenary).unwrap();
+        assert!(!read_done_in(&state, Mechanic::Incursion, merc));
         assert!(area_changed_in(&state));
         assert!(!area_changed_in(&state));
         assert_eq!(state.read_prompt.lock().unwrap().snapshot().mechanic, None);

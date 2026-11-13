@@ -22,6 +22,9 @@ use crate::read_hotkey::{PendingRead, Press, ScreenReader};
 pub struct PressedFrame {
     pub frame: Result<Arc<Capture>, String>,
     pub reason: ArmReason,
+    /// The Incursion prompt arm live when the press was accepted; its read
+    /// clears only that arm.
+    pub prompt: Option<u64>,
 }
 
 /// What the temple reader needs from the app at press time.
@@ -31,6 +34,10 @@ pub trait PressContext {
     fn press_sender(&self) -> Option<Sender<PressedFrame>>;
     /// The Client.txt arm, copied out.
     fn arm_state(&self) -> ArmState;
+    /// The Incursion prompt's live arm id, `None` when it shows none.
+    fn prompt_arm(&self) -> Option<u64> {
+        None
+    }
 }
 
 impl PressContext for AppHandle {
@@ -41,6 +48,9 @@ impl PressContext for AppHandle {
     }
     fn arm_state(&self) -> ArmState {
         super::trigger::arm_state(self)
+    }
+    fn prompt_arm(&self) -> Option<u64> {
+        crate::read_prompt::armed_id_in(&self.state::<crate::AppState>(), crate::read_prompt::Mechanic::Incursion)
     }
 }
 
@@ -58,20 +68,21 @@ pub static TEMPLE_READER: TempleReader = TempleReader;
 pub struct TemplePending {
     tx: Sender<PressedFrame>,
     reason: ArmReason,
+    prompt: Option<u64>,
 }
 
 impl<C: PressContext> ScreenReader<C> for TempleReader {
     fn arm(&self, ctx: &C, _press: &Press) -> Option<Box<dyn PendingRead<C>>> {
         let tx = ctx.press_sender()?;
         let reason = press_reason(ctx.arm_state(), super::run::now_ms())?;
-        Some(Box::new(TemplePending { tx, reason }))
+        Some(Box::new(TemplePending { tx, reason, prompt: ctx.prompt_arm() }))
     }
 }
 
 impl<C> PendingRead<C> for TemplePending {
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, _ctx: &C) {
         let frame = frame.map(Arc::clone).map_err(str::to_string);
-        if self.tx.send(PressedFrame { frame, reason: self.reason }).is_err() {
+        if self.tx.send(PressedFrame { frame, reason: self.reason, prompt: self.prompt }).is_err() {
             log::warn!("temple: read worker gone, pressed frame dropped");
         }
     }
@@ -91,6 +102,7 @@ mod tests {
     struct World {
         sender: Mutex<Option<Sender<PressedFrame>>>,
         arm: Mutex<ArmState>,
+        prompt: Mutex<Option<u64>>,
     }
     impl PressContext for World {
         fn press_sender(&self) -> Option<Sender<PressedFrame>> {
@@ -98,6 +110,9 @@ mod tests {
         }
         fn arm_state(&self) -> ArmState {
             *self.arm.lock().unwrap()
+        }
+        fn prompt_arm(&self) -> Option<u64> {
+            *self.prompt.lock().unwrap()
         }
     }
 
@@ -108,7 +123,17 @@ mod tests {
     /// A world with the worker running under `arm`, and the worker's inbox.
     fn world(arm: ArmState) -> (World, Receiver<PressedFrame>) {
         let (tx, rx) = mpsc::channel();
-        (World { sender: Mutex::new(Some(tx)), arm: Mutex::new(arm) }, rx)
+        (World { sender: Mutex::new(Some(tx)), arm: Mutex::new(arm), prompt: Mutex::new(None) }, rx)
+    }
+
+    #[test]
+    fn a_pressed_frame_carries_the_prompt_arm_live_at_the_press() {
+        let (world, rx) = world(armed(ArmReason::AlvaStart));
+        *world.prompt.lock().unwrap() = Some(4);
+        let armed = crate::read_hotkey::arm_all(Press { cursor: None }, Default::default(), &[&TEMPLE_READER], &world);
+        *world.prompt.lock().unwrap() = Some(5);
+        crate::read_hotkey::run_armed(armed, &world, &mut |_| {}, &mut || Ok(capture(1)));
+        assert_eq!(rx.try_recv().unwrap().prompt, Some(4));
     }
 
     fn capture(monitor_id: u32) -> Capture {
@@ -231,7 +256,7 @@ mod tests {
     // ------------------------------------------------- the worker's receive --
 
     fn frame(monitor_id: u32) -> PressedFrame {
-        PressedFrame { frame: Ok(Arc::new(capture(monitor_id))), reason: ArmReason::AlvaStart }
+        PressedFrame { frame: Ok(Arc::new(capture(monitor_id))), reason: ArmReason::AlvaStart, prompt: None }
     }
 
     fn drain(rx: &Receiver<PressedFrame>, stop: &dyn Fn() -> bool) -> Vec<Result<u32, String>> {
@@ -262,7 +287,7 @@ mod tests {
     #[test]
     fn a_grab_error_is_read_once_as_the_error() {
         let (tx, rx) = mpsc::channel();
-        tx.send(PressedFrame { frame: Err("no monitor".to_string()), reason: ArmReason::AlvaStart }).unwrap();
+        tx.send(PressedFrame { frame: Err("no monitor".to_string()), reason: ArmReason::AlvaStart, prompt: None }).unwrap();
         drop(tx);
 
         assert_eq!(drain(&rx, &|| false), vec![Err("no monitor".to_string())]);

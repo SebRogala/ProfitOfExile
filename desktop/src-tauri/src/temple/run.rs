@@ -1707,7 +1707,7 @@ fn read_press(
             let publishing = Instant::now();
             publish(app, |slice| *slice = projected);
             stages.publish = publishing.elapsed();
-            crate::read_prompt::read_done(app, crate::read_prompt::Mechanic::Incursion);
+            crate::read_prompt::read_done(app, crate::read_prompt::Mechanic::Incursion, pressed.prompt);
             read_at
         }
         Err(_) if cancelled => return said("cancelled"),
