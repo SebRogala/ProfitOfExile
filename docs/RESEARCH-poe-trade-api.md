@@ -217,6 +217,7 @@ markets: [
 - `account:guild:stashes` — Guild stash access (special request)
 
 #### User-Agent Format (required)
+Superseded by [TRADE-LIFECYCLE.md § GGG policy](TRADE-LIFECYCLE.md#ggg-policy).
 ```
 OAuth {clientId}/{version} (contact: {email})
 ```
@@ -407,7 +408,7 @@ Per 5-minute window:
 ```
 
 ### Policy Requirements
-- User-Agent: `OAuth {clientId}/{version} (contact: {email})`
+- User-Agent: `OAuth {clientId}/{version} (contact: {email})` — superseded by [TRADE-LIFECYCLE.md § GGG policy](TRADE-LIFECYCLE.md#ggg-policy)
 - Include disclaimer: "Not affiliated with or endorsed by Grinding Gear Games"
 - No CORS — all requests must be server-side (our Go backend)
 - Keep credentials safe, never in code

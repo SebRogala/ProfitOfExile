@@ -507,6 +507,31 @@ This project is public. Documentation and examples deliberately use generic plac
 
 Contributors should document trust boundaries and configuration behavior clearly while keeping secrets in deployment-managed configuration.
 
+## GGG policy
+
+**Current behavior (POE-384, POE-385).** This section is the normative source for how ProfitOfExile identifies itself to GGG and budgets its requests. GGG's developer docs require an identifiable User-Agent with a contact on every request.
+
+### User-Agent per surface
+
+| Surface | User-Agent |
+|---|---|
+| Desktop app | `ProfitOfExile/<app version> (contact: contact@profitofexile.top)` (`TRADE_USER_AGENT` in `desktop/src-tauri/src/trade/client.rs`) |
+| Server (trade client and Currency Exchange client) | `ProfitOfExile-server/<version> (contact: contact@profitofexile.top)` |
+
+- The server `<version>` is the Go VCS revision stamped into the binary (`vcs.revision`, first 12 characters), or `unknown` when the build carries none. It is never a hard-coded number, and the dirty-tree flag is not reported. Built in `internal/useragent`; no environment variable overrides it.
+- Neither surface uses an `OAuth` prefix: ProfitOfExile holds no registered GGG OAuth client.
+- poe.ninja is not GGG and is out of scope for this policy.
+
+### Separation of trade traffic
+
+The desktop app calls GGG trade from each user's own machine and IP, with that user's own rate-limit pool. The server calls GGG trade from the shared server IP, with one pool for all its traffic. User lookups never go through the server. See [Why the distinction matters](#why-the-distinction-matters).
+
+### Cadence budget
+
+- Server: the refresher's default 45 s cadence ([§ 5](#5-collector-cadence-for-the-optional-trade-gate)) makes about 480 searches per 6 h, against GGG's tightest observed search tier of 600 per 21600 s. Observed 2026-11-13 from a dev machine and from the production host: `x-rate-limit-ip: 5:10:60,15:60:300,30:300:1800,600:21600:3600`.
+- The limits are dynamic; the rate limiter follows the response headers rather than these numbers.
+- Desktop: one trade search per user click. (2026-11-13: the desktop doc that owns this rule will be linked here once the auto-trade change lands.)
+
 ## Related documents
 
 - Tracker `POE-118` — Mercure lifecycle implementation specification.
