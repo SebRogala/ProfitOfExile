@@ -508,6 +508,7 @@ pub fn set_module_enabled(id: String, enabled: bool, app: AppHandle) -> Result<(
     }
     crate::persist_settings(&app);
     apply_reconcile(&app);
+    crate::read_prompt::modules_changed(&app);
     crate::ssot::emit_ssot(&app);
     Ok(())
 }

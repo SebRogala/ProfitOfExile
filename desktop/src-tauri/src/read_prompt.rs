@@ -105,8 +105,37 @@ fn edit_in(state: &crate::AppState, edit: impl FnOnce(&mut ReadPromptState)) -> 
     prompt.snapshot() != before
 }
 
+/// Whether `mechanic`'s module is on: the one check the arm entry and the
+/// module toggle go through.
+fn module_on(state: &crate::AppState, mechanic: Mechanic) -> bool {
+    let id = match mechanic {
+        // The lab has no entry in the module registry; its overlay switch is its on/off.
+        Mechanic::DivineFont => {
+            return *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner());
+        }
+        Mechanic::Incursion => "temple",
+        Mechanic::Mercenary => crate::mercenary::MODULE_ID,
+    };
+    let enabled = state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get(id) == Some(&true);
+    enabled
+}
+
+/// Applies `change`; an arm of a mechanic whose module is off shows nothing.
 pub fn apply_in(state: &crate::AppState, change: Change) -> bool {
+    if let Change::Arm(mechanic) = change {
+        if !module_on(state, mechanic) {
+            return false;
+        }
+    }
     edit_in(state, |p| p.apply(change))
+}
+/// Hides the prompt of every mechanic whose module is now off.
+pub fn modules_changed_in(state: &crate::AppState) -> bool {
+    let off: Vec<Mechanic> = [Mechanic::DivineFont, Mechanic::Incursion, Mechanic::Mercenary]
+        .into_iter()
+        .filter(|m| !module_on(state, *m))
+        .collect();
+    edit_in(state, |p| off.into_iter().for_each(|m| p.end(m)))
 }
 pub fn read_done_in(state: &crate::AppState, mechanic: Mechanic, id: u64) -> bool {
     edit_in(state, |p| p.read_done(mechanic, id))
@@ -134,6 +163,9 @@ pub fn read_done(app: &AppHandle, mechanic: Mechanic, id: Option<u64>) {
     if let Some(id) = id {
         emit_if(app, read_done_in(&app.state::<crate::AppState>(), mechanic, id));
     }
+}
+pub fn modules_changed(app: &AppHandle) {
+    emit_if(app, modules_changed_in(&app.state::<crate::AppState>()));
 }
 pub fn area_changed(app: &AppHandle) {
     emit_if(app, area_changed_in(&app.state::<crate::AppState>()));
@@ -315,9 +347,67 @@ mod tests {
         assert_eq!(temple.prompt, ReadPromptState::default());
     }
 
+    fn set_module(state: &crate::AppState, mechanic: Mechanic, on: bool) {
+        match mechanic {
+            Mechanic::DivineFont => *state.lab_overlays_enabled.lock().unwrap() = on,
+            Mechanic::Incursion => {
+                state.modules_enabled.lock().unwrap().insert("temple".into(), on);
+            }
+            Mechanic::Mercenary => {
+                state.modules_enabled.lock().unwrap().insert(crate::mercenary::MODULE_ID.into(), on);
+            }
+        }
+    }
+    fn shown_in(state: &crate::AppState) -> Option<Mechanic> {
+        state.read_prompt.lock().unwrap().snapshot().mechanic
+    }
+
+    #[test]
+    fn each_mechanic_arms_only_while_its_own_module_is_on() {
+        let all = [Mechanic::DivineFont, Mechanic::Incursion, Mechanic::Mercenary];
+        for mechanic in all {
+            let state = crate::settings::tests::test_app_state();
+            for other in all {
+                set_module(&state, other, other != mechanic);
+            }
+            assert!(!apply_in(&state, Change::Arm(mechanic)), "{mechanic:?} armed with its module off");
+            assert_eq!(shown_in(&state), None);
+            set_module(&state, mechanic, true);
+            assert!(apply_in(&state, Change::Arm(mechanic)));
+            assert_eq!(shown_in(&state), Some(mechanic));
+        }
+    }
+
+    #[test]
+    fn a_temple_line_with_the_temple_module_off_shows_no_prompt() {
+        let state = crate::settings::tests::test_app_state();
+        set_module(&state, Mechanic::Incursion, false);
+        let line = temple_line(NOW);
+        let mut arm = ArmState::default();
+        let event = classify(&line, NOW);
+        apply_line(&mut arm, &line, NOW);
+        let change = temple_change(event, arm.arm.is_armed(NOW));
+        assert_eq!(change, Some(Change::Arm(Mechanic::Incursion)));
+        apply_in(&state, change.unwrap());
+        assert_eq!(shown_in(&state), None);
+    }
+
+    #[test]
+    fn turning_the_temple_module_off_hides_its_shown_prompt_only() {
+        let state = crate::settings::tests::test_app_state();
+        set_module(&state, Mechanic::Mercenary, true);
+        set_module(&state, Mechanic::Incursion, true);
+        apply_in(&state, Change::Arm(Mechanic::Mercenary));
+        apply_in(&state, Change::Arm(Mechanic::Incursion));
+        set_module(&state, Mechanic::Incursion, false);
+        assert!(modules_changed_in(&state));
+        assert_eq!(shown_in(&state), Some(Mechanic::Mercenary));
+    }
+
     #[test]
     fn the_app_state_path_reports_a_change_only_when_the_snapshot_moved() {
         let state = crate::settings::tests::test_app_state();
+        set_module(&state, Mechanic::Mercenary, true);
         assert!(apply_in(&state, Change::Arm(Mechanic::Mercenary)));
         let merc = armed_id_in(&state, Mechanic::Mercenary).unwrap();
         assert!(!read_done_in(&state, Mechanic::Incursion, merc));
