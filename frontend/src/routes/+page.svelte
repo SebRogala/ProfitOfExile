@@ -231,8 +231,8 @@
 	<section class="modules" id="modules">
 		<h2 class="section-heading">Modules</h2>
 		<p class="modules-intro">
-			Every module has the same shape: a Client.txt event arms it, it reads one panel while that panel is on
-			screen, and it shows its verdict in an overlay you place once. Switch each on or off in the app's sidebar.
+			Every module has the same shape: a Client.txt event arms it, it reads one panel on a press of the read
+			key, and it shows its verdict in an overlay you place once. Switch each on or off in the app's sidebar.
 		</p>
 		<div class="module-list">
 			{#each modules as m (m.id)}
@@ -470,13 +470,13 @@
 						<tr class="transparency-table-highlight">
 							<td>ProfitOfExile</td>
 							<td>Reads Client.txt + screen pixels via OCR</td>
-							<td>Automatic &mdash; triggered by game log event</td>
+							<td>Read key (default Ctrl+A); Client.txt arms</td>
 						</tr>
 					</tbody>
 				</table>
 			</div>
-			<p>Each technique the app uses exists individually across established community tools: auto-trigger from Client.txt
-				(LabCompass, TraXile), screen reading (MercuryTrade, Exile-UI). The app combines them.</p>
+			<p>Each technique the app uses exists individually across established community tools: screen reading
+				(MercuryTrade, Exile-UI).</p>
 		</div>
 
 		<div class="transparency-block">
@@ -501,16 +501,13 @@
 				<li>It sends <strong>zero input</strong> to the game &mdash; well below GGG's "one action per one keypress"
 					guideline that other tools actively use.</li>
 				<li>Client.txt reading is an established community practice used by dozens of tools.</li>
-				<li>Screen OCR is used by other community tools (e.g. Exile-UI, MercuryTrade), though typically triggered manually.</li>
+				<li>Screen OCR is used by other community tools (e.g. Exile-UI, MercuryTrade).</li>
 			</ul>
 			<p><strong>The honest truth:</strong></p>
 			<ul class="transparency-position">
 				<li><strong>GGG has never explicitly approved any local third-party tool.</strong> Not Awakened PoE Trade,
 					not Exile-UI, not Path of Building, not LabCompass. Community tools exist in a space of implicit tolerance.</li>
 				<li><strong>No bans have been reported</strong> for using OCR-based overlay tools. This is weak but real evidence.</li>
-				<li><strong>Auto-triggered OCR is the part closest to the line.</strong> I believe it falls on the right side
-					because it's read-only information display, not automation &mdash; but I cannot guarantee GGG sees it the
-					same way.</li>
 			</ul>
 			<p class="transparency-promise">If GGG ever communicates that this approach crosses a line, I will change it
 				immediately. I have no interest in putting your account at risk.</p>
@@ -519,7 +516,6 @@
 		<div class="transparency-block">
 			<h3 class="transparency-subheading">You Are in Control</h3>
 			<ul class="transparency-position">
-				<li>You can see when OCR is active (the scan indicator is visible on the overlay)</li>
 				<li>You can see exactly what gets read: Settings &rarr; OCR Regions &rarr; Preview outlines each region over the game</li>
 				<li>You can adjust or disable features in settings</li>
 				<li>The app is <a href="https://github.com/SebRogala/ProfitOfExile" target="_blank" rel="noopener">open source</a>
