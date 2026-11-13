@@ -477,6 +477,49 @@ mod dispatch_tests {
         assert_eq!(dispatcher.join().unwrap(), 2);
     }
     #[test]
+    fn presses_grab_one_frame_each_with_no_reader_registered() {
+        let world = Arc::new(World::default());
+        let grabs = run_pipeline(&world, &[], vec![sample(PRESSED, true), sample(&[], true), sample(PRESSED, true)]);
+        assert_eq!(grabs, 2);
+    }
+    #[test]
+    fn no_press_grabs_no_frame_with_no_reader_registered() {
+        let world = Arc::new(World::default());
+        let grabs = run_pipeline(&world, &[], vec![sample(&[], true), sample(&[120], true)]);
+        assert_eq!(grabs, 0);
+    }
+    #[test]
+    fn presses_grab_one_frame_each_when_every_reader_declines() {
+        let world = Arc::new(World::default());
+        let grabs = run_pipeline(&world, &[&IDLE, &IDLE], vec![sample(PRESSED, true), sample(&[], true), sample(PRESSED, true)]);
+        assert_eq!(grabs, 2);
+        assert!(world.consumed.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn queued_press_sleeps_its_press_time_delay_before_its_one_grab() {
+        let world = Arc::new(World::default());
+        let with_delay = |keys: &[u16], delay_ms| Sample {
+            settings: ReadHotkeySettings { delay_ms, ..ReadHotkeySettings::default() },
+            ..sample(keys, true)
+        };
+        let (tx, rx) = mpsc::channel();
+        // The delay setting changes on the tick after the press, while it is queued.
+        let mut samples = vec![with_delay(PRESSED, 300), with_delay(&[], 900)].into_iter();
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx);
+        drop(tx);
+        let events = Mutex::new(Vec::new());
+        run_dispatcher(
+            &world,
+            rx,
+            &mut |d| events.lock().unwrap().push(format!("sleep {d:?}")),
+            &mut || {
+                events.lock().unwrap().push("grab".to_string());
+                Ok(capture(1))
+            },
+        );
+        assert_eq!(*events.lock().unwrap(), vec!["sleep 300ms", "grab"]);
+    }
+    #[test]
     fn queued_press_reads_with_the_context_of_its_press() {
         let world = Arc::new(World::default());
         *world.context.lock().unwrap() = "x".into();
