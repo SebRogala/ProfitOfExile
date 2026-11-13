@@ -23,9 +23,8 @@ function craft(
 	support: number | null,
 	ev: number | null,
 	ages: [number | null, number | null] = [18 * MIN, 18 * MIN],
-	tradeUrl: string | null = 'https://www.pathofexile.com/trade/search/Mirage?q=x',
 ): FontLensCraft {
-	return { outcome: quote(lens, ages[0]), feeder: { ...quote(support, ages[1]), tradeUrl }, ev };
+	return { outcome: quote(lens, ages[0]), feeder: { ...quote(support, ages[1]), tradeUrl: null }, ev };
 }
 
 const view = (c: FontLensCraft | null | undefined) => lensView(c, NOW, fmt, fmtSigned);
@@ -68,16 +67,11 @@ describe('lensView', () => {
 		expect(v.ev).toEqual({ kind: 'missing', text: NEEDS_SUPPORT_PRICE });
 	});
 
-	it('reads "no price" for both rows and no buy link when the server sent no lens key', () => {
+	it('reads "no price" for both rows when the server sent no lens key', () => {
 		const v = view(null);
 		expect([v.lens, v.support]).toEqual([{ kind: 'missing' }, { kind: 'missing' }]);
 		expect(v.ev).toEqual({ kind: 'missing', text: '— needs the lens price' });
-		expect(v.tradeUrl).toBeNull();
 		expect(v.age).toBeNull();
-	});
-
-	it('passes the feeder trade search through, also when its price is missing', () => {
-		expect(view(craft(412, null, null)).tradeUrl).toBe('https://www.pathofexile.com/trade/search/Mirage?q=x');
 	});
 
 	it('ages the card by the older of the two quotes', () => {

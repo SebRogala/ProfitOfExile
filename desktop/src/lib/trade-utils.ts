@@ -146,3 +146,23 @@ export function baseGemNoQualityUrl(gemName: string, league?: string | null): st
 	};
 	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league)}?q=${encodeURIComponent(JSON.stringify(q))}`;
 }
+
+/**
+ * Facetor's Lens 60% craft input: securable support gems of gem level 3+ with
+ * a level 76+ requirement (the Exceptional supports).
+ */
+export function exceptionalSupportTradeUrl(league?: string | null): string | null {
+	if (!league?.trim()) return null;
+	const q = {
+		query: {
+			status: { option: 'securable' },
+			filters: {
+				type_filters: { filters: { category: { option: 'gem.supportgem' } } },
+				req_filters: { filters: { lvl: { min: 76 } } },
+				misc_filters: { filters: { gem_level: { min: 3 } } },
+			},
+		},
+		sort: { price: 'asc' },
+	};
+	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league)}?q=${encodeURIComponent(JSON.stringify(q))}`;
+}

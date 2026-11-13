@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, DEDICATION_POOL_LABELS, type DedicationPool, VARIANTS, type FontEVResponse, type FontLensCraft, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
-	import { baseGemTradeUrl, cheapestCorruptedTradeUrl, buyBaseUrl, baseGemNoQualityUrl } from '$lib/trade-utils';
+	import { baseGemTradeUrl, cheapestCorruptedTradeUrl, buyBaseUrl, baseGemNoQualityUrl, exceptionalSupportTradeUrl } from '$lib/trade-utils';
 	import { formatPrice, formatPriceSigned, type PriceUnit } from '$lib/price.svelte';
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
@@ -271,14 +271,15 @@
 		{@const exceptional = exceptionalView(exceptionalPrices, nowMs, (c) => formatPrice(c))}
 		{@const lens = lensView(craft, nowMs, (c) => formatPrice(c), (c) => formatPriceSigned(c))}
 		{#snippet supportBuy()}
-			{#if lens.tradeUrl}
+			{@const supportUrl = exceptionalSupportTradeUrl(ssot.league)}
+			{#if supportUrl}
 				<Tooltip text="Buy the cheapest Exceptional Support Gem lv 3+"><a
 					class="buy-btn buy-blue"
-					href={lens.tradeUrl}
+					href={supportUrl}
 					target="_blank"
 				>BUY</a></Tooltip>
 			{:else}
-				<span class="buy-btn buy-blue buy-disabled" aria-disabled="true" title={'Trade link unavailable — the server sent no support search'}>BUY</span>
+				<span class="buy-btn buy-blue buy-disabled" aria-disabled="true" title="League not detected — trade link unavailable">BUY</span>
 			{/if}
 		{/snippet}
 		<div class="recipe-grid">

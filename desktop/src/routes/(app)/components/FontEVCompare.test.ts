@@ -10,6 +10,8 @@ vi.mock('@tauri-apps/api/app', () => ({ getVersion: async () => '0.0.0-test' }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: async () => null }));
 
 const { default: FontEVCompare } = await import('./FontEVCompare.svelte');
+const { ssot } = await import('$lib/stores/ssot.svelte');
+const { exceptionalSupportTradeUrl } = await import('$lib/trade-utils');
 
 function lensCard(body: string): string {
 	const start = body.indexOf('aria-label="Facetor’s Lens · 60%"');
@@ -33,5 +35,31 @@ describe('FontEVCompare while the Font response is pending', () => {
 
 	it('renders no Recipes section in Dedication mode', () => {
 		expect(render(FontEVCompare, { props: { labMode: 'dedication' } }).body).not.toContain('Recipes');
+	});
+});
+
+describe('FontEVCompare support-row BUY, with no server support search', () => {
+	function supportBuy(league: string | null): string {
+		ssot.league = league;
+		try {
+			const card = lensCard(render(FontEVCompare, { props: { labMode: 'normal' } }).body);
+			const m = card.match(/<(a|span)[^>]*class="buy-btn buy-blue[^"]*"[^>]*>BUY<\/\1>/);
+			expect(m, 'support BUY is not rendered').not.toBeNull();
+			return m![0];
+		} finally {
+			ssot.league = null;
+		}
+	}
+
+	it('links to the client-built Exceptional-support search once the league is detected', () => {
+		const buy = supportBuy('New League');
+		const href = buy.match(/href="([^"]*)"/)?.[1].replaceAll('&amp;', '&');
+		expect(href).toBe(exceptionalSupportTradeUrl('New League'));
+	});
+
+	it('disables the BUY with the league-missing title when no league is detected', () => {
+		const buy = supportBuy(null);
+		expect(buy).toMatch(/^<span[^>]*aria-disabled="true"/);
+		expect(buy).toContain('title="League not detected — trade link unavailable"');
 	});
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { baseGemTradeUrl, cheapestCorruptedTradeUrl, buyBaseUrl, baseGemNoQualityUrl } from './trade-utils';
+import { baseGemTradeUrl, cheapestCorruptedTradeUrl, buyBaseUrl, baseGemNoQualityUrl, exceptionalSupportTradeUrl } from './trade-utils';
 
 const name = 'Kinetic Blast of Clustering';
 const builders = [
@@ -74,5 +74,27 @@ describe('query preservation', () => {
 		expect(q.type).toBe('Kinetic Blast');
 		expect(q.filters.type_filters.filters.category).toEqual({ option: 'gem' });
 		expect(q.filters.misc_filters.filters).toEqual({ gem_level: { min: 20 }, corrupted: { option: 'false' } });
+	});
+});
+
+describe('exceptionalSupportTradeUrl', () => {
+	it.each([undefined, null, '', ' \t\n '])('disables the URL without a resolved league (%j)', league => {
+		expect(exceptionalSupportTradeUrl(league)).toBeNull();
+	});
+
+	it('searches the cheapest securable lv 3+ support gems with a level 76+ requirement in the league', () => {
+		const parsed = new URL(exceptionalSupportTradeUrl('New League')!);
+		expect(`${parsed.origin}${parsed.pathname}`).toBe('https://www.pathofexile.com/trade/search/New%20League');
+		expect(JSON.parse(parsed.searchParams.get('q')!)).toEqual({
+			query: {
+				status: { option: 'securable' },
+				filters: {
+					type_filters: { filters: { category: { option: 'gem.supportgem' } } },
+					req_filters: { filters: { lvl: { min: 76 } } },
+					misc_filters: { filters: { gem_level: { min: 3 } } },
+				},
+			},
+			sort: { price: 'asc' },
+		});
 	});
 });

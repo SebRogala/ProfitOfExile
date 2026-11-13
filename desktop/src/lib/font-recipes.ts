@@ -16,7 +16,6 @@ export interface LensView {
 	support: PriceCell;
 	ev: EvCell;
 	age: { text: string; stale: boolean } | null;
-	tradeUrl: string | null;
 }
 
 export const NEEDS_LENS_PRICE = '— needs the lens price';
@@ -37,7 +36,7 @@ export function lensView(
 	formatSigned: (chaos: number) => string,
 ): LensView {
 	if (craft === undefined) {
-		return { lens: { kind: 'loading' }, support: { kind: 'loading' }, ev: { kind: 'loading' }, age: null, tradeUrl: null };
+		return { lens: { kind: 'loading' }, support: { kind: 'loading' }, ev: { kind: 'loading' }, age: null };
 	}
 	const lensChaos = craft?.outcome.chaos ?? null;
 	const supportChaos = craft?.feeder.chaos ?? null;
@@ -61,6 +60,5 @@ export function lensView(
 		support: cell(supportChaos, format),
 		ev,
 		age,
-		tradeUrl: craft?.feeder.tradeUrl ?? null,
 	};
 }
