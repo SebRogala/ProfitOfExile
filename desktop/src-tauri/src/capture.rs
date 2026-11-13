@@ -460,17 +460,18 @@ static REFUSAL_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 /// `Err`, which every caller already reads as "no frame".
 pub fn capture_screen(app: &tauri::AppHandle) -> Result<Capture, String> {
     use tauri::Manager;
-    let accepted = crate::privacy::is_accepted(&app.state::<crate::AppState>());
-    grab_if_accepted(accepted, &REFUSAL_LOGGED, |msg| crate::app_log(app, msg), || platform::grab_screen(app))
+    let gate = &app.state::<crate::AppState>().privacy_gate;
+    grab_if_accepted(gate, &REFUSAL_LOGGED, |msg| crate::app_log(app, msg), || platform::grab_screen(app))
 }
 
+/// Reads `gate` on every call, so opening it lets the next grab through.
 fn grab_if_accepted<T>(
-    accepted: bool,
+    gate: &crate::http::NoticeGate,
     refusal_logged: &std::sync::atomic::AtomicBool,
     log: impl FnOnce(String),
     grab: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
-    if !accepted {
+    if !gate.is_open() {
         if !refusal_logged.swap(true, std::sync::atomic::Ordering::SeqCst) {
             log("screen capture refused until the Data & privacy notice is accepted".to_string());
         }
@@ -898,13 +899,14 @@ mod affinity_ledger_tests {
 #[cfg(test)]
 mod notice_gate_tests {
     use super::grab_if_accepted;
+    use crate::http::NoticeGate;
     use std::cell::Cell;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     /// Runs one gated grab against a counting stand-in; returns the result.
-    fn grab(accepted: bool, flag: &AtomicBool, grabs: &Cell<u32>, logs: &Cell<u32>) -> Result<&'static str, String> {
+    fn grab(gate: &NoticeGate, flag: &AtomicBool, grabs: &Cell<u32>, logs: &Cell<u32>) -> Result<&'static str, String> {
         grab_if_accepted(
-            accepted,
+            gate,
             flag,
             |_| logs.set(logs.get() + 1),
             || {
@@ -916,24 +918,27 @@ mod notice_gate_tests {
 
     #[test]
     fn capture_refuses_while_the_notice_is_not_accepted() {
-        let (flag, grabs, logs) = (AtomicBool::new(false), Cell::new(0), Cell::new(0));
-        assert_eq!(grab(false, &flag, &grabs, &logs), Err(crate::http::NOTICE_NOT_ACCEPTED.to_string()));
+        let (gate, flag, grabs, logs) = (NoticeGate::default(), AtomicBool::new(false), Cell::new(0), Cell::new(0));
+        assert_eq!(grab(&gate, &flag, &grabs, &logs), Err(crate::http::NOTICE_NOT_ACCEPTED.to_string()));
         assert_eq!(grabs.get(), 0);
     }
 
+    /// The accept command opens a clone of the gate the app holds; the next
+    /// grab through the original must see it.
     #[test]
-    fn capture_reaches_the_grab_once_accepted() {
-        let (flag, grabs, logs) = (AtomicBool::new(false), Cell::new(0), Cell::new(0));
-        assert_eq!(grab(false, &flag, &grabs, &logs), Err(crate::http::NOTICE_NOT_ACCEPTED.to_string()));
-        assert_eq!(grab(true, &flag, &grabs, &logs), Ok("frame"));
+    fn capture_reaches_the_grab_once_the_same_gate_opens() {
+        let (gate, flag, grabs, logs) = (NoticeGate::default(), AtomicBool::new(false), Cell::new(0), Cell::new(0));
+        assert_eq!(grab(&gate, &flag, &grabs, &logs), Err(crate::http::NOTICE_NOT_ACCEPTED.to_string()));
+        gate.clone().open();
+        assert_eq!(grab(&gate, &flag, &grabs, &logs), Ok("frame"));
         assert_eq!(grabs.get(), 1);
     }
 
     #[test]
     fn refusal_logs_once() {
-        let (flag, grabs, logs) = (AtomicBool::new(false), Cell::new(0), Cell::new(0));
-        let _ = grab(false, &flag, &grabs, &logs);
-        let _ = grab(false, &flag, &grabs, &logs);
+        let (gate, flag, grabs, logs) = (NoticeGate::default(), AtomicBool::new(false), Cell::new(0), Cell::new(0));
+        let _ = grab(&gate, &flag, &grabs, &logs);
+        let _ = grab(&gate, &flag, &grabs, &logs);
         assert_eq!(logs.get(), 1);
         assert!(flag.load(Ordering::SeqCst));
     }
