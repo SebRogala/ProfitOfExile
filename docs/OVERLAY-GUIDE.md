@@ -1424,8 +1424,10 @@ touching the named path.
      Toxic Grove (the eight 3.30 chest rooms, [GAME-FACTS.md](GAME-FACTS.md)).
      The sale row is 18 px of TEXT with no icon and no placeholder glyph. Under
      it, one unique cell per pool item: 39 px of art with its price centred
-     UNDER it. Glittering Halls' four uniques fold the fourth
-     (`FULL_DRIVER_ROWS`; `view.ts` `offerUniqueDrops`). Vial cells, the `+`
+     UNDER it. At most three drivers are drawn, the sale row included
+     (`FULL_DRIVER_ROWS`; `view.ts` `offerBoxes`, `offerFold`), and the rest
+     fold: Glittering Halls' four uniques fold only the fourth when the sale
+     row is absent, and fold two when a sale row is drawn. Vial cells, the `+`
      between unique and vial and the `→` upgraded cell were removed in 3.30.0
      (POE-366). With a known Cradle of Creation plate on the board, a tier-3
      chest cell carries `(+Nc)` on its caption line; a scaled or fallback box
@@ -1480,11 +1482,10 @@ touching the named path.
 
   4. **Fallback.** Start the app with no network (or point its server URL at
      nothing) and open a panel. With no usable market, the value reads
-     the rung's chaos, marked ` · est.` (no grade letter is drawn since
-     POE-368; `view.ts` `offerValueText`); the ` · est.` is the only
-     provenance mark, and on line two it fires where the rung is a live inference
-     (`valuation.rs`'s `summed <= 0` branch) rather than the cold preset's base
-     value. **A chest line with no drop terms has no item row**; a resolved
+     the rung's chaos, marked ` · est.` (the grade letter was removed in
+     3.30.0 (POE-368); `view.ts` `offerValueText`); the ` · est.` is the only
+     provenance mark and fires on every fallback value, cold or live
+     (`view.ts`). **A chest line with no drop terms has no item row**; a resolved
      content line keeps its content row, including on fallback. The warning age line reads `prices unavailable — base
      values`. If the line carries tier facts, the ladder still explains them;
      otherwise the bonus label is used, full width. No chaos figure or
@@ -1555,7 +1556,7 @@ touching the named path.
   header's arrow with it. Click **Room line**: A→Z, and the arrow moves to that
   header — not the direction that was on Tier 3. Only Room line and Tier 3
   sort (`values.ts` `ValueSortKey`; a stored `grade:*` sort loads as
-  `DEFAULT_VALUE_SORT`; the Grade column was removed by POE-368).
+  `DEFAULT_VALUE_SORT`; the Grade column and its sort were removed in 3.30.0 (POE-368)).
   Reach both headers by TAB alone and fire one with Enter; a screen reader
   must announce the sorted column as ascending or descending. Then close the app,
   reopen it, and the table must come back on the sort you left it on. **Nothing a
