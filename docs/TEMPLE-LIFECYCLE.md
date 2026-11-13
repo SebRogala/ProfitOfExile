@@ -154,7 +154,7 @@ so a `temple_set_preset` landing mid-read cannot cross the two. The update paths
 `temple::valuation::warm_temple_valuation`, called off-thread from the market poll, from
 `temple::market::on_server_url_changed`, from `temple_set_preset` / `temple_set_custom` and from
 `reset_all_settings` — exist only so that the read's call is a HIT, and a missed one costs that
-read a rebuild rather than a wrong board. The build itself runs with the `temple_valuation`
+read a rebuild rather than a wrong board. The build itself runs with the `temple_state.valuation`
 mutex DROPPED — taken for the key comparison, released, re-taken to store — so a read arriving
 while a warm-up builds waits for a key compare and never for the build; a lost race costs one
 wasted rebuild and never a blocked read. The Temple page's own 25 x 3 table goes through the

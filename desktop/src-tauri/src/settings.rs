@@ -1185,7 +1185,7 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     // persisted flags and profile from the first poll — including while the
     // module is OFF and no loop will ever publish them. Taken from the owner
     // just written rather than from `settings`, so a rejected value is echoed
-    // as the one actually in force. The `temple_settings` guard is released
+    // as the one actually in force. The `temple_state.settings` guard is released
     // before `temple` is taken; nothing else locks the two together.
     let temple = state.temple_state.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     {

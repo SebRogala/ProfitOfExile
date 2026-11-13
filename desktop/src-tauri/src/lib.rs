@@ -767,7 +767,7 @@ fn reset_all_settings(app: AppHandle) {
     for rejection in settings::apply_to_state(&defaults, &state) {
         app_log(&app, rejection);
     }
-    // The apply above rewrote `temple_settings.preset` and `.custom`, which are
+    // The apply above rewrote `temple_state.settings.preset` and `.custom`, which are
     // two of the three inputs the valuation is keyed on, so the stored table is
     // now for settings nobody is running (POE-257 WI-3 fix round, 2026-09-07).
     // Warm it here for the same reason `temple_set_preset` and
