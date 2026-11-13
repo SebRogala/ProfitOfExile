@@ -229,7 +229,6 @@
 
 	// Ctrl+Shift+F12 toggles debug mode (devtools + force-show overlays)
 	let debugMode = $state(false);
-	// Ctrl+Shift+F11 opens the identify dialog (device alias registration)
 	let identifyOpen = $state(false);
 
 	$effect(() => {
@@ -248,10 +247,6 @@
 				// regardless of game focus.
 				invoke('set_debug_mode', { on: debugMode }).catch((e: any) => console.warn('[debug] set_debug_mode failed:', e));
 				console.log(debugMode ? '[debug] Debug mode ON — overlays force-shown' : '[debug] Debug mode OFF');
-			}
-			if (e.ctrlKey && e.shiftKey && e.key === 'F11') {
-				e.preventDefault();
-				identifyOpen = !identifyOpen;
 			}
 		}
 		window.addEventListener('keydown', handleKeydown);
@@ -321,7 +316,7 @@
 </script>
 
 <div class="app-shell">
-	<TopBar status={store.status} />
+	<TopBar status={store.status} onAccount={() => (identifyOpen = true)} />
 	<div class="app-body">
 		<Sidebar open={sidebarOpen} currentPath={viewToPath(visibleView)} onToggle={toggleSidebar}
 			comparatorActive={labOverlaysActive && (widgetPlacements.rows['lab.comparator']?.visible ?? true)} gameFocused={store.status?.game_focused ?? false} onToggleComparator={() => setWidgetVisible(LAB_COMPARATOR_SPEC, !(widgetPlacements.rows['lab.comparator']?.visible ?? true))}

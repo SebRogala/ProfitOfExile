@@ -1,3 +1,49 @@
+<script lang="ts" module>
+	import type { Registration } from '$lib/stores/entitlements.svelte';
+
+	export interface AccountView {
+		glyph: 'initial' | 'person' | '?' | '…';
+		initial: string;
+		tooltipHtml: string;
+		ariaLabel: string;
+		filled: boolean;
+		dashed: boolean;
+	}
+
+	function escapeHtml(s: string): string {
+		return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+	}
+
+	function tip(head: string, detail?: string): string {
+		const second = detail ? `<div style="color:var(--color-lab-text-secondary)">${detail}</div>` : '';
+		return `<div style="font-weight:700">${head}</div>${second}`;
+	}
+
+	/** The account button's look, tooltip and accessible name for one registration. */
+	export function accountView(r: Registration): AccountView {
+		switch (r.state) {
+			case 'registered': {
+				const alias = escapeHtml(r.alias);
+				const detail = r.role ? `Role ${escapeHtml(r.role)} · click to open device identity` : 'click to open device identity';
+				return {
+					glyph: 'initial',
+					initial: ([...r.alias.trim()][0] ?? '').toUpperCase(),
+					tooltipHtml: tip(`Registered as “${alias}”`, detail),
+					ariaLabel: `Account: registered as ${r.alias}`,
+					filled: true,
+					dashed: false
+				};
+			}
+			case 'unregistered':
+				return { glyph: 'person', initial: '', tooltipHtml: tip('Not registered', 'This device has no alias on the server yet. Click to set one.'), ariaLabel: 'Account: not registered', filled: false, dashed: false };
+			case 'unknown':
+				return { glyph: '?', initial: '', tooltipHtml: tip('Registration unknown', 'Server unreachable or outdated. Click to check again.'), ariaLabel: 'Account: registration unknown', filled: false, dashed: true };
+			default:
+				return { glyph: '…', initial: '', tooltipHtml: tip('Checking registration…'), ariaLabel: 'Account: checking registration', filled: false, dashed: true };
+		}
+	}
+</script>
+
 <script lang="ts">
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 
@@ -11,9 +57,11 @@
 	import { divineRateView } from '$lib/stores/divine-rate';
 	import ItemIcon from '$lib/components/ItemIcon.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
+	import { registration } from '$lib/stores/entitlements.svelte';
 
-	let { status }: {
+	let { status, onAccount }: {
 		status: any;
+		onAccount?: () => void;
 	} = $props();
 
 	/**
@@ -35,6 +83,7 @@
 
 	const apiBase = $derived(getApiBase());
 	const rateView = $derived(divineRateView(divineRate, divineRate.now));
+	const account = $derived(accountView(registration));
 
 	async function toggleServer() {
 		// Nowhere to go: the tooltip has said why; take the click to where a
@@ -109,6 +158,19 @@
 				{#if rateView.state === 'stale'}
 					<span class="rate-tag">stale</span>
 				{/if}
+			</button>
+		</Tooltip>
+		<Tooltip text={account.tooltipHtml} position="below">
+			<button class="account" class:registered={account.filled} class:dashed={account.dashed} aria-label={account.ariaLabel} onclick={onAccount}>
+				<span class="av" aria-hidden="true">
+					{#if account.glyph === 'initial'}
+						{account.initial}
+					{:else if account.glyph === 'person'}
+						<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="5.5" r="2.8"></circle><path d="M2.8 14c.6-2.7 2.7-4.2 5.2-4.2s4.6 1.5 5.2 4.2"></path></svg>
+					{:else}
+						{account.glyph}
+					{/if}
+				</span>
 			</button>
 		</Tooltip>
 		<div class="window-controls">
@@ -310,6 +372,62 @@
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
+	}
+
+	.account {
+		all: unset;
+		box-sizing: border-box;
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		height: 24px;
+		padding: 1px;
+		border-radius: 12px;
+		-webkit-app-region: no-drag;
+	}
+
+	.account:hover {
+		background: rgba(255, 255, 255, 0.06);
+	}
+
+	.account:focus-visible {
+		outline: 1px solid var(--color-lab-blue);
+		outline-offset: 1px;
+	}
+
+	.av {
+		box-sizing: border-box;
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 11px;
+		font-weight: 700;
+		line-height: 1;
+		color: var(--text-muted);
+		border: 1.5px solid var(--text-muted);
+	}
+
+	.av svg {
+		width: 13px;
+		height: 13px;
+	}
+
+	.account:hover .av {
+		color: var(--text);
+		border-color: var(--text);
+	}
+
+	.account.registered .av {
+		background: var(--text);
+		color: var(--surface);
+		border-color: var(--text);
+	}
+
+	.account.dashed .av {
+		border-style: dashed;
 	}
 
 	.window-controls {
