@@ -265,6 +265,52 @@ func TestLatestLookups_emptyResultReplacesStalePriceOnWarm(t *testing.T) {
 	}
 }
 
+// POE-394: the stored seller count is the result's count, not 0 and not the
+// listing length (7 listings here, 6 sellers).
+func TestInsertTradeLookup_persistsSellerCountReadBackByLatestLookups(t *testing.T) {
+	pool := tradeIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+	const leagueID = "POE-394-trade-sellers"
+	const gem = "POE394 Seller Count Gem"
+	const variant = "20/20"
+	registerTradeLeague(t, pool, leagueID)
+	cleanupTradeGem(t, pool, gem)
+	scope := league.Historical(leagueID)
+	listings := make([]TradeListingDetail, 7)
+	for i := range listings {
+		listings[i] = TradeListingDetail{Price: float64(10 + i), Currency: "chaos"}
+	}
+	row := BuildResult(gem, variant, leagueID, SearchResponse{Total: 7}, listings, 6, 200)
+	if err := repo.InsertTradeLookup(ctx, scope, row, "desktop"); err != nil {
+		t.Fatalf("InsertTradeLookup: %v", err)
+	}
+
+	var stored int
+	if err := pool.QueryRow(ctx,
+		`SELECT unique_accounts FROM trade_lookups WHERE league = $1 AND gem = $2 AND variant = $3`,
+		leagueID, gem, variant).Scan(&stored); err != nil {
+		t.Fatalf("read stored unique_accounts: %v", err)
+	}
+	if stored != 6 {
+		t.Errorf("stored unique_accounts = %d, want 6", stored)
+	}
+
+	results, err := repo.LatestLookups(ctx, scope, 24)
+	if err != nil {
+		t.Fatalf("LatestLookups: %v", err)
+	}
+	for _, got := range results {
+		if got.Gem == gem && got.Variant == variant {
+			if got.Signals.UniqueAccounts != 6 || got.Signals.SellerConcentration != "CONCENTRATED" {
+				t.Errorf("read-back signals = %d/%s, want 6/CONCENTRATED", got.Signals.UniqueAccounts, got.Signals.SellerConcentration)
+			}
+			return
+		}
+	}
+	t.Fatal("LatestLookups omitted the stored lookup")
+}
+
 func TestKnownGem_exactRawMembership(t *testing.T) {
 	pool := tradeIntegrationPool(t)
 	ctx := context.Background()
