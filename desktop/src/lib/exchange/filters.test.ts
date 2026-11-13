@@ -1,13 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-	applyGates,
-	applyNumericFilters,
-	applyRules,
 	cycleCategoryRule,
 	effectiveRule,
 	gateDefaults,
-	itemUniverse,
-	matchesSearch,
 	movedGates,
 	overridesCategory,
 	parseCategoryRules,
@@ -18,23 +13,11 @@ import {
 	resetGateInputs,
 	serializeCategoryRules,
 	serializeItemRules,
-	snapGateInput
+	snapGateInput,
+	exchangePageParams
 } from './filters';
-import type { CategoryRules, GateInputs, Gates, ItemRule, NumericFilters } from './filters';
-import { CHAOS_ID, DIVINE_ID, moneyColumns, runInvestment } from './view';
+import type { CategoryRules, ExchangePagePrefs, GateInputs, ItemRule } from './filters';
 import type { CurrencyExchangeLeg, CurrencyExchangePlay } from '$lib/api';
-
-/**
- * The response rate `applyGates` un-converts a divine-quoted entry with.
- *
- * A round 200 rather than the 198.97 the numeric-bounds fixture carries, because
- * the divine gate's boundary cases have to land ON the floor: 80c at this rate
- * is 0.4 div exactly, which is the only way to test that the comparison is
- * inclusive rather than testing floating-point luck. Every `applyGates` call
- * passes it, including the chaos-quoted ones, where it is inert — the gate is
- * scoped by the buy leg's quote, so a chaos row never reaches the division.
- */
-const DIVINE_RATE = 200;
 
 /**
  * A clean Currency leg: buy Divine Orbs with Chaos Orbs. Every rule case
@@ -65,17 +48,7 @@ function leg(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg 
 	};
 }
 
-/**
- * A ranked play over one leg.
- *
- * The best-case pair (`roi`/`roiPct`) and the simulated pair
- * (`expectedRoi`/`expectedRoiPct`) carry deliberately DIFFERENT values, and the
- * expectation is the smaller of the two, as the calibration found it to be
- * (POE-193). Every gate in this file judges the best-case pair, so a gate case
- * that overrides `roi` or `roiPct` leaves an expectation that would answer the
- * same gate differently — which is what makes those cases able to fail if a
- * gate is ever re-pointed at the measured number.
- */
+/** A ranked play over one leg; `playSides` reads only its legs. */
 function play(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
 	return {
 		key: 'direct:divine:chaos',
@@ -96,39 +69,15 @@ function play(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePl
 		suspect: false,
 		hoursSeen: 6,
 		lastHour: '2026-08-19T11:00:00.000Z',
-		...overrides
-	};
-}
-
-/** Every numeric filter off, which is the state the bar starts in. */
-function filters(overrides: Partial<NumericFilters> = {}): NumericFilters {
-	return {
-		investMin: '',
-		investMax: '',
-		unit: 'chaos',
-		divineChaosRate: 198.97,
-		...overrides
-	};
-}
-
-/**
- * Every gate off, so a gate test says which single gate it is about.
- *
- * Written out rather than spread from `gateDefaults`, which POE-196 turned from
- * a stylistic choice into a necessary one: two knobs now ship armed
- * (`minItemPrice`, `minItemPriceDiv`), and a baseline spread from the shipped
- * defaults would put live floors under every per-gate case. A per-gate test
- * wants a stated baseline of nothing.
- */
-function gates(overrides: Partial<Gates> = {}): Gates {
-	return {
-		minItemPrice: 0,
-		minItemPriceDiv: 0,
-		minRoiChaos: 0,
-		minTurnover: 0,
-		maxTickPct: 0,
-		minEdgeTickRatio: 0,
-		minRoiPct: 0,
+		display: {
+			units: 1,
+			basis: 'posting',
+			money: { investment: 200, roi: 10, expectedRoi: 4 },
+			expectedPrinted: true,
+			scale: { flips: 25, gain: 100, investment: 5000, hours: 1 },
+			runInvestment: 5000,
+			sortKeys: { expected: 4, roi: 10, fastestHours: 1 }
+		},
 		...overrides
 	};
 }
@@ -145,10 +94,6 @@ function gateInputs(overrides: Partial<GateInputs> = {}): GateInputs {
 		minRoiPct: '',
 		...overrides
 	};
-}
-
-function keys(plays: CurrencyExchangePlay[]): string[] {
-	return plays.map((p) => p.key);
 }
 
 describe('parseCategoryRules', () => {
@@ -353,120 +298,6 @@ describe('overridesCategory', () => {
 		// The rule outlives the response that created it, so the chip can render
 		// with no category to compare against.
 		expect(overridesCategory(rule('only'), undefined, { 'Divination Cards': 'hide' })).toBe(false);
-	});
-});
-
-describe('applyRules', () => {
-	const imperial = play({
-		key: 'imperial',
-		legs: [
-			leg({
-				item: 'imperial-legacy',
-				itemName: 'The Imperial Legacy',
-				itemCategory: 'Divination Cards'
-			})
-		]
-	});
-	const mirrors = play({
-		key: 'mirrors',
-		legs: [
-			leg({ item: 'house-of-mirrors', itemName: 'House of Mirrors', itemCategory: 'Divination Cards' })
-		]
-	});
-	const divinePlay = play({ key: 'divine' });
-	const exaltedPlay = play({
-		key: 'exalted',
-		legs: [leg({ item: 'exalted', itemName: 'Exalted Orb' })]
-	});
-	const scarabPlay = play({
-		key: 'scarab',
-		legs: [leg({ item: 'scarab-gilded', itemName: 'Gilded Scarab', itemCategory: 'Threads' })]
-	});
-
-	it('keeps every play when no rule is set', () => {
-		expect(keys(applyRules([divinePlay, scarabPlay], {}, []))).toEqual(['divine', 'scarab']);
-	});
-
-	it('shows an item ruled Only inside a category the reader hid', () => {
-		// The Imperial Legacy case: "none of the card market except this one card"
-		// is only expressible because the item layer beats the category layer.
-		const kept = applyRules([imperial, mirrors], { 'Divination Cards': 'hide' }, [
-			{ id: 'imperial-legacy', name: 'The Imperial Legacy', state: 'only' }
-		]);
-
-		expect(keys(kept)).toEqual(['imperial']);
-	});
-
-	it('hides a play as soon as one side is hidden, however Only the rest of it is', () => {
-		// Hide beats Only: a play holding something the reader will not trade is
-		// not rescued by the other side being on their list.
-		const kept = applyRules([divinePlay, exaltedPlay], { Currency: 'only' }, [
-			{ id: 'divine', name: 'Divine Orb', state: 'hide' }
-		]);
-
-		expect(keys(kept)).toEqual(['exalted']);
-	});
-
-	it('requires an Only match once a category is ruled Only', () => {
-		expect(keys(applyRules([divinePlay, scarabPlay], { Threads: 'only' }, []))).toEqual(['scarab']);
-	});
-
-	it('requires an Only match once a single item is ruled Only', () => {
-		// Only gates the whole table, not just its own layer — otherwise picking
-		// one item Only would leave every unrelated play on screen.
-		const kept = applyRules([divinePlay, scarabPlay], {}, [
-			{ id: 'scarab-gilded', name: 'Gilded Scarab', state: 'only' }
-		]);
-
-		expect(keys(kept)).toEqual(['scarab']);
-	});
-
-	it('matches a rule against the quote side of a leg', () => {
-		// The reader shops for whichever side they hold: chaos is never an item
-		// here, and a rule naming it still has to catch the play.
-		const exaltedQuote = play({
-			key: 'exalted-quote',
-			legs: [leg({ quote: 'exalted', quoteName: 'Exalted Orb' })]
-		});
-
-		expect(keys(applyRules([divinePlay, exaltedQuote], {}, [
-			{ id: 'chaos', name: 'Chaos Orb', state: 'hide' }
-		]))).toEqual(['exalted-quote']);
-	});
-
-	const uncategorised = play({
-		key: 'uncategorised',
-		legs: [
-			leg({
-				item: 'unknown-item',
-				itemName: 'Unknown',
-				itemCategory: '',
-				quote: 'unknown-quote',
-				quoteName: 'Also Unknown',
-				quoteCategory: ''
-			})
-		]
-	});
-
-	it('leaves a side the asset could not categorise out of every category rule', () => {
-		expect(keys(applyRules([uncategorised, divinePlay], { Currency: 'hide' }, []))).toEqual([
-			'uncategorised'
-		]);
-	});
-
-	it('ignores a hide rule keyed on the empty category', () => {
-		// "" is the wire's uncategorised marker, not a sixteenth group, so a rule
-		// keyed on it must not sweep up everything the asset does not cover.
-		expect(keys(applyRules([uncategorised], { '': 'hide' }, []))).toEqual(['uncategorised']);
-	});
-
-	it('does not gate the table on an Only rule keyed on the empty category', () => {
-		// Such a rule can never be matched, so treating it as an Only would hide
-		// every play with no way for the reader to see why.
-		expect(keys(applyRules([uncategorised, divinePlay], { '': 'only' }, []))).toEqual([
-			'uncategorised',
-			'divine'
-		]);
 	});
 });
 
@@ -694,783 +525,116 @@ describe('resetGateInputs', () => {
 		// seven.
 		expect(movedGates(parseGates(resetGateInputs()))).toEqual([]);
 	});
-
-	it('takes the sub-chaos tier back off the table', () => {
-		// The reset's observable end, not just its parsed one: a reader who typed 0,
-		// saw the fractional rows and pressed Defaults gets the clean table back.
-		const oil = play({ key: 'oil', investment: 0.4 });
-		const disarmed = parseGates(gateInputs({ minItemPrice: '0' }));
-
-		expect(keys(applyGates([oil], disarmed, DIVINE_RATE))).toEqual(['oil']);
-		expect(keys(applyGates([oil], parseGates(resetGateInputs()), DIVINE_RATE))).toEqual([]);
-	});
-
-	it('takes the hundreds-per-divine tier back off the table', () => {
-		// The same round trip for the divine knob, and the FIRST assertion is what
-		// makes the second one mean anything: it fixes that this play is on the table
-		// whenever the divine floor is off, so the empty result under the reset can
-		// only be that floor coming back. Alone, the second would pass just as well
-		// against a play some unrelated gate was dropping. (A knob left out of
-		// `resetGateInputs` is not what this pair catches — `parseGate` would be
-		// handed `undefined` and throw on `.trim()`, which the first case in this
-		// block hits first.)
-		const junk = play({
-			key: 'junk',
-			legs: [leg({ item: 'card', quote: DIVINE_ID, quoteName: 'Divine Orb' })],
-			investment: 20
-		});
-		const disarmed = parseGates(gateInputs({ minItemPriceDiv: '0' }));
-
-		expect(keys(applyGates([junk], disarmed, DIVINE_RATE))).toEqual(['junk']);
-		expect(keys(applyGates([junk], parseGates(resetGateInputs()), DIVINE_RATE))).toEqual([]);
-	});
 });
 
-describe('applyGates', () => {
-	/** Clears every recommended level: 10c gained, a live hour, a one-step spread. */
-	const clean = play({ key: 'clean', roi: 10, turnover: 20000, tick: 0.005, roiPct: 0.05 });
-	/**
-	 * A Sacrifice-fragment-shaped play: fails four of the five RECOMMENDED levels.
-	 *
-	 * Its entry price is the fixture's 200c and deliberately not a fragment's real
-	 * fraction of a chaos: these cases are about the four old levels, and a
-	 * sub-chaos entry would put POE-196's shipped floor underneath every one of
-	 * them. The trash-price knob has its own fixture (`oil`) for that.
-	 */
-	const fragment = play({ key: 'fragment', roi: 0.5, turnover: 4000, tick: 0.2, roiPct: 0.03 });
-	/**
-	 * Clear Oil: the tier POE-196 exists to remove. Entered at 0.4 chaos, and
-	 * otherwise a play the five recommended levels have no quarrel with, so a case
-	 * built on it can only be answered by the item-price floor.
-	 */
-	const oil = play({
-		key: 'oil',
-		investment: 0.4,
-		roi: 10,
-		turnover: 20000,
-		tick: 0.005,
-		roiPct: 0.05
-	});
-
-	/**
-	 * A DIVINE-QUOTED entry: the reader spends divine to get in, so the divine
-	 * trash-price knob is the one that judges it.
-	 *
-	 * `quote` is `DIVINE_ID` on the BUY leg — `legs[0]` — because that is what
-	 * `applyGates` scopes on, and the fixture's default leg quotes in the bare
-	 * string `'chaos'`, which is not `CHAOS_ID` either: the gate must recognise
-	 * the real divine id and nothing else, so a fixture using the shorthand would
-	 * pass a gate that matched on any non-chaos string.
-	 *
-	 * `investment` is the CHAOS cost of one exchange, as the wire always sends it;
-	 * at `DIVINE_RATE` the caller reads the divine entry price straight off it.
-	 * 100c is 0.5 div — comfortably over the 0.4 floor — so this play is the
-	 * baseline a boundary case moves off.
-	 */
-	const divineEntry = (overrides: Partial<CurrencyExchangePlay> = {}) =>
-		play({
-			key: 'divine-entry',
-			legs: [leg({ item: 'card', quote: DIVINE_ID, quoteName: 'Divine Orb' })],
-			investment: 100,
-			roi: 10,
-			turnover: 20000,
-			tick: 0.005,
-			roiPct: 0.05,
-			...overrides
-		});
-
-	/**
-	 * The levels the server used to enforce for everyone, which the desktop shipped
-	 * armed until POE-193 and now only recommends (POE-184's calibration, ADR-015).
-	 * Spelled here rather than imported because they are no longer a value the
-	 * source exports — the point of these tests is that typing them brings the old
-	 * table back, so a copy that could not drift with `gateDefaults` is the honest
-	 * fixture.
-	 */
-	const oldServerLevels: Gates = {
-		// Both off: the server never had a price floor in either denomination, so
-		// neither is one of the levels typing brings back. POE-196 and the divine
-		// twin of 2026-08-23 added them on this side alone.
-		minItemPrice: 0,
-		minItemPriceDiv: 0,
-		minRoiChaos: 3,
-		minTurnover: 10000,
-		maxTickPct: 10,
-		minEdgeTickRatio: 5,
-		minRoiPct: 2
+describe('exchangePageParams', () => {
+	const BLANK_GATES: GateInputs = {
+		minItemPrice: '',
+		minItemPriceDiv: '',
+		minRoiChaos: '',
+		minTurnover: '',
+		maxTickPct: '',
+		minEdgeTickRatio: '',
+		minRoiPct: ''
 	};
 
-	it('shows a play that fails four old levels, because none of the five is armed', () => {
-		// POE-193's whole change: the fragment fails four of the old levels and is
-		// on the table anyway, because the reader has not asked for any of them.
-		// Both price floors are armed here and neither reaches it — a 200c entry is
-		// not the trash tier, and the divine floor does not judge a chaos-quoted
-		// entry at all — so this stays a statement about the five.
-		expect(keys(applyGates([clean, fragment], gateDefaults, DIVINE_RATE))).toEqual(['clean', 'fragment']);
-	});
+	/** A fresh install's persisted picks: every pref at the string the page stores by default. */
+	function prefs(overrides: Partial<ExchangePagePrefs> = {}): ExchangePagePrefs {
+		return {
+			sort: 'expected',
+			rowCap: '50',
+			categoryRules: '{}',
+			itemRules: '[]',
+			gateInputs: BLANK_GATES,
+			investMin: '',
+			investMax: '',
+			unit: 'chaos',
+			search: '',
+			...overrides
+		};
+	}
 
-	it('drops a sub-chaos play at the shipped defaults', () => {
-		// The chaos half of what is armed out of the box (POE-196, one of ADR-017's
-		// two sanctioned exceptions). Nothing else about the oil play is
-		// objectionable — it clears every recommended level, and it is chaos-quoted
-		// so the divine floor never looks at it — making its absence the chaos price
-		// floor and nothing else.
-		expect(keys(applyGates([clean, oil], gateDefaults, DIVINE_RATE))).toEqual(['clean']);
-	});
+	it('sends every gate explicitly, including defaults', () => {
+		// The server never defaults a gate (ADR-017, M1): a blank knob must reach
+		// it as this build's shipped number, and an armed one as what was typed.
+		const params = exchangePageParams(prefs({ gateInputs: { ...BLANK_GATES, minRoiChaos: '5', maxTickPct: '-3' } }));
 
-	it('keeps a play entered at exactly the shipped floor', () => {
-		// Inclusive on the passing side, like every other gate here: 0.5c is in.
-		// This is the case a `<=` slipped into the comparison fails.
-		const exact = play({ key: 'exact', investment: 0.5 });
-
-		expect(keys(applyGates([exact], gateDefaults, DIVINE_RATE))).toEqual(['exact']);
-	});
-
-	it('drops a play entered a hundredth of a chaos under the shipped floor', () => {
-		// The other side of that boundary, which is what catches the comparison
-		// being inverted — a `>` here would keep the row its sibling keeps and this
-		// pair would agree on everything.
-		const under = play({ key: 'under', investment: 0.49 });
-
-		expect(keys(applyGates([under], gateDefaults, DIVINE_RATE))).toEqual([]);
-	});
-
-	it('keeps the sub-chaos play once the floor is explicitly turned off', () => {
-		// Typing 0 is the documented way out of the one default-on gate, and it has
-		// to give the reader the fractional tier back rather than fall through to
-		// the shipped floor.
-		expect(keys(applyGates([oil], gates({ minItemPrice: 0 }), DIVINE_RATE))).toEqual(['oil']);
-	});
-
-	it('keeps a divine-quoted play entered at exactly the shipped divine floor', () => {
-		// 80c at the 200c rate is 0.4 div exactly. Inclusive on the passing side like
-		// every other gate here, so a `<=` in the comparison fails this and nothing
-		// else.
-		const exact = divineEntry({ key: 'exact', investment: 80 });
-
-		expect(keys(applyGates([exact], gateDefaults, DIVINE_RATE))).toEqual(['exact']);
-	});
-
-	it('drops a divine-quoted play a tenth of a chaos under the shipped divine floor', () => {
-		// 79.9c is 0.3995 div. The other side of that boundary — the pair is what
-		// catches the comparison being inverted, since a `>` would keep the row its
-		// sibling keeps and the two would agree on everything.
-		const under = divineEntry({ key: 'under', investment: 79.9 });
-
-		expect(keys(applyGates([under], gateDefaults, DIVINE_RATE))).toEqual([]);
-	});
-
-	it('leaves a chaos-quoted play alone however cheap it is in divine', () => {
-		// THE SCOPE. A 1c entry is 0.005 div, far under the 0.4 floor, and it stays
-		// on the table because the divine knob only judges plays entered by spending
-		// divine. Drop the entry-quote check and this row goes — with it, most of the
-		// chaos side of the table, which is governed by the 0.5c floor alone (1c
-		// clears that one).
-		const cheapChaos = play({ key: 'cheap-chaos', investment: 1 });
-
-		expect(keys(applyGates([cheapChaos], gateDefaults, DIVINE_RATE))).toEqual(['cheap-chaos']);
-	});
-
-	it('leaves a chaos-entry route alone though a later leg quotes divine', () => {
-		// THE SCOPE, at the position it is read from. The entry quote is the BUY leg's
-		// — `legs[0]` — and this route is entered by spending chaos; the divine id
-		// appears only on the SELL leg it passes through, which is not a currency the
-		// reader ever puts in. Its 20c entry is 0.1 div, deep under the 0.4 floor, so
-		// a scope written as "any leg quotes divine" would drop this row while the
-		// sibling above still passed: that one carries no divine leg at all.
-		const passesThroughDivine = play({
-			key: 'passes-through-divine',
-			mode: '1-hop',
-			legs: [
-				leg({ item: 'card', quote: CHAOS_ID, quoteName: 'Chaos Orb' }),
-				leg({ action: 'sell', item: 'card', quote: DIVINE_ID, quoteName: 'Divine Orb' }),
-				leg({ action: 'sell', item: 'divine', quote: CHAOS_ID, quoteName: 'Chaos Orb' })
-			],
-			investment: 20
+		expect({
+			minItemPrice: params.minItemPrice,
+			minItemPriceDiv: params.minItemPriceDiv,
+			minRoiChaos: params.minRoiChaos,
+			minTurnover: params.minTurnover,
+			maxTickPct: params.maxTickPct,
+			minEdgeTickRatio: params.minEdgeTickRatio,
+			minRoiPct: params.minRoiPct
+		}).toEqual({
+			minItemPrice: '0.5',
+			minItemPriceDiv: '0.4',
+			minRoiChaos: '5',
+			minTurnover: '0',
+			maxTickPct: '0',
+			minEdgeTickRatio: '0',
+			minRoiPct: '0'
 		});
-
-		expect(keys(applyGates([passesThroughDivine], gateDefaults, DIVINE_RATE))).toEqual([
-			'passes-through-divine'
-		]);
 	});
 
-	it('drops a divine-quoted play on the chaos floor alone', () => {
-		// The chaos knob judges EVERY play whatever the entry quote is, `investment`
-		// always being chaos — the divine knob is the narrower of the two and does not
-		// displace it. The divine floor is off here, so a 0.4c entry behind a divine
-		// entry quote can only be answered by the chaos one; scoping `minItemPrice` to
-		// chaos-quoted entries would leave this row on the table.
-		const dust = divineEntry({ key: 'dust', investment: 0.4 });
-
-		expect(keys(applyGates([dust], gates({ minItemPrice: 0.5 }), DIVINE_RATE))).toEqual([]);
-	});
-
-	it('keeps the hundreds-per-divine play once the divine floor is explicitly turned off', () => {
-		// Typing 0 is the documented way out, and it has to give the tier back rather
-		// than fall through to the shipped 0.4.
-		const junk = divineEntry({ key: 'junk', investment: 20 });
-
-		expect(keys(applyGates([junk], gates({ minItemPriceDiv: 0 }), DIVINE_RATE))).toEqual(['junk']);
-	});
-
-	it('leaves the divine floor standing when the chaos floor alone is turned off', () => {
-		// The two disarm separately. A reader who typed 0 into Min item price asked
-		// for the fractional-chaos tier, not for the hundreds-per-divine one.
-		const junk = divineEntry({ key: 'junk', investment: 20 });
-
-		expect(keys(applyGates([junk], gates({ minItemPriceDiv: 0.4 }), DIVINE_RATE))).toEqual([]);
-	});
-
-	it('judges the divine floor on the entry cost, not on the buy leg’s printed price', () => {
-		// THE FIGURE. Both plays post a leg price that answers the floor the OTHER
-		// way from their entry cost: `printsDear` prints 0.5 div an item while
-		// costing 0.3 div to enter, `printsCheap` prints 0.1 while costing 0.5. The
-		// gate reads `investment / rate` — the undercut entry, the same figure the
-		// chaos twin judges — so the dear-printing play is the one that goes.
-		// Re-pointing the gate at `legs[0].price` swaps both verdicts.
-		const printsDear = divineEntry({
-			key: 'prints-dear',
-			legs: [leg({ item: 'card', quote: DIVINE_ID, quoteName: 'Divine Orb', price: 0.5 })],
-			investment: 60
-		});
-		const printsCheap = divineEntry({
-			key: 'prints-cheap',
-			legs: [leg({ item: 'card', quote: DIVINE_ID, quoteName: 'Divine Orb', price: 0.1 })],
-			investment: 100
-		});
-
-		expect(keys(applyGates([printsDear, printsCheap], gateDefaults, DIVINE_RATE))).toEqual([
-			'prints-cheap'
-		]);
-	});
-
-	it('judges a divine-quoted 1-hop route on its own entry cost', () => {
-		// `legs[0]` is the buy leg whichever shape the route is, so a 1-hop entered by
-		// spending divine is scoped and measured exactly as a direct one — no
-		// special-casing by mode, and no reading of the later legs' quotes.
-		const hop = divineEntry({
-			key: 'hop',
-			mode: '1-hop',
-			legs: [
-				leg({ item: 'card', quote: DIVINE_ID, quoteName: 'Divine Orb' }),
-				leg({ item: 'card', quote: 'chaos' }),
-				leg({ item: 'divine' })
-			],
-			investment: 20
-		});
-
-		expect(keys(applyGates([hop], gateDefaults, DIVINE_RATE))).toEqual([]);
-	});
-
-	it('judges no play at all in an hour with no divine rate to read', () => {
-		// `divineChaosRate` is 0 only in an hour that carried no divine/chaos trade,
-		// in which case no divine-quoted play is served — but the guard is what keeps
-		// a 0 from becoming a division by zero compared against a floor. Unjudged and
-		// not failed: the play stays.
-		const junk = divineEntry({ key: 'junk', investment: 20 });
-
-		expect(keys(applyGates([junk], gateDefaults, 0))).toEqual(['junk']);
-	});
-
-	it('measures the price floor on the entry cost, not on what the play returns', () => {
-		// A cheap entry that pays well is still the trash tier by this gate's
-		// question, and a dear entry that pays nothing still clears it. Pointing the
-		// floor at `roi` — the neighbouring per-exchange chaos figure — would answer
-		// both the other way round.
-		const cheapButRich = play({ key: 'cheap-but-rich', investment: 0.4, roi: 50 });
-		const dearButPoor = play({ key: 'dear-but-poor', investment: 400, roi: 0.1 });
-
-		expect(keys(applyGates([cheapButRich, dearButPoor], gateDefaults, DIVINE_RATE))).toEqual(['dear-but-poor']);
-	});
-
-	it('judges a 1-hop route on the same entry cost as a direct one', () => {
-		// No special-casing by mode: `investment` is the chaos an exchange costs to
-		// enter whichever shape the route is, which is why the gate reads it rather
-		// than a leg price quoted in whatever that leg trades against.
-		const hop = play({
-			key: 'hop',
-			mode: '1-hop',
-			legs: [leg(), leg({ item: 'oil', quote: 'divine' }), leg({ item: 'divine' })],
-			investment: 0.4
-		});
-
-		expect(keys(applyGates([hop], gateDefaults, DIVINE_RATE))).toEqual([]);
-	});
-
-	it('leaves the sub-chaos play on the table when only the old server levels are typed', () => {
-		// The levels a reader arms are the SERVER's five; none of them is a price
-		// floor, so a fixture spelling them out must not be able to answer this
-		// gate's question by accident.
-		expect(keys(applyGates([oil], oldServerLevels, DIVINE_RATE))).toEqual(['oil']);
-	});
-
-	it('keeps a play the simulation expects to lose chaos', () => {
-		// The gates judge the BEST-CASE pair on purpose (POE-193): the levels a
-		// reader arms were calibrated against `roi` and `roiPct`, so re-pointing one
-		// at the expectation would change what a typed level cuts. The measured
-		// loser stays on the table and is ranked and coloured for what it is —
-		// serve and flag (ADR-016), not a sixth hidden gate — and it survives the
-		// armed levels too, not just the empty ones.
-		const measuredLoss = play({
-			key: 'measured-loss',
-			roi: 10,
-			turnover: 20000,
-			tick: 0.005,
-			roiPct: 0.05,
-			expectedRoi: -6,
-			expectedRoiPct: -0.03
-		});
-
-		expect(keys(applyGates([measuredLoss], gateDefaults, DIVINE_RATE))).toEqual(['measured-loss']);
-		expect(keys(applyGates([measuredLoss], oldServerLevels, DIVINE_RATE))).toEqual(['measured-loss']);
-	});
-
-	it('drops that cheap thin play again once the old server levels are typed in', () => {
-		// The other half of the contract: the levels still mean what they meant, so
-		// a reader who wants the pre-POE-193 table types five numbers and has it.
-		expect(keys(applyGates([clean, fragment], oldServerLevels, DIVINE_RATE))).toEqual(['clean']);
-	});
-
-	it('keeps a play that fails four levels when all five gates are explicitly 0', () => {
-		// The explicit-off contract, stated against a written-out baseline rather
-		// than against `gateDefaults`: 0 disables every comparison, `maxTickPct`
-		// included — the fragment's 20% spread would fail any ceiling that ran at
-		// all. This is what makes 0 usable as the shipped default, and it stays
-		// true (and stays tested) the day a default is armed again.
-		expect(keys(applyGates([fragment], gates(), DIVINE_RATE))).toEqual(['fragment']);
-	});
-
-	it('drops it on one armed knob alone, leaving the other four off', () => {
-		// A knob is armed one at a time in practice — the turnover line is the one
-		// that hid a real 8.5k-chaos-an-hour flip, and arming it alone is enough to
-		// hide the fragment without the reader having touched the rest.
-		expect(keys(applyGates([clean, fragment], gates({ minTurnover: 10000 }), DIVINE_RATE))).toEqual(['clean']);
-	});
-
-	it('keeps a play gaining exactly the chaos floor', () => {
-		const exact = play({ key: 'exact', roi: 3 });
-
-		expect(keys(applyGates([exact], gates({ minRoiChaos: 3 }), DIVINE_RATE))).toEqual(['exact']);
-	});
-
-	it('drops a play a hundredth of a chaos under the floor', () => {
-		const under = play({ key: 'under', roi: 2.99 });
-
-		expect(keys(applyGates([under], gates({ minRoiChaos: 3 }), DIVINE_RATE))).toEqual([]);
-	});
-
-	it('keeps a play whose hour turned over exactly the floor', () => {
-		const exact = play({ key: 'exact', turnover: 10000 });
-
-		expect(keys(applyGates([exact], gates({ minTurnover: 10000 }), DIVINE_RATE))).toEqual(['exact']);
-	});
-
-	it('drops a play one chaos of turnover short of the floor', () => {
-		const under = play({ key: 'under', turnover: 9999 });
-
-		expect(keys(applyGates([under], gates({ minTurnover: 10000 }), DIVINE_RATE))).toEqual([]);
-	});
-
-	it('keeps a play whose spread sits exactly on the ceiling', () => {
-		const exact = play({ key: 'exact', tick: 0.1 });
-
-		expect(keys(applyGates([exact], gates({ maxTickPct: 10 }), DIVINE_RATE))).toEqual(['exact']);
-	});
-
-	it('drops a play whose spread is a hair over the ceiling', () => {
-		const over = play({ key: 'over', tick: 0.101 });
-
-		expect(keys(applyGates([over], gates({ maxTickPct: 10 }), DIVINE_RATE))).toEqual([]);
-	});
-
-	it('reads the spread ceiling as percent points against a fractional tick', () => {
-		// The input says 0.5 and the wire says 0.01 — a ceiling compared raw would
-		// pass a 1% spread as comfortably under "0.5".
-		const wide = play({ key: 'wide', tick: 0.01 });
-
-		expect(keys(applyGates([wide], gates({ maxTickPct: 0.5 }), DIVINE_RATE))).toEqual([]);
-	});
-
-	it('keeps a play returning exactly the ratio of its own spread', () => {
-		const exact = play({ key: 'exact', tick: 0.01, roiPct: 0.05 });
-
-		expect(keys(applyGates([exact], gates({ minEdgeTickRatio: 5 }), DIVINE_RATE))).toEqual(['exact']);
-	});
-
-	it('drops a play returning just under the ratio of its own spread', () => {
-		// The 1-hop case: the whole edge is one price step, so the ratio is what
-		// keeps it off the table until the reader asks for it.
-		const thin = play({ key: 'thin', tick: 0.01, roiPct: 0.049 });
-
-		expect(keys(applyGates([thin], gates({ minEdgeTickRatio: 5 }), DIVINE_RATE))).toEqual([]);
-	});
-
-	it('measures the ratio against the spread of the play in hand, not a fixed floor', () => {
-		// Same return, twice the spread: the wider market is the one that fails.
-		const tight = play({ key: 'tight', tick: 0.005, roiPct: 0.03 });
-		const wide = play({ key: 'wide', tick: 0.01, roiPct: 0.03 });
-
-		expect(keys(applyGates([tight, wide], gates({ minEdgeTickRatio: 5 }), DIVINE_RATE))).toEqual(['tight']);
-	});
-
-	it('reads the return floor as percent points against a fractional roiPct', () => {
-		// The input says 2 and the wire says 0.05 — compared raw, a 5% play would
-		// fail a 2% floor.
-		expect(keys(applyGates([clean], gates({ minRoiPct: 2 }), DIVINE_RATE))).toEqual(['clean']);
-	});
-
-	it('keeps a play returning exactly the floor', () => {
-		const exact = play({ key: 'exact', roiPct: 0.02 });
-
-		expect(keys(applyGates([exact], gates({ minRoiPct: 2 }), DIVINE_RATE))).toEqual(['exact']);
-	});
-
-	it('drops a play returning a hundredth of a percent under the floor', () => {
-		const under = play({ key: 'under', roiPct: 0.0199 });
-
-		expect(keys(applyGates([under], gates({ minRoiPct: 2 }), DIVINE_RATE))).toEqual([]);
-	});
-
-	it('drops a play that clears four armed gates and fails only the fifth', () => {
-		// One failing gate is enough — the reader who wants this play back has to
-		// turn that one off, not all of them.
-		const thinHour = play({ key: 'thin-hour', roi: 10, turnover: 9000, tick: 0.005, roiPct: 0.05 });
-
-		expect(keys(applyGates([thinHour], oldServerLevels, DIVINE_RATE))).toEqual([]);
-		expect(keys(applyGates([thinHour], gateDefaults, DIVINE_RATE))).toEqual(['thin-hour']);
-	});
-});
-
-describe('applyNumericFilters', () => {
-	// 100c an exchange EXPECTED to pay 10c: ten flips clear the 100c scale
-	// target, so the bounds are asked about 1,000c — never about the 100c one
-	// exchange costs. The best-case `roi` is deliberately 25c, which would
-	// divide the target into four flips and 400c instead: the scale counts the
-	// expectation (POE-193), and these bounds meet whatever it counts.
-	const cheap = play({ key: 'cheap', investment: 100, roi: 25, roiPct: 0.25, expectedRoi: 10 });
-	// Dearer at the same expectation per exchange: ten flips of 250c tie up
-	// 2,500c.
-	const dear = play({ key: 'dear', investment: 250, roi: 25, roiPct: 0.1, expectedRoi: 10 });
-
-	it('keeps every play when no bound is typed', () => {
-		// The losing play stays: the return floor is a gate now (POE-191), and
-		// nothing in this pass looks at `roiPct` at all.
-		const loss = play({
-			key: 'loss',
-			investment: 0,
-			roi: -5,
-			roiPct: -0.5,
-			expectedRoi: -9,
-			expectedRoiPct: -0.4
-		});
-
-		expect(keys(applyNumericFilters([cheap, loss], filters()))).toEqual(['cheap', 'loss']);
-	});
-
-	it('ignores a half-typed bound rather than emptying the table', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ investMin: '1e' })))).toEqual(['cheap']);
-	});
-
-	it('ignores a whitespace-only bound rather than reading it as zero', () => {
-		// `Number('  ')` is 0, so without the trim a space left in Max investment
-		// would become a 0c ceiling and empty the table.
-		expect(keys(applyNumericFilters([cheap], filters({ investMax: '  ' })))).toEqual(['cheap']);
-	});
-
-	it('ignores an infinite bound rather than emptying the table', () => {
-		// `persisted()` hands back whatever is in storage, so the read site is the
-		// only place a bound of "Infinity" — which no play can ever clear — stops.
-		expect(keys(applyNumericFilters([cheap], filters({ investMin: 'Infinity' })))).toEqual([
-			'cheap'
-		]);
-	});
-
-	it('measures the investment floor against the scale the play must be run at', () => {
-		// Ten flips tie up 1,000c, so a 900c floor is met — even though one
-		// exchange, at 100c, would fall an order of magnitude short of it.
-		expect(keys(applyNumericFilters([cheap], filters({ investMin: '900' })))).toEqual(['cheap']);
-	});
-
-	it('keeps a play whose scale sits exactly on the investment floor', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ investMin: '1000' })))).toEqual(['cheap']);
-	});
-
-	it('drops a play whose scale is one chaos under the investment floor', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ investMin: '1001' })))).toEqual([]);
-	});
-
-	it('drops a play the bankroll covers one exchange of but not the scale it needs', () => {
-		// The discriminating case for the re-anchoring (POE-192): 100c an exchange
-		// clears a 500c ceiling, and the 1,000c the play has to tie up to be worth
-		// running does not. Answering about the exchange would sell the reader a
-		// trip they cannot afford to finish.
-		expect(keys(applyNumericFilters([cheap], filters({ investMax: '500' })))).toEqual([]);
-	});
-
-	it('keeps a play whose scale sits exactly on the investment ceiling', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ investMax: '1000' })))).toEqual(['cheap']);
-	});
-
-	it('drops a play whose scale is one chaos over the investment ceiling', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ investMax: '999' })))).toEqual([]);
-	});
-
-	it('bounds the very figure the Scale column shows the reader', () => {
-		// The bound and the Scale column's "N c in" sub-line are one FUNCTION, not
-		// two agreeing expressions: `applyNumericFilters` calls `runInvestment`,
-		// which is what that sub-line renders. So a ceiling the reader types cannot
-		// admit a row whose printed run cost sits above it. Told across both
-		// branches at once — `cheap` has a run, `measuredLoss` has none — so a
-		// change that re-anchored either side of either branch shows up here as a
-		// row admitted above its own printed cost.
-		//
-		// The printed figures are pinned as LITERALS rather than by re-calling the
-		// shared function: since the filter now calls it too, asserting the bound
-		// against that same call would compare the production expression with
-		// itself. `dear` is the discriminator — its per-exchange 250c clears the
-		// ceiling that its printed 2,500c does not.
-		const measuredLoss = play({ key: 'loss', investment: 100, roi: 25, expectedRoi: -3 });
-		const ceiling = 1000;
-
-		const kept = applyNumericFilters(
-			[cheap, dear, measuredLoss],
-			filters({ investMax: String(ceiling) })
+	it('maps an item rule and a category rule to their params', () => {
+		const params = exchangePageParams(
+			prefs({
+				categoryRules: serializeCategoryRules({ Currency: 'only', Omens: 'hide' }),
+				itemRules: serializeItemRules([
+					{ id: 'item-hidden', name: 'Hidden', state: 'hide' },
+					{ id: 'item-kept', name: 'Kept', state: 'only' }
+				])
+			})
 		);
 
-		expect(keys(kept)).toEqual(['cheap', 'loss']);
-		expect(runInvestment(cheap)).toBe(1000);
-		expect(runInvestment(measuredLoss)).toBe(100);
-		expect(runInvestment(dear)).toBe(2500);
-	});
-
-	it('bounds the RUN of a play, not the posting its columns print', () => {
-		// THE SEAM (spec §6.1), and the case that would silently pass if the bound
-		// were left reading `moneyColumns`. This play enters on a market that posts
-		// four at a time, so its Investment COLUMN prints 4c — while the run it has
-		// to be repeated to is 10 flips tying up 10c. A 5c ceiling covers the
-		// posting and does not cover the run, and a bankroll ceiling is asking about
-		// the run. Since the owner rulings of 2026-08-22 every row displays a
-		// posting, so this seam is on every row and not only the chaos ones.
-		const trash = play({
-			key: 'trash',
-			legs: [leg({ quote: CHAOS_ID, price: 1, priceItemQty: 4, priceQuoteQty: 4 })],
-			investment: 1,
-			roi: 0.25,
-			expectedRoi: 10
-		});
-
-		expect(moneyColumns(trash).investment).toBe(4);
-		expect(runInvestment(trash)).toBe(10);
-		expect(keys(applyNumericFilters([trash], filters({ investMax: '5' })))).toEqual([]);
-		expect(keys(applyNumericFilters([trash], filters({ investMax: '10' })))).toEqual(['trash']);
-	});
-
-	it('reads the investment bounds as divine when the unit says divine', () => {
-		// A ceiling of 5 divine at 200c/div is a 1,000c ceiling: the cheap play's
-		// scale ties up exactly that, the dear one's 2,500c does not.
-		const kept = applyNumericFilters(
-			[cheap, dear],
-			filters({ unit: 'divine', divineChaosRate: 200, investMax: '5' })
-		);
-
-		expect(keys(kept)).toEqual(['cheap']);
-	});
-
-	it('reads the bounds as chaos when the hour carried no divine trade', () => {
-		// divineChaosRate 0 means the rate is unknown, not that a divine is worth
-		// nothing — converting by it would give a 0c ceiling and empty the table.
-		const kept = applyNumericFilters(
-			[cheap, dear],
-			filters({ unit: 'divine', divineChaosRate: 0, investMax: '1000' })
-		);
-
-		expect(keys(kept)).toEqual(['cheap']);
-	});
-
-	it('measures a play with no derivable scale against one exchange', () => {
-		// A play the simulation expects nothing from never reaches the target, so
-		// there is no scaled figure to compare — what it demonstrably ties up is
-		// the one exchange. Since POE-193 the table really carries such rows: the
-		// server's positivity floor governs `roi`, which is why this fixture's is
-		// healthy, while the measured expectation is free to come out negative and
-		// the play is served anyway (ADR-016).
-		const measuredLoss = play({ key: 'measured-loss', investment: 100, roi: 25, expectedRoi: -3 });
-
-		expect(keys(applyNumericFilters([measuredLoss], filters({ investMax: '100' })))).toEqual([
-			'measured-loss'
+		expect([params.onlyCategory, params.hideCategory, params.onlyItem, params.hideItem]).toEqual([
+			['Currency'],
+			['Omens'],
+			['item-kept'],
+			['item-hidden']
 		]);
 	});
 
-	it('drops a play with no derivable scale whose one exchange is over the ceiling', () => {
-		const measuredLoss = play({ key: 'measured-loss', investment: 100, roi: 25, expectedRoi: -3 });
+	it('sends no rule param when no rule is set', () => {
+		const params = exchangePageParams(prefs());
 
-		expect(keys(applyNumericFilters([measuredLoss], filters({ investMax: '99' })))).toEqual([]);
-	});
-});
-
-describe('matchesSearch', () => {
-	/** Buy Divine Orbs with Chaos Orbs — the item side is "Divine Orb". */
-	const divinePlay = play();
-
-	it('finds a play by part of its item name', () => {
-		expect(matchesSearch(divinePlay, 'ivine')).toBe(true);
+		expect(['onlyCategory', 'hideCategory', 'onlyItem', 'hideItem'].filter((key) => key in params)).toEqual([]);
 	});
 
-	it('finds a play by part of its QUOTE name', () => {
-		// The reader shops for whichever side they hold: this play's item side is
-		// Divine, and it is still the play someone spending chaos is looking for.
-		expect(matchesSearch(divinePlay, 'chaos')).toBe(true);
+	it('sends divine bounds with unit divine', () => {
+		const params = exchangePageParams(prefs({ investMin: '1', investMax: '2.5', unit: 'divine' }));
+
+		expect([params.investMin, params.investMax, params.unit]).toEqual(['1', '2.5', 'divine']);
 	});
 
-	it('finds a play by a name that only its second leg carries', () => {
-		const hop = play({
-			legs: [
-				leg(),
-				leg({
-					action: 'sell',
-					item: 'scarab-gilded',
-					itemName: 'Gilded Scarab',
-					itemCategory: 'Threads'
-				})
-			]
-		});
+	it('omits a blank or half-typed bound rather than sending it', () => {
+		// A half-typed "1e" must not filter the table while the exponent is typed.
+		const params = exchangePageParams(prefs({ investMin: '  ', investMax: '1e' }));
 
-		expect(matchesSearch(hop, 'gilded')).toBe(true);
+		expect(['investMin', 'investMax'].filter((key) => key in params)).toEqual([]);
 	});
 
-	it('ignores the case of the query', () => {
-		expect(matchesSearch(divinePlay, 'DIVINE')).toBe(true);
+	it('maps Show all to pageSize=all', () => {
+		expect(exchangePageParams(prefs({ rowCap: 'all' })).pageSize).toBe('all');
 	});
 
-	it('ignores the case of the name', () => {
-		const shouty = play({ legs: [leg({ itemName: 'DIVINE ORB' })] });
-
-		expect(matchesSearch(shouty, 'divine')).toBe(true);
+	it('maps a numeric row cap to its page size', () => {
+		expect(exchangePageParams(prefs({ rowCap: '25' })).pageSize).toBe('25');
 	});
 
-	it('drops a play no side of which carries the query', () => {
-		expect(matchesSearch(divinePlay, 'scarab')).toBe(false);
+	it('sends the parsed sort', () => {
+		expect([
+			exchangePageParams(prefs({ sort: 'fastest' })).sort,
+			exchangePageParams(prefs({ sort: 'bogus' })).sort
+		]).toEqual(['fastest', 'expected']);
 	});
 
-	it('keeps every play for an empty query', () => {
-		expect(matchesSearch(divinePlay, '')).toBe(true);
-	});
-
-	it('keeps every play for a whitespace-only query', () => {
-		// A space left in the box is a search the reader is done with, not a
-		// needle no name contains — matching it literally would empty the table.
-		expect(matchesSearch(divinePlay, '   ')).toBe(true);
-	});
-
-	it('ignores the space around a query typed with one', () => {
-		expect(matchesSearch(divinePlay, ' divine ')).toBe(true);
-	});
-
-	it('does not match on the exchange id, only on the names', () => {
-		// The ids are `Metadata/Items/...`-shaped and never on screen, so an id
-		// hit would leave a row with nothing in it to explain why it survived.
-		const hidden = play({
-			legs: [
-				leg({
-					item: 'Metadata/Items/Currency/CurrencyRerollRare',
-					itemName: 'Chromatic Orb',
-					quote: 'chaos',
-					quoteName: 'Chaos Orb'
-				})
-			]
-		});
-
-		expect(matchesSearch(hidden, 'metadata')).toBe(false);
-	});
-});
-
-describe('itemUniverse', () => {
-	it('lists an item once however many roles and plays it appears in', () => {
-		const first = play({ key: 'first', legs: [leg({ item: 'divine', quote: 'chaos' })] });
-		const second = play({
-			key: 'second',
-			legs: [
-				leg({ item: 'scarab-gilded', itemName: 'Gilded Scarab', itemCategory: 'Threads' }),
-				leg({ action: 'sell', item: 'chaos', itemName: 'Chaos Orb', quote: 'divine', quoteName: 'Divine Orb' })
-			]
-		});
-
-		expect(
-			itemUniverse([first, second]).map((item) => [item.id, item.playCount])
-		).toEqual([
-			['chaos', 2],
-			['divine', 2],
-			['scarab-gilded', 1]
-		]);
-	});
-
-	it('counts an item filling both halves of one play once', () => {
-		const both = play({
-			key: 'both',
-			legs: [
-				leg({ item: 'divine', quote: 'chaos' }),
-				leg({ action: 'sell', item: 'chaos', itemName: 'Chaos Orb', quote: 'divine', quoteName: 'Divine Orb' })
-			]
-		});
-
-		expect(itemUniverse([both]).map((item) => [item.id, item.playCount])).toEqual([
-			['chaos', 1],
-			['divine', 1]
-		]);
-	});
-
-	it('orders the picker by display name rather than by rank', () => {
-		const alpha = play({
-			key: 'alpha',
-			legs: [leg({ item: 'zulu', itemName: 'Zephyr Scarab', quote: 'alpha', quoteName: 'Alva Card' })]
-		});
-
-		expect(itemUniverse([alpha]).map((item) => item.name)).toEqual([
-			'Alva Card',
-			'Zephyr Scarab'
-		]);
-	});
-
-	it('breaks a display-name tie on the id so the order is stable between renders', () => {
-		// Two distinct ids can humanize to one name; without the id tie-break
-		// their relative order would depend on insertion order alone.
-		const twins = play({
-			key: 'twins',
-			legs: [
-				leg({ item: 'b-id', itemName: 'Same Name', quote: 'a-id', quoteName: 'Same Name' })
-			]
-		});
-
-		expect(itemUniverse([twins]).map((item) => item.id)).toEqual(['a-id', 'b-id']);
-	});
-
-	it('fills a missing icon from another side of the same item that carries one', () => {
-		// A leg the asset could not decorate must not blank a row another leg
-		// already filled in.
-		const bare = play({ key: 'bare', legs: [leg({ item: 'divine', itemIcon: null })] });
-		const decorated = play({
-			key: 'decorated',
-			legs: [leg({ item: 'divine', itemIcon: '/icon/currency-exchange/divine' })]
-		});
-
-		const divine = itemUniverse([bare, decorated]).find((item) => item.id === 'divine');
-
-		expect(divine?.icon).toBe('/icon/currency-exchange/divine');
-	});
-
-	it('fills a missing category from another side of the same item that carries one', () => {
-		const bare = play({ key: 'bare', legs: [leg({ item: 'divine', itemCategory: '' })] });
-		const categorised = play({
-			key: 'categorised',
-			legs: [leg({ item: 'divine', itemCategory: 'Currency' })]
-		});
-
-		const divine = itemUniverse([bare, categorised]).find((item) => item.id === 'divine');
-
-		expect(divine?.category).toBe('Currency');
-	});
-
-	it('lists nothing for a response that served no plays', () => {
-		expect(itemUniverse([])).toEqual([]);
+	it('sends a trimmed search and omits a blank one', () => {
+		expect([
+			exchangePageParams(prefs({ search: '  Omen ' })).search,
+			'search' in exchangePageParams(prefs({ search: '   ' }))
+		]).toEqual(['Omen', false]);
 	});
 });

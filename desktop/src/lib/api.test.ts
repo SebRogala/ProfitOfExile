@@ -98,6 +98,7 @@ describe('signalTransitionLabel', () => {
  * turn into the "stale" header rather than a blank table.
  */
 describe('fetchCurrencyExchangePlays', () => {
+	const PAGE = { pageSize: '50', sort: 'expected' };
 	const PLAYS_RESPONSE: CurrencyExchangeResponse = {
 		league: 'Mirage',
 		lastUpdated: '2026-08-19T12:00:00.000Z',
@@ -130,7 +131,13 @@ describe('fetchCurrencyExchangePlays', () => {
 			'Harvest',
 			'Runegrafts',
 			'Allflame'
-		]
+		],
+		total: 0,
+		afterRules: 0,
+		afterGates: 0,
+		matched: 0,
+		showConvert: false,
+		itemUniverse: []
 	};
 
 	/**
@@ -250,7 +257,16 @@ describe('fetchCurrencyExchangePlays', () => {
 				// Any suspect leg makes the play suspect; it is still served.
 				suspect: true,
 				hoursSeen: 20,
-				lastHour: '2026-08-19T12:00:00.000Z'
+				lastHour: '2026-08-19T12:00:00.000Z',
+				display: {
+					units: 200,
+					basis: 'posting',
+					money: { investment: 36000, roi: 4320, expectedRoi: -840 },
+					expectedPrinted: true,
+					scale: null,
+					runInvestment: 180,
+					sortKeys: { expected: -840, roi: 4320, fastestHours: null }
+				}
 			}
 		]
 	};
@@ -280,14 +296,14 @@ describe('fetchCurrencyExchangePlays', () => {
 	});
 
 	it('requests the plays endpoint under the configured server API base', async () => {
-		await fetchCurrencyExchangePlays('direct');
+		await fetchCurrencyExchangePlays('direct', 'recent', PAGE);
 
 		const { url } = request();
 		expect(url.origin + url.pathname).toBe('https://server.test/api/currency-exchange/plays');
 	});
 
 	it('sends the selected mode as the mode query parameter', async () => {
-		await fetchCurrencyExchangePlays('direct');
+		await fetchCurrencyExchangePlays('direct', 'recent', PAGE);
 
 		expect(request().url.searchParams.get('mode')).toBe('direct');
 	});
@@ -295,31 +311,47 @@ describe('fetchCurrencyExchangePlays', () => {
 	it('sends "all" as an explicit mode rather than omitting the parameter', async () => {
 		// The server reads a missing mode as its own default, and the page's
 		// picker has to be able to say "all" back to a server whose default is not.
-		await fetchCurrencyExchangePlays('all');
+		await fetchCurrencyExchangePlays('all', 'recent', PAGE);
 
 		expect(request().url.searchParams.get('mode')).toBe('all');
 	});
 
-	it('sends "recent" as an explicit horizon when the caller names none', async () => {
-		// The page (POE-184) still calls with a mode only. Riding the server's
-		// own default would make the window the page renders change under it the
-		// day that default moves, and the response's `horizon` echo would then be
-		// the first place anyone noticed.
-		await fetchCurrencyExchangePlays('all');
-
-		expect(request().url.searchParams.get('horizon')).toBe('recent');
-	});
-
 	it('sends the requested horizon when the caller asks for the day window', async () => {
-		await fetchCurrencyExchangePlays('all', 'day');
+		await fetchCurrencyExchangePlays('all', 'day', PAGE);
 
 		expect(request().url.searchParams.get('horizon')).toBe('day');
+	});
+
+	it('sends the page query, a repeated param once per value', async () => {
+		// The server reads onlyCategory/hideItem/... as repeated keys (ADR-030);
+		// a joined "a,b" would be one category nobody has.
+		await fetchCurrencyExchangePlays('all', 'recent', {
+			pageSize: 'all',
+			sort: 'roi',
+			onlyCategory: ['Currency', 'Omens'],
+			minItemPrice: '0.5'
+		});
+
+		const params = request().url.searchParams;
+		expect([
+			params.get('pageSize'),
+			params.get('sort'),
+			params.getAll('onlyCategory'),
+			params.get('minItemPrice')
+		]).toEqual(['all', 'roi', ['Currency', 'Omens'], '0.5']);
+	});
+
+	it('sends a zero-valued gate rather than dropping it as empty', async () => {
+		// A gate is sent explicitly even at 0: the server never defaults one.
+		await fetchCurrencyExchangePlays('all', 'recent', { pageSize: '50', minRoiPct: '0' });
+
+		expect(request().url.searchParams.get('minRoiPct')).toBe('0');
 	});
 
 	it('identifies the device and app version on the request', async () => {
 		// The server attributes requests per device (POE-102); a fetcher that
 		// reaches the network without these headers is an anonymous client.
-		await fetchCurrencyExchangePlays('all');
+		await fetchCurrencyExchangePlays('all', 'recent', PAGE);
 
 		expect(request().init.headers).toEqual({
 			'X-Device-ID': 'device-abc123',
@@ -328,7 +360,7 @@ describe('fetchCurrencyExchangePlays', () => {
 	});
 
 	it('returns the parsed body on a successful request', async () => {
-		expect(await fetchCurrencyExchangePlays('direct')).toEqual(PLAYS_RESPONSE);
+		expect(await fetchCurrencyExchangePlays('direct', 'recent', PAGE)).toEqual(PLAYS_RESPONSE);
 	});
 
 	it('hands the page a leg with its display names and icon paths exactly as the server sent them', async () => {
@@ -338,7 +370,7 @@ describe('fetchCurrencyExchangePlays', () => {
 		// would send every chip to a 404.
 		fetchMock.mockResolvedValue({ ok: true, json: async () => structuredClone(DECORATED_RESPONSE) });
 
-		const result = await fetchCurrencyExchangePlays('direct');
+		const result = await fetchCurrencyExchangePlays('direct', 'recent', PAGE);
 
 		expect(result.plays[0].legs[0]).toEqual(DECORATED_LEG);
 	});
@@ -350,7 +382,7 @@ describe('fetchCurrencyExchangePlays', () => {
 		// this is the shape of a real payload, not a defensive case.
 		fetchMock.mockResolvedValue({ ok: true, json: async () => structuredClone(DECORATED_RESPONSE) });
 
-		const leg = (await fetchCurrencyExchangePlays('direct')).plays[0].legs[1];
+		const leg = (await fetchCurrencyExchangePlays('direct', 'recent', PAGE)).plays[0].legs[1];
 
 		expect(leg.itemIcon).toBeNull();
 	});
@@ -366,7 +398,7 @@ describe('fetchCurrencyExchangePlays', () => {
 		// tells them apart.
 		fetchMock.mockResolvedValue({ ok: true, json: async () => structuredClone(DECORATED_RESPONSE) });
 
-		const play = (await fetchCurrencyExchangePlays('direct')).plays[0];
+		const play = (await fetchCurrencyExchangePlays('direct', 'recent', PAGE)).plays[0];
 
 		expect(play.expectedRoi).toBe(-4.2);
 		expect(play.simEntries).toBe(7);
@@ -380,7 +412,7 @@ describe('fetchCurrencyExchangePlays', () => {
 		// has to leave the Delirium side of it still matchable.
 		fetchMock.mockResolvedValue({ ok: true, json: async () => structuredClone(DECORATED_RESPONSE) });
 
-		const leg = (await fetchCurrencyExchangePlays('direct')).plays[0].legs[1];
+		const leg = (await fetchCurrencyExchangePlays('direct', 'recent', PAGE)).plays[0].legs[1];
 
 		expect(leg.itemCategory).toBe('Delirium');
 		expect(leg.quoteCategory).toBe('Currency');
@@ -401,7 +433,7 @@ describe('fetchCurrencyExchangePlays', () => {
 				})
 		});
 
-		const leg = (await fetchCurrencyExchangePlays('direct')).plays[0].legs[0];
+		const leg = (await fetchCurrencyExchangePlays('direct', 'recent', PAGE)).plays[0].legs[0];
 
 		expect(leg.itemCategory).toBe('');
 	});
@@ -412,7 +444,7 @@ describe('fetchCurrencyExchangePlays', () => {
 		// leave the filter empty on a cold server, and one re-sorted on the way
 		// through would stop matching the in-game sidebar the reader is reading
 		// alongside it.
-		const result = await fetchCurrencyExchangePlays('all');
+		const result = await fetchCurrencyExchangePlays('all', 'recent', PAGE);
 
 		expect(result.categories).toEqual([
 			'Currency',
@@ -437,7 +469,7 @@ describe('fetchCurrencyExchangePlays', () => {
 	it('rejects with the status when the server answers a non-OK response', async () => {
 		fetchMock.mockResolvedValue({ ok: false, status: 500, statusText: 'Internal Server Error' });
 
-		await expect(fetchCurrencyExchangePlays('all')).rejects.toThrow(
+		await expect(fetchCurrencyExchangePlays('all', 'recent', PAGE)).rejects.toThrow(
 			'API /currency-exchange/plays: 500 Internal Server Error'
 		);
 	});
@@ -447,7 +479,7 @@ describe('fetchCurrencyExchangePlays', () => {
 		// purely by whether this promise rejected.
 		fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 
-		await expect(fetchCurrencyExchangePlays('all')).rejects.toThrow('Failed to fetch');
+		await expect(fetchCurrencyExchangePlays('all', 'recent', PAGE)).rejects.toThrow('Failed to fetch');
 	});
 });
 

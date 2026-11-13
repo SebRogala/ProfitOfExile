@@ -89,7 +89,8 @@ export function parseHorizon(raw: string): CurrencyExchangeHorizon {
 /**
  * Which number the table is ordered by — and, since POE-220, ONLY that number:
  * each option names a column and orders by the figure that column prints, with
- * no flag partitioning the list underneath it (`sortPlays`).
+ * no flag partitioning the list underneath it. The server sorts (ADR-030), on
+ * the Go-computed `display.sortKeys`.
  *
  * `'expected'` reads the fill-simulated Exp. ROI column (ADR-016), which is the
  * measured question; `'roi'` the BEST-CASE chaos the ROI column prints, which is
@@ -203,7 +204,8 @@ export function parseRowCap(raw: string): ExchangeRowCap {
 }
 
 /**
- * The pick as the number `applyRowCap` slices with; `'all'` is `Infinity`.
+ * The pick as a row count; `'all'` is `Infinity`. The request sends the pick
+ * itself as `pageSize` (`exchangePageParams`).
  *
  * Kept apart from `parseRowCap` because the two answers have different jobs:
  * the picker is SET to a string it has an entry for, and the slice takes a
@@ -502,20 +504,9 @@ export function hoursProgress(hoursSeen: number, hours: number): number {
 // --------------------------------------------------------------- the scale --
 
 /**
- * The chaos a play is scaled up to before it is worth the reader's attention
- * (POE-192).
- *
- * An OWNER CONSTANT, not a preference: the page's job is a quick market
- * overview, and the moment the reader has to type their own case the overview
- * stops being quick — that is the whole reason the Quantity stepper this
- * replaced was removed. 100c is the size at which a flip pays for the clicking
- * on a Currency Exchange whose fee is gold: below it the row is real but not
- * worth the trip, above it the table starts recommending inventories nobody
- * holds. Revisit on field feedback, not per reader.
+ * What one play looks like scaled to the 100c target (POE-192), an owner
+ * constant that lives with the formula in Go (`exchange.ScaleTargetChaos`).
  */
-export const SCALE_TARGET_CHAOS = 100;
-
-/** What one play looks like scaled to `SCALE_TARGET_CHAOS`. */
 export interface WorthwhileScale {
 	/** Whole exchanges needed to clear the target — the `×N` the column leads with. */
 	flips: number;
@@ -532,6 +523,10 @@ export interface WorthwhileScale {
 
 /**
  * How far a play has to be repeated to be worth doing, and what that costs.
+ *
+ * A READER of the server's `display.scale` (ADR-030): the formula below is
+ * computed in Go (`internal/exchange/plays_display.go`), and a non-finite figure
+ * the wire sends as null reads back as NaN (`hours` stays null).
  *
  * Scaled on `expectedRoi` and NOT on `roi` (POE-193): the question the column
  * answers is how many exchanges it takes to make the trip worth the clicking,
@@ -575,23 +570,26 @@ export interface WorthwhileScale {
  * expectation has an answer to.
  */
 export function worthwhileScale(play: CurrencyExchangePlay): WorthwhileScale | null {
-	if (!Number.isFinite(play.expectedRoi) || play.expectedRoi <= 0) return null;
-
-	const flips = Math.ceil(SCALE_TARGET_CHAOS / play.expectedRoi);
-	const readableDepth = Number.isFinite(play.depth) && play.depth > 0;
+	const scale = play.display.scale;
+	if (scale === null) return null;
 	return {
-		flips,
-		gain: play.expectedRoi * flips,
-		investment: play.investment * flips,
-		hours: readableDepth ? Math.ceil(flips / play.depth) : null
+		flips: wireNumber(scale.flips),
+		gain: wireNumber(scale.gain),
+		investment: wireNumber(scale.investment),
+		hours: scale.hours
 	};
+}
+
+/** A display figure as a number: JSON's null for a non-finite value is NaN. */
+function wireNumber(value: number | null): number {
+	return value === null ? NaN : value;
 }
 
 /**
  * What the run ties up, whatever scale the row DISPLAYS.
  *
- * The one money figure that is still the RUN's on every row. Its only caller is
- * the filter bar's Run cost bound (`filters.ts`); the Scale column prints the
+ * The one money figure that is still the RUN's on every row: `display.runInvestment`,
+ * which the server's Run cost bound judges (ADR-030); the Scale column prints the
  * same quantity, reading `worthwhileScale().investment` off the object it
  * already holds for the ×N and the hours.
  *
@@ -608,7 +606,7 @@ export function worthwhileScale(play: CurrencyExchangePlay): WorthwhileScale | n
  * existed — the fallback moved, the answer did not.
  */
 export function runInvestment(play: CurrencyExchangePlay): number {
-	return worthwhileScale(play)?.investment ?? play.investment;
+	return wireNumber(play.display.runInvestment);
 }
 
 // ------------------------------------------------------- the display scale --
@@ -681,12 +679,11 @@ export interface DisplayScale {
  *
  * A play with no legs at all takes the second branch; `runLedger` and
  * `routeSlots` both refuse such a body before any of this is rendered.
+ *
+ * The rule runs in Go (`Decorate`); this reads `display.units`/`basis`.
  */
 export function displayScale(play: CurrencyExchangePlay): DisplayScale {
-	const buyLeg = play.legs[0];
-	return buyLeg !== undefined && hasQuantityPair(buyLeg)
-		? { units: buyLeg.priceItemQty, basis: 'posting' }
-		: { units: 1, basis: 'single' };
+	return { units: play.display.units, basis: play.display.basis };
 }
 
 // ------------------------------------------------------------- the money --
@@ -720,7 +717,8 @@ export interface MoneyColumns {
  * deciding for itself what this row counts
  * (`docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md` §1, SCALE).
  *
- * All three are the wire's PER-EXCHANGE field multiplied by that count, and
+ * All three are the wire's PER-EXCHANGE field multiplied by that count — Go
+ * computes them (`display.money`) and this reads them — and
  * `WorthwhileScale`'s own `investment`/`gain` are deliberately not read here any
  * more: they are the RUN's totals, which is no longer the size this answers on
  * any row. The Scale column is the run's lone home and says `×N` beside these
@@ -734,11 +732,11 @@ export interface MoneyColumns {
  * ceiling is a run-sized question whatever the row prints (spec §6.1).
  */
 export function moneyColumns(play: CurrencyExchangePlay): MoneyColumns {
-	const { units } = displayScale(play);
+	const { money } = play.display;
 	return {
-		investment: play.investment * units,
-		roi: play.roi * units,
-		expectedRoi: play.expectedRoi * units
+		investment: wireNumber(money.investment),
+		roi: wireNumber(money.roi),
+		expectedRoi: wireNumber(money.expectedRoi)
 	};
 }
 
@@ -760,7 +758,7 @@ export function moneyColumns(play: CurrencyExchangePlay): MoneyColumns {
  * cell dims and captions, so those rows print a figure and sort by it.
  */
 export function printsExpectedRoi(play: CurrencyExchangePlay): boolean {
-	return play.simEntries !== 0;
+	return play.display.expectedPrinted;
 }
 
 // ------------------------------------------------------------- the ledger --
@@ -921,187 +919,7 @@ function saleTotal(
 	return { sellTotal: null, sellForward: false };
 }
 
-// -------------------------------------------------------------- the order --
-
-/**
- * Descending comparator over a money column, total even on an unreadable key.
- *
- * `api.ts`'s `get<T>` casts the body to the wire type without validating it, so
- * a missing or malformed `roi`/`expectedRoi` reaches this as `NaN` — and a
- * single `NaN` key makes `Array.prototype.sort`'s output unspecified for the
- * WHOLE array, not just for the row that carries it. Every non-finite key is
- * therefore read as `-Infinity`, which lands it at the END and leaves two of
- * them tied on the served order; `worthwhileScale` already guards the same
- * field the same way for the Fastest sort.
- *
- * It compares rather than subtracts, because `-Infinity - -Infinity` is `NaN`
- * and would put the untotal comparator straight back.
- */
-function byMoneyDesc(left: number, right: number): number {
-	const a = Number.isFinite(left) ? left : -Infinity;
-	const b = Number.isFinite(right) ? right : -Infinity;
-	if (a === b) return 0;
-	return a < b ? 1 : -1;
-}
-
-/**
- * Ascending comparator over the Scale column's wait, total on every key it can
- * be handed.
- *
- * `null` is the MISSING KEY — no `worthwhileScale` at all, or one whose depth
- * could not be read — and lands at the END, tied with every other unknown so
- * the served order survives between them. That is the dash the Scale column
- * prints for those rows.
- *
- * `Infinity` is NOT a missing key. `worthwhileScale` answers it for a positive
- * but vanishing `expectedRoi` (`Number.MIN_VALUE` divides the 100c target into
- * `Infinity` flips), and the column prints that wait rather than a dash — so
- * the sort takes it as the largest key there is and puts the row behind every
- * readable wait, which is where an unbounded wait belongs on a "shortest first"
- * list. It still sits AHEAD of the rows with no key at all.
- *
- * It compares rather than subtracts, because `Infinity - Infinity` is `NaN` and
- * a comparator that answers `NaN` is inconsistent — `Array.prototype.sort` then
- * leaves the order unspecified for the WHOLE array, not for the pair that
- * produced it. Measured 2026-09-01: V8 consumes a `NaN` result as 0, so the
- * subtraction this replaced did not visibly reorder anything on WebView2. The
- * shape is still wrong to ship, and the difference the tests can pin is the one
- * above — an `Infinity` wait is a key, not a dash.
- */
-function byHoursAsc(left: number | null, right: number | null): number {
-	if (left === null || right === null) {
-		if (left === right) return 0;
-		return left === null ? 1 : -1;
-	}
-	if (left === right) return 0;
-	return left < right ? -1 : 1;
-}
-
-/**
- * The table's rows in the order the sort picker asks for.
- *
- * ONE RULE, since the owner ruling of 2026-09-01 (POE-220): a sort orders by the
- * figure its column prints and by nothing else. The flags a row can carry —
- * `suspect`, `lowCoverage`, `lowLiquidity`, and the legs' `depletedSide` — are
- * MARKS. None of them is a sort key, a partition, or a demotion.
- *
- * What that replaced: every option here used to partition on `suspect` first, so
- * a flagged play sat behind every clean one whatever key the reader picked. The
- * measured cost (prod snapshot 2026-09-01 17:00Z, league Allflame) was the
- * Apocalypse direct flip — buy 401c, sell 1200c, both prices standing 20+ hours
- * — landing at row 638 of 954 under the ROI sort on the third-largest ROI in the
- * table. A partition on a flag is a hidden gate: the picker named a column and
- * the list answered a different question, with nothing on screen saying so. The
- * flag still renders, and `EXCHANGE_HIDE_SUSPECT` still hides such rows for a
- * reader who opts in; neither is allowed to move a row the table is showing.
- *
- * `'expected'` orders by `moneyColumns().expectedRoi` descending — the Exp. ROI
- * COLUMN, derived here, not the served order — on the rows that PRINT one. A row
- * the simulation could not replay prints a dash there (`printsExpectedRoi`, the
- * one home for that question, which the cell reads too), so it has no key and
- * lands at the END with the other unreadable columns rather than being ranked on
- * a number nobody on screen can see. Two such rows tie and keep the served order.
- * It used to hand back the response's
- * array copied, which carried the server's own ranking (clean before suspect,
- * then covered before low-coverage, then `expectedRoi` desc, then turnover, then
- * direct-first, then key — POE-193). Two of those six tie-breaks were flag
- * partitions, which is why the served order can no longer be this option's
- * answer. The three that survive as ORDER — turnover, direct-first, key — are
- * kept for free by sorting a stably-ordered served list: a tie on the column
- * leaves the server's remaining order intact.
- *
- * The seam that ordering by the column opens is real and accepted: the Exp. ROI
- * column is one POSTING's expectation, a market's own lot size, so a market that
- * posts a thousand at a time can print a larger number than one that posts one
- * with the better per-exchange expectation. That is the same reading every money
- * column on the row already carries since the second owner ruling of 2026-08-22
- * (every row is posting-sized), and it is disclosed where it is caused — on each
- * buy step's hover, which says what that market posts. The alternative was
- * ordering by a number no column prints, which is the failure these options
- * exist to avoid.
- *
- * `'roi'` orders by `moneyColumns().roi` descending — the BEST-CASE chaos the
- * ROI COLUMN prints, and not the wire's per-exchange `roi`. Same rule and the
- * same posting-sized reading; the Investment column has no sort of its own, and
- * if it ever gets one it reads the same helper.
- *
- * `'fastest'` orders by how long the market needs to absorb the play's
- * worthwhile scale, ascending, because the shortest wait is the best row. A play
- * whose hours cannot be read — `worthwhileScale` `null`, which since POE-193
- * includes every play whose expectation is not positive, or its `hours` `null` —
- * sits at the END of the list. That is a MISSING KEY and not a demotion: two
- * unknowns compare equal, so they keep the served order between them, and a
- * comparator that ranked an unknown wait as instant would put the least-known
- * row on top. An `Infinity` wait is a printed figure and not a missing key, so
- * it sorts as the largest key rather than as a dash (`byHoursAsc`). The order
- * reads the same `worthwhileScale` the Scale column prints in comfortable
- * density (dense trades the wait away with every other sub-line), so the two can
- * never disagree about a play's hours.
- *
- * Every option sorts a COPY, so a caller holding the result can never reorder
- * the response's own array through it, and every comparator COMPARES rather than
- * subtracts, so it stays total and antisymmetric on the infinities both keys can
- * carry — a money column that will not read as a number sorts as `-Infinity` and
- * lands at the END too, the same missing-key treatment (`byMoneyDesc`) — so
- * `Array.prototype.sort`'s stability carries the served
- * order through every tie. The Fastest sort ties often, because its hours are whole
- * ones: everything the market swallows inside the hour reads 1 and stays in the
- * server's order behind that.
- */
-export function sortPlays(
-	plays: CurrencyExchangePlay[],
-	sort: ExchangeSort
-): CurrencyExchangePlay[] {
-	if (sort === 'fastest') {
-		return [...plays].sort((a, b) =>
-			byHoursAsc(worthwhileScale(a)?.hours ?? null, worthwhileScale(b)?.hours ?? null)
-		);
-	}
-	if (sort === 'expected') {
-		return [...plays].sort((a, b) =>
-			byMoneyDesc(
-				printsExpectedRoi(a) ? moneyColumns(a).expectedRoi : NaN,
-				printsExpectedRoi(b) ? moneyColumns(b).expectedRoi : NaN
-			)
-		);
-	}
-	return [...plays].sort((a, b) => byMoneyDesc(moneyColumns(a).roi, moneyColumns(b).roi));
-}
-
-/**
- * The head of an already-sorted list — the LAST step of the page's chain, after
- * `sortPlays` and after the search (POE-222).
- *
- * DISCLOSURE, NOT A FILTER. `feedback_visibility_default` forbids a default
- * that HIDES served plays, and ADR-018 forbids anything that reorders, demotes
- * or partitions one. This is neither: a cap that NAMES ITS OWN SIZE on the
- * counter and carries a one-click "show all" beside it is pagination, which is
- * what the owner asked for on 2026-09-01. It reads no key and no flag, it
- * decides nothing about a play, and the order it hands back is the order it was
- * given — it slices the head and does nothing else. Everything that answers a
- * question ABOUT the table keeps reading the uncapped list: the counts, the
- * item universe, the convert column and the empty-table messages.
- *
- * A search bypasses it entirely — the rule `BestPlays.svelte` already runs on
- * the gem side. A query names what the reader is looking for, so every match is
- * shown and only browsing is capped; a capped search would answer "there is no
- * such play" with a play it found and dropped.
- *
- * EVERY path hands back a new array — the search bypass and the `'all'` pick
- * (`Infinity`, via `rowCapLimit`) included — so the caller holds the same kind
- * of value whatever it asked for. Returning the input by reference on one path
- * would make the drawn list alias `rows` under exactly one combination of
- * settings, which is the shape of bug that only shows up once something
- * downstream sorts or splices what it was handed.
- */
-export function applyRowCap(
-	plays: CurrencyExchangePlay[],
-	cap: number,
-	searchActive: boolean
-): CurrencyExchangePlay[] {
-	if (searchActive) return [...plays];
-	return plays.slice(0, cap);
-}
+// -------------------------------------------------------------- the count --
 
 /** What the counter says, and what the empty-table messages read. */
 export interface RowCounts {
@@ -1109,7 +927,7 @@ export interface RowCounts {
 	shown: number;
 	/** How many survived the rules, the gates, the bounds and the search. */
 	matched: number;
-	/** How many the response carried. */
+	/** How many the server served after the mode filter. */
 	total: number;
 	/** Whether the cap is holding rows back — what makes the counter say so. */
 	capped: boolean;
@@ -1119,18 +937,18 @@ export interface RowCounts {
 	hiddenByFilters: number;
 }
 
-/** The five lists the counter is measured over, in chain order. */
+/** The paged response's stage counts (ADR-030), in chain order. */
 export interface RowCountsInput {
-	/** The response's own plays, unfiltered. */
-	served: CurrencyExchangePlay[];
+	/** Served after the mode filter, unfiltered — the response's `total`. */
+	total: number;
 	/** After the category and item rules. */
-	afterRules: CurrencyExchangePlay[];
+	afterRules: number;
 	/** After the gates. */
-	afterGates: CurrencyExchangePlay[];
-	/** After the bounds and the search, sorted — the full list, uncapped. */
-	matched: CurrencyExchangePlay[];
-	/** What the `{#each}` draws — `applyRowCap` over `matched`. */
-	shown: CurrencyExchangePlay[];
+	afterGates: number;
+	/** After the bounds and the search — the full list, uncapped. */
+	matched: number;
+	/** What the page carries and the `{#each}` draws — `plays.length`. */
+	shown: number;
 }
 
 /**
@@ -1148,21 +966,15 @@ export interface RowCountsInput {
  * their controls sit behind a collapsed row, so a lump figure over a bar with
  * nothing visibly set on it reads as a broken table rather than as a knob.
  */
-export function rowCounts({
-	served,
-	afterRules,
-	afterGates,
-	matched,
-	shown
-}: RowCountsInput): RowCounts {
-	const hiddenByGates = afterRules.length - afterGates.length;
+export function rowCounts({ total, afterRules, afterGates, matched, shown }: RowCountsInput): RowCounts {
+	const hiddenByGates = afterRules - afterGates;
 	return {
-		shown: shown.length,
-		matched: matched.length,
-		total: served.length,
-		capped: shown.length < matched.length,
+		shown,
+		matched,
+		total,
+		capped: shown < matched,
 		hiddenByGates,
-		hiddenByFilters: served.length - matched.length - hiddenByGates
+		hiddenByFilters: total - matched - hiddenByGates
 	};
 }
 
@@ -1667,35 +1479,6 @@ export interface RouteView {
 	get: RouteEnd;
 	/** The run is expected to gain, so the Get amount is drawn as a gain. */
 	positive: boolean;
-}
-
-/**
- * Does the RENDERED set of plays need the convert slot at all?
- *
- * The route's slots are fixed-width so a column holds the same kind of step on
- * every row, and a direct play holds its convert slot open with an empty dashed
- * tile rather than letting Get slide left under the row above's sell. That
- * reserved width earns its keep only while some row on screen actually converts:
- * a table filtered down to direct plays alone spends the slot and both of its
- * arrows on a column that is empty top to bottom, on the widest cell in a table
- * that already scrolls sideways.
- *
- * So the answer is taken over the whole rendered set and applied to every row —
- * never per row, which would reintroduce the drift the fixed geometry exists to
- * prevent. The page hands this to `ExchangeRoute` and to its own header spans
- * together, because those two carry the same widths and must collapse as one.
- *
- * Read off the LEGS and not off `mode`: `routeSlots` reads the slots by
- * position, so the third leg is what draws the convert step, and a play whose
- * `mode` says `1-hop` on a two-leg body would otherwise reserve a slot nothing
- * can fill.
- *
- * An empty list answers false. The table is not rendered at all when nothing
- * survives the filters, so the answer is unobservable there — and false is the
- * honest one of the two: no play on screen has a step to put in the slot.
- */
-export function anyConvertStep(plays: CurrencyExchangePlay[]): boolean {
-	return plays.some((play) => play.legs.length > 2);
 }
 
 /**

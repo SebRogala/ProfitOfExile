@@ -290,7 +290,7 @@ it.each(['failed', 'cold'] as const)('withdraws every outgoing consumer while B 
 	comparator.selectGem('Arc');
 	compareA.resolve([{ name: 'Arc', variant: '20/20', transPrice: 42, history: [42] } as unknown as CompareGem]);
 	const exchange = createExchangeController({
-		selection: () => ({ mode: 'all', horizon: 'day' }), listen: async () => () => {},
+		selection: () => ({ mode: 'all', horizon: 'day', params: { pageSize: '50' } }), listen: async () => () => {},
 		load: () => { const d = deferred<CurrencyExchangeResponse>(); cxCalls.push(d); return d.promise; }
 	});
 	stops.push(exchange.start());

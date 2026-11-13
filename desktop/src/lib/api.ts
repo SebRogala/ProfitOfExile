@@ -560,13 +560,46 @@ export interface CurrencyExchangePlay {
 	windowVolume?: number;
 	hoursSeen: number;
 	lastHour: string;
+	/** The server's row figures (ADR-030), read by the `view.ts` display helpers. */
+	display: PlayDisplay;
 }
+
+/**
+ * One play's Go-computed display figures (`internal/exchange/plays_display.go`).
+ * JSON has no NaN or ±Inf, so a non-finite figure arrives as null.
+ */
+export interface PlayDisplay {
+	units: number;
+	basis: 'posting' | 'single';
+	money: { investment: number | null; roi: number | null; expectedRoi: number | null };
+	expectedPrinted: boolean;
+	scale: {
+		flips: number | null;
+		gain: number | null;
+		investment: number | null;
+		hours: number | null;
+	} | null;
+	runInvestment: number | null;
+	sortKeys: { expected: number | null; roi: number | null; fastestHours: number | null };
+}
+
+/** One item-picker entry, counted over the plays served after the mode filter. */
+export interface ExchangeUniverseItem {
+	id: string;
+	name: string;
+	icon: string | null;
+	category: string;
+	playCount: number;
+}
+
+/** A paged `/currency-exchange/plays` request's params; a list repeats its key. */
+export type ExchangePageParams = Record<string, string | string[]>;
 
 /**
  * The `/currency-exchange/plays` payload. A cold server answers 200 with
  * `warm: false` and an empty `plays`, so an empty list is not an error — the
- * page tells the two apart through `warm`. `count` is the size after the mode
- * filter and `plays` arrives already ranked.
+ * page tells the two apart through `warm`. `plays` is one page, filtered and
+ * ordered by the server; `total` is the size after the mode filter.
  *
  * `horizon` echoes the window these plays were ranked in, so a body arriving
  * from the cache cannot be mistaken for the other horizon's. `divineChaosRate`
@@ -595,6 +628,13 @@ export interface CurrencyExchangeResponse {
 	count: number;
 	plays: CurrencyExchangePlay[];
 	categories: string[];
+	/** Paged body (ADR-030): `count` is the page's size, these are the stage counts. */
+	total: number;
+	afterRules: number;
+	afterGates: number;
+	matched: number;
+	showConvert: boolean;
+	itemUniverse: ExchangeUniverseItem[];
 }
 
 // --- API helpers ---
@@ -627,11 +667,12 @@ export function getApiBase(): string {
 	return (store.status?.server_url || import.meta.env.VITE_SERVER_URL || 'https://profitofexile.localhost') + '/api';
 }
 
-async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
+async function get<T>(path: string, params?: Record<string, string | string[]>): Promise<T> {
 	const url = new URL(`${getApiBase()}${path}`);
 	if (params) {
 		for (const [k, v] of Object.entries(params)) {
-			if (v) url.searchParams.set(k, v);
+			if (Array.isArray(v)) for (const each of v) url.searchParams.append(k, each);
+			else if (v) url.searchParams.set(k, v);
 		}
 	}
 	const resp = await fetch(url.toString(), { headers: deviceHeaders() });
@@ -1137,12 +1178,17 @@ function deriveReason(prev: any, curr: any): string {
  *
  * Unlike `fetchStatus`, this throws on a failed request — the caller keeps the
  * result it already has and marks it stale instead of blanking the table.
+ *
+ * `page` is the paged request (ADR-030, built by `exchangePageParams`): its
+ * `pageSize` selects the server's paged mode, which filters, sorts, counts and
+ * caps in SQL. A repeated param (the rule lists) goes out once per value.
  */
 export async function fetchCurrencyExchangePlays(
 	mode: CurrencyExchangeMode,
-	horizon: CurrencyExchangeHorizon = 'recent'
+	horizon: CurrencyExchangeHorizon,
+	page: ExchangePageParams
 ): Promise<CurrencyExchangeResponse> {
-	return get<CurrencyExchangeResponse>('/currency-exchange/plays', { mode, horizon });
+	return get<CurrencyExchangeResponse>('/currency-exchange/plays', { ...page, mode, horizon });
 }
 
 /** One Harvest snapshot: prices and family tiers read together (POE-286 D10). */

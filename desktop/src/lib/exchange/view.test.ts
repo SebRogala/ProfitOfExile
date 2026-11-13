@@ -8,8 +8,6 @@ import {
 	ROW_CAP_OPTIONS,
 	REFETCH_JITTER_MS,
 	SORT_OPTIONS,
-	anyConvertStep,
-	applyRowCap,
 	chaosIconPath,
 	currencyIconPath,
 	dataAgeParts,
@@ -31,6 +29,7 @@ import {
 	parseRowCap,
 	parseSort,
 	parseUnit,
+	printsExpectedRoi,
 	quoteUnit,
 	refetchDelay,
 	routeSlots,
@@ -38,14 +37,15 @@ import {
 	rowCounts,
 	runInvestment,
 	runLedger,
-	sortPlays,
 	worthwhileScale
 } from './view';
 import type {
 	CurrencyExchangeLeg,
 	CurrencyExchangePlay,
-	CurrencyExchangeResponse
+	CurrencyExchangeResponse,
+	PlayDisplay
 } from '$lib/api';
+import parity from '../../../../internal/exchange/testdata/page-parity.json';
 import { setNumberFormat } from '$lib/stores/number-format.svelte';
 
 // The expectations below are written with comma grouping; pin it so they do
@@ -91,6 +91,12 @@ function response(overrides: Partial<CurrencyExchangeResponse> = {}): CurrencyEx
 			'Runegrafts',
 			'Allflame'
 		],
+		total: 0,
+		afterRules: 0,
+		afterGates: 0,
+		matched: 0,
+		showConvert: false,
+		itemUniverse: [],
 		...overrides
 	};
 }
@@ -120,7 +126,7 @@ function response(overrides: Partial<CurrencyExchangeResponse> = {}): CurrencyEx
  * (POE-193).
  */
 function play(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
-	return {
+	const base: Omit<CurrencyExchangePlay, 'display'> = {
 		key: 'direct:divine:chaos',
 		mode: 'direct',
 		legs: [],
@@ -140,6 +146,55 @@ function play(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePl
 		hoursSeen: 6,
 		lastHour: '2026-08-19T11:00:00.000Z',
 		...overrides
+	};
+	return { ...base, display: overrides.display ?? wireDisplay(base) };
+}
+
+/**
+ * The `display` object the server attaches to a hand-built play: a stand-in for
+ * Go's `exchange.Decorate`, so a fixture carries the field its readers read.
+ * The `wireDisplay` describe below holds it to the server's recorded output over
+ * every `page-parity.json` play, so it cannot drift into a second answer.
+ */
+function wireDisplay(p: Omit<CurrencyExchangePlay, 'display'>): PlayDisplay {
+	const buy = p.legs[0];
+	const posting =
+		buy !== undefined &&
+		Number.isInteger(buy.priceItemQty) &&
+		Number.isInteger(buy.priceQuoteQty) &&
+		buy.priceItemQty > 0 &&
+		buy.priceQuoteQty > 0;
+	const units = posting ? buy.priceItemQty : 1;
+	const wire = (n: number): number | null => (Number.isFinite(n) ? n : null);
+	const money = {
+		investment: wire(p.investment * units),
+		roi: wire(p.roi * units),
+		expectedRoi: wire(p.expectedRoi * units)
+	};
+	let scale: PlayDisplay['scale'] = null;
+	if (Number.isFinite(p.expectedRoi) && p.expectedRoi > 0) {
+		// Go's exchange.ScaleTargetChaos.
+		const flips = Math.ceil(100 / p.expectedRoi);
+		scale = {
+			flips: wire(flips),
+			gain: wire(p.expectedRoi * flips),
+			investment: wire(p.investment * flips),
+			hours: Number.isFinite(p.depth) && p.depth > 0 ? wire(Math.ceil(flips / p.depth)) : null
+		};
+	}
+	const expectedPrinted = p.simEntries !== 0;
+	return {
+		units,
+		basis: posting ? 'posting' : 'single',
+		money,
+		expectedPrinted,
+		scale,
+		runInvestment: scale !== null ? scale.investment : wire(p.investment),
+		sortKeys: {
+			expected: expectedPrinted ? money.expectedRoi : null,
+			roi: money.roi,
+			fastestHours: scale?.hours ?? null
+		}
 	};
 }
 
@@ -1031,529 +1086,13 @@ describe('dataAgeParts', () => {
 	});
 });
 
-describe('sortPlays', () => {
-	function keys(plays: CurrencyExchangePlay[]): string[] {
-		return plays.map((p) => p.key);
-	}
-
-	it('orders by the expected chaos the column shows, overriding the served order', () => {
-		// POE-220. The list arrives in the SERVER's order, which ranks every clean
-		// play before every suspect one, so the flagged row is last on the wire.
-		// The Exp. ROI sort re-derives the order from the column: the suspect row
-		// expects the most and therefore leads, because the picked column is the
-		// whole key and the flag is a mark that moves nothing.
-		//
-		// `roi` is deliberately left at the fixture's default on all three, so a
-		// comparator that read the ROI column instead would tie, fall back on
-		// stability and hand the served order straight back.
-		const served = [
-			play({ key: 'clean-lead', expectedRoi: 20 }),
-			play({ key: 'clean-tail', expectedRoi: 2 }),
-			play({ key: 'suspect-best', expectedRoi: 120, suspect: true })
-		];
-
-		expect(keys(sortPlays(served, 'expected'))).toEqual([
-			'suspect-best',
-			'clean-lead',
-			'clean-tail'
-		]);
-	});
-
-	it('orders by the posting-priced Exp. ROI the column shows, not by the per-exchange one', () => {
-		// The same disagreement the ROI case below pins, on the measured number:
-		// `a` expects 2c an exchange on a market that posts TWENTY at a time, so
-		// its Exp. ROI column reads +40c; `b` expects five times as much per
-		// exchange on a market that posts one, and its column reads +10c. Served
-		// `b`-first so that a branch handing back the fetched list unchanged, or
-		// one reading the wire's `expectedRoi`, both answer b,a.
-		const lot = play({
-			key: 'a',
-			expectedRoi: 2,
-			legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })]
-		});
-		const served = [
-			play({ key: 'b', expectedRoi: 10, legs: [leg({ priceItemQty: 1, priceQuoteQty: 1 })] }),
-			lot
-		];
-
-		expect(moneyColumns(lot).expectedRoi).toBe(40);
-		expect(keys(sortPlays(served, 'expected'))).toEqual(['a', 'b']);
-	});
-
-	it('orders by chaos gained per exchange under the ROI sort', () => {
-		const served = [
-			play({ key: 'a', roi: 5 }),
-			play({ key: 'b', roi: 500 }),
-			play({ key: 'c', roi: 50 })
-		];
-
-		expect(keys(sortPlays(served, 'roi'))).toEqual(['b', 'c', 'a']);
-	});
-
-	it('orders by the posting-priced ROI the column shows, not by the per-exchange one', () => {
-		// The two orders genuinely disagree here, which is the whole point: `a`
-		// gains 5c an exchange on a market that posts TWENTY at a time, so its ROI
-		// column reads +100c; `b` gains ten times as much per exchange on a market
-		// that posts one, so its column reads +50c. A table ordered by the wire's
-		// `roi` would put `b` on top of a number half `a`'s.
-		const served = [
-			play({ key: 'a', roi: 5, legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })] }),
-			play({ key: 'b', roi: 50, legs: [leg({ priceItemQty: 1, priceQuoteQty: 1 })] })
-		];
-
-		expect(keys(sortPlays(served, 'roi'))).toEqual(['a', 'b']);
-	});
-
-	it('orders a divine-entry row by its posting too, never by its run', () => {
-		// The rule is that the table is ordered by the number it SHOWS, and since
-		// the second owner ruling of 2026-08-22 that number is one POSTING on every
-		// row, the divine entries included. `chaosLot` posts twelve cards at
-		// 0.1435c each and reads +2; `divineScarab` posts sixteen scarabs at 7.175c
-		// each and reads +115. A sort still reaching for the flip count would rank
-		// the two on +287 and +359 — the same ORDER for two numbers neither row
-		// prints, which is why both columns are pinned here beside the order.
-		const served = [chaosLot(), divineScarab()];
-
-		expect(formatGain(moneyColumns(chaosLot()).roi)).toBe('+2');
-		expect(formatGain(moneyColumns(divineScarab()).roi)).toBe('+115');
-		expect(keys(sortPlays(served, 'roi'))).toEqual(['direct:scarab:divine', 'direct:card:chaos']);
-	});
-
-	it('orders a suspect play by its ROI column like every other row', () => {
-		// POE-220, the Apocalypse incident (prod snapshot 2026-09-01 17:00Z): a
-		// direct flip bought at 401c and sold at 1200c, both prices standing 20+
-		// hours, flagged suspect because the buy sits below fair × 0.67 (fair
-		// 933.33 that hour). Its ROI column is the middle of these three, so the
-		// middle is where it goes. The partition this replaced sent it behind BOTH
-		// clean rows — on the real table, to row 638 of 954.
-		//
-		// The buy market posts one at a time, so the row's display scale is 1 and
-		// the column prints the wire's per-exchange gain unmultiplied; that figure
-		// is pinned beside the order, because it is the sort key and a fixture
-		// whose column read something else would order for the wrong reason.
-		const apocalypse = play({
-			key: 'direct:apocalypse:chaos',
-			roi: 795,
-			suspect: true,
-			legs: [
-				leg({
-					action: 'buy',
-					price: 401,
-					priceItemQty: 1,
-					priceQuoteQty: 401,
-					fair: 933.33,
-					fairOk: false,
-					suspect: true
-				})
-			]
-		});
-		const served = [
-			play({ key: 'clean-huge', roi: 14812 }),
-			play({ key: 'clean-small', roi: 300 }),
-			apocalypse
-		];
-
-		expect(moneyColumns(apocalypse).roi).toBe(795);
-		expect(keys(sortPlays(served, 'roi'))).toEqual([
-			'clean-huge',
-			'direct:apocalypse:chaos',
-			'clean-small'
-		]);
-	});
-
-	it('keeps the server order between two plays tied on ROI', () => {
-		const served = [play({ key: 'first', roi: 40 }), play({ key: 'second', roi: 40 })];
-
-		expect(keys(sortPlays(served, 'roi'))).toEqual(['first', 'second']);
-	});
-
-	it('keeps the server order between two plays tied on the Exp. ROI column', () => {
-		// Tied on the COLUMN and not on the wire: `a` expects 2c an exchange on a
-		// market that posts TWENTY at a time and `b` 40c on one that posts one, so
-		// both columns read +40c. The served order is the only tie-break left, and
-		// a comparator that reached past the tie for the wire's own `expectedRoi`
-		// would answer b,a.
-		const a = play({
-			key: 'a',
-			expectedRoi: 2,
-			legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })]
-		});
-		const b = play({
-			key: 'b',
-			expectedRoi: 40,
-			legs: [leg({ priceItemQty: 1, priceQuoteQty: 1 })]
-		});
-
-		expect(moneyColumns(a).expectedRoi).toBe(40);
-		expect(moneyColumns(b).expectedRoi).toBe(40);
-		expect(keys(sortPlays([a, b], 'expected'))).toEqual(['a', 'b']);
-	});
-
-	it('keeps the server order between two plays tied on the ROI column', () => {
-		// The same tie on the best-case column: the wire figures differ twentyfold
-		// and both columns land on +100c, because `a`'s market posts twenty at a
-		// time and `b`'s posts one. Stability carries the served order through, and
-		// it can only do that while the comparator answers 0 on the column it was
-		// asked to sort by.
-		const a = play({ key: 'a', roi: 5, legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })] });
-		const b = play({ key: 'b', roi: 100, legs: [leg({ priceItemQty: 1, priceQuoteQty: 1 })] });
-
-		expect(moneyColumns(a).roi).toBe(100);
-		expect(moneyColumns(b).roi).toBe(100);
-		expect(keys(sortPlays([a, b], 'roi'))).toEqual(['a', 'b']);
-	});
-
-	it('puts a play whose Exp. ROI column will not read as a number at the end', () => {
-		// `api.ts`'s `get<T>` casts the body to the wire type without validating
-		// it, so a malformed `expectedRoi` reaches the comparator as a
-		// number-typed `NaN`. One `NaN` key makes `Array.prototype.sort`'s answer
-		// unspecified for the WHOLE array, which is why the two readable rows are
-		// pinned in column order beside the unreadable one's place: a MISSING KEY
-		// lands last, the same treatment an unreadable wait gets under Fastest.
-		//
-		// The unreadable row is served in the MIDDLE deliberately. V8 answers the
-		// same three keys differently from every starting order, and this is one
-		// the unguarded comparators get wrong: subtracting the raw keys — what
-		// this sorted by before POE-220 — leaves the array exactly as served, and
-		// comparing them without the guard answers high,unreadable,low.
-		const served = [
-			play({ key: 'low', expectedRoi: 2 }),
-			play({ key: 'unreadable', expectedRoi: NaN }),
-			play({ key: 'high', expectedRoi: 50 })
-		];
-
-		expect(keys(sortPlays(served, 'expected'))).toEqual(['high', 'low', 'unreadable']);
-	});
-
-	it('puts a play whose Exp. ROI column prints a dash at the end under the Exp. ROI sort', () => {
-		// POE-220. `simEntries` 0 means no hour of the last day could be replayed,
-		// so the cell prints a dash — but `moneyColumns` still multiplies the wire
-		// field out into a number, and sorting on that ranked the row by a figure
-		// nobody on screen can see. The column and the sort read ONE predicate
-		// (`printsExpectedRoi`) since, so no printed figure is a MISSING KEY and
-		// lands last, ahead of no other rule.
-		//
-		// The blank row carries the LARGEST `expectedRoi` of the three on purpose:
-		// a sort that read the column without the predicate would lead with it.
-		const blank = play({ key: 'not-simulable', expectedRoi: 9000, simEntries: 0 });
-		const served = [
-			play({ key: 'small', expectedRoi: 2 }),
-			blank,
-			play({ key: 'big', expectedRoi: 50 })
-		];
-
-		expect(moneyColumns(blank).expectedRoi).toBe(9000);
-		expect(keys(sortPlays(served, 'expected'))).toEqual(['big', 'small', 'not-simulable']);
-	});
-
-	it('keeps the served order between two plays whose Exp. ROI columns both print a dash', () => {
-		// Two missing keys compare equal, so stability hands the served order back.
-		// Served SMALLEST-first, so a comparator that reached past the missing key
-		// for the column underneath it would answer second,first.
-		const served = [
-			play({ key: 'first-blank', expectedRoi: 40, simEntries: 0 }),
-			play({ key: 'second-blank', expectedRoi: 9000, simEntries: 0 })
-		];
-
-		expect(keys(sortPlays(served, 'expected'))).toEqual(['first-blank', 'second-blank']);
-	});
-
-	it('puts a play whose ROI column will not read as a number at the end', () => {
-		// The same guard on the best-case column, and the other malformed shape a
-		// cast body can arrive in: a `roi` the server never sent is `undefined`,
-		// which the column multiplies into `NaN` just the same. Served in the
-		// middle for the reason the Exp. ROI case above states.
-		const served = [
-			play({ key: 'low', roi: 5 }),
-			play({ key: 'unreadable', roi: undefined as unknown as number }),
-			play({ key: 'high', roi: 500 })
-		];
-
-		expect(keys(sortPlays(served, 'roi'))).toEqual(['high', 'low', 'unreadable']);
-	});
-
-	it('sorts into a new array rather than reordering the fetched list', () => {
-		// The page holds the fetched list in reactive state and re-derives the sort
-		// from it; an in-place sort would leave the next pick reordering an
-		// already-reordered list, with the served tie-breaks gone for good.
-		const served = [play({ key: 'a', roi: 5 }), play({ key: 'b', roi: 500 })];
-
-		sortPlays(served, 'roi');
-
-		expect(keys(served)).toEqual(['a', 'b']);
-	});
-
-	it('sorts into a new array under the Exp. ROI sort as well', () => {
-		// The page holds the fetched list in reactive state and re-derives every
-		// sort from it, so the response's own array must survive a sort intact —
-		// an in-place one would leave the next pick sorting an already-reordered
-		// list and the served tie-breaks gone for good.
-		const served = [play({ key: 'a', expectedRoi: 2 }), play({ key: 'b', expectedRoi: 50 })];
-
-		const sorted = sortPlays(served, 'expected');
-
-		expect(sorted).not.toBe(served);
-		expect(keys(sorted)).toEqual(['b', 'a']);
-		expect(keys(served)).toEqual(['a', 'b']);
-	});
-
-	it('puts the play the market absorbs soonest first under the Fastest sort', () => {
-		// Ascending, not descending: the question the Scale column answers is how
-		// long the worthwhile size waits, and the shortest wait is the best row.
-		// 100 flips at 10/h is 10 hours; 10 flips at 5/h is 2; 10 at 4000/h is 1.
-		//
-		// The scale is counted off the EXPECTATION (POE-193), so that is the field
-		// each row varies; every one of them keeps the fixture's single `roi`, at
-		// which the target divides into ten flips for all three alike. A scale
-		// counted off that number would leave only `depth` to tell the rows apart
-		// and answer slow, fast, middling — the thin book first, because ten flips
-		// at 10/h and ten at 4000/h both round up to the same single hour.
-		const served = [
-			play({ key: 'slow', expectedRoi: 1, depth: 10 }),
-			play({ key: 'fast', expectedRoi: 10, depth: 4000 }),
-			play({ key: 'middling', expectedRoi: 10, depth: 5 })
-		];
-
-		expect(keys(sortPlays(served, 'fastest'))).toEqual(['fast', 'middling', 'slow']);
-	});
-
-	it('puts a play whose depth cannot be read last under the Fastest sort', () => {
-		// An unreadable depth is an unknown wait, not a zero one — sorting it to
-		// the front would put the least-known row at the top of the list.
-		const served = [
-			play({ key: 'unreadable', depth: 0 }),
-			play({ key: 'slow', expectedRoi: 1, depth: 10 }),
-			play({ key: 'fast', expectedRoi: 10, depth: 4000 })
-		];
-
-		expect(keys(sortPlays(served, 'fastest'))).toEqual(['fast', 'slow', 'unreadable']);
-	});
-
-	it('puts a play with no worthwhile scale last under the Fastest sort', () => {
-		// A play the simulation expects nothing from never reaches the target, so
-		// it has no wait to compare — the same "unknown, not instant" reading a
-		// dead depth gets, and the branch a scale-less play would otherwise sort
-		// by NaN. Since POE-193 this is a row the server really serves.
-		const served = [
-			play({ key: 'no-scale', expectedRoi: 0, depth: 4000 }),
-			play({ key: 'slow', expectedRoi: 1, depth: 10 }),
-			play({ key: 'fast', expectedRoi: 10, depth: 4000 })
-		];
-
-		expect(keys(sortPlays(served, 'fastest'))).toEqual(['fast', 'slow', 'no-scale']);
-	});
-
-	it('keeps the served order between two plays with no readable wait at all', () => {
-		// Two unknowns compare as equal — a comparator that claims either one
-		// precedes the other is non-reflexive, and the sort is free to act on
-		// the lie in any order it likes.
-		const served = [
-			play({ key: 'first-unknown', depth: 0 }),
-			play({ key: 'second-unknown', expectedRoi: 0, depth: 4000 })
-		];
-
-		expect(keys(sortPlays(served, 'fastest'))).toEqual(['first-unknown', 'second-unknown']);
-	});
-
-	it('puts a wait that never ends behind every readable one but ahead of a missing one', () => {
-		// POE-220. A positive but vanishing expectation divides the 100c target
-		// into `Infinity` flips, so the wait comes out `Infinity` on any readable
-		// depth. The Scale column PRINTS that wait rather than a dash, so the sort
-		// takes it as the LARGEST key and not as a missing one — behind every
-		// readable wait, still ahead of the row that has no wait to print. The
-		// dash row is served FIRST so that reading `Infinity` as a missing key —
-		// the other reading available here — would tie the three and hand back
-		// dash,first,second instead.
-		//
-		// The two endless rows are pinned adjacent and in served order because
-		// nothing but the server's order separates two equal keys; their depths
-		// differ twentyfive-fold so that a comparator reaching past the tie has
-		// something to reach for.
-		const endless = play({ key: 'first-endless', expectedRoi: Number.MIN_VALUE, depth: 40 });
-		const served = [
-			play({ key: 'no-wait', depth: 0 }),
-			endless,
-			play({ key: 'second-endless', expectedRoi: Number.MIN_VALUE, depth: 4000 }),
-			play({ key: 'readable', expectedRoi: 10, depth: 5 })
-		];
-
-		expect(worthwhileScale(endless)?.hours).toBe(Infinity);
-		expect(keys(sortPlays(served, 'fastest'))).toEqual([
-			'readable',
-			'first-endless',
-			'second-endless',
-			'no-wait'
-		]);
-	});
-
-	it('puts a suspect play with a readable wait ahead of a clean play with none', () => {
-		// The null-last rule is about a MISSING key and not about the flag: the
-		// suspect row has hours and the clean one does not, so the suspect row
-		// leads. Served clean-first, which is the wire's own order, so the
-		// partition this replaced would answer the list unchanged.
-		const served = [
-			play({ key: 'clean-unreadable', depth: 0 }),
-			play({ key: 'suspect-fast', expectedRoi: 100, depth: 100_000, suspect: true })
-		];
-
-		expect(keys(sortPlays(served, 'fastest'))).toEqual(['suspect-fast', 'clean-unreadable']);
-	});
-
-	it('lets a suspect play lead the Fastest sort when the market absorbs it soonest', () => {
-		// One flip at 100,000/h is an hour; ten flips at 5/h is two; a hundred at
-		// 10/h is ten. The three waits are strictly apart, so the order is the
-		// hours and nothing else — the flag on the fastest row moves it nowhere.
-		const served = [
-			play({ key: 'clean-slow', expectedRoi: 1, depth: 10 }),
-			play({ key: 'suspect-instant', expectedRoi: 100, depth: 100_000, suspect: true }),
-			play({ key: 'clean-quick', expectedRoi: 10, depth: 5 })
-		];
-
-		expect(keys(sortPlays(served, 'fastest'))).toEqual([
-			'suspect-instant',
-			'clean-quick',
-			'clean-slow'
-		]);
-	});
-
-	it('keeps the server order between two plays the market absorbs inside the same hour', () => {
-		// The hours are whole ones, so everything under an hour ties at 1 — the
-		// deeper book does NOT out-sort the thinner one, it keeps the server's
-		// remaining tie-breaks.
-		const served = [
-			play({ key: 'first', expectedRoi: 10, depth: 900 }),
-			play({ key: 'second', expectedRoi: 10, depth: 4000 })
-		];
-
-		expect(keys(sortPlays(served, 'fastest'))).toEqual(['first', 'second']);
-	});
-
-	it('sorts into a new array under the Fastest sort as well', () => {
-		const served = [
-			play({ key: 'slow', expectedRoi: 1, depth: 10 }),
-			play({ key: 'fast', expectedRoi: 10, depth: 4000 })
-		];
-
-		sortPlays(served, 'fastest');
-
-		expect(keys(served)).toEqual(['slow', 'fast']);
-	});
-});
-
-describe('applyRowCap', () => {
-	function keys(plays: CurrencyExchangePlay[]): string[] {
-		return plays.map((p) => p.key);
-	}
-
-	/**
-	 * Deliberately in ASCENDING expectation, which is the order no sort on this
-	 * page would produce: the cap is handed an already-sorted list and its only
-	 * job is to take the head of it. A helper that read a key and re-ranked would
-	 * answer with the two largest instead of the first two.
-	 */
-	const sorted = [
-		play({ key: 'first', expectedRoi: 1 }),
-		play({ key: 'second', expectedRoi: 2 }),
-		play({ key: 'third', expectedRoi: 3 }),
-		play({ key: 'fourth', expectedRoi: 4 })
-	];
-
-	it('draws the head of the list it was given, in the order it was given', () => {
-		expect(keys(applyRowCap(sorted, 2, false))).toEqual(['first', 'second']);
-	});
-
-	it('draws every row when the cap is All', () => {
-		// `rowCapLimit('all')` is what reaches it, so Infinity is the real input.
-		expect(keys(applyRowCap(sorted, Infinity, false))).toEqual([
-			'first',
-			'second',
-			'third',
-			'fourth'
-		]);
-	});
-
-	it('draws every row when the cap is larger than the list', () => {
-		expect(keys(applyRowCap(sorted, 200, false))).toEqual([
-			'first',
-			'second',
-			'third',
-			'fourth'
-		]);
-	});
-
-	it('draws every match while a search is running, however small the cap', () => {
-		// A query names what the reader is looking for: capping it would answer
-		// "no such play" with a play that was found and dropped.
-		expect(keys(applyRowCap(sorted, 1, true))).toEqual(['first', 'second', 'third', 'fourth']);
-	});
-
-	it('draws every row when the cap is exactly the length of the list', () => {
-		// The off-by-one boundary, and the one the shipped cap of 50 sits on for a
-		// reader whose filters left exactly 50: `slice(0, cap - 1)` passes every
-		// other case in this block and drops the last row here, and the counter
-		// must not offer a `show all` over a table that is already all shown.
-		const shown = applyRowCap(sorted, sorted.length, false);
-
-		expect(keys(shown)).toEqual(['first', 'second', 'third', 'fourth']);
-		expect(
-			rowCounts({
-				served: sorted,
-				afterRules: sorted,
-				afterGates: sorted,
-				matched: sorted,
-				shown
-			}).capped
-		).toBe(false);
-	});
-
-	it('leaves the list it was given intact', () => {
-		// The page holds `rows` across the cap — the counter, `showConvert` and the
-		// empty-table branch all read it after this call. A cap that truncated in
-		// place would take those rows off every one of them.
-		const served = [play({ key: 'a' }), play({ key: 'b' }), play({ key: 'c' })];
-
-		applyRowCap(served, 1, false);
-
-		expect(keys(served)).toEqual(['a', 'b', 'c']);
-	});
-
-	it('hands back a copy when a search bypasses the cap', () => {
-		// The bypass is the path that once returned its input by reference, so the
-		// drawn list WAS `rows` under exactly one combination of settings. An
-		// alias that exists in one branch and not the others is worse than one
-		// that always exists: it is the branch nothing downstream is tested on.
-		const served = [play({ key: 'a' }), play({ key: 'b' })];
-
-		expect(applyRowCap(served, 1, true)).not.toBe(served);
-	});
-
-	it('hands back a copy when the cap is All', () => {
-		// `Infinity` is the other place a short-circuit is tempting — slicing a
-		// whole list looks like waste. The caller must hold the same kind of value
-		// whichever pick is set.
-		const served = [play({ key: 'a' }), play({ key: 'b' })];
-
-		expect(applyRowCap(served, Infinity, false)).not.toBe(served);
-	});
-});
-
 describe('rowCounts', () => {
-	/** Distinct keys only, because the counter reads lengths and nothing else. */
-	function plays(count: number): CurrencyExchangePlay[] {
-		return Array.from({ length: count }, (_, i) => play({ key: `p${i}` }));
-	}
-
 	/**
-	 * Ten served, two taken by the rules, three by the gates, one by the bounds
-	 * and the search together — four matching, of which the cap draws two.
+	 * The paged response's figures: ten served, two taken by the rules, three by
+	 * the gates, one by the bounds and the search together — four matching, of
+	 * which the page draws two.
 	 */
-	const chain = {
-		served: plays(10),
-		afterRules: plays(8),
-		afterGates: plays(5),
-		matched: plays(4),
-		shown: plays(2)
-	};
+	const chain = { total: 10, afterRules: 8, afterGates: 5, matched: 4, shown: 2 };
 
 	it('reports the drawn count as the length of the capped list', () => {
 		expect(rowCounts(chain).shown).toBe(2);
@@ -1595,24 +1134,177 @@ describe('rowCounts', () => {
 	});
 
 	it('counts no rows hidden by the gates when every play passes them', () => {
-		const all = plays(3);
+		const all = { total: 3, afterRules: 3, afterGates: 3, matched: 3, shown: 3 };
 
-		expect(
-			rowCounts({ served: all, afterRules: all, afterGates: all, matched: all, shown: all })
-				.hiddenByGates
-		).toBe(0);
+		expect(rowCounts(all).hiddenByGates).toBe(0);
 	});
 
 	it('counts no rows hidden by the filters when every served play matches', () => {
 		// The unfiltered table is what a reader with no rules, no gates and no
 		// bounds sees, and the bar must say nothing was taken from it.
-		const all = plays(3);
+		const all = { total: 3, afterRules: 3, afterGates: 3, matched: 3, shown: 3 };
 
-		expect(
-			rowCounts({ served: all, afterRules: all, afterGates: all, matched: all, shown: all })
-				.hiddenByFilters
-		).toBe(0);
+		expect(rowCounts(all).hiddenByFilters).toBe(0);
 	});
+
+	it('attributes the response figures without charging capped rows to filters', () => {
+		// A capped page of 25 out of 60 matching: the 35 below the page were taken
+		// by nothing, so they appear in no hidden figure.
+		expect(rowCounts({ total: 100, afterRules: 90, afterGates: 70, matched: 60, shown: 25 })).toEqual({
+			shown: 25,
+			matched: 60,
+			total: 100,
+			capped: true,
+			hiddenByGates: 20,
+			hiddenByFilters: 20
+		});
+	});
+});
+
+// ---------------------------------------------------- the wire's display --
+
+interface ParityPlay {
+	play: Record<string, unknown> & { key: string };
+	display: PlayDisplay;
+}
+
+/** JSON has no NaN: the fixture writes a non-finite number as null. */
+function fromWire(value: unknown): unknown {
+	if (value === null) return NaN;
+	if (Array.isArray(value)) return value.map(fromWire);
+	if (typeof value === 'object') {
+		return Object.fromEntries(Object.entries(value as object).map(([k, v]) => [k, fromWire(v)]));
+	}
+	return value;
+}
+
+/** One parity play as the paged wire carries it: the play plus the server's display. */
+function parityPlay({ play: raw, display }: ParityPlay): CurrencyExchangePlay {
+	const legs = (raw.legs as CurrencyExchangeLeg[]) ?? [];
+	return { ...(fromWire({ ...raw, legs: [] }) as CurrencyExchangePlay), legs, display };
+}
+
+const PARITY = (parity as unknown as { plays: ParityPlay[] }).plays;
+
+/** A display number as the readers hand it on: null on the wire is NaN. */
+const num = (n: number | null): number => (n === null ? NaN : n);
+
+describe('display readers', () => {
+	it('read the parity corpus’s rows of every boundary', () => {
+		// The rows test 5a must cover, by the shape the server answered for them.
+		const shapes = PARITY.map(({ display }) => display);
+		expect([
+			shapes.some((d) => d.basis === 'single'),
+			shapes.some((d) => d.scale === null),
+			shapes.some((d) => d.scale !== null && d.scale.hours === null),
+			shapes.some((d) => !d.expectedPrinted)
+		]).toEqual([true, true, true, true]);
+	});
+
+	describe('render the parity fixture’s Scale and money cells unchanged', () => {
+		for (const entry of PARITY) {
+			it(entry.play.key, () => {
+				const p = parityPlay(entry);
+				const d = entry.display;
+
+				expect(displayScale(p)).toEqual({ units: d.units, basis: d.basis });
+				expect(moneyColumns(p)).toEqual({
+					investment: num(d.money.investment),
+					roi: num(d.money.roi),
+					expectedRoi: num(d.money.expectedRoi)
+				});
+				expect(printsExpectedRoi(p)).toBe(d.expectedPrinted);
+				expect(worthwhileScale(p)).toEqual(
+					d.scale === null
+						? null
+						: {
+								flips: num(d.scale.flips),
+								gain: num(d.scale.gain),
+								investment: num(d.scale.investment),
+								hours: d.scale.hours
+							}
+				);
+				expect(runInvestment(p)).toEqual(num(d.runInvestment));
+				const ledger = runLedger(p, parity.divineChaosRate);
+				if (ledger !== null) {
+					expect({
+						units: ledger.units,
+						basis: ledger.basis,
+						investmentChaos: ledger.investmentChaos,
+						roiChaos: ledger.roiChaos,
+						expectedRoiChaos: ledger.expectedRoiChaos,
+						chainEndChaos: ledger.chainEndChaos,
+						getChaos: ledger.getChaos
+					}).toEqual({
+						units: d.units,
+						basis: d.basis,
+						investmentChaos: num(d.money.investment),
+						roiChaos: num(d.money.roi),
+						expectedRoiChaos: num(d.money.expectedRoi),
+						chainEndChaos: num(d.money.investment) + num(d.money.roi),
+						getChaos: num(d.money.investment) + num(d.money.expectedRoi)
+					});
+				}
+			});
+		}
+	});
+
+	/**
+	 * A play whose own fields say one thing and whose display says another: the
+	 * readers must answer the display, because no formula is left on this side.
+	 */
+	const disagreeing = play({
+		legs: [leg({ priceItemQty: 3, priceQuoteQty: 9 })],
+		investment: 1,
+		roi: 1,
+		expectedRoi: 1,
+		simEntries: 5,
+		depth: 1,
+		display: {
+			units: 7,
+			basis: 'single',
+			money: { investment: 70, roi: 14, expectedRoi: null },
+			expectedPrinted: false,
+			scale: { flips: 11, gain: 101, investment: 770, hours: null },
+			runInvestment: 770,
+			sortKeys: { expected: null, roi: 14, fastestHours: null }
+		}
+	});
+
+	it('displayScale reads units and basis off the display', () => {
+		expect(displayScale(disagreeing)).toEqual({ units: 7, basis: 'single' });
+	});
+
+	it('moneyColumns reads display.money, a null as NaN', () => {
+		expect(moneyColumns(disagreeing)).toEqual({ investment: 70, roi: 14, expectedRoi: NaN });
+	});
+
+	it('printsExpectedRoi reads display.expectedPrinted', () => {
+		expect(printsExpectedRoi(disagreeing)).toBe(false);
+	});
+
+	it('worthwhileScale reads display.scale', () => {
+		expect(worthwhileScale(disagreeing)).toEqual({ flips: 11, gain: 101, investment: 770, hours: null });
+	});
+
+	it('worthwhileScale answers null where the display carries no scale', () => {
+		expect(worthwhileScale({ ...disagreeing, display: { ...disagreeing.display, scale: null } })).toBeNull();
+	});
+
+	it('runInvestment reads display.runInvestment', () => {
+		expect(runInvestment({ ...disagreeing, display: { ...disagreeing.display, runInvestment: 55 } })).toBe(55);
+	});
+});
+
+describe('wireDisplay (this file’s fixture builder)', () => {
+	// The NaN-expectation row cannot carry its input: the fixture's JSON play
+	// records that expectedRoi as 0, so only its recorded display is the spec.
+	for (const entry of PARITY.filter(({ play: p }) => p.key !== 'synthetic:expected-roi-nan')) {
+		it(`agrees with the server’s recorded display for ${entry.play.key}`, () => {
+			const p = parityPlay(entry);
+			expect(wireDisplay(p)).toEqual(entry.display);
+		});
+	}
 });
 
 describe('formatVolume', () => {
@@ -1792,328 +1484,6 @@ describe('hoursProgress', () => {
 
 	it('reports 0 for a non-finite count', () => {
 		expect(hoursProgress(Number.NaN, 6)).toBe(0);
-	});
-});
-
-describe('worthwhileScale', () => {
-	// Every case is stated against the 100c target the constant carries, so a
-	// change to that constant fails these tests rather than passing silently.
-	//
-	// The step the target is divided by is the EXPECTATION (POE-193), never the
-	// best-case `roi` this used to read — so every case below, bar the last,
-	// leaves `roi` at the fixture's 10c, which divides the target into 10 flips
-	// and is therefore an answer none of the expectations here produce. The last
-	// case is the one that needs a `roi` of its own, and says why.
-
-	it('rounds the flip count up to the exchange that actually clears the target', () => {
-		// 100 ÷ 3 is 33.3 exchanges, and 33 of them pay 99c — a chaos short.
-		expect(worthwhileScale(play({ expectedRoi: 3 }))?.flips).toBe(34);
-	});
-
-	it('adds no extra flip to an expectation that divides the target exactly', () => {
-		// Four exchanges expected to pay 25c clear exactly 100c, so the fifth is
-		// not needed.
-		expect(worthwhileScale(play({ expectedRoi: 25 }))?.flips).toBe(4);
-	});
-
-	it('reports a single flip for a play expected to clear the target on its own', () => {
-		expect(worthwhileScale(play({ expectedRoi: 150 }))?.flips).toBe(1);
-	});
-
-	it('reports the chaos those flips are expected to pay, not the target', () => {
-		// 34 exchanges at 3c overshoot to 102c; reporting the flat 100c would put a
-		// number on screen the play does not pay.
-		expect(worthwhileScale(play({ expectedRoi: 3 }))?.gain).toBe(102);
-	});
-
-	it('reports the chaos the flips tie up, not the cost of one exchange', () => {
-		expect(worthwhileScale(play({ expectedRoi: 3, investment: 40 }))?.investment).toBe(1360);
-	});
-
-	it('rounds the hours the market needs to absorb the flips up to a whole hour', () => {
-		// 200 flips against 30 units an hour is 6.7 hours of trading, which is a
-		// seventh hour the reader spends, not a sixth.
-		expect(worthwhileScale(play({ expectedRoi: 0.5, depth: 30 }))?.hours).toBe(7);
-	});
-
-	it('reports exactly one hour for a scale the hourly volume covers whole', () => {
-		expect(worthwhileScale(play({ expectedRoi: 25, depth: 4 }))?.hours).toBe(1);
-	});
-
-	it('reports a second hour for a scale one flip past what the hour covers', () => {
-		expect(worthwhileScale(play({ expectedRoi: 25, depth: 3 }))?.hours).toBe(2);
-	});
-
-	it('reports no hours for a play whose thinnest leg traded nothing', () => {
-		// An hourly volume of 0 is an unreadable wait, not an instant one, and
-		// dividing by it would answer Infinity — which the column would print.
-		expect(worthwhileScale(play({ depth: 0 }))?.hours).toBeNull();
-	});
-
-	it('reports no hours for a negative depth', () => {
-		expect(worthwhileScale(play({ depth: -5 }))?.hours).toBeNull();
-	});
-
-	it('reports no hours for a non-finite depth', () => {
-		expect(worthwhileScale(play({ depth: Number.NaN }))?.hours).toBeNull();
-	});
-
-	it('still reports the scale for a play whose depth cannot be read', () => {
-		// The flip count and what it ties up are known whatever the book did last
-		// hour; only the wait is missing, so the row keeps its "×N → +Gc".
-		expect(worthwhileScale(play({ expectedRoi: 25, depth: 0 }))?.flips).toBe(4);
-	});
-
-	it('reports no scale for a play the simulation expects to gain nothing', () => {
-		// No repeat count reaches a positive target from a zero step, and dividing
-		// would answer Infinity flips.
-		expect(worthwhileScale(play({ expectedRoi: 0 }))).toBeNull();
-	});
-
-	it('reports no scale for a play the simulation expects to lose chaos', () => {
-		expect(worthwhileScale(play({ expectedRoi: -5 }))).toBeNull();
-	});
-
-	it('reports no scale for a non-finite expectation', () => {
-		expect(worthwhileScale(play({ expectedRoi: Number.NaN }))).toBeNull();
-	});
-
-	it('reports no scale for a measured loser however large its best-case return', () => {
-		// The row POE-193 put on the table and the old `roi` reading could not
-		// express: the server's positivity floor (ADR-015) still keeps `roi` above
-		// zero, and the simulation is free to measure a loss anyway — so a play can
-		// carry the table's biggest ROI and no scale at all. Counting the
-		// best-case 500c would answer ×1 rather than the dash the column owes a
-		// play with nothing to repeat toward.
-		expect(worthwhileScale(play({ roi: 500, roiPct: 2.5, expectedRoi: -6 }))).toBeNull();
-	});
-});
-
-describe('runInvestment', () => {
-	// The RUN's cost, which since the display scale became one posting is no
-	// longer what `moneyColumns` answers on ANY row. The filter bar's Run cost
-	// bound is its only caller, and the seam is deliberate (spec §6.1): a
-	// bankroll ceiling asks a run-sized question whatever the row prints.
-
-	it('reports what the worthwhile run ties up', () => {
-		// 34 flips at 40c each — the figure the Scale column's "N c in" sub-line
-		// prints.
-		expect(runInvestment(play({ expectedRoi: 3, investment: 40 }))).toBe(1360);
-	});
-
-	it('reports the run’s cost, not the posting the row shows', () => {
-		// THE SEAM, pinned. `chaosLot` displays one posting of its buy market —
-		// twelve cards for 3c — while the run behind it is 2,000 exchanges costing
-		// 505c. A bound reading `moneyColumns` would compare a 500c bankroll
-		// ceiling against 3c and let every trash row through.
-		expect(runInvestment(chaosLot())).toBe(505);
-		expect(moneyColumns(chaosLot()).investment).toBe(3.0300000000000002);
-	});
-
-	it('reports the run’s cost on a DIVINE-entry row too, not its posting', () => {
-		// The seam is no longer a chaos-only reading: since the second ruling a
-		// divine row displays one posting as well, so the Investment column prints
-		// 202c while the run it has to be repeated to ties up 631.25c. A bound left
-		// reading `moneyColumns` would have gone silently wrong on THESE rows —
-		// the ones every earlier test of this seam left green.
-		expect(runInvestment(divineScarab())).toBe(631.25);
-		expect(moneyColumns(divineScarab()).investment).toBe(202);
-	});
-
-	it('falls back to one exchange’s cost for a play with no worthwhile run', () => {
-		// A measured loser is served and flagged (ADR-016) and has no run to
-		// repeat toward — so the fallback is a live branch, not a guard.
-		expect(runInvestment(play({ expectedRoi: -6, investment: 40 }))).toBe(40);
-	});
-
-	it('falls back on an expectation of exactly zero', () => {
-		// The boundary `worthwhileScale` refuses: no repeat count reaches a
-		// positive target from a zero step.
-		expect(runInvestment(play({ expectedRoi: 0, investment: 40 }))).toBe(40);
-	});
-});
-
-describe('displayScale', () => {
-	// The one decision every money figure and both step quantities are sized by,
-	// and since the second owner ruling of 2026-08-22 it is ONE RULE on every row:
-	// the minimal posting of the buy market, whatever currency that market quotes
-	// in. The entry currency decides nothing here.
-
-	it('counts one posting of the buy market', () => {
-		// The market posts twelve at a time, so twelve is the order the reader can
-		// actually place — and the run behind this row is 2,000 exchanges, a count
-		// nothing on the row may claim.
-		expect(displayScale(chaosLot())).toEqual({ units: 12, basis: 'posting' });
-	});
-
-	it('counts a single item on a market that posts one at a time', () => {
-		// The same rule, at the lot size most chaos markets actually carry: the
-		// posting IS one item, and `basis` says the count came from the pair rather
-		// than from the pairless fallback beside it.
-		expect(displayScale(chaosScarab())).toEqual({ units: 1, basis: 'posting' });
-	});
-
-	it('ignores the worthwhile run on a chaos entry however large it is', () => {
-		// `chaosScarab` needs 200 exchanges to clear the target. The posting is
-		// still one, and this is the case that separates the two rules: a
-		// `worthwhileScale` reached for first would answer 200 here.
-		expect(worthwhileScale(chaosScarab())?.flips).toBe(200);
-		expect(displayScale(chaosScarab()).units).toBe(1);
-	});
-
-	it('counts one posting of a DIVINE buy market rather than the run', () => {
-		// THE SECOND RULING, in one assertion. This market posts sixteen scarabs
-		// for a divine and the play's worthwhile run is 50 exchanges: an
-		// entry-currency branch reaching for the run answers `{ units: 50, basis:
-		// 'run' }` here, which is the "buy 159 for ≈ 2.72 div" the owner refused —
-		// not a measurable price, and not an order anyone places.
-		expect(worthwhileScale(divineScarab())?.flips).toBe(50);
-		expect(displayScale(divineScarab())).toEqual({ units: 16, basis: 'posting' });
-	});
-
-	it('keeps a divine row’s posting when the expectation measures a loss', () => {
-		// A market's lot does not depend on the measurement, so the branch that
-		// empties the Scale column moves nothing here. The old rule dropped such a
-		// row to a single exchange; the posting is what it always was.
-		expect(worthwhileScale(divineScarab({ expectedRoi: -3 }))).toBeNull();
-		expect(displayScale(divineScarab({ expectedRoi: -3 }))).toEqual({
-			units: 16,
-			basis: 'posting'
-		});
-	});
-
-	it('counts a single item on a row whose buy leg posted no pair', () => {
-		// Version skew: there is no posting to read, and one item is the smallest
-		// claim the row can make that is still true. `basis` separates it from the
-		// posting that happens to be one — the units agree, the reason does not.
-		expect(displayScale(chaosNoPair())).toEqual({ units: 1, basis: 'single' });
-	});
-
-	it('counts a single item on a DIVINE row whose buy leg posted no pair', () => {
-		// The pairless fallback is the same rule on both entry currencies, and this
-		// is the case that says so: a divine buy leg with no usable pair reaches it
-		// too, rather than dropping through to a run the way it used to.
-		const skewed = divineScarab({
-			legs: [
-				leg({ ...DIVINE_SIDE, price: 0.0625, priceItemQty: 0, priceQuoteQty: 0 }),
-				leg({ ...DIVINE_SIDE, action: 'sell', price: 0.1, priceItemQty: 10, priceQuoteQty: 1 })
-			]
-		});
-
-		expect(displayScale(skewed)).toEqual({ units: 1, basis: 'single' });
-	});
-
-	it('counts a single item for a play that arrives with no legs at all', () => {
-		// Not a served shape, and not renderable either — `runLedger` and
-		// `routeSlots` both refuse a body with fewer than two legs. The branch
-		// exists so the buy-leg read cannot throw before they do.
-		expect(displayScale(play({ expectedRoi: 3 }))).toEqual({ units: 1, basis: 'single' });
-	});
-});
-
-describe('moneyColumns', () => {
-	// The invariant under test is ONE SCALE PER ROW: all three money columns count
-	// `displayScale(play).units` and nothing else, so the columns and the route
-	// slots can never be about different trips.
-	//
-	// The `play()` factory carries no legs, so it has no posting to read and falls
-	// to a single item — that is what the fallback cases at the foot of this block
-	// exercise. Every case that means to price a POSTING carries legs.
-
-	it('reports the chaos one posting ties up', () => {
-		// Twenty items at 40c each, on a market that posts twenty at a time.
-		const posted = play({
-			investment: 40,
-			legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })]
-		});
-
-		expect(moneyColumns(posted).investment).toBe(800);
-	});
-
-	it('reports the best-case return across that same posting', () => {
-		// The column stays the RAW best case (the NET/RAW convention the ROI%
-		// column spells out) and is simply told at the row's size: 20 × 10c.
-		const posted = play({ roi: 10, legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })] });
-
-		expect(moneyColumns(posted).roi).toBe(200);
-	});
-
-	it('reports the chaos the posting is expected to pay, not the per-exchange mean', () => {
-		const posted = play({
-			expectedRoi: 3,
-			legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })]
-		});
-
-		expect(moneyColumns(posted).expectedRoi).toBe(60);
-	});
-
-	it('prices a DIVINE-entry row at ONE POSTING and never at the run', () => {
-		// THE SECOND OWNER RULING on the three columns at once. `divineScarab`
-		// posts sixteen scarabs for a divine and its run is 50 exchanges, so a
-		// column that multiplied by the flip count would read 631.25 / +359 / +100
-		// here instead of 202 / +115 / +32. The run is real and is not on these
-		// three: it is the Scale column's.
-		const money = moneyColumns(divineScarab());
-
-		expect(money.investment).toBe(202);
-		expect(money.roi).toBe(114.8);
-		expect(money.expectedRoi).toBe(32);
-		expect(worthwhileScale(divineScarab())).toEqual({
-			flips: 50,
-			gain: 100,
-			investment: 631.25,
-			hours: 2
-		});
-	});
-
-	it('prices a chaos-entry row at ONE POSTING and never at the run', () => {
-		// THE OWNER RULING, pinned on all three columns at once: ROI is per single
-		// trade, not per batch. `chaosLot` posts twelve for 3c and its run is 2,000
-		// exchanges, so a column that multiplied by the flip count would read
-		// +287 / +100 here instead of +2 / +1. One posting is what the reader can
-		// actually place, and it is what the row prices.
-		const money = moneyColumns(chaosLot());
-
-		expect(money.investment).toBe(3.0300000000000002);
-		expect(money.roi).toBe(1.722);
-		expect(money.expectedRoi).toBe(0.6000000000000001);
-		// The run is real and is not on these three: it is the Scale column's.
-		expect(worthwhileScale(chaosLot())).toEqual({
-			flips: 2000,
-			gain: 100,
-			investment: 505,
-			hours: 50
-		});
-	});
-
-	it('prices a chaos-entry row that posts one at a time at that one', () => {
-		// The commonest chaos shape. 200 flips behind it, one item on it.
-		expect(moneyColumns(chaosScarab()).investment).toBe(19.19);
-		expect(moneyColumns(chaosScarab()).expectedRoi).toBe(0.5);
-	});
-
-	it('falls back to the cost of one exchange when there is no posting to read', () => {
-		// Version skew: a buy leg served with no usable pair leaves nothing for the
-		// row to count but a single item.
-		expect(moneyColumns(chaosNoPair()).investment).toBe(19.19);
-	});
-
-	it('falls back to the best-case return on one exchange with no posting to read', () => {
-		expect(moneyColumns(chaosNoPair({ roi: 500 })).roi).toBe(500);
-	});
-
-	it('carries the wire’s sign through the count on a measured loser', () => {
-		// The one money figure on the row that can print a minus. The count is a
-		// positive integer, so the sign is the wire's and a losing measurement is
-		// still a losing one at four items: 4 × −6.
-		expect(moneyColumns(chaosTrash({ expectedRoi: -6 })).expectedRoi).toBe(-24);
-	});
-
-	it('keeps the posting when the expectation is exactly zero', () => {
-		// The boundary `worthwhileScale` refuses — and the display scale does not
-		// care: a market's lot is not a function of the measurement, so the columns
-		// stay at the twelve this market posts.
-		expect(moneyColumns(chaosLot({ expectedRoi: 0 })).investment).toBe(3.0300000000000002);
 	});
 });
 
@@ -4228,69 +3598,6 @@ describe('row closure', () => {
 			expect(routeSlots(divineScarab(), 0)?.positive).toBe(true);
 			expect(routeSlots(divineScarab({ expectedRoi: -3 }), 0)?.positive).toBe(false);
 		});
-	});
-});
-
-describe('anyConvertStep', () => {
-	/**
-	 * One fully-shaped leg, reused for every position. `anyConvertStep` reads the
-	 * LENGTH of the leg list and nothing inside a leg, so the cases below vary the
-	 * count and hold the contents fixed — a fixture that also varied the contents
-	 * would leave it unclear which of the two the answer came from.
-	 */
-	const someLeg: CurrencyExchangeLeg = {
-		action: 'buy',
-		item: 'scarab',
-		quote: CHAOS_ID,
-		price: 19,
-		priceItemQty: 1,
-		priceQuoteQty: 19,
-		fair: 19.5,
-		fairOk: true,
-		tick: 0.01,
-		volume: 2000,
-		stock: 40,
-		suspect: false,
-		itemName: 'Ambush Scarab',
-		itemIcon: '/icon/Scarab',
-		itemCategory: 'Threads',
-		quoteName: 'Chaos Orb',
-		quoteIcon: '/icon/currency-exchange/Chaos',
-		quoteCategory: 'Currency'
-	};
-
-	/** A play with `count` legs — two is a direct flip, three a 1-hop route. */
-	function withLegs(count: number, overrides: Partial<CurrencyExchangePlay> = {}) {
-		return play({ legs: Array.from({ length: count }, () => someLeg), ...overrides });
-	}
-
-	it('collapses the column when every rendered play is a direct flip', () => {
-		// The case the collapse exists for: a table filtered to direct plays draws
-		// an empty dashed tile and two arrows on every row, and the convert column
-		// is dead width down the whole table.
-		expect(anyConvertStep([withLegs(2), withLegs(2), withLegs(2)])).toBe(false);
-	});
-
-	it('shows the column when one rendered play converts', () => {
-		// All-or-nothing over the set: the single 1-hop row needs the slot, so
-		// every direct row around it keeps holding it open. Collapsing the rest
-		// per-row would slide their Get under this row's sell.
-		expect(anyConvertStep([withLegs(2), withLegs(3), withLegs(2)])).toBe(true);
-	});
-
-	it('reads the legs and not the mode label a play carries', () => {
-		// `routeSlots` draws the convert slot off the THIRD LEG, by position. A
-		// play labelled 1-hop that arrived with two legs has no third step to put
-		// in the slot, so reserving one would spend the width on a tile nothing
-		// can fill.
-		expect(anyConvertStep([withLegs(2, { mode: '1-hop' })])).toBe(false);
-	});
-
-	it('collapses on an empty set rather than reserving a slot for no row', () => {
-		// Unobservable in practice — the table is not rendered when nothing
-		// survives the filters — but the answer is pinned so the collapse cannot
-		// flip to "shown" on the way through an empty render.
-		expect(anyConvertStep([])).toBe(false);
 	});
 });
 

@@ -60,36 +60,23 @@
 import { describe, it, expect } from 'vitest';
 import dayWire from '../../../../internal/exchange/testdata/wire/day.json';
 import recentWire from '../../../../internal/exchange/testdata/wire/recent.json';
+import parity from '../../../../internal/exchange/testdata/page-parity.json';
 import {
 	CHAOS_ID,
 	DIVINE_ID,
-	SCALE_TARGET_CHAOS,
 	displayScale,
 	formatChaos,
 	formatGain,
 	moneyColumns,
-	parseUnit,
 	routeSlots,
 	runLedger,
-	sortPlays,
 	worthwhileScale
 } from './view';
-import type { ExchangeSort } from './view';
-import {
-	applyGates,
-	applyNumericFilters,
-	applyRules,
-	gateDefaults,
-	matchesSearch,
-	parseCategoryRules,
-	parseGates,
-	parseItemRules
-} from './filters';
-import type { GateInputs } from './filters';
 import type {
 	CurrencyExchangeLeg,
 	CurrencyExchangePlay,
-	CurrencyExchangeResponse
+	CurrencyExchangeResponse,
+	PlayDisplay
 } from '$lib/api';
 
 // ------------------------------------------------------ the wire, as it lands --
@@ -234,6 +221,7 @@ function wrapAsResponse(wire: WireResult): CurrencyExchangeResponse {
 	const plays = wire.plays.map(
 		(play): CurrencyExchangePlay => ({
 			...play,
+			display: serverDisplay(wire.horizon, play.key),
 			mode: play.mode === '1-hop' ? '1-hop' : 'direct',
 			legs: play.legs.map(
 				(leg): CurrencyExchangeLeg => ({
@@ -262,8 +250,27 @@ function wrapAsResponse(wire: WireResult): CurrencyExchangeResponse {
 		divineChaosRate: wire.divineChaosRate,
 		count: plays.length,
 		plays,
-		categories: CATEGORIES
+		categories: CATEGORIES,
+		total: plays.length,
+		afterRules: plays.length,
+		afterGates: plays.length,
+		matched: plays.length,
+		showConvert: plays.some((play) => play.legs.length > 2),
+		itemUniverse: []
 	};
+}
+
+/**
+ * The `display` the server sends with this corpus play (ADR-030): Go's
+ * `Decorate` output, recorded per play in `page-parity.json` (day keys there
+ * carry a `day:` prefix).
+ */
+function serverDisplay(horizon: string, key: string): PlayDisplay {
+	const recorded = (parity as unknown as { plays: { play: { key: string }; display: PlayDisplay }[] }).plays;
+	const wanted = horizon === 'day' ? `day:${key}` : key;
+	const found = recorded.find((entry) => entry.play.key === wanted);
+	if (found === undefined) throw new Error(`page-parity.json has no display for ${wanted}`);
+	return found.display;
 }
 
 const RECENT = wrapAsResponse(recentWire as WireResult);
@@ -428,41 +435,6 @@ function playByKey(response: CurrencyExchangeResponse, key: string): CurrencyExc
 	return found;
 }
 
-/**
- * A FRESH INSTALL's filter pass, in the order the page composes it.
- *
- * Every layer is fed the state a never-touched install actually stores — the
- * empty `persisted()` strings of ADR-013 — and parsed through this file's own
- * parsers rather than hand-built, so a build that changes what an unset knob
- * means reaches this test the same way it reaches the reader. `parseGates` over
- * seven blank strings resolves to `gateDefaults`, which is the two sanctioned
- * trash-price floors armed and the other five off; `parseCategoryRules('')` and
- * `parseItemRules('')` answer no rules; both investment bounds are unset; the
- * search box is empty.
- */
-function freshInstallInputs(): GateInputs {
-	return {
-		minItemPrice: '',
-		minItemPriceDiv: '',
-		minRoiChaos: '',
-		minTurnover: '',
-		maxTickPct: '',
-		minEdgeTickRatio: '',
-		minRoiPct: ''
-	};
-}
-
-function freshInstallPass(response: CurrencyExchangeResponse): CurrencyExchangePlay[] {
-	const ruled = applyRules(response.plays, parseCategoryRules(''), parseItemRules(''));
-	const gated = applyGates(ruled, parseGates(freshInstallInputs()), response.divineChaosRate);
-	const bounded = applyNumericFilters(gated, {
-		investMin: '',
-		investMax: '',
-		unit: parseUnit(''),
-		divineChaosRate: response.divineChaosRate
-	});
-	return bounded.filter((play) => matchesSearch(play, ''));
-}
 
 // ------------------------------------------------------------ the shape pin --
 
@@ -798,7 +770,8 @@ for (const { horizon, response } of FIXTURES) {
 					return;
 				}
 
-				expect(run.flips).toBe(Math.ceil(SCALE_TARGET_CHAOS / p.expectedRoi));
+				// Go's exchange.ScaleTargetChaos is 100.
+				expect(run.flips).toBe(Math.ceil(100 / p.expectedRoi));
 				expect(moneyColumns(p).expectedRoi).toBe(p.expectedRoi * posting.units);
 				expect(run.gain === moneyColumns(p).expectedRoi).toBe(run.flips === posting.units);
 			});
@@ -864,15 +837,9 @@ describe('incident — Journey Tattoo, sold into a one-sided book (2026-08-23)',
 	// the empty ask side it was never going to trade on, and the newest-hour rule
 	// then deleted the recipe.
 	//
-	// What the desktop owes that fix is two things: the surviving 1-hop must reach
-	// the reader through a fresh install's filters, and the mark that says the book
-	// was one-sided must reach the STEP the component draws.
-	for (const { horizon, response } of FIXTURES) {
-		it(`survives a fresh-install filter pass in the ${horizon} horizon`, () => {
-			expect(names(freshInstallPass(response))).toContain(INCIDENT_NAMES[TATTOO_SELL_KEY]);
-		});
-	}
-
+	// What the desktop owes that fix: the mark that says the book was one-sided
+	// must reach the STEP the component draws. Whether the row survives a fresh
+	// install's filters is the server's (`TestPlaysPage_MatchesTheClientChainOnEveryParityCase`).
 	it('reaches the route with the depleted mark on the leg that carried it', () => {
 		// `RouteStep.depletedSide` is what `ExchangeRoute.svelte` draws the mark
 		// from, so this is the field the component reads and not an intermediate.
@@ -957,8 +924,8 @@ describe('incident — Apocalypse card, thin newest hour priced from the window 
 	// The engine now prices such a leg from the window and MARKS the row with the
 	// span it drew from. What the desktop owes that is three things, and they are
 	// the three this block pins: the marked figures arrive intact, the row closes
-	// its equations like any other, and the mark decides nothing — no gate reads
-	// it (the fresh-install suite below) and no sort does (the last case here).
+	// its equations like any other, and the mark decides nothing — no gate or
+	// sort reads it, which the server's parity cases now pin.
 	const play = () => playByKey(RECENT, APOCALYPSE_WINDOW_KEY);
 	const rate = RECENT.divineChaosRate;
 
@@ -1036,49 +1003,6 @@ describe('incident — Apocalypse card, thin newest hour priced from the window 
 		expect(scale!.flips).toBeGreaterThan(0);
 		expect(scale!.hours).not.toBeNull();
 	});
-
-	for (const { horizon, response } of FIXTURES) {
-		it(`survives a fresh-install filter pass in the ${horizon} horizon`, () => {
-			// ADR-017 on the newest mark: a row is marked, never removed. The suite at
-			// the end of this file makes the same claim over the whole served set; this
-			// one names the market, so a gate armed against `windowPriced` fails here
-			// with the incident in the message.
-			expect(names(freshInstallPass(response))).toContain(INCIDENT_NAMES[APOCALYPSE_WINDOW_KEY]);
-		});
-	}
-
-	/**
-	 * Every member of `ExchangeSort`, exhaustively.
-	 *
-	 * Keyed by the union so the TYPE CHECKER supplies the list: a fourth sort
-	 * added to `view.ts` fails to compile here until it is named, which a
-	 * hand-written array of three would not do.
-	 */
-	const EVERY_SORT: Record<ExchangeSort, true> = { expected: true, roi: true, fastest: true };
-
-	for (const sort of Object.keys(EVERY_SORT) as ExchangeSort[]) {
-		it(`leaves two otherwise identical rows in their input order under the ${sort} sort`, () => {
-			// ADR-018 and C8: the mark is in NEITHER comparator. The pair is cloned
-			// from one served play and differs in this one field, so "identical" is
-			// structural — every key `sortPlays` reads (`expectedRoi`, `roiPct`,
-			// `investment`, `depth`, `legs`) is the same object graph, and a
-			// comparator that grew a `windowPriced` branch would have to reorder them
-			// to act on it. Order is asserted by KEY rather than by index so a failure
-			// says which row moved.
-			const source = play();
-			const marked = { ...source, key: 'marked', windowPriced: true };
-			const unmarked = { ...source, key: 'unmarked', windowPriced: false };
-
-			expect(sortPlays([marked, unmarked], sort).map((p) => p.key)).toEqual([
-				'marked',
-				'unmarked'
-			]);
-			expect(sortPlays([unmarked, marked], sort).map((p) => p.key)).toEqual([
-				'unmarked',
-				'marked'
-			]);
-		});
-	}
 });
 
 describe('incident — the 2026-08-23 screenshot’s spreadless 170 print', () => {
@@ -1116,12 +1040,6 @@ describe('incident — the 2026-08-23 screenshot’s spreadless 170 print', () =
 		expect(route.get.sub).not.toContain('-');
 		expect(parseAmount(route.get.amount)).toBeLessThan(parseAmount(route.spend.amount));
 	});
-
-	it('survives a fresh-install filter pass, because a served loser is still a row', () => {
-		// ADR-017's serve-and-flag principle reaching the client: the measured losers
-		// are ranked last, not hidden, and no default may hide one.
-		expect(names(freshInstallPass(RECENT))).toContain(INCIDENT_NAMES[SPREADLESS_KEY]);
-	});
 });
 
 describe('incident — Mawr Blaidd, junk low IN the newest hour (POE-188)', () => {
@@ -1130,61 +1048,6 @@ describe('incident — Mawr Blaidd, junk low IN the newest hour (POE-188)', () =
 	// POE-220 the flag decides nothing about where the row sits: every sort orders
 	// by the figure its own column prints, so this row lands in a DIFFERENT place
 	// under each of the three, exactly like a clean one.
-	const SORTS: ExchangeSort[] = ['expected', 'roi', 'fastest'];
-
-	/**
-	 * The market on either side of the flagged row, per sort.
-	 *
-	 * Pinned as neighbours rather than as an index, so a failure names the two
-	 * markets the row should have been between. The flag used to send it behind
-	 * all other rows in all three orders; what puts it where it is now is one
-	 * number each time, and the three places differ because the three columns do.
-	 *
-	 * The claim rides on the `above` half in every case: it is a CLEAN row, so a
-	 * comparator that grew a `suspect` branch back could not leave this row
-	 * directly under it. Under the `fastest` sort the `below` half is the other
-	 * flagged row (POE-252's window-priced card), because that market absorbs in
-	 * two hours and nothing else in the corpus reads between one and unmeasurable
-	 * — which is a fact about the two markets' depth, not about either flag.
-	 */
-	const NEIGHBOURS: Record<ExchangeSort, { above: string; below: string }> = {
-		// ROI column +192.8c: under the clean flip's +197.8c, over the divine-quoted
-		// flip's +140c. Eleven clean rows are behind it here.
-		roi: { above: CLEAN_FLIP_KEY, below: SCARAB_DIVINE_KEY },
-		// Exp. ROI column +17.7c: under the tattoo twin's +27.4c, over the one-hop
-		// triangle's +6.9c. A different seat from the ROI sort's, which is the whole
-		// reason the table offers two columns to order by.
-		expected: { above: TATTOO_TWIN_KEY, below: SCARAB_HOP_KEY },
-		// One hour to absorb, which nine clean rows tie with; the stable sort keeps
-		// the served order inside that tie and puts this row last of it — directly
-		// above the two-hour window-priced card, per the `below` note above.
-		fastest: { above: YOUNG_KEY, below: APOCALYPSE_WINDOW_KEY }
-	};
-
-	for (const { horizon, response } of FIXTURES) {
-		it(`survives a fresh-install filter pass in the ${horizon} horizon`, () => {
-			expect(names(freshInstallPass(response))).toContain(INCIDENT_NAMES[MAWR_JUNK_KEY]);
-		});
-	}
-
-	for (const sort of SORTS) {
-		it(`sits between the clean rows its own column puts it between under the ${sort} sort`, () => {
-			// A comparator that grew a `suspect` branch back would send this row to the
-			// end of the table under all three sorts, and this fails naming the two
-			// clean markets it belonged between.
-			const ordered = sortPlays(RECENT.plays, sort);
-			const junkAt = ordered.findIndex((p) => p.key === MAWR_JUNK_KEY);
-			const { above, below } = NEIGHBOURS[sort];
-
-			expect(ordered[junkAt]?.suspect).toBe(true);
-			expect(names(ordered.slice(junkAt - 1, junkAt + 2))).toEqual([
-				INCIDENT_NAMES[above],
-				INCIDENT_NAMES[MAWR_JUNK_KEY],
-				INCIDENT_NAMES[below]
-			]);
-		});
-	}
-
 	it('marks the leg whose extreme was junk, and not the row’s other step', () => {
 		// The mark is a LEG reading and reaches the step the component draws.
 		const route = routeSlots(playByKey(RECENT, MAWR_JUNK_KEY), RECENT.divineChaosRate)!;
@@ -1222,29 +1085,6 @@ describe('incident — Divine Vessel, a 100% tick (POE-184)', () => {
 		expect(worthwhileScale(play)).toBeNull();
 	});
 
-	it('stays in the Fastest sort rather than being dropped from it', () => {
-		// A sort is not a filter. The row keeps its rank, its ROI and its depth; what
-		// it loses is a position argument.
-		expect(names(sortPlays(RECENT.plays, 'fastest'))).toEqual(
-			expect.arrayContaining([INCIDENT_NAMES[VESSEL_KEY]])
-		);
-		expect(sortPlays(RECENT.plays, 'fastest').length).toBe(RECENT.plays.length);
-	});
-
-	it('sits at the very end of the Fastest sort, on the missing key and not the flag', () => {
-		// Since POE-220 there is no suspect band to be at the end of: what puts this
-		// row last is the wait nobody can read, which it shares with four CLEAN rows,
-		// and the served order behind them that the stable sort keeps. Asserted as
-		// the whole unreadable tail — a comparator that scattered the unknowns, or
-		// one that read `null` as nought hours, breaks the second expectation.
-		const ordered = sortPlays(RECENT.plays, 'fastest');
-		const unreadable = ordered.filter((p) => worthwhileScale(p)?.hours == null);
-
-		expect(unreadable.filter((p) => !p.suspect).length).toBeGreaterThan(0);
-		expect(names(ordered).slice(-unreadable.length)).toEqual(names(unreadable));
-		expect(names(ordered).at(-1)).toBe(INCIDENT_NAMES[VESSEL_KEY]);
-	});
-
 	it('still closes on Get = Spend + Exp. ROI at a chain end of nothing', () => {
 		// The −100% round trip renders as a chain end of zero, and the row is still a
 		// closed row: E3 and E5 both hold, and the Get is the Spend plus a negative
@@ -1257,119 +1097,3 @@ describe('incident — Divine Vessel, a 100% tick (POE-184)', () => {
 	});
 });
 
-// ------------------------------------------------------ fresh-install visibility --
-
-describe('fresh-install visibility (ADR-017)', () => {
-	// THE RULE: no default may hide a served play, with exactly two sanctioned
-	// exceptions — the trash-price floors `minItemPrice` (0.5 chaos, POE-196) and
-	// `minItemPriceDiv` (0.4 divine, owner ruling 2026-08-23).
-	//
-	// This is the fourth time a default-on filter has quietly removed served rows
-	// from this table, so the assertion is on the survivor SET and not on a count:
-	// a future default that starts hiding a market fails with that market's name in
-	// the message.
-
-	/**
-	 * The twelve markets a fresh install shows, in served order.
-	 *
-	 * The four that do NOT appear are each below one of the two sanctioned floors,
-	 * and the test below proves that by disarming exactly those two rather than by
-	 * asserting it in a comment.
-	 */
-	const FRESH_INSTALL_SURVIVORS = [
-		'a clean profitable flip',
-		'Apocalypse card, spreadless newest hour (2026-08-22)',
-		'Mawr Blaidd, junk lows behind the newest hour (POE-188)',
-		'Journey Tattoo twin, both sides alive',
-		'Journey Tattoo against divine, a direct flip',
-		'Journey Tattoo, sold into a one-sided book (2026-08-23)',
-		'a one-hop triangle',
-		'the scarab against chaos, a two-tick loser',
-		'the 2026-08-23 screenshot\'s spreadless 170 print',
-		'a recipe too young to have an expectation',
-		'Apocalypse card, thin newest hour priced from the window (POE-252, 2026-09-04)',
-		'Mawr Blaidd, junk low IN the newest hour (POE-188)'
-	];
-
-	for (const { horizon, response } of FIXTURES) {
-		it(`shows exactly the markets above the two sanctioned floors in the ${horizon} horizon`, () => {
-			expect(names(freshInstallPass(response))).toEqual(FRESH_INSTALL_SURVIVORS);
-		});
-	}
-
-	it('hides nothing at all once the two sanctioned floors are disarmed', () => {
-		// ADR-017 stated as an assertion rather than as prose: turn off the two knobs
-		// the ADR sanctions and EVERY served play must come back. A sixth default
-		// arming itself — a return floor, a turnover floor, a category rule — fails
-		// here with the names of the markets it removed, whatever else it also passes.
-		const disarmed = applyGates(
-			RECENT.plays,
-			parseGates({ ...freshInstallInputs(), minItemPrice: '0', minItemPriceDiv: '0' }),
-			RECENT.divineChaosRate
-		);
-		const ruled = applyRules(disarmed, parseCategoryRules(''), parseItemRules(''));
-		const bounded = applyNumericFilters(ruled, {
-			investMin: '',
-			investMax: '',
-			unit: parseUnit(''),
-			divineChaosRate: RECENT.divineChaosRate
-		});
-
-		expect(names(bounded.filter((p) => matchesSearch(p, '')))).toEqual(names(RECENT.plays));
-	});
-
-	/**
-	 * Is this play under one of the two floors ADR-017 sanctions?
-	 *
-	 * The predicates the shipped knobs run, re-derived from the wire's own figures
-	 * rather than taken on trust: `minItemPrice` judges `investment`, which is
-	 * always chaos; `minItemPriceDiv` judges the same figure read back into divine
-	 * and only on a DIVINE-quoted entry.
-	 */
-	function belowASanctionedFloor(play: CurrencyExchangePlay): boolean {
-		if (play.investment < gateDefaults.minItemPrice) return true;
-		return (
-			play.legs[0].quote === DIVINE &&
-			play.investment / RECENT.divineChaosRate < gateDefaults.minItemPriceDiv
-		);
-	}
-
-	it('hides nothing that is not under one of the two sanctioned floors', () => {
-		// A drop matching NEITHER predicate is a default hiding a live market, which
-		// is the thing ADR-017 forbids — and it fails here naming the market rather
-		// than only shrinking the survivor list above.
-		const shown = new Set(freshInstallPass(RECENT).map((p) => p.key));
-		const hidden = RECENT.plays.filter((p) => !shown.has(p.key));
-
-		expect(hidden.length).toBeGreaterThan(0);
-		expect(names(hidden.filter((p) => !belowASanctionedFloor(p)))).toEqual([]);
-	});
-
-	it('keeps every measured loser and every flagged row on screen', () => {
-		// The half of the rule that is easiest to break by accident: `lowLiquidity`,
-		// `lowCoverage`, `suspect`, `windowPriced` and a negative `expectedRoi` are
-		// MARKS — never sort keys since POE-220, and never reasons to hide. All five
-		// shapes are in the fixture, and each row carrying one must reach a fresh
-		// install unless a sanctioned floor removed it for its PRICE — which is a
-		// different reason and the only other one allowed.
-		const shown = new Set(freshInstallPass(RECENT).map((p) => p.key));
-		const flagged = RECENT.plays.filter(
-			(p) =>
-				p.suspect ||
-				p.lowCoverage ||
-				p.lowLiquidity === true ||
-				p.windowPriced === true ||
-				p.expectedRoi < 0
-		);
-		const owed = flagged.filter((p) => !belowASanctionedFloor(p));
-
-		expect(flagged.length).toBeGreaterThan(3);
-		// The newest of the five shapes, asserted rather than assumed: a fixture that
-		// stopped carrying a window-priced row would still satisfy the count above off
-		// the other four, and this rule would go untested for the mark it was extended
-		// to cover (POE-252).
-		expect(RECENT.plays.some((p) => p.windowPriced === true)).toBe(true);
-		expect(owed.length).toBeGreaterThan(0);
-		expect(names(owed.filter((p) => !shown.has(p.key)))).toEqual([]);
-	});
-});

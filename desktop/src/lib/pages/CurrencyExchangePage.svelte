@@ -34,8 +34,6 @@
 		MODE_OPTIONS,
 		ROW_CAP_OPTIONS,
 		SORT_OPTIONS,
-		anyConvertStep,
-		applyRowCap,
 		dataAgeParts,
 		deriveState,
 		formatChaos,
@@ -51,19 +49,13 @@
 		parseSort,
 		parseUnit,
 		printsExpectedRoi,
-		rowCapLimit,
 		rowCounts,
-		sortPlays,
 		worthwhileScale
 	} from '$lib/exchange/view';
 	import {
-		applyGates,
-		applyNumericFilters,
-		applyRules,
+		exchangePageParams,
 		parseGates,
 		resetGateInputs,
-		itemUniverse,
-		matchesSearch,
 		movedGates,
 		parseCategoryRules,
 		parseItemRules,
@@ -153,7 +145,28 @@
 	 */
 	const apiBase = $derived(getApiBase());
 
-	const controller = createExchangeController(productionDependencies(() => ({ mode: mode.value, horizon: horizon.value })));
+	/**
+	 * The request the picks make (ADR-030): the server filters, sorts, counts and
+	 * caps, and this page renders the page it answers with. Read lazily by the
+	 * controller, after every pick below is initialised.
+	 */
+	const controller = createExchangeController(
+		productionDependencies(() => ({
+			mode: mode.value,
+			horizon: horizon.value,
+			params: exchangePageParams({
+				sort: sortPref.value,
+				rowCap: rowCapPref.value,
+				categoryRules: categoryRulesPref.value,
+				itemRules: itemRulesPref.value,
+				gateInputs,
+				investMin: investMinPref.value,
+				investMax: investMaxPref.value,
+				unit: unitPref.value,
+				search
+			})
+		}))
+	);
 	const result = $derived(controller.result);
 	const lastFetchedAt = $derived(controller.lastFetchedAt);
 	const lastError = $derived(controller.lastError);
@@ -198,18 +211,20 @@
 	 */
 	let search = $state('');
 	/**
-	 * Whether a query is narrowing the table. Held once because two rules read
-	 * it: the cap is bypassed while it is true (`applyRowCap`), and the empty
-	 * table says a different sentence.
+	 * Whether a query is narrowing the table: the server bypasses the cap while
+	 * it is true, and the empty table says a different sentence.
 	 */
 	const searchActive = $derived(search.trim() !== '');
 
 	// ----------------------------------------------------------- the filters --
 
-	/** The response's own list — what the counter counts against and what the
-	 *  picker's universe is built from, never the filtered one. */
-	const allPlays = $derived(result?.plays ?? []);
-	const items = $derived(itemUniverse(allPlays));
+	/**
+	 * The server's page, drawn in the order received (ADR-030). The picker's
+	 * universe is the response's `itemUniverse`, counted over every play served
+	 * after the mode filter — so an item whose own rule hid it stays listed.
+	 */
+	const rows = $derived(result?.plays ?? []);
+	const items = $derived(result?.itemUniverse ?? []);
 	const hoursWindow = $derived(result?.hours ?? 0);
 	/**
 	 * The newest hour's chaos value of one divine, 0 when that hour carried no
@@ -226,90 +241,26 @@
 	const divineChaosRate = $derived(result?.divineChaosRate ?? 0);
 
 	/**
-	 * Rules, then gates, then numbers, then the search, then order. The two rule
-	 * layers narrow by identity and the numeric bounds by size, so running them
-	 * the other way round would cost the same rows at more comparisons; the search
-	 * runs last of the four because it narrows what the persisted setup has
-	 * already left on screen rather than joining it. The sort is last of all
-	 * because it is the only step whose answer depends on how many rows survived —
-	 * last of the FILTERS, that is: the row cap slices the head of what this chain
-	 * produces (`cappedRows` below), after the sort and after the search, and it
-	 * takes no part in what any of this counts.
-	 *
-	 * The gate step is held in its own `$derived` rather than folded into the
-	 * chain, because the counter has to be able to say how many rows the GATES
-	 * took: since POE-191 they are the one filter that hides rows the reader never
-	 * set, and a lump "hidden by filters" over a bar with nothing visibly on it
-	 * reads as a broken table rather than as a knob to turn. POE-196 makes that
-	 * figure non-zero on a fresh install — both trash-price knobs ship armed — so
-	 * the split is now what tells the reader the missing sub-chaos and
-	 * hundreds-per-divine rows are a default they can undo rather than rows the
-	 * server never sent.
-	 *
-	 * `rows` is what the counter counts, so the shown figure is the post-search
-	 * one: a query that hides a play is one of the reasons it is not on the table.
+	 * Whether the route's convert slot is drawn, for the whole table at once: the
+	 * server's `showConvert`, taken over every play that matched the filters and
+	 * not over the page, so lifting the cap never re-lays the table out. Both the
+	 * header spans and every `ExchangeRoute` read this one value, which keeps the
+	 * two geometries mirrored.
 	 */
-	const afterRules = $derived(applyRules(allPlays, categoryRules, itemRules));
-	const afterGates = $derived(applyGates(afterRules, gates, divineChaosRate));
-	const rows = $derived(
-		sortPlays(
-			applyNumericFilters(afterGates, {
-				investMin: investMinPref.value,
-				investMax: investMaxPref.value,
-				unit,
-				divineChaosRate
-			}).filter((play) => matchesSearch(play, search)),
-			parseSort(sortPref.value)
-		)
-	);
+	const showConvert = $derived(result?.showConvert ?? false);
 
 	/**
-	 * What the table DRAWS: the head of `rows` under the reader's row cap, and
-	 * the whole of it while a search is running (POE-222).
-	 *
-	 * The last step, and read by nothing but the `{#each}`. The counter measures
-	 * the cap (`rowCounts`) and says so; every other consumer on this page reads
-	 * an UNCAPPED list, because a question about what the FILTERS left is not
-	 * answered by how much of the answer is on screen. `showConvert`, the gate
-	 * attribution and the empty-table branch read `rows` — what the filters
-	 * left — while the item universe reads `allPlays`, one step further back
-	 * again: the picker has to keep listing an item whose own rule hid it, or
-	 * that rule is clearable from nowhere but the chip.
-	 */
-	const cappedRows = $derived(
-		applyRowCap(rows, rowCapLimit(parseRowCap(rowCapPref.value)), searchActive)
-	);
-
-	/**
-	 * Whether the route's convert slot is drawn, for the whole table at once.
-	 *
-	 * Taken over `rows` — what the filters left — and not over `allPlays`: a
-	 * reader who has filtered down to direct plays is looking at a column of empty
-	 * dashed tiles, and the response still holding a 1-hop they cannot see is no
-	 * reason to keep spending the width on it. Deliberately NOT over `cappedRows`,
-	 * for the opposite reason: the cap is how much of one answer is drawn, and a
-	 * column that appeared the moment the cap was lifted would re-lay the table
-	 * out under a control that is only supposed to lengthen it. Both the header spans and every
-	 * `ExchangeRoute` read this one value, which is what keeps the two geometries
-	 * mirrored; the rule against deciding it per row lives with `anyConvertStep`.
-	 */
-	const showConvert = $derived(anyConvertStep(rows));
-
-	/**
-	 * The counter's attribution, derived in `rowCounts` rather than here so the
-	 * one rule it carries is unit-tested: the rows the CAP leaves undrawn are
-	 * never charged to the filters. Gates get their own figure; the rules, the
-	 * bounds and the search share the other, because those three are all things
-	 * the reader can see they set on a bar that is always open — a gate's controls
-	 * are behind a collapsed row, so its rows are the ones that need pointing at.
+	 * The counter's attribution from the response's stage counts (`rowCounts`):
+	 * the rows the CAP leaves undrawn are never charged to the filters, and the
+	 * gates get their own figure because their controls sit behind a collapsed row.
 	 */
 	const counts = $derived(
 		rowCounts({
-			served: allPlays,
-			afterRules,
-			afterGates,
-			matched: rows,
-			shown: cappedRows
+			total: result?.total ?? 0,
+			afterRules: result?.afterRules ?? 0,
+			afterGates: result?.afterGates ?? 0,
+			matched: result?.matched ?? 0,
+			shown: rows.length
 		})
 	);
 
@@ -324,7 +275,7 @@
 	 * that disables them is the difference between a dead end and a control.
 	 *
 	 * BOTH floors are named rather than whichever one did it, because the page
-	 * cannot tell them apart from here: `applyGates` runs once and `hiddenByGates`
+	 * cannot tell them apart from here: the server's gate pass runs once and `hiddenByGates`
 	 * is one count over that one pass, so which knob took the last row is not a
 	 * fact this page holds, and a table emptied by the two of them together has no
 	 * single culprit to name at all. Naming one would be a guess printed as a
@@ -407,10 +358,23 @@
 	}
 
 	$effect(() => untrack(() => controller.start()));
+	// A pick refetches at once; a typed input (search, gate, bound) waits 300 ms.
 	$effect(() => {
 		void mode.value;
 		void horizon.value;
+		void sortPref.value;
+		void rowCapPref.value;
+		void categoryRulesPref.value;
+		void itemRulesPref.value;
+		void unitPref.value;
 		untrack(() => controller.syncSelection());
+	});
+	$effect(() => {
+		void search;
+		void gateInputs;
+		void investMinPref.value;
+		void investMaxPref.value;
+		untrack(() => controller.syncSelection({ debounce: true }));
 	});
 </script>
 
@@ -609,7 +573,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each cappedRows as play, i (play.key)}
+					{#each rows as play, i (play.key)}
 						{@const progress = hoursProgress(play.hoursSeen, hoursWindow)}
 						{@const scale = worthwhileScale(play)}
 						{@const money = moneyColumns(play)}
@@ -953,7 +917,7 @@
 		     set. -->
 
 		<div class="empty">
-			{allPlays.length > 0
+			{counts.total > 0
 				? searchActive
 					? 'No plays match your search, gates and filters right now.'
 					: counts.hiddenByGates > 0 && counts.hiddenByFilters === 0
