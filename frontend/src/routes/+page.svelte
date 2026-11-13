@@ -475,8 +475,8 @@
 					</tbody>
 				</table>
 			</div>
-			<p>Each technique the app uses exists individually across established community tools: screen reading
-				(MercuryTrade, Exile-UI).</p>
+			<p>Each technique the app uses exists individually across established community tools: Client.txt reading
+				(LabCompass, TraXile), screen reading (MercuryTrade, Exile-UI).</p>
 		</div>
 
 		<div class="transparency-block">
