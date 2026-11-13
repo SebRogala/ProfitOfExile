@@ -33,9 +33,9 @@ impl Default for ReadHotkeySettings {
     fn default() -> Self {
         Self {
             shortcut: Shortcut {
-                key: 120,
-                shift: true,
-                ctrl: false,
+                key: 65,
+                shift: false,
+                ctrl: true,
                 alt: false,
             },
             delay_ms: 0,
@@ -56,11 +56,11 @@ pub fn apart_from_boss_loot(
 }
 
 /// What stands in for a refused read hotkey: the default, or the first of
-/// Shift+F10 / Shift+F11 when the boss-loot keys already hold it. Two boss-loot
+/// Ctrl+Q / Ctrl+Z when the boss-loot keys already hold it. Two boss-loot
 /// keys can block at most two of the three.
 pub fn fallback_apart_from(loot: &crate::loot_capture::LootSettings) -> ReadHotkeySettings {
     let default = ReadHotkeySettings::default();
-    [120, 121, 122]
+    [65, 81, 90]
         .into_iter()
         .map(|key| ReadHotkeySettings {
             shortcut: Shortcut { key, ..default.shortcut.clone() },
@@ -362,8 +362,8 @@ mod dispatch_tests {
             settings: ReadHotkeySettings::default(),
         }
     }
-    /// Shift+F9, the default read key.
-    const PRESSED: &[u16] = &[16, 120];
+    /// Ctrl+A, the default read key.
+    const PRESSED: &[u16] = &[17, 65];
 
     /// Runs the sampler over `samples` and the dispatcher to the end; returns grab count.
     fn run_pipeline(world: &Arc<World>, readers: &[&dyn ScreenReader<Arc<World>>], samples: Vec<Sample>) -> usize {
@@ -390,7 +390,7 @@ mod dispatch_tests {
     #[test]
     fn no_press_grabs_no_frame() {
         let world = Arc::new(World::default());
-        let grabs = run_pipeline(&world, &[&A], vec![sample(&[], true), sample(&[16], true), sample(&[120], true)]);
+        let grabs = run_pipeline(&world, &[&A], vec![sample(&[], true), sample(&[17], true), sample(&[65], true)]);
         assert_eq!(grabs, 0);
     }
     #[test]
@@ -507,7 +507,7 @@ mod dispatch_tests {
     #[test]
     fn no_press_grabs_no_frame_with_no_reader_registered() {
         let world = Arc::new(World::default());
-        let grabs = run_pipeline(&world, &[], vec![sample(&[], true), sample(&[120], true)]);
+        let grabs = run_pipeline(&world, &[], vec![sample(&[], true), sample(&[65], true)]);
         assert_eq!(grabs, 0);
     }
     #[test]
@@ -656,23 +656,23 @@ mod tests {
     fn fallback_skips_a_default_held_by_boss_loot_capture() {
         let loot = LootSettings { capture_shortcut: ReadHotkeySettings::default().shortcut, ..Default::default() };
         let fallback = fallback_apart_from(&loot);
-        assert_eq!(fallback.shortcut.key, 121);
+        assert_eq!(fallback.shortcut.key, 81);
         assert_eq!(apart_from_boss_loot(&fallback.shortcut, &loot), Ok(()));
     }
     #[test]
     fn fallback_skips_a_default_held_by_boss_loot_preview() {
         let loot = LootSettings { preview_shortcut: ReadHotkeySettings::default().shortcut, ..Default::default() };
-        assert_eq!(fallback_apart_from(&loot).shortcut.key, 121);
+        assert_eq!(fallback_apart_from(&loot).shortcut.key, 81);
     }
     #[test]
     fn fallback_skips_two_candidates_held_by_both_boss_loot_keys() {
         let default = ReadHotkeySettings::default().shortcut;
         let loot = LootSettings {
             capture_shortcut: default.clone(),
-            preview_shortcut: Shortcut { key: 121, ..default },
+            preview_shortcut: Shortcut { key: 81, ..default },
             ..Default::default()
         };
-        assert_eq!(fallback_apart_from(&loot).shortcut.key, 122);
+        assert_eq!(fallback_apart_from(&loot).shortcut.key, 90);
     }
     #[test]
     fn fallback_is_the_default_when_boss_loot_leaves_it_free() {

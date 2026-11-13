@@ -20,9 +20,9 @@
   },
   "read_hotkey": {
     "shortcut": {
-      "key": 120,
-      "shift": true,
-      "ctrl": false,
+      "key": 65,
+      "shift": false,
+      "ctrl": true,
       "alt": false
     },
     "delayMs": 0

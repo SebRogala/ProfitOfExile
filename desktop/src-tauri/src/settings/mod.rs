@@ -1433,7 +1433,7 @@ pub(crate) mod tests {
         settings.boss_loot.layout = LootLayout::List;
         settings.boss_loot.auto_save_seconds = 30;
         settings.boss_loot.not_counted.push("Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly".into());
-        settings.boss_loot.capture_shortcut = Shortcut { key: 65, ctrl: true, shift: false, alt: false };
+        settings.boss_loot.capture_shortcut = Shortcut { key: 66, ctrl: true, shift: false, alt: false };
         settings.ui_prefs.insert("numberFormat".into(), "comma".into());
         assert!(apply_to_state(&settings, &state).is_empty());
         *state.sidebar_open.lock().unwrap() = false;
@@ -1445,7 +1445,7 @@ pub(crate) mod tests {
         let json = serde_json::to_value(snapshot).unwrap();
         assert_eq!(json["bossLoot"]["settings"]["layout"], "list");
         assert_eq!(json["bossLoot"]["settings"]["autoSaveSeconds"], 30);
-        assert_eq!(json["bossLoot"]["settings"]["captureShortcut"]["key"], 65);
+        assert_eq!(json["bossLoot"]["settings"]["captureShortcut"]["key"], 66);
         assert_eq!(json["bossLoot"]["settings"]["notCounted"], serde_json::json!(["Communion Support", "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly"]));
         assert_eq!(json["bossLoot"]["numberFormat"], "comma");
     }

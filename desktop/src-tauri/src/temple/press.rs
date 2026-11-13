@@ -124,8 +124,8 @@ mod tests {
     fn sample(keys: &[u16]) -> Sample {
         Sample { down: keys.iter().copied().collect(), foreground: true, settings: ReadHotkeySettings::default() }
     }
-    /// Shift+F9, the default read key.
-    const PRESSED: &[u16] = &[16, 120];
+    /// Ctrl+A, the default read key.
+    const PRESSED: &[u16] = &[17, 65];
 
     /// The read key's sampler and dispatcher over `samples` with only the
     /// temple reader registered; returns the grab count.
@@ -164,7 +164,7 @@ mod tests {
     fn idle_samples_under_a_temple_arm_grab_nothing_and_read_nothing() {
         let (world, rx) = world(armed(ArmReason::AlvaStart));
 
-        let grabs = press_through_the_read_key(&world, vec![sample(&[]), sample(&[16]), sample(&[120])]);
+        let grabs = press_through_the_read_key(&world, vec![sample(&[]), sample(&[17]), sample(&[65])]);
 
         assert_eq!(grabs, 0);
         assert!(read_by_the_worker(world, rx).is_empty());

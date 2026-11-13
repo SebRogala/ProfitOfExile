@@ -3,7 +3,7 @@
 //! `modules.rs::spawn_temple` delegates here. Like the merc loop, this is a
 //! [`ModuleJoin::Thread`](crate::modules::ModuleJoin::Thread) rather than a
 //! task: `Windows.Media.Ocr` is apartment-threaded and deadlocks on the async
-//! runtime (see `spawn_gem_scan` in lab/commands.rs). Threads cannot be
+//! runtime (see `read_hotkey::run_dispatcher`). Threads cannot be
 //! aborted, so the worker waits in [`CANCEL_POLL`] slices — two orders under the
 //! registry's 5 s `MODULE_THREAD_POLL_CEILING`.
 //!
