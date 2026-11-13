@@ -83,14 +83,15 @@ Properties:
 - League comes from the Rust-owned SSOT slice, resolved from server status.
   The queue captures that league before waiting and refuses an unresolved league.
 
-### One lookup per click
+### One lookup per click (gem paths)
 
-Every native GGG trade request starts from a user click; nothing searches on detection, on compare results, or on cache age. Each click sends its own lookup through the native queue and limiter, and the desktop displays the result locally:
+Every native GGG gem trade request starts from a user click; the comparator does not search on detection, on compare results, or on cache age. Each click sends its own lookup through the native queue and limiter, and the desktop displays the result locally:
 
 - Comparator per-gem trade button: one lookup for that gem.
 - Overlay refresh button (`overlay-trade-refresh`): one lookup for that gem.
 - LabPage "Refresh queue": one click, one lookup per queued item.
-- Mercenary Search button: one lookup for that mercenary.
+
+Mercenary capture still searches automatically; see the next section.
 
 ### Trade price definition
 
@@ -126,7 +127,7 @@ POE-302 adds no corruption filter.
 
 **Current behavior:** Implemented (POE-202). Desktop-only; the server knows nothing about mercenary listings.
 
-This is the second automatic path through the native lookup, When the mercenary module has fully read a recruit window, the desktop builds a trade query for that exact mercenary and searches for it without the user asking.
+This is the only automatic path through the native lookup. When the mercenary module has fully read a recruit window, the desktop builds a trade query for that exact mercenary and searches for it without the user asking.
 
 - It has its own toggle, `merc_trade_auto`, default **on**. It is independent of contribution consent.
 - The query the app **posts** is one `and` group holding every cell that names exactly one support, plus one `count` group of `value.min = 1` per cell that names several (an icon read the app could not narrow, or a support loosened down to the tier floor). It carries **no** `mercenary` group and so no row scoping: a mercenary with the same skills and links arranged across different rows also matches, which is an accepted false-positive class. GGG's complexity budget is what forces it — a `mercenary` group costs 21 of a budget of 35, so two of them never fit and a captured panel is four or five rows. Against that budget an `and` filter costs 1 and a `count` group costs 3 plus 2 per filter; over it, the app drops its own tier loosening first and then support cells from the last row inward. Only the second is reported to the user as a looser query than the capture asked for — a query that lost just the loosening still asks for exactly what the panel showed.
