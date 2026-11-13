@@ -1,7 +1,7 @@
 /**
  * PrivacyGate, rendered with `svelte/server`: which notice the blocking modal
  * shows for a given accepted revision. Interaction (Escape, focus trap,
- * Continue/Quit) is checked by the WI-5 manual READBACK; desktop has no DOM
+ * Continue/Quit) is checked by the WI-6b Playwright READBACK; desktop has no DOM
  * client-render environment.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +11,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(() => new Promise(() => {
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 
 import PrivacyGate from './PrivacyGate.svelte';
+import PrivacyNoticeView from './PrivacyNoticeView.svelte';
 import { resetNoticeGateForTests } from '$lib/privacy/gate.svelte';
 import { notice as bundled, type Notice } from '$lib/privacy/notice';
 
@@ -35,20 +36,18 @@ describe('PrivacyGate', () => {
 		resetNoticeGateForTests();
 	});
 
-	it('first run renders the full notice sections', () => {
+	it('first run renders the ruled summary', () => {
 		const html = body({ acceptedRevision: null });
 		expect(html).toContain('aria-modal="true"');
-		for (const s of bundled.sections) expect(html).toContain(`data-section="${s.id}"`);
-		expect(html).not.toContain('Data &amp; privacy changes');
+		expect(html).toContain('ProfitOfExile reads your game screen on demand and sends game data to its server. No screenshot leaves your device.');
 	});
 
-	it('a bumped revision renders the changes modal with exactly the newer entries', () => {
+	it('a bumped revision renders the current revision summary', () => {
 		const html = body({ notice: threeRevisions, acceptedRevision: 1 });
-		expect(html).toContain('Data &amp; privacy changes');
-		expect(html).toContain('change-three');
-		expect(html).toContain('change-two');
+		expect(html).toContain('Data &amp; privacy updated (revision 3).');
+		expect(html).not.toContain('change-three');
+		expect(html).not.toContain('change-two');
 		expect(html).not.toContain('change-one');
-		expect(html.indexOf('data-revision="3"')).toBeLessThan(html.indexOf('data-revision="2"'));
 	});
 
 	it('the changes modal keeps the full notice collapsed', () => {
@@ -78,8 +77,31 @@ describe('PrivacyGate', () => {
 		expect(body({ acceptedRevision: null })).not.toContain('role="dialog"');
 	});
 
-	it('the Draft badge shows only on a draft notice', () => {
-		expect(body({ notice: { ...threeRevisions, draft: true }, acceptedRevision: null })).toContain('class="draft');
-		expect(body({ notice: threeRevisions, acceptedRevision: null })).not.toContain('class="draft');
+	it('the modal offers the in-app notice link', () => {
+		expect(body({ acceptedRevision: null })).toContain('href="#privacy-notice"');
+	});
+
+	it('first run keeps the full notice behind the link', () => {
+		for (const s of bundled.sections) expect(body({ acceptedRevision: null })).not.toContain(`data-section="${s.id}"`);
+	});
+
+	it('an accepted future revision renders no modal', () => {
+		expect(body({ notice: threeRevisions, acceptedRevision: 4 })).not.toContain('role="dialog"');
+	});
+
+	it('the opened notice renderer includes every bundled section', () => {
+		const html = render(PrivacyNoticeView).body;
+		const escaped = (text: string) => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+		for (const section of bundled.sections) {
+			expect(html).toContain(`data-section="${section.id}"`);
+			expect(html).toContain(escaped(section.heading));
+			for (const paragraph of section.paragraphs) expect(html).toContain(escaped(paragraph));
+			for (const item of section.items) expect(html).toContain(escaped(item));
+		}
+	});
+
+	it('the notice renderer includes section list items', () => {
+		const notice = { ...threeRevisions, sections: [{ id: 'list', heading: 'List', paragraphs: [], items: ['notice-item'] }] };
+		expect(render(PrivacyNoticeView, { props: { notice } }).body).toContain('<li>notice-item</li>');
 	});
 });

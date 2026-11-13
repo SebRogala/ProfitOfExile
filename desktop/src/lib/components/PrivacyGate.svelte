@@ -1,14 +1,14 @@
 <script lang="ts">
 	/**
-	 * The blocking Data & Privacy notice (POE-395, ADR-033): first-run notice
-	 * while no revision is accepted, the changes since the accepted revision
-	 * while it is older than the bundled one. No Escape, no outside click;
+	 * The blocking Data & Privacy notice (POE-395, ADR-033). The Operator's
+	 * 17:52 ruling keeps the full notice behind an in-app link. No Escape, no outside click;
 	 * focus stays in the dialog. Continue accepts, Quit exits the app.
 	 */
 	import { untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { noticeGate, type PrivacyState } from '$lib/privacy/gate.svelte';
-	import { notice as bundledNotice, changesSince, type Notice } from '$lib/privacy/notice';
+	import { notice as bundledNotice, type Notice } from '$lib/privacy/notice';
+	import PrivacyNoticeView from './PrivacyNoticeView.svelte';
 
 	let {
 		notice = bundledNotice,
@@ -25,6 +25,8 @@
 	let busy = $state(false);
 	let fullOpen = $state(false);
 	let dialog = $state<HTMLDivElement | null>(null);
+	let noticeLink = $state<HTMLAnchorElement | null>(null);
+	let backButton = $state<HTMLButtonElement | null>(null);
 
 	$effect(() => {
 		if (acceptedRevision !== undefined) return;
@@ -45,7 +47,11 @@
 	);
 	let pending = $derived(open && acceptedRevision === undefined && !stateFailed);
 	let isChanges = $derived(open && acceptedRevision !== null && acceptedRevision !== undefined);
-	let changes = $derived(isChanges ? changesSince(notice, acceptedRevision as number) : []);
+
+	$effect(() => {
+		if (fullOpen) backButton?.focus();
+		else noticeLink?.focus();
+	});
 
 	function focusables(): HTMLElement[] {
 		if (!dialog) return [];
@@ -94,38 +100,17 @@
 	<div class="privacy-backdrop">
 		<div class="privacy-dialog" role="dialog" aria-modal="true" aria-labelledby="privacy-title" aria-busy={pending} bind:this={dialog}>
 			<div class="header">
-				<h3 id="privacy-title">{isChanges ? 'Data & privacy changes' : 'Data & privacy'}</h3>
-				{#if notice.draft}<span class="draft">Draft</span>{/if}
-				<span class="rev">Rev {notice.revision} · {notice.date}</span>
+				<h3 id="privacy-title">Data & privacy</h3>
 			</div>
 
 			{#if !pending}
 			<div class="body">
-				{#if isChanges}
-					{#each changes as change (change.revision)}
-						<section class="change" data-revision={change.revision}>
-							<h4>Rev {change.revision} · {change.date}</h4>
-							<ul>
-								{#each change.items as item}<li>{item}</li>{/each}
-							</ul>
-						</section>
-					{/each}
-					<button type="button" class="expand" aria-expanded={fullOpen} onclick={() => (fullOpen = !fullOpen)}>
-						Full notice
-					</button>
-				{/if}
-				{#if !isChanges || fullOpen}
-					<div class="full-notice">
-						{#each notice.sections as section (section.id)}
-							<section data-section={section.id}>
-								<h4>{section.heading}</h4>
-								{#each section.paragraphs as p}<p>{p}</p>{/each}
-								{#if section.items.length > 0}
-									<ul>{#each section.items as item}<li>{item}</li>{/each}</ul>
-								{/if}
-							</section>
-						{/each}
-					</div>
+				{#if fullOpen}
+					<button type="button" class="expand" bind:this={backButton} onclick={() => (fullOpen = false)}>Back</button>
+					<PrivacyNoticeView {notice} />
+				{:else}
+					<p class="summary">{isChanges ? `Data & privacy updated (revision ${notice.revision}).` : 'ProfitOfExile reads your game screen on demand and sends game data to its server. No screenshot leaves your device.'}</p>
+					<a class="expand" href="#privacy-notice" bind:this={noticeLink} onclick={(event) => { event.preventDefault(); fullOpen = true; }}>Data & privacy</a>
 				{/if}
 			</div>
 			{/if}
@@ -155,7 +140,7 @@
 		background: var(--surface);
 		border: 1px solid var(--border);
 		border-radius: 8px;
-		width: min(640px, calc(100vw - 32px));
+		width: min(960px, calc(100vw - 32px));
 		max-height: calc(100vh - 64px);
 		display: flex;
 		flex-direction: column;
@@ -175,38 +160,21 @@
 		font-size: 1rem;
 	}
 
-	.draft {
-		font-size: 0.7rem;
-		padding: 0.1rem 0.4rem;
-		border: 1px solid var(--warning);
-		color: var(--warning);
-		border-radius: 4px;
-	}
-
-	.rev {
-		margin-left: auto;
-		font-size: 0.75rem;
-		color: var(--text-muted);
-	}
-
 	.body {
 		padding: 0.75rem 1rem;
+		min-height: 0;
 		overflow-y: auto;
 		font-size: 0.85rem;
 	}
 
-	h4 {
-		margin: 0.75rem 0 0.25rem;
-		font-size: 0.85rem;
-	}
-
-	p, ul {
+	.summary {
 		margin: 0.25rem 0;
 		color: var(--text-muted);
 	}
 
 	.expand {
-		margin-top: 0.75rem;
+		display: inline-block;
+		margin: 0.75rem 0;
 		background: none;
 		border: none;
 		padding: 0;

@@ -1,25 +1,65 @@
 {
 	"revision": 1,
 	"date": "2026-11-13",
-	"draft": true,
+	"draft": false,
 	"changes": [
 		{
 			"revision": 1,
 			"date": "2026-11-13",
-			"items": ["[DRAFT] Placeholder change item; WI-6 writes the text."]
+			"items": ["Initial notice"]
 		}
 	],
 	"sections": [
-		{ "id": "controller", "heading": "Who is responsible", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the controller section."], "items": [] },
-		{ "id": "data-items", "heading": "What the app sends and why", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the data items section."], "items": [] },
-		{ "id": "identify", "heading": "Identify (device accounts)", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the Identify section."], "items": [] },
-		{ "id": "trade", "heading": "Trade searches", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the trade section."], "items": [] },
-		{ "id": "not-collected", "heading": "What is not collected", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the not-collected section."], "items": [] },
-		{ "id": "legal-basis", "heading": "Legal basis", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the legal basis section."], "items": [] },
-		{ "id": "recipients", "heading": "Recipients and transfers", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the recipients section."], "items": [] },
-		{ "id": "third-parties", "heading": "Third-party services", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the third-party section."], "items": [] },
-		{ "id": "retention", "heading": "Retention", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the retention section."], "items": [] },
-		{ "id": "rights", "heading": "Your rights", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the rights section."], "items": [] },
-		{ "id": "revision", "heading": "Revision history", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the revision section."], "items": [] }
+		{
+			"id": "controller",
+			"heading": "Who",
+			"paragraphs": ["SoftSolution, based in Poland, decides how your data is used; contact@profitofexile.top."],
+			"items": []
+		},
+		{
+			"id": "local-reads",
+			"heading": "What the app reads",
+			"paragraphs": ["One screen capture per key press or button click, for recognition; Client.txt to know which module waits."],
+			"items": []
+		},
+		{
+			"id": "server-data",
+			"heading": "What is sent",
+			"paragraphs": [
+				"Device ID for statistics and abuse prevention; lab and boss-loot data for shared features; trade results without seller names for shared prices.",
+				"Optional: the alias you enter and the role it unlocks, linked to your device ID; ask by email to remove it. A ban keeps only the device fingerprint."
+			],
+			"items": []
+		},
+		{
+			"id": "recipients",
+			"heading": "Where",
+			"paragraphs": ["Our servers are in the EU. The app also contacts GGG (trade) and GitHub (updates) directly from your computer."],
+			"items": []
+		},
+		{
+			"id": "retention",
+			"heading": "How long",
+			"paragraphs": ["Device links: 2 years; device IDs: 2 years after last use, except bans; market data retention policy: 21 days; backups and logs: at most 2 years."],
+			"items": []
+		},
+		{
+			"id": "legal-basis",
+			"heading": "Legal basis",
+			"paragraphs": ["GDPR Art. 6(1)(b): providing the service; Art. 6(1)(f): shared statistics, bug fixes and abuse prevention."],
+			"items": []
+		},
+		{
+			"id": "rights",
+			"heading": "Your rights",
+			"paragraphs": ["Access, correction, deletion, restriction or objection: contact@profitofexile.top; complaints: Polish data protection authority (Prezes UODO)."],
+			"items": []
+		},
+		{
+			"id": "revision",
+			"heading": "Revision",
+			"paragraphs": ["Revision 1 · 2026-11-13."],
+			"items": []
+		}
 	]
 }
