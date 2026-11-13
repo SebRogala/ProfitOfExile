@@ -55,6 +55,19 @@ describe('PrivacyGate', () => {
 		expect(body({ notice: threeRevisions, acceptedRevision: 1 })).not.toContain('section-body');
 	});
 
+	it('an unknown accepted revision renders a blocking dialog without the notice or Continue', () => {
+		const html = body({ notice: threeRevisions });
+		expect(html).toContain('aria-modal="true"');
+		expect(html).toContain('aria-busy="true"');
+		expect(html).toContain('>Quit<');
+		expect(html).not.toContain('>Continue<');
+		expect(html).not.toContain('section-body');
+	});
+
+	it('a known revision renders a dialog that is not busy', () => {
+		expect(body({ notice: threeRevisions, acceptedRevision: null })).toContain('aria-busy="false"');
+	});
+
 	it('accepted current revision renders no modal', () => {
 		expect(body({ notice: threeRevisions, acceptedRevision: 3 })).not.toContain('role="dialog"');
 	});

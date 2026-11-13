@@ -30,13 +30,20 @@
 		if (acceptedRevision !== undefined) return;
 		invoke<PrivacyState>('get_privacy_state')
 			.then((s) => { acceptedRevision = s.acceptedRevision; })
-			.catch((e) => console.error('[privacy] get_privacy_state failed:', e));
+			.catch((e) => {
+				console.error('[privacy] get_privacy_state failed:', e);
+				stateFailed = true;
+			});
 	});
 
+	// Blocks until acceptance is confirmed: while the state is pending, and
+	// after a failed state request (then shown as a first run).
+	let stateFailed = $state(false);
 	let open = $derived(
-		!noticeGate.accepted && !acceptedHere && acceptedRevision !== undefined
-			&& (acceptedRevision === null || acceptedRevision < notice.revision)
+		!noticeGate.accepted && !acceptedHere
+			&& (acceptedRevision === undefined || acceptedRevision === null || acceptedRevision < notice.revision)
 	);
+	let pending = $derived(open && acceptedRevision === undefined && !stateFailed);
 	let isChanges = $derived(open && acceptedRevision !== null && acceptedRevision !== undefined);
 	let changes = $derived(isChanges ? changesSince(notice, acceptedRevision as number) : []);
 
@@ -85,13 +92,14 @@
 
 {#if open}
 	<div class="privacy-backdrop">
-		<div class="privacy-dialog" role="dialog" aria-modal="true" aria-labelledby="privacy-title" bind:this={dialog}>
+		<div class="privacy-dialog" role="dialog" aria-modal="true" aria-labelledby="privacy-title" aria-busy={pending} bind:this={dialog}>
 			<div class="header">
 				<h3 id="privacy-title">{isChanges ? 'Data & privacy changes' : 'Data & privacy'}</h3>
 				{#if notice.draft}<span class="draft">Draft</span>{/if}
 				<span class="rev">Rev {notice.revision} · {notice.date}</span>
 			</div>
 
+			{#if !pending}
 			<div class="body">
 				{#if isChanges}
 					{#each changes as change (change.revision)}
@@ -120,10 +128,13 @@
 					</div>
 				{/if}
 			</div>
+			{/if}
 
 			<div class="actions">
 				<button type="button" class="btn quit" onclick={quit}>Quit</button>
-				<button type="button" class="btn continue" disabled={busy} onclick={accept}>Continue</button>
+				{#if !pending}
+					<button type="button" class="btn continue" disabled={busy} onclick={accept}>Continue</button>
+				{/if}
 			</div>
 		</div>
 	</div>
