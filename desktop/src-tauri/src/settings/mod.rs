@@ -3,6 +3,8 @@
 //! Loaded on startup, saved on every change. Settings that aren't in the file
 //! use defaults (forward-compatible with new fields).
 
+pub(crate) mod commands;
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -4032,7 +4034,7 @@ pub(crate) mod tests {
 
     #[test]
     fn settings_json_keeps_its_flat_wire_shape() {
-        let fixture = include_str!("../tests/fixtures/settings/settings-wire-shape.json");
+        let fixture = include_str!("../../tests/fixtures/settings/settings-wire-shape.json");
         assert_eq!(
             serde_json::to_string_pretty(&wire_fixture_settings()).unwrap(),
             fixture.trim_end_matches('\n'),
