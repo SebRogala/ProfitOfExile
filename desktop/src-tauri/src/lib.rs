@@ -1931,7 +1931,6 @@ pub fn run() {
             temple::commands::temple_set_preset,
             temple::commands::temple_set_custom,
             temple::commands::temple_value_table,
-            temple::commands::temple_rearm,
             temple::commands::temple_debug_capture,
             set_debug_mode,
             set_gem_band_dump,

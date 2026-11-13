@@ -75,13 +75,13 @@
 //!   START phrases, [`trigger::ArmReason::AlvaStart`] armed with no deadline);
 //!   the loop reads a board ONCE per identity — `run::LoopState::gate` →
 //!   `run::GateAnswer` over the epoch, the re-arm counter and
-//!   [`slice::BoardFrame`], with `run::RETRIES` merged re-reads
-//!   ([`slice::KeptRead`], [`slice::merge_reads`], [`slice::unclean`], and
+//!   `slice::BoardFrame`, with `run::RETRIES` merged re-reads
+//!   ([`slice::KeptRead`], `slice::merge_reads`, [`slice::unclean`], and
 //!   `run::kept_for`) and the placed-origin recheck plus explicit cold fallback
 //!   owning anchor recovery. `slice::panel_signature` and the periodic panel
 //!   re-OCR are gone;
-//!   [`slice::layout_signature`] survives as the semantic half of the identity
-//!   and `ReadGate` is now [`slice::RearmGate`], the re-arm counter alone.
+//!   `slice::layout_signature` survives as the semantic half of the identity
+//!   and `ReadGate` is now `slice::RearmGate`, the re-arm counter alone.
 //! - 2026-09-07 (WI-1): the capture has no tails left. `ALVA_TAIL_MS` and
 //!   `PANEL_TAIL_MS` are gone with [`trigger::ArmReason`]'s `AlvaLine`, a
 //!   non-START Alva line STANDS THE CAPTURE DOWN (the temple's own banter
@@ -101,6 +101,8 @@
 //!   overlays nor ends the cycle.
 //! - POE-389: the loop above is gone. [`press`] arms on the read key under
 //!   Client.txt temple context, and [`run`] reads each pressed frame once.
+//!   The Re-arm command and button, `slice::RearmGate`, `slice::BoardFrame`,
+//!   `slice::merge_reads` and `slice::layout_signature` went with it (WI-2).
 //!
 //! - [`trigger`] (POE-242) — what puts an incursion in scope, and so whether
 //!   [`press`] arms the temple reader at all: a pure state machine over the
@@ -244,26 +246,17 @@ pub struct TempleState {
     /// Whether Client.txt has put an incursion in scope (POE-242) — with, since
     /// 2026-09-07 (WI-1), the word the next stand-down is reported with
     /// (`temple::trigger::StandDown`). The single owner of "may the temple loop
-    /// capture right now". Written by the log watcher on every line, by
-    /// `temple_rearm`, and by the capture loop when it has read a board and
-    /// watched the sheet close; read once per loop iteration. Acquired alone,
+    /// capture right now". Written by the log watcher on every line; read by
+    /// [`press::TEMPLE_READER`] once per read-key press. Acquired alone,
     /// like every other module-owned Mutex.
     ///
     /// Kept current even while the temple module is OFF: it is a fact about the
     /// game, and a player who switches the module on inside a temple must get a
     /// read without pressing anything.
     pub(crate) arm: std::sync::Mutex<trigger::ArmState>,
-    /// Bumped by `temple_rearm` (and by every settings command that invalidates
-    /// the current advice). The loop's read gate watches it to force one full
-    /// re-read of a board it would otherwise skip as unchanged. An atomic, not
-    /// a Mutex: it is read on every tick and never read together with the
-    /// settings.
-    ///
-    /// **INVARIANT, stated at both fields:** this counter FORCES a read with
-    /// nothing sighted; `epoch` only INVALIDATES one already read. An
-    /// Alva line must never bump this one — that would promote an anchor
-    /// attempt on an empty screen for every voice line, which is the
-    /// free-running capture POE-242 removed.
+    /// Bumped only by `ssot::geometry_recalibrate`; nothing reads it since
+    /// POE-389 removed the temple loop and Re-arm. Kept because that writer
+    /// lives outside the temple module's POE-389 WI-2 scope.
     pub(crate) rearm: std::sync::atomic::AtomicU64,
     /// Bumped by `temple::trigger::on_client_line` on every CYCLE BOUNDARY
     /// (`trigger::ends_epoch`: a start line, any other Alva line, a zone change
@@ -274,8 +267,7 @@ pub struct TempleState {
     /// what was already read rather than being read again. The capture loop
     /// keys its board on it and INVALIDATES that board when it moves.
     ///
-    /// **INVARIANT, stated at both fields:** `rearm` FORCES a read with
-    /// nothing sighted; this one only invalidates. It must never be read as a
+    /// **INVARIANT:** this one only invalidates. It must never be read as a
     /// reason to look at the screen — Alva speaks several times per incursion,
     /// and each of those lines would otherwise buy an anchor attempt over
     /// whatever the player happens to be doing.

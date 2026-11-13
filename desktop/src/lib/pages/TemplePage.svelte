@@ -62,7 +62,6 @@
 		TempleValueRow
 	} from '$lib/temple/slice';
 	import {
-		rearmTemple,
 		setTempleConfig,
 		setTempleCustom,
 		setTemplePreset,
@@ -175,8 +174,7 @@
 
 	/** Long enough that tabbing across a row of cells is one write, short
 	 *  enough that a pause reads as done. `$lib/prefs.svelte.ts`'s number, for
-	 *  its reason: every write rewrites the whole settings file, and each one
-	 *  also re-arms the reader.
+	 *  its reason: every write rewrites the whole settings file.
 	 *
 	 *  Same accepted trade-off as that file's: an edit made within the window
 	 *  of closing the app is lost. It degrades to the previous value and never
@@ -362,12 +360,6 @@
 				>{market}</span
 			>
 			<span class="spacer"></span>
-			<Button
-				onclick={() => void apply(rearmTemple)}
-				title="Force the next tick to re-read the board, whatever the read gate thinks. Use this when a plate came out wrong."
-			>
-				Re-read
-			</Button>
 			<input
 				type="text"
 				bind:value={debugImagePath}

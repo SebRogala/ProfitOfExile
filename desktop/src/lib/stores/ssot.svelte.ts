@@ -32,8 +32,8 @@
  *   // Write: setNormalVariant(v) / setDedicationSelection(variant, pool)
  *   // Write: setModuleEnabled(id, enabled)
  *   // Write: setMercSourcesOff(offList) — which guides take part in the verdict
- *   // Write: setTempleConfig(c) / setTempleProfile(p) / rearmTemple()
- *   //   (these three return the rejection message instead of throwing — Rust
+ *   // Write: setTempleConfig(c) / setTempleProfile(p)
+ *   //   (these two return the rejection message instead of throwing — Rust
  *   //    validates them, so the page renders what it said no to)
  *   // Main window: call startSsotStore() top-level (like initStatusStore()).
  *   // Overlay windows: call startSsotStore() from an $effect and return its
@@ -987,11 +987,6 @@ export function setTempleConfig(config: TempleConfig): Promise<string | null> {
 /** Set the four tunable strategy-profile fields. */
 export function setTempleProfile(profile: TempleProfile): Promise<string | null> {
 	return templeCommand('temple_set_profile', { profile });
-}
-
-/** Force the next tick to do a full read, whatever the read gate thinks. */
-export function rearmTemple(): Promise<string | null> {
-	return templeCommand('temple_rearm', {});
 }
 
 /**

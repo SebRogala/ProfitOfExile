@@ -1279,11 +1279,6 @@ describe('temple slice', () => {
 			expect(callsOf('temple_set_profile')).toEqual([{ profile }]);
 		});
 
-		it('re-arms with no arguments', async () => {
-			expect(await mod.rearmTemple()).toBeNull();
-			expect(callsOf('temple_rearm')).toEqual([{}]);
-		});
-
 		it('sends the preset as the wire string Rust spells it', async () => {
 			expect(await mod.setTemplePreset('custom')).toBeNull();
 			expect(callsOf('temple_set_preset')).toEqual([{ preset: 'custom' }]);

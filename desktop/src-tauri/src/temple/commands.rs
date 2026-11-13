@@ -10,16 +10,13 @@
 //! order, which is what settles whether a missing architect was cropped out or
 //! emitted out of order.
 //!
-//! # Why the setters do not touch the loop
+//! # Why the setters do not touch the reader
 //!
-//! `AppState.temple_state.settings` is the single owner. The loop reads a snapshot of
-//! it at the top of every read, so a setter's whole job is to write the owner,
-//! persist the delta and publish — the next tick picks the change up on its
-//! own. The one exception is [`temple_rearm`], which has nothing to write: it
-//! bumps an atomic the loop's read gate watches, and (POE-242) arms the capture
-//! itself for `crate::client_log::MANUAL_ARM_GRACE_MS`.
+//! `AppState.temple_state.settings` is the single owner. Each read-key press
+//! takes a snapshot of it, so a setter's whole job is to write the owner,
+//! persist the delta and publish — the next press reads under the change.
 //!
-//! [`temple_debug_capture`] is NOT behind that arm gate. It is an explicit user
+//! [`temple_debug_capture`] is NOT behind the Client.txt arm gate. It is an explicit user
 //! action — the command a user runs *because* something else went wrong — and a
 //! diagnostic that is unavailable in the state being diagnosed is not one.
 //!
@@ -37,7 +34,6 @@
 //! a user runs *because* something else went wrong.
 
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -60,8 +56,7 @@ pub const DEBUG_DIR: &str = "temple-debug";
 /// Both change the *rules*, not the reading: `artefacts_of_the_vaal` changes
 /// how many incursions share one map and `scarab_of_timelines` takes R5
 /// (leave the map) away — except that in 3.30 it takes nothing away while
-/// `strategy::SCARAB_OF_TIMELINES_ACTIVE` is false (POE-377). So the current
-/// board's advice is stale the moment either moves, and this re-arms.
+/// `strategy::SCARAB_OF_TIMELINES_ACTIVE` is false (POE-377).
 #[tauri::command]
 pub fn temple_set_config(config: TempleConfig, app: AppHandle) -> Result<(), String> {
     {
@@ -87,7 +82,6 @@ pub fn temple_set_config(config: TempleConfig, app: AppHandle) -> Result<(), Str
             if config.r5_applies() { "available" } else { "off (scarab)" }
         ),
     );
-    rearm(&app);
     Ok(())
 }
 
@@ -125,7 +119,6 @@ pub fn temple_set_profile(profile: TempleProfileSettings, app: AppHandle) -> Res
             profile.r4_keep_upgrade_targets
         ),
     );
-    rearm(&app);
     Ok(())
 }
 
@@ -163,9 +156,8 @@ pub fn temple_set_preset(preset: Preset, app: AppHandle) -> Result<(), String> {
     );
     // "Computed on update" (POE-257 WI-3): the preset is one of the three
     // inputs the valuation is a function of, so the new table is built here —
-    // off this thread — rather than by the read `rearm` is about to force.
+    // off this thread — rather than by the next press's read.
     crate::temple::valuation::warm_temple_valuation(&app);
-    rearm(&app);
     Ok(())
 }
 
@@ -229,7 +221,6 @@ pub fn temple_set_custom(
     // Same as `temple_set_preset` — see the note there. The editor writes on a
     // 300 ms debounce, which is why the warm must not run on this thread.
     crate::temple::valuation::warm_temple_valuation(&app);
-    rearm(&app);
     Ok(notes)
 }
 
@@ -291,36 +282,6 @@ pub fn temple_value_table(
         )
     };
     Ok(slice::value_rows(&valued))
-}
-
-/// Force the next tick to do a full read, whatever the gate thinks.
-///
-/// The user's escape hatch: the gate deliberately does not re-read a board that
-/// looks identical, so a read that came out wrong — a mis-OCR'd plate, a
-/// diamond the rect missed because the anchor was off — would otherwise stand
-/// until the player moves.
-#[tauri::command]
-pub fn temple_rearm(app: AppHandle) -> Result<(), String> {
-    rearm(&app);
-    // POE-242: the button now has two jobs, because the loop it used to poke
-    // may not be looking at all. Besides forcing the read gate open, it arms
-    // the CAPTURE for `client_log::MANUAL_ARM_GRACE_MS` — the fallback for every
-    // panel Client.txt does not announce (Alva in the hideout, a non-English
-    // client). Only the command does this, not the shared `rearm` helper: a
-    // settings change must not start a capture nobody asked for.
-    super::trigger::arm_manual(&app);
-    crate::app_log(&app, "Temple: re-read armed".to_string());
-    Ok(())
-}
-
-/// Bump the counter `slice::RearmGate` watches.
-///
-/// An atomic rather than a field of `temple_settings`: it is read on every tick
-/// and never read together with the settings, and a counter that shared their
-/// mutex would put the loop behind the webview thread once a second.
-fn rearm(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    state.temple_state.rearm.fetch_add(1, Ordering::SeqCst);
 }
 
 // ------------------------------------------------------------- the dump --
