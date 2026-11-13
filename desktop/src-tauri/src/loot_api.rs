@@ -58,7 +58,7 @@ pub trait LootTransport: Sync {
 pub struct LootApi { http: reqwest::Client, base: String, cancel: Option<tokio::sync::watch::Receiver<bool>> }
 impl LootApi {
     pub fn from_state(state: &crate::AppState) -> Self {
-        Self { http: state.server_http.clone(), base: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).trim_end_matches('/').into(), cancel: None }
+        Self { http: state.server_http.clone(), base: crate::settings::server_base(state), cancel: None }
     }
     pub fn with_cancel(mut self, cancel: tokio::sync::watch::Receiver<bool>) -> Self {
         self.cancel = Some(cancel); self

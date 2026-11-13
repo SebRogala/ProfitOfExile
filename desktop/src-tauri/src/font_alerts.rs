@@ -88,11 +88,7 @@ async fn fetch_exceptional_prices_once(app: &AppHandle) -> (u64, Option<Exceptio
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .generation;
-    let server_url = state
-        .server_url
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone();
+    let server_url = crate::settings::server_base(&state);
     let http = state.server_http.clone();
     let url = format!("{}/api/analysis/exceptional-supports", server_url);
 

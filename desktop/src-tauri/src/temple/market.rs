@@ -619,11 +619,7 @@ async fn poll_temple_market_once(app: &AppHandle) -> PollOutcome {
 async fn fetch_temple_market_once(app: &AppHandle) -> Option<MarketInput> {
     let (server_url, http) = {
         let state = app.state::<AppState>();
-        let url = state
-            .server_url
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+        let url = crate::settings::server_base(&state);
         (url, state.server_http.clone())
     };
     let url = format!("{}/api/analysis/temple-market", server_url);

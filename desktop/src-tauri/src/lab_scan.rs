@@ -149,11 +149,7 @@ impl GemProcessingState {
         // gem timeout starts only after the vocabulary is ready, so a request
         // cannot stall the font session or spend its scan budget.
         if generation != 0 {
-            let server = state
-                .server_url
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
+            let server = crate::settings::server_base(&state);
             let http = state.server_http.clone();
             let lab_mode = state
                 .lab_settings

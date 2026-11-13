@@ -1051,7 +1051,7 @@ async fn trade_lookup(
 
     // Fire-and-forget: submit trade result to server for cache enrichment
     {
-        let server_url = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let server_url = settings::server_base(&state);
         let http = state.server_http.clone();
         let submit_result = result.clone();
         let app_clone = app.clone();
@@ -1793,7 +1793,7 @@ pub fn run() {
         client_txt_path: Mutex::new(String::from(
             r"C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt",
         )),
-        server_url: Mutex::new(String::from(option_env!("POE_SERVER_URL").unwrap_or("https://profitofexile.localhost"))),
+        server_url: Mutex::new(String::from(settings::DEFAULT_SERVER_URL)),
         lab_scan: lab_scan::LabScanState {
             detection: Mutex::new(lab_detection::LabDetection::default()),
             detected_gems: Mutex::new(Vec::new()),

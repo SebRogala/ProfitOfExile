@@ -716,13 +716,26 @@ pub struct WindowSettings {
     pub maximized: bool,
 }
 
+/// Server base used until settings.json supplies one: the build's
+/// `POE_SERVER_URL`, else the local dev host.
+pub const DEFAULT_SERVER_URL: &str = match option_env!("POE_SERVER_URL") {
+    Some(url) => url,
+    None => "https://profitofexile.localhost",
+};
+
+/// The one read of the runtime server base for native callers, without
+/// trailing slashes so `format!("{base}/api/...")` never yields `//api`.
+pub fn server_base(state: &crate::AppState) -> String {
+    state.server_url.lock().unwrap_or_else(|e| e.into_inner()).trim_end_matches('/').to_string()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
             boss_loot: Default::default(),
             number_format: None,
             client_txt_path: crate::detect_client_txt_path(),
-            server_url: String::from(option_env!("POE_SERVER_URL").unwrap_or("https://profitofexile.localhost")),
+            server_url: String::from(DEFAULT_SERVER_URL),
             window: None,
             sidebar_open: true,
             comparator_overlay: None,
@@ -4134,4 +4147,70 @@ pub(crate) mod tests {
         show_low_confidence_survives_a_restart: show_low_confidence = false;
     }
 
+
+    fn base_for_saved(saved: &str) -> String {
+        let state = test_app_state();
+        let field = &state.server_url;
+        *field.lock().unwrap() = saved.into();
+        server_base(&state)
+    }
+
+    #[test]
+    fn server_base_trims_a_trailing_slash() {
+        assert_eq!(base_for_saved("https://saved.example/"), "https://saved.example");
+    }
+
+    #[test]
+    fn server_base_keeps_a_url_without_a_slash() {
+        assert_eq!(base_for_saved("https://saved.example"), "https://saved.example");
+    }
+
+    #[test]
+    fn server_base_trims_every_trailing_slash() {
+        assert_eq!(base_for_saved("https://saved.example//"), "https://saved.example");
+    }
+
+    /// Per-file counts, not file exemptions: a restored direct read next to an
+    /// allowed one (e.g. trade submit beside the AppStatus projection in
+    /// lib.rs) still fails. Whitespace is stripped so reads split across lines
+    /// count too.
+    #[test]
+    fn server_url_is_read_only_through_server_base() {
+        fn walk(dir: &Path, files: &mut Vec<PathBuf>) {
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(&path, files);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    files.push(path);
+                }
+            }
+        }
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        walk(&src, &mut files);
+        assert!(files.len() > 10, "source walk found only {} files", files.len());
+        let lock_read = concat!(".server", "_url.lock()");
+        let build_default = concat!("option_env!(\"POE_", "SERVER_URL\")");
+        let mut lock_reads = std::collections::BTreeMap::new();
+        let mut default_reads = std::collections::BTreeMap::new();
+        for path in &files {
+            let text: String = fs::read_to_string(path).unwrap().chars().filter(|c| !c.is_whitespace()).collect();
+            let rel = path.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
+            let locks = text.matches(lock_read).count();
+            if locks > 0 {
+                lock_reads.insert(rel.clone(), locks);
+            }
+            let defaults = text.matches(build_default).count();
+            if defaults > 0 {
+                default_reads.insert(rel, defaults);
+            }
+        }
+        let expected_locks: std::collections::BTreeMap<String, usize> =
+            [("settings/mod.rs".to_string(), 3), ("lib.rs".to_string(), 1)].into();
+        assert_eq!(lock_reads, expected_locks, "read server_url through settings::server_base");
+        let expected_defaults: std::collections::BTreeMap<String, usize> =
+            [("settings/mod.rs".to_string(), 1)].into();
+        assert_eq!(default_reads, expected_defaults, "use settings::DEFAULT_SERVER_URL");
+    }
 }

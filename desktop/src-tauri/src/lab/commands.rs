@@ -346,7 +346,7 @@ pub(crate) fn emit_lab_nav(event_json: serde_json::Value, app: AppHandle) {
 pub(crate) async fn send_test_gems(app: AppHandle) -> Result<String, String> {
     let state = app.state::<AppState>();
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let server = crate::settings::server_base(&state);
     let url = format!("{}/api/desktop/gems", server);
     let gems = vec![
         "Earthquake of Fragility",
@@ -425,7 +425,7 @@ fn current_gem_variant(state: &tauri::State<'_, AppState>) -> String {
 pub(crate) async fn send_gems_to_server(app: &AppHandle, gems: Vec<String>) {
     let state = app.state::<AppState>();
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let server = crate::settings::server_base(&state);
     let url = format!("{}/api/desktop/gems", server);
     let http = state.server_http.clone();
 
@@ -492,7 +492,7 @@ pub(crate) async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<St
     let candidates = ocr::extract_gem_candidates(&lines);
     app_log(&app, format!("{} candidate lines to match", candidates.len()));
 
-    let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let server = crate::settings::server_base(&state);
     let http = state.server_http.clone();
     let lab_mode = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).lab_mode.clone();
     let gem_names = fetch_gem_names(&app, &server, &http, &lab_mode).await;
@@ -626,7 +626,7 @@ pub(crate) fn send_font_session_data(app: &AppHandle) {
     let mut session = state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner());
 
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let server = crate::settings::server_base(&state);
     let lab_mode = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).lab_mode.clone();
 
     let device_id = state.device_id.clone();

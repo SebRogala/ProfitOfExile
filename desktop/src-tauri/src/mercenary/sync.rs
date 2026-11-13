@@ -717,11 +717,7 @@ pub(super) fn icons_dir(app: &AppHandle) -> Option<PathBuf> {
 /// from.
 pub(super) fn server_and_http(app: &AppHandle) -> (String, reqwest::Client) {
     let state = app.state::<AppState>();
-    let url = state
-        .server_url
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone();
+    let url = crate::settings::server_base(&state);
     (url, state.server_http.clone())
 }
 

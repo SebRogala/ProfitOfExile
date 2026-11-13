@@ -1522,11 +1522,7 @@ pub(crate) fn parse_league_from_status(body: &serde_json::Value) -> Option<Strin
 async fn fetch_league_once(app: &AppHandle) -> bool {
     let (server_url, http, url_generation) = {
         let state = app.state::<AppState>();
-        let url = state
-            .server_url
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+        let url = crate::settings::server_base(&state);
         let generation = LEAGUE_SCHEDULER.task.lock().unwrap_or_else(|e| e.into_inner()).url_generation;
         (url, state.server_http.clone(), generation)
     };
@@ -1535,7 +1531,7 @@ async fn fetch_league_once(app: &AppHandle) -> bool {
     };
     let changed = {
         let state = app.state::<AppState>();
-        let current_url = state.server_url.lock().unwrap_or_else(|e| e.into_inner());
+        let current_url = crate::settings::server_base(&state);
         let task = LEAGUE_SCHEDULER.task.lock().unwrap_or_else(|e| e.into_inner());
         let Some(changed) = accept_league_response(
             &state.ssot, (&current_url, task.url_generation), (&server_url, url_generation), name,
