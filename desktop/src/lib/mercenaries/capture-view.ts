@@ -197,7 +197,7 @@ export type OutcomeTone = 'pass' | 'fail' | 'unknown' | 'bonus' | 'muted';
  *
  * Since POE-198 the three running states are three different amounts of work,
  * and the page says which: `idle` runs no OCR at all and is waiting for a
- * mercenary to speak, `scanning` is a burst looking for the window, `live` has
+ * mercenary to speak, `scanning` is a read-key press being read, `live` has
  * it. Wording `idle` as "watching" would claim the OCR that trigger-only
  * capture exists to NOT do.
  */
@@ -240,21 +240,6 @@ export const CAPTURE_ON_SCREEN_STATUSES: MercStatus[] = ['live', 'done'];
 export function captureOnScreen(status: MercStatus): boolean {
 	return CAPTURE_ON_SCREEN_STATUSES.includes(status);
 }
-
-/** The manual trigger, next to the debug capture. */
-export const SCAN_NOW_LABEL = 'Scan now';
-
-/**
- * Why it exists, in the tooltip: the voice line that normally arms a burst has
- * already gone by for a window that was open before the module was switched on.
- *
- * It also has to say to alt-tab, because clicking the button puts THIS window
- * in front and the capture loop only reads the screen while the GAME is the
- * foreground window. The scan waits for that; the reader has to know it is
- * waiting on them.
- */
-export const SCAN_NOW_TITLE =
-	'Look for a recruit window — for one that is already open, or a voice line that was missed. Alt-tab to the game: the scan starts when the game is in front and runs about 10 seconds.';
 
 const POSITION_OUTCOME_LABEL: Record<PositionOutcome, string> = {
 	pass: 'present',

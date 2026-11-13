@@ -1920,7 +1920,6 @@ pub fn run() {
             lab::commands::send_test_gems,
             lab::commands::test_ocr_on_image,
             mercenary::debug::merc_debug_capture,
-            mercenary::debug::merc_scan_now,
             mercenary::debug::merc_forget_template,
             mercenary::debug::merc_forget_seed,
             mercenary::debug::merc_reset_templates,

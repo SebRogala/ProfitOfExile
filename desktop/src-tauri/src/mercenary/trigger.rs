@@ -174,7 +174,7 @@ pub const MAX_SPEAKER_HISTORY: usize = 256;
 /// Entries are least-recently-used by speaker. A bounded history is enough for
 /// the one-line grunt rule, while an NPC-heavy long session cannot grow this
 /// watcher-owned state without limit. Eviction only loses a possible grunt
-/// trigger; Scan now remains the explicit fallback. Every accepted line still
+/// trigger; the read key reads regardless. Every accepted line still
 /// does one hash lookup and, for an existing speaker, an O(256) deque search/remove
 /// to move that speaker to most-recently-used; existing speakers allocate no
 /// strings, and a new speaker allocates its two owned keys.
@@ -311,12 +311,6 @@ pub fn on_client_line(
     if module_enabled(app) {
         crate::app_log(app, format!("Merc: heard {speaker} — press the read key to read"));
     }
-}
-
-/// Scan now is gone: the read key replaced it (POE-390). The command itself is
-/// removed separately (WI-2).
-pub fn scan_now(_app: &AppHandle) -> Result<(), String> {
-    Err("Scan now is replaced by the read key".to_string())
 }
 
 #[cfg(test)]

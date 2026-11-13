@@ -24,10 +24,9 @@
  *
  * The running four are the trigger's own states (POE-198 + the 2026-08-25
  * smoke): `idle` is waiting for a mercenary and runs NO OCR at all, `scanning`
- * is an armed burst looking for the window, `live` has one and is still reading
- * it, and `done` has one that is fully read — the re-detect is PAUSED down to a
- * 10 s liveness check, while the hover tick keeps running so a tooltip can
- * still correct a confident wrong match. `idle` therefore does not mean
+ * is a read-key press being read, `live` has a window and is still reading it,
+ * and `done` has one that is fully read — a later press still reads its
+ * hovered tooltip, so a tooltip can still correct a confident wrong match. `idle` therefore does not mean
  * "watching", and `done` does not mean the window is gone: a `done` capture is
  * on screen exactly as a `live` one is.
  */
@@ -225,12 +224,11 @@ export interface MercenarySlice {
 	seededFamilies: string[];
 	lastError: string | null;
 	/**
-	 * Who the module HEARD, for the burst it is scanning under (2026-08-25).
+	 * Who the module HEARD, for the scan it is running (2026-08-25).
 	 *
-	 * Non-null only alongside `scanning`, and only for a Client.txt burst —
-	 * Scan now names nobody. Rust writes it in the same publish that arms the
-	 * status, which is what lets the strip say "heard Fennik, of Unshakeable
-	 * Faith · scanning…" the moment the voice line lands.
+	 * Always null since POE-390: reads run on the read key, and a press names
+	 * nobody. The field stays so the slice contract is unchanged; the strip
+	 * still prefixes "heard <speaker> · " if Rust ever publishes one.
 	 */
 	burstSpeaker: string | null;
 	/** Whether `merc-geometry.json` overrode the built-in reference numbers. */

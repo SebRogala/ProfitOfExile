@@ -28,8 +28,6 @@
 		READ_TONE,
 		RULESET_OUTCOME_LABEL,
 		RULESET_OUTCOME_TONE,
-		SCAN_NOW_LABEL,
-		SCAN_NOW_TITLE,
 		STATUS_LABEL,
 		STATUS_TONE,
 		captureOnScreen,
@@ -203,19 +201,6 @@
 	 *  the minute, so a ticking clock would buy nothing and churn the DOM. */
 	const pool = $derived(poolSyncView(merc.sync, Date.now()));
 
-	/** The manual half of the trigger (POE-198): the Client.txt voice line arms a
-	 *  burst on its own, and this arms one for the window that was already open.
-	 *  Rust refuses when the module is off or capture is unavailable, and the
-	 *  refusal is shown — a button that silently does nothing teaches nothing. */
-	let scanError = $state<string | null>(null);
-	async function scanNow(): Promise<void> {
-		scanError = null;
-		try {
-			await invoke('merc_scan_now');
-		} catch (e) {
-			scanError = `${e}`;
-		}
-	}
 
 	let debugBusy = $state(false);
 	let debugReport = $state<string | null>(null);
@@ -416,7 +401,7 @@
 		</span>
 	</p>
 
-	<!-- 1. Capture status: what the module is doing, and the two levers that fix it. -->
+	<!-- 1. Capture status: what the module is doing, and the debug capture. -->
 	<section class="card status-card">
 		<div class="card-head">
 			<h2 class="card-title">Merc OCR</h2>
@@ -425,7 +410,6 @@
 				geometry: {merc.geometrySource === 'file' ? 'merc-geometry.json' : 'built-in reference'}
 			</span>
 			<span class="spacer"></span>
-			<Button onclick={scanNow} title={SCAN_NOW_TITLE}>{SCAN_NOW_LABEL}</Button>
 			<Button
 				onclick={runDebugCapture}
 				disabled={debugBusy}
@@ -434,10 +418,6 @@
 				{debugBusy ? (debugCountdown > 0 ? `Capturing in ${debugCountdown}…` : 'Capturing…') : 'Debug capture (5 s)'}
 			</Button>
 		</div>
-
-		{#if scanError}
-			<p class="error">{scanError}</p>
-		{/if}
 
 		{#if merc.lastError}
 			<p class="error">Last error: {merc.lastError}</p>

@@ -290,12 +290,6 @@ describe('the status line', () => {
 		expect(statusLine(slice('idle', null))).toBe(IDLE_LINE);
 	});
 
-	// This window can never be clicked, so the line has to say WHERE the button
-	// is rather than looking like one.
-	it('points at the manual scan on the page', () => {
-		expect(IDLE_LINE).toContain('Scan now');
-	});
-
 	it('says a burst is looking', () => {
 		expect(statusLine(slice('scanning', null))).toBe(SCANNING_LINE);
 	});
@@ -309,8 +303,8 @@ describe('the status line', () => {
 		);
 	});
 
-	// Scan now arms a burst that heard nobody. A prefix there would invent a
-	// speaker the trigger never had.
+	// A read-key press hears nobody. A prefix there would invent a speaker the
+	// press never had.
 	it('drops the prefix for a scan that heard nobody', () => {
 		expect(statusLine(slice('scanning', null, null))).not.toContain('heard');
 	});

@@ -24,7 +24,7 @@
  *
  * **The strip is on screen for as long as a recruit window is being worked,
  * and four seconds longer** (owner decision, 2026-09-01). `scanning`, `live`
- * and `done` show for as long as they last — the burst after a voice line, the
+ * and `done` show for as long as they last — the read after a key press, the
  * read filling in, the finished read the player is deciding on. `idle` —
  * "window gone" over a retired capture, or "waiting" over nothing — shows for
  * [`LINGER_MS`] and then the strip clears entirely, because a panel that stays
@@ -137,7 +137,7 @@ export function overlayShowsVerdict(slice: MercenarySlice): boolean {
  *
  * Owner decision, 2026-09-01: "after 4 s, clear the content so the whole
  * overlay disappears". Long enough to register the window-gone marker, or to
- * notice the module is idle after a burst found nothing; short enough that the
+ * notice the module is idle after a press found nothing; short enough that the
  * strip is not still there when the player has moved on. It applies to the
  * waiting line as well as to a retired capture — the cost, known and accepted,
  * is that an armed module with no strip is indistinguishable from one that
@@ -162,8 +162,8 @@ export function lingerInit(): OverlayLinger {
 /**
  * Advance the linger for the slice just polled.
  *
- * Entering `idle` starts the clock; every other status clears it, so a burst
- * that fires during the linger (a voice line right after the window closed)
+ * Entering `idle` starts the clock; every other status clears it, so a read
+ * that runs during the linger (a press right after the window closed)
  * shows the strip in full and the idle after it starts a fresh four seconds.
  * Staying idle keeps the original start — the route polls every three seconds,
  * and a clock that restarted on each poll would never run out.
@@ -224,26 +224,18 @@ export function captureRetired(slice: MercenarySlice): boolean {
 /** What the strip says about a capture whose window is gone. */
 export const WINDOW_GONE_NOTE = 'recruit window gone — last read';
 
-/**
- * What the strip says while the module is on and nothing has triggered a look.
- *
- * It names the manual escape hatch, because this is the exact moment the player
- * wonders whether the thing is working: a mercenary they can see on screen that
- * produced no voice line the watcher caught. `Scan now` is on the page, not
- * here — this window can never be clicked (see the route's click-through note),
- * so the line says WHERE the button is rather than pretending to be one.
- */
-export const IDLE_LINE = 'waiting for a mercenary · Scan now on the page';
+/** What the strip says while the module is on and no press has been read. */
+export const IDLE_LINE = 'waiting for a mercenary';
 
-/** What the strip says while a burst is armed and looking. */
+/** What the strip says while a read-key press is being read. */
 export const SCANNING_LINE = 'scanning for the recruit window…';
 
 /**
  * What a scanning line adds when the verdict below it is a PREVIOUS read.
  *
- * `scanning` outranks the window-gone marker because a burst armed after the
+ * `scanning` outranks the window-gone marker because a press read after the
  * last window closed is the more current fact — but the verdict block does not
- * disappear while that burst runs, so plain `SCANNING_LINE` would leave a stale
+ * disappear while that read runs, so plain `SCANNING_LINE` would leave a stale
  * verdict on screen with nothing saying it was stale. That is the exact failure
  * `WINDOW_GONE_NOTE` exists to prevent, so the mark is carried rather than
  * dropped: precedence decides the HEADLINE, not whether the reader is told.
@@ -275,7 +267,7 @@ function unreadPhrase(unread: number): string | null {
  * 1. `live` with a capture — what the reader is looking at right now, counts
  *    included, so a cell still needing a hover is visible without alt-tabbing.
  * 2. `scanning` — something IS looking. This outranks the window-gone marker,
- *    because a burst armed after the last window closed is the more current
+ *    because a press read after the last window closed is the more current
  *    fact; but the verdict block below is still showing the PREVIOUS read, so
  *    the line carries [`STALE_VERDICT_SUFFIX`] rather than dropping the mark.
  *    Precedence decides the headline, never whether the reader is told.
@@ -306,8 +298,9 @@ export function statusLine(slice: MercenarySlice): string | null {
  * Naming the mercenary is what separates "the module caught the voice line you
  * just heard" from "something is scanning" — the 2026-08-25 report was that the
  * strip sat on "waiting" through the voice line and then jumped straight to
- * reading, which looked like a missed trigger. Scan now names nobody, so the
- * prefix is dropped rather than faked.
+ * reading, which looked like a missed trigger. A read-key press names nobody,
+ * so Rust publishes no speaker since POE-390 and the prefix is dropped rather
+ * than faked.
  */
 function scanningLine(slice: MercenarySlice): string {
 	const heard = slice.burstSpeaker === null ? '' : `${HEARD_PREFIX}${slice.burstSpeaker} · `;
@@ -560,7 +553,7 @@ export function unreadNote(slice: MercenarySlice): string | null {
 /**
  * What the dot beside the status line does.
  *
- * `beating` while something is LOOKING — a burst armed, a read filling in —
+ * `beating` while something is LOOKING — a press being read, a read filling in —
  * because the 2026-08-25 report was that a still strip and a dead one look the
  * same; `steady` once the read is done and nothing on the strip will move;
  * `off` for the idle linger, where the line is a marker for a window that is

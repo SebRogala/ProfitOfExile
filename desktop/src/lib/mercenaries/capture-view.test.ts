@@ -11,7 +11,6 @@ import {
 	poolSyncView,
 	positionKey,
 	positionOutcomeLabel,
-	SCAN_NOW_TITLE,
 	skillText,
 	skillTitle,
 	STATUS_LABEL,
@@ -446,7 +445,7 @@ describe('the module status wording', () => {
 	/**
 	 * The states differ in how much work the module is doing, which is the whole
 	 * point of trigger-only capture (POE-198): `idle` runs no OCR, `scanning` is
-	 * an armed burst, `live` has the window. Two states sharing a label would
+	 * a press being read, `live` has the window. Two states sharing a label would
 	 * leave the page unable to say which — and "waiting" and "scanning" are the
 	 * pair most likely to be copy-pasted into one.
 	 */
@@ -462,13 +461,6 @@ describe('the module status wording', () => {
 		// window" (which it was before POE-198) would promise the OCR that was
 		// removed, and hide a trigger that never fires.
 		expect(STATUS_LABEL.idle).not.toMatch(/watch|scan|look/i);
-	});
-
-	/** The button cannot do anything until the game is the foreground window —
-	 *  a tooltip that promised an immediate scan would read as a broken button
-	 *  to anyone who clicked it and watched nothing happen. */
-	it('tells the reader that Scan now waits for the game to be in front', () => {
-		expect(SCAN_NOW_TITLE).toMatch(/alt-tab/i);
 	});
 
 	it('keeps the captured-window colour for a captured window', () => {
@@ -491,7 +483,7 @@ describe('the module status wording', () => {
 	/** `done` is a live window with nothing left to read (2026-08-25). The page
 	 *  has to say the OCR paused WITHOUT reading as a module that stopped
 	 *  working or a window that went away — both would send the reader to press
-	 *  Scan now over a window that is already fully read. */
+	 *  the read key again over a window that is already fully read. */
 	it('words a finished read as a paused capture, not as a lost one', () => {
 		expect(STATUS_LABEL.done).toMatch(/paused/i);
 		expect(STATUS_LABEL.done).not.toMatch(/gone|off|unavailable|waiting/i);
