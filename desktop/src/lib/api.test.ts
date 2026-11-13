@@ -637,7 +637,14 @@ describe('fetchDivineRate', () => {
 	}
 
 	/** Make the next request answer the server body the endpoint returns. */
-	function answer(body: { divineChaosRate: number | null; priceHour: string | null; warm: boolean }): void {
+	function answer(body: {
+		divineChaosRate: number | null;
+		buyChaos?: number | null;
+		sellChaos?: number | null;
+		source?: 'exchange' | 'ninja' | null;
+		priceHour: string | null;
+		warm: boolean;
+	}): void {
 		fetchMock.mockResolvedValue({ ok: true, json: async () => structuredClone(body) });
 	}
 
@@ -659,6 +666,9 @@ describe('fetchDivineRate', () => {
 
 		expect(await fetchDivineRate()).toEqual({
 			divineChaosRate: 351.08,
+			buyChaos: null,
+			sellChaos: null,
+			source: 'exchange',
 			priceHour: '2026-10-13T11:00:00Z',
 			updatedAt: NOW,
 			state: 'ready',
@@ -666,11 +676,30 @@ describe('fetchDivineRate', () => {
 		});
 	});
 
+	it('maps a poe.ninja fallback to a ready rate that names its source', async () => {
+		answer({ divineChaosRate: 180, priceHour: '2026-11-13T08:00:00Z', warm: false, buyChaos: null, sellChaos: null, source: 'ninja' });
+
+		expect(await fetchDivineRate()).toEqual(expect.objectContaining({
+			divineChaosRate: 180,
+			source: 'ninja',
+			state: 'ready'
+		}));
+	});
+
+	it('carries the hour\'s buy and sell from the server', async () => {
+		answer({ divineChaosRate: 199, priceHour: '2026-11-13T08:00:00Z', warm: true, buyChaos: 196, sellChaos: 203, source: 'exchange' });
+
+		expect(await fetchDivineRate()).toEqual(expect.objectContaining({ buyChaos: 196, sellChaos: 203 }));
+	});
+
 	it('maps a cold server answer to a cold divine rate with no rate or hour', async () => {
 		answer({ divineChaosRate: null, priceHour: null, warm: false });
 
 		expect(await fetchDivineRate()).toEqual({
 			divineChaosRate: null,
+			buyChaos: null,
+			sellChaos: null,
+			source: null,
 			priceHour: null,
 			updatedAt: NOW,
 			state: 'cold',
@@ -683,6 +712,9 @@ describe('fetchDivineRate', () => {
 
 		expect(await fetchDivineRate()).toEqual({
 			divineChaosRate: null,
+			buyChaos: null,
+			sellChaos: null,
+			source: null,
 			priceHour: '2026-10-13T11:00:00Z',
 			updatedAt: NOW,
 			state: 'cold',

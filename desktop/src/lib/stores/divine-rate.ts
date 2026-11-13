@@ -16,6 +16,9 @@ export type DivineRateState = DivineRate['state'];
 /** What the store holds: the port's fields, `updatedAt` null before the first read. */
 export interface DivineRateSnapshot {
 	divineChaosRate: number | null;
+	buyChaos: number | null;
+	sellChaos: number | null;
+	source: DivineRate['source'];
 	priceHour: string | null;
 	updatedAt: string | null;
 	state: DivineRateState;
@@ -32,10 +35,19 @@ export interface DivineRateView {
  * A rate is usable only as a finite number > 0. The owner answers `0` for an
  * hour with no divine/chaos trade (`divineRateOf` in `internal/exchange/plays.go`),
  * and a consumer divides by this value, so anything else is stored as unknown.
+ * The hour's buy and sell follow the same rule.
  */
 export function normalizeDivineRate(port: DivineRate): DivineRate {
-	const r = port.divineChaosRate;
-	return { ...port, divineChaosRate: typeof r === 'number' && Number.isFinite(r) && r > 0 ? r : null };
+	return {
+		...port,
+		divineChaosRate: usableChaos(port.divineChaosRate),
+		buyChaos: usableChaos(port.buyChaos),
+		sellChaos: usableChaos(port.sellChaos)
+	};
+}
+
+function usableChaos(r: number | null): number | null {
+	return typeof r === 'number' && Number.isFinite(r) && r > 0 ? r : null;
 }
 
 /**
@@ -128,9 +140,13 @@ export function divineRateView(snap: DivineRateSnapshot, now: number, timeZone?:
 	}
 	const hour = snap.priceHour ? formatPriceHour(snap.priceHour, timeZone) : COLD_CHIP;
 	const age = snap.updatedAt ? ` · ${formatAge(snap.updatedAt, now)}` : '';
+	const detail =
+		snap.source === 'ninja'
+			? `poe.ninja snapshot of ${hour}${age}; no Currency Exchange rate yet.`
+			: `Currency Exchange, hour of ${hour}${age}`;
 	return {
 		state,
 		chip: formatChipRate(rate),
-		tooltipHtml: lines(head, `Currency Exchange, hour of ${hour}${age}`)
+		tooltipHtml: lines(head, detail)
 	};
 }

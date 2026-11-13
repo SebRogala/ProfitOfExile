@@ -32,6 +32,9 @@ const LINE_3 = '<div style="color:var(--color-lab-text-secondary)">Every chaos �
 function snap(over: Partial<DivineRateSnapshot>): DivineRateSnapshot {
 	return {
 		divineChaosRate: 360.07,
+		buyChaos: null,
+		sellChaos: null,
+		source: 'exchange',
 		priceHour: '2026-09-09T23:00:00Z',
 		updatedAt: new Date(NOW - 6 * MIN).toISOString(),
 		state: 'ready',
@@ -130,15 +133,23 @@ describe('formatAge', () => {
 
 describe('normalizeDivineRate', () => {
 	it('stores a zero, negative or non-finite rate as null and keeps a positive one', () => {
-		const port = { priceHour: null, updatedAt: '2026-09-09T23:06:00Z', state: 'ready' as const, unreachableSince: null };
+		const port = { buyChaos: null, sellChaos: null, source: 'exchange' as const, priceHour: null, updatedAt: '2026-09-09T23:06:00Z', state: 'ready' as const, unreachableSince: null };
 		expect([0, -1, NaN, 360.07].map((r) => normalizeDivineRate({ ...port, divineChaosRate: r }).divineChaosRate))
 			.toEqual([null, null, null, 360.07]);
 	});
 });
 
+describe('normalizeDivineRate buy and sell', () => {
+	it('stores a zero or non-finite buy or sell as null', () => {
+		const port = { divineChaosRate: 199, buyChaos: 0, sellChaos: NaN, source: 'exchange' as const, priceHour: null, updatedAt: '2026-09-09T23:06:00Z', state: 'ready' as const, unreachableSince: null };
+		const out = normalizeDivineRate(port);
+		expect([out.buyChaos, out.sellChaos]).toEqual([null, null]);
+	});
+});
+
 describe('normalizeDivineRate finite guard', () => {
 	it('stores an infinite rate as null', () => {
-		const port = { divineChaosRate: Infinity, priceHour: null, updatedAt: '2026-09-09T23:06:00Z', state: 'ready' as const, unreachableSince: null };
+		const port = { divineChaosRate: Infinity, buyChaos: null, sellChaos: null, source: 'exchange' as const, priceHour: null, updatedAt: '2026-09-09T23:06:00Z', state: 'ready' as const, unreachableSince: null };
 		expect(normalizeDivineRate(port).divineChaosRate).toBeNull();
 	});
 });
@@ -167,6 +178,13 @@ describe('divineRateView', () => {
 				'<div style="color:var(--color-lab-text-secondary)">Currency Exchange, hour of 09 Sep 23:00 · updated 6 min ago</div>' +
 				LINE_3
 		});
+	});
+
+	it('words a poe.ninja fallback as a snapshot, not an exchange hour', () => {
+		const ninja = snap({ divineChaosRate: 180, priceHour: '2026-11-13T08:00:00Z', source: 'ninja' });
+		const { tooltipHtml } = divineRateView(ninja, NOW, 'UTC');
+		expect(tooltipHtml).toContain('poe.ninja snapshot of 13 Nov 08:00 · updated 6 min ago; no Currency Exchange rate yet.');
+		expect(tooltipHtml).not.toContain('Currency Exchange, hour of');
 	});
 
 	it('words the cold state as reference 02', () => {
@@ -202,6 +220,9 @@ describe('readDivineRateFixture', () => {
 	it('answers the fixture ready rate, hour and age by default', () => {
 		expect(readDivineRateFixture(NOW)).toEqual({
 			divineChaosRate: 360.07,
+			buyChaos: null,
+			sellChaos: null,
+			source: 'exchange',
 			priceHour: '2026-09-09T23:00:00Z',
 			updatedAt: new Date(NOW - 6 * MIN).toISOString(),
 			state: 'ready',
@@ -212,6 +233,9 @@ describe('readDivineRateFixture', () => {
 	it('answers no rate and no hour when asked for cold', () => {
 		expect(readDivineRateFixture(NOW, 'cold')).toEqual(expect.objectContaining({
 			divineChaosRate: null,
+			buyChaos: null,
+			sellChaos: null,
+			source: null,
 			priceHour: null,
 			state: 'cold',
 			unreachableSince: null
@@ -221,6 +245,9 @@ describe('readDivineRateFixture', () => {
 	it('answers the stale example hour and outage start when asked for stale', () => {
 		expect(readDivineRateFixture(NOW, 'stale')).toEqual(expect.objectContaining({
 			divineChaosRate: 360.07,
+			buyChaos: null,
+			sellChaos: null,
+			source: 'exchange',
 			priceHour: '2026-09-09T21:00:00Z',
 			state: 'stale',
 			unreachableSince: '2026-09-09T21:04:00Z'

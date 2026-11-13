@@ -35,6 +35,9 @@ let answeredBase: string | null = null;
 /** The one reactive snapshot. Read reactively; only this module writes it. */
 export const divineRate = $state<DivineRateSnapshot & { now: number }>({
 	divineChaosRate: null,
+	buyChaos: null,
+	sellChaos: null,
+	source: null,
 	priceHour: null,
 	updatedAt: null,
 	state: 'cold',
@@ -60,6 +63,9 @@ export function resetDivineRate(): void {
 	readInFlight = false;
 	answeredBase = null;
 	divineRate.divineChaosRate = null;
+	divineRate.buyChaos = null;
+	divineRate.sellChaos = null;
+	divineRate.source = null;
 	divineRate.priceHour = null;
 	divineRate.updatedAt = null;
 	divineRate.state = 'cold';
@@ -86,6 +92,9 @@ export async function refreshDivineRate(): Promise<void> {
 		// superseded this read yet (the status store subscribes late).
 		if (getApiBase() !== base) return;
 		divineRate.divineChaosRate = next.divineChaosRate;
+		divineRate.buyChaos = next.buyChaos;
+		divineRate.sellChaos = next.sellChaos;
+		divineRate.source = next.source;
 		divineRate.priceHour = next.priceHour;
 		divineRate.updatedAt = next.updatedAt;
 		divineRate.state = next.state;

@@ -1254,12 +1254,19 @@ export async function fetchHarvest(horizon: CurrencyExchangeHorizon): Promise<Ha
  * The divine:chaos rate every chaos ↔ divine figure converts with (POE-284),
  * owned by the Currency Exchange module (`internal/exchange`) and readable by
  * every device. `divineChaosRate` is a finite number > 0 or `null` (no exchange
- * hour yet, or no divine/chaos trade in it). These are the source fields; the
- * store additionally derives stale and `unreachableSince` on failed reads.
+ * hour yet, or no divine/chaos trade in it). `buyChaos` / `sellChaos` are the
+ * exchange hour's cheapest / dearest divine trade in chaos, for information
+ * only; nothing converts with them. `source` names where the rate came from:
+ * the Currency Exchange, or the poe.ninja snapshot the server falls back to
+ * while the exchange is cold. These are the source fields; the store
+ * additionally derives stale and `unreachableSince` on failed reads.
  * Read through `$lib/stores/divine-rate.svelte`, never directly.
  */
 export interface DivineRate {
 	divineChaosRate: number | null;
+	buyChaos: number | null;
+	sellChaos: number | null;
+	source: 'exchange' | 'ninja' | null;
 	priceHour: string | null;
 	updatedAt: string;
 	state: 'ready' | 'cold' | 'stale';
@@ -1268,20 +1275,31 @@ export interface DivineRate {
 
 /**
  * Read the divine rate through its port: the Currency Exchange's own rate
- * (`GET /currency-exchange/divine-rate`). `state` is `ready` only when the
- * server is warm and holds a rate; otherwise `cold`. Stale and unreachable
- * detection belongs to the store: when this rejects it keeps the last value
- * and marks it stale (POE-291).
+ * (`GET /currency-exchange/divine-rate`). `state` is `ready` when the server
+ * holds a rate and is warm, or answers from its poe.ninja fallback
+ * (`source: 'ninja'`, sent while the exchange is cold); otherwise `cold`.
+ * Released builds without this rule read a ninja fallback as cold. An older
+ * server sends no `source` and only ever an exchange rate. Stale and
+ * unreachable detection belongs to the store: when this rejects it keeps the
+ * last value and marks it stale (POE-291).
  */
 export async function fetchDivineRate(): Promise<DivineRate> {
-	const body = await get<{ divineChaosRate: number | null; priceHour: string | null; warm: boolean }>(
-		'/currency-exchange/divine-rate'
-	);
+	const body = await get<{
+		divineChaosRate: number | null;
+		buyChaos?: number | null;
+		sellChaos?: number | null;
+		source?: 'exchange' | 'ninja' | null;
+		priceHour: string | null;
+		warm: boolean;
+	}>('/currency-exchange/divine-rate');
 	return {
 		divineChaosRate: body.divineChaosRate,
+		buyChaos: body.buyChaos ?? null,
+		sellChaos: body.sellChaos ?? null,
+		source: body.source ?? (body.divineChaosRate !== null ? 'exchange' : null),
 		priceHour: body.priceHour,
 		updatedAt: new Date().toISOString(),
-		state: body.warm && body.divineChaosRate !== null ? 'ready' : 'cold',
+		state: body.divineChaosRate !== null && (body.warm || body.source === 'ninja') ? 'ready' : 'cold',
 		unreachableSince: null
 	};
 }

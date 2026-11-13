@@ -36,6 +36,9 @@ const HEALTH_POLL_MS = 75_000; // 60 s + the pinned 0.5 × 30 s session jitter.
 function port(over: Partial<DivineRate> = {}): DivineRate {
 	return {
 		divineChaosRate: 360.07,
+		buyChaos: null,
+		sellChaos: null,
+		source: 'exchange',
 		priceHour: '2026-09-09T23:00:00Z',
 		updatedAt: new Date(T0 - 6 * 60_000).toISOString(),
 		state: 'ready',
@@ -234,6 +237,9 @@ describe('initDivineRateStore', () => {
 		s.resetDivineRate();
 		expect({ ...s.divineRate, now: 0 }).toEqual({
 			divineChaosRate: null,
+			buyChaos: null,
+			sellChaos: null,
+			source: null,
 			priceHour: null,
 			updatedAt: null,
 			state: 'cold',
@@ -297,6 +303,14 @@ function deferred(): { promise: Promise<DivineRate>; resolve: (rate: DivineRate)
 }
 
 describe('refreshDivineRate and syncDivineRateToServer', () => {
+	it('holds the read\'s buy, sell and source', async () => {
+		mocks.fetchDivineRate.mockResolvedValueOnce(port({ divineChaosRate: 199, buyChaos: 196, sellChaos: 203, source: 'exchange' }));
+		const s = await load();
+		await s.refreshDivineRate();
+
+		expect([s.divineRate.buyChaos, s.divineRate.sellChaos, s.divineRate.source]).toEqual([196, 203, 'exchange']);
+	});
+
 	it('keeps the newest answer when an older read settles last', async () => {
 		const older = deferred();
 		const newer = deferred();
@@ -448,7 +462,7 @@ describe('failed divine-rate reads', () => {
 		await read;
 
 		expect({ ...s.divineRate }).toEqual({
-			divineChaosRate: null, priceHour: null, updatedAt: null, state: 'cold', unreachableSince: null, now: T0
+			divineChaosRate: null, buyChaos: null, sellChaos: null, source: null, priceHour: null, updatedAt: null, state: 'cold', unreachableSince: null, now: T0
 		});
 		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', offline);
 	});

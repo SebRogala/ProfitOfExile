@@ -32,11 +32,23 @@ const STALE_UNREACHABLE_SINCE = '2026-09-09T21:04:00Z';
 export function readDivineRateFixture(now: number, state: DivineRate['state'] = DIVINE_RATE_FIXTURE.state): DivineRate {
 	const updatedAt = new Date(now - DIVINE_RATE_FIXTURE.updatedMinutesAgo * 60_000).toISOString();
 	if (state === 'cold') {
-		return { divineChaosRate: null, priceHour: null, updatedAt, state, unreachableSince: null };
+		return {
+			divineChaosRate: null,
+			buyChaos: null,
+			sellChaos: null,
+			source: null,
+			priceHour: null,
+			updatedAt,
+			state,
+			unreachableSince: null
+		};
 	}
 	if (state === 'stale') {
 		return {
 			divineChaosRate: DIVINE_RATE_FIXTURE.divineChaosRate,
+			buyChaos: null,
+			sellChaos: null,
+			source: 'exchange',
 			priceHour: STALE_PRICE_HOUR,
 			updatedAt,
 			state,
@@ -45,6 +57,9 @@ export function readDivineRateFixture(now: number, state: DivineRate['state'] = 
 	}
 	return {
 		divineChaosRate: DIVINE_RATE_FIXTURE.divineChaosRate,
+		buyChaos: null,
+		sellChaos: null,
+		source: 'exchange',
 		priceHour: DIVINE_RATE_FIXTURE.priceHour,
 		updatedAt,
 		state,
