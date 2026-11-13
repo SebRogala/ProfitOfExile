@@ -2031,6 +2031,7 @@ pub fn run() {
 
             spawn_log_watcher(handle.clone());
             focus::spawn_focus_poller(handle.clone());
+            read_hotkey::spawn_read_hotkey(handle.clone(), Default::default());
             // Resolve the active league from the server (start-only, bounded
             // retry). Until it succeeds the SSOT stays unresolved and every
             // trade lookup fails closed — by design (POE-128 chunk 3).
