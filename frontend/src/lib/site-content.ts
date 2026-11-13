@@ -46,7 +46,7 @@ export const modules: Module[] = [
 		name: 'Lab Farming',
 		status: 'available',
 		tagline: 'PoE lab farming and transfigured gems farming: which gem to take, and at what price.',
-		trigger: "A press of the read key (Ctrl+A by default) from Izaro's defeat, per Client.txt, until you leave the lab.",
+		trigger: "Read-key presses (Ctrl+A) from Izaro's defeat or a Font open, per Client.txt; ends at lab exit or 10 idle min.",
 		reads: 'The Font craft panel and, while you hover a Font option, its gem tooltip; once per press.',
 		gives: [
 			'Comparator overlay: the gems on offer with live trade prices, seller concentration and outliers, plus pick buttons.',
