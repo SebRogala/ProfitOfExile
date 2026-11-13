@@ -3626,11 +3626,15 @@ mod tests {
         let modules: std::collections::HashMap<String, bool> =
             [(TEMPLE_MODULE_ID.to_string(), true)].into_iter().collect();
         let mercenary = crate::mercenary::MercenarySlice {
-            capture: Some(crate::mercenary::MercCapture {
-                captured_at_ms: 1_700_000_000_000,
-                screen: [1920, 1200],
-                ..Default::default()
-            }),
+            capture: Some(
+                serde_json::from_value(serde_json::json!({
+                    "capturedAtMs": 1_700_000_000_000u64, "live": false, "scale": 0.0,
+                    "screen": [1920, 1200], "panel": null,
+                    "header": { "name": null, "class": null, "level": null, "wager": null },
+                    "rows": [], "rowsOnScreen": 0, "rowsRead": 0, "partial": false
+                }))
+                .unwrap(),
+            ),
             learned_families: vec!["fire--1".into()],
             pooled_families: vec!["cold--2".into()],
             seeded_families: vec!["lightning".into()],
@@ -3665,11 +3669,12 @@ mod tests {
             mode: Some("advice".into()),
             unknown_rooms: vec!["slot-3".into()],
             last_read_at: Some(1_700_000_000_000),
-            calibration: Some(crate::temple::anchor::AnchorCalibration {
-                screen_w: 1920,
-                screen_h: 1200,
-                scale: 1.0,
-            }),
+            calibration: Some(
+                serde_json::from_value(serde_json::json!({
+                    "screen_w": 1920, "screen_h": 1200, "scale": 1.0
+                }))
+                .unwrap(),
+            ),
             read_notice: Some("notice".into()),
             last_error: Some("temple error".into()),
             ..Default::default()
