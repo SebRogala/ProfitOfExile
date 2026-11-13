@@ -6,7 +6,8 @@
 //!   1. POST /api/trade/search/{league} → query ID + result IDs
 //!   2. GET  /api/trade/fetch/{ids}?query={queryId} → listing details
 //!
-//! Uses a browser-like User-Agent (Awakened PoE Trade does the same).
+//! Sends an identifiable User-Agent with contact (GGG developer docs); see
+//! `TRADE_USER_AGENT` for the observed result.
 //! No POESESSID needed for public listings.
 
 use chrono::{DateTime, Utc};
@@ -21,9 +22,13 @@ use super::types::{SearchResponse, TradeListingDetail, TradeLookupResult};
 const TRADE_API_BASE_URL: &str = "https://www.pathofexile.com";
 const TRADE_CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Browser-like User-Agent. GGG blocks non-browser UAs.
-/// Awakened PoE Trade uses Electron's default Chromium UA — same idea.
-const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
+/// Identifiable User-Agent with contact, as GGG's developer docs require.
+/// Observed 2026-11-13 (curl, Standard): search + fetch both 200 with this UA.
+const TRADE_USER_AGENT: &str = concat!(
+    "ProfitOfExile/",
+    env!("CARGO_PKG_VERSION"),
+    " (contact: contact@profitofexile.top)"
+);
 
 /// The `Err` a lookup returns when its source was cancelled while it waited.
 ///
@@ -256,7 +261,7 @@ impl TradeApiClient {
     pub fn new(proxy: &crate::http::ProxyConfig) -> Self {
         let http_client = crate::http::client_builder(proxy, crate::http::Transport::Trade)
             .timeout(TRADE_CLIENT_TIMEOUT)
-            .user_agent(BROWSER_USER_AGENT)
+            .user_agent(TRADE_USER_AGENT)
             .build()
             .expect("failed to build trade HTTP client");
 
@@ -775,6 +780,36 @@ pub(crate) mod tests {
         let result = client.lookup_gem(Some("Mirage".into()), "Spark", "20/20", 0.0, |_| {}).await.unwrap();
         assert_eq!(result.league, "Mirage");
         assert!(stub.requests()[0].starts_with("POST /api/trade/search/Mirage "));
+    }
+
+    /// GGG's developer docs require an identifiable User-Agent with contact;
+    /// both phases of a lookup must send it with this build's version.
+    #[tokio::test]
+    async fn search_and_fetch_send_identifiable_user_agent() {
+        let stub = stub_api(search_ok(), fetch_ok()).await;
+        let client = stub_client(&stub);
+        client.lookup_gem(Some("Mirage".into()), "Spark", "20/20", 0.0, |_| {}).await.unwrap();
+
+        let expected = format!(
+            "user-agent: profitofexile/{} (contact: contact@profitofexile.top)",
+            env!("CARGO_PKG_VERSION")
+        )
+        .to_ascii_lowercase();
+        let trade_requests: Vec<String> = stub
+            .requests()
+            .into_iter()
+            .filter(|r| r.contains("/api/trade/"))
+            .collect();
+        for path in ["/api/trade/search/", "/api/trade/fetch/"] {
+            let request = trade_requests
+                .iter()
+                .find(|r| r.lines().next().is_some_and(|l| l.contains(path)))
+                .unwrap_or_else(|| panic!("no {path} request recorded: {trade_requests:?}"));
+            assert!(
+                request.lines().any(|l| l.to_ascii_lowercase() == expected),
+                "{path} request lacks `{expected}`:\n{request}"
+            );
+        }
     }
 
     /// The full lookup read path fails closed when the league is unset: it
