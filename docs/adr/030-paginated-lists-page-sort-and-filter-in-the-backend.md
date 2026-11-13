@@ -6,8 +6,8 @@ uid: 49e34882-2cb2-4b18-ba12-8f41984ecf45
 
 ## Status
 
-Accepted 2026-11-12 (POE-336). Last verified 2026-11-12. Current violations
-are listed under Consequences and are not yet fixed.
+Accepted 2026-11-12 (POE-336). Last verified 2026-11-13. The three
+violations found at acceptance are fixed; see Consequences.
 
 ## Enforcement
 
@@ -70,36 +70,36 @@ against production-sized data was not verified. The in-memory slice in
 the production wiring (Observed: `desktop/src/routes/(app)/+layout.svelte:56`
 wires the native ports).
 
-Violations: 3, listed, not fixed (Observed, 2026-11-12):
+Violations: 3 found at acceptance (Observed, 2026-11-12), all fixed (Observed,
+2026-11-13: each commit below resolves on `dev`):
 
-1. Desktop Currency Exchange — row cap Show 25/50/100/200/All
-   (`desktop/src/lib/pages/CurrencyExchangePage.svelte:452`,
-   `desktop/src/lib/exchange/view.ts:185`), Show all at
-   `CurrencyExchangePage.svelte:504`; the code calls this "pagination"
-   (`desktop/src/lib/exchange/view.ts:1078`). Filters and sorting run in the
-   client (`CurrencyExchangePage.svelte:252`) and the result is sliced there
-   (`:280`, `view.ts:1103`). Endpoint unbounded: `/currency-exchange/plays`
-   receives only mode/horizon (`desktop/src/lib/api.ts:1088`) and returns every
-   mode-matching play from the cache snapshot
-   (`internal/server/handlers/currency_exchange.go:139-169`).
-2. Web gem rankings, Normal and Dedication — row cap Show 10/20/50
-   (`frontend/src/routes/lab/components/ByVariant.svelte:327`); client
-   filters (`:249-258`) and sort-then-slice
-   (`frontend/src/routes/lab/components/BestPlays.svelte:58-73`). The page
-   fetches 100 rows per variant (`frontend/src/routes/lab/+page.svelte:178-179`)
-   from `/analysis/collective` (`frontend/src/lib/api.ts:394-411`); the
-   user's cap, sort and filter picks are not sent as request parameters.
-3. Desktop gem rankings, Normal and Dedication — the same mechanism:
-   row cap at `desktop/src/routes/(app)/components/ByVariant.svelte:360`,
-   sort-then-slice at `desktop/src/routes/(app)/components/BestPlays.svelte:72-82`,
-   100 rows per variant (`desktop/src/lib/pages/LabPage.svelte:151-156`)
-   from `/analysis/collective` (`desktop/src/lib/api.ts:804-821`).
+1. Desktop Currency Exchange — row cap, filters and sort ran in the client
+   over an unbounded `/currency-exchange/plays`. Fixed by 2d6377e5, 0c895fce,
+   138d9ea7 (WI-6 groundwork), a2f51ccb, 38df2415 (WI-7 SQL page query and
+   paged route) and 8e1190e6, 9ddf5877 (WI-8 client).
+2. Web gem rankings, Normal and Dedication — client sort-then-slice over 100
+   rows per variant, ranked in application memory on the server. Fixed by
+   7e994f87, 3c108a32 (WI-1 Normal in SQL), 928eae82 (WI-2 Dedication in SQL)
+   and a3f6f3b8, 348f14ff (WI-4 web client).
+3. Desktop gem rankings, Normal and Dedication — the same mechanism. Fixed by
+   the same server commits and 184b5eb2, a17694c7, a3573dd9 (WI-5 desktop
+   client).
 
-For 2 and 3 the endpoint is bounded, not unbounded: `limit` is capped at 100
-for Normal (`internal/server/handlers/collective.go:165-177`) and 500 for
-Dedication (`:230-237`). The backend ranks in application memory, not SQL
-(`internal/server/handlers/collective_query.go:94`,
-`internal/lab/collective.go:277-285`), which rule 7 also forbids.
+Production-sized runs (lane DB, synthetic data at documented prod scale, not
+production measurements): gem queries at 27,648,000 gem_snapshots (1,440
+hourly ticks) — "the slowest single query is the 1000-row search page at
+34.3 ms"; currency-exchange `PlaysPage` at "2 horizons x 2,000 plays
+(`MaxPlays` x horizons, the production bound)" — "the slowest is the search's
+stage count at 35.9 ms". Measured 2026-11-12/13 with `EXPLAIN (ANALYZE,
+BUFFERS)`, median of 3 warm runs; no index added.
+
+Legacy requests from released desktop builds (Observed): a request without
+`pageSize` is served the pre-ADR response. The exchange handler routes it to
+the cache body (`internal/server/handlers/currency_exchange.go:217`,
+`internal/exchange/plays_page.go:76-77`); the collective handlers keep the
+legacy params and bounds (`internal/server/handlers/collective.go:120`,
+`:344`), ranked by the same SQL. The legacy path stays until a minimum
+desktop version retires it (Inferred from the plan; not yet scheduled).
 
 A new paginated list adds page, sort and filter parameters to its endpoint
 and a SQL count plus page query; adding a client-side pager or row cap over a
