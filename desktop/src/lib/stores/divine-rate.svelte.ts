@@ -15,6 +15,7 @@
 import { listen } from '@tauri-apps/api/event';
 import { onLeagueChange } from './ssot.svelte';
 import { fetchDivineRate, getApiBase } from '$lib/api';
+import { whenServerUrl } from '$lib/stores/server-base.svelte';
 import { refetchDelay } from '$lib/exchange/view';
 import { deriveDivineRateState, normalizeDivineRate, type DivineRateSnapshot, type DivineRateState } from './divine-rate';
 
@@ -76,11 +77,14 @@ export async function refreshDivineRate(): Promise<void> {
 	const mine = ++generation;
 	readInFlight = true;
 	try {
+		// The server this read goes to: before the first server slice the request
+		// waits in `$lib/api`, and this wait resolves with the same url.
+		const base = getApiBase() ?? `${await whenServerUrl()}/api`;
 		const next = normalizeDivineRate(await fetchDivineRate());
 		if (mine !== generation) return;
-		// Read after the answer: a read started before the first server slice
-		// waits for it, and a server change mid-read supersedes it (generation).
-		const base = getApiBase();
+		// Another server's answer: drop it, whether or not a listener has
+		// superseded this read yet (the status store subscribes late).
+		if (getApiBase() !== base) return;
 		divineRate.divineChaosRate = next.divineChaosRate;
 		divineRate.priceHour = next.priceHour;
 		divineRate.updatedAt = next.updatedAt;

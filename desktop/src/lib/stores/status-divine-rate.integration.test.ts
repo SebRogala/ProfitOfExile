@@ -147,4 +147,27 @@ describe('a divine rate read made before the server is known', () => {
 
 		expect(currentDivineRate()).toBeNull();
 	});
+
+	it('is not kept under a server that changed while it was in flight', async () => {
+		const aAnswer = deferred<Response>();
+		fetchMock.mockImplementation((url: string) => {
+			if (!String(url).includes(DIVINE_PATH)) return new Promise<Response>(() => {});
+			return new URL(String(url)).host === 'a.example' ? aAnswer.promise : Promise.reject(new Error('B down'));
+		});
+
+		const startup = refreshDivineRate();
+		applySnapshot(snapshotFor('https://a.example'));
+		await flush();
+		applySnapshot(snapshotFor('https://b.example'));
+		aAnswer.resolve({
+			ok: true,
+			json: async () => ({ divineChaosRate: 351.08, priceHour: '2026-10-13T08:00:00Z', warm: true })
+		} as unknown as Response);
+		await startup;
+
+		cleanup = await initStatusStore();
+		await flush();
+
+		expect(currentDivineRate()).toBeNull();
+	});
 });
