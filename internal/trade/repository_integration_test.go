@@ -386,3 +386,96 @@ func TestKnownGem_rejectsInvalidScopeBeforeQuery(t *testing.T) {
 		t.Fatalf("KnownGem with invalid scope = %v, %v; want false and validation error", known, err)
 	}
 }
+
+// lookupsAsOfFor returns the rows LookupsAsOf read for one gem.
+func lookupsAsOfFor(t *testing.T, repo *Repository, scope league.Scope, asOf time.Time, gem string) []TradeLookupResult {
+	t.Helper()
+	res, err := repo.LookupsAsOf(context.Background(), scope, asOf)
+	if err != nil {
+		t.Fatalf("LookupsAsOf: %v", err)
+	}
+	var matches []TradeLookupResult
+	for _, r := range res {
+		if r.Gem == gem {
+			matches = append(matches, r)
+		}
+	}
+	return matches
+}
+
+func TestLookupsAsOf_returnsTheNewestRowAtOrBeforeAsOf(t *testing.T) {
+	pool := tradeIntegrationPool(t)
+	repo := NewRepository(pool)
+	const leagueID = "Temp-POE307-asof"
+	const gem = "POE307 AsOf Newest Gem"
+	registerTradeLeague(t, pool, leagueID)
+	cleanupTradeGem(t, pool, gem)
+	scope := league.Historical(leagueID)
+
+	base := time.Date(2099, 3, 1, 0, 0, 0, 0, time.UTC)
+	t71, t72, t73 := base.Add(71*time.Hour), base.Add(72*time.Hour), base.Add(73*time.Hour)
+	for _, row := range []*TradeLookupResult{
+		{Gem: gem, Variant: "20/20", Listings: []TradeListingDetail{{Price: 71, Currency: "chaos"}}, FetchedAt: t71},
+		{Gem: gem, Variant: "20/20", Listings: []TradeListingDetail{{Price: 73, Currency: "chaos"}}, FetchedAt: t73},
+	} {
+		if err := repo.InsertTradeLookup(context.Background(), scope, row, "user"); err != nil {
+			t.Fatalf("InsertTradeLookup: %v", err)
+		}
+	}
+
+	got := lookupsAsOfFor(t, repo, scope, t72, gem)
+
+	if len(got) != 1 || !got[0].FetchedAt.Equal(t71) || len(got[0].Listings) != 1 || got[0].Listings[0].Price != 71 {
+		t.Fatalf("rows = %+v, want the one row fetched at %v with a 71c listing", got, t71)
+	}
+}
+
+func TestLookupsAsOf_hasNoAgeCap(t *testing.T) {
+	pool := tradeIntegrationPool(t)
+	repo := NewRepository(pool)
+	const leagueID = "Temp-POE307-agecap"
+	const gem = "POE307 AsOf Old Gem"
+	registerTradeLeague(t, pool, leagueID)
+	cleanupTradeGem(t, pool, gem)
+	scope := league.Historical(leagueID)
+
+	asOf := time.Date(2099, 3, 1, 0, 0, 0, 0, time.UTC)
+	old := asOf.Add(-30 * 24 * time.Hour)
+	row := &TradeLookupResult{Gem: gem, Variant: "20/20", Listings: []TradeListingDetail{{Price: 30, Currency: "chaos"}}, FetchedAt: old}
+	if err := repo.InsertTradeLookup(context.Background(), scope, row, "user"); err != nil {
+		t.Fatalf("InsertTradeLookup: %v", err)
+	}
+
+	got := lookupsAsOfFor(t, repo, scope, asOf, gem)
+
+	if len(got) != 1 || !got[0].FetchedAt.Equal(old) {
+		t.Fatalf("rows = %+v, want the row fetched 30 days before asOf", got)
+	}
+}
+
+func TestLookupsAsOf_ignoresOtherLeagues(t *testing.T) {
+	pool := tradeIntegrationPool(t)
+	repo := NewRepository(pool)
+	const leagueA, leagueB = "Temp-POE307-own", "Temp-POE307-other"
+	const gem = "POE307 AsOf League Gem"
+	registerTradeLeague(t, pool, leagueA)
+	registerTradeLeague(t, pool, leagueB)
+	cleanupTradeGem(t, pool, gem)
+
+	asOf := time.Date(2099, 3, 1, 0, 0, 0, 0, time.UTC)
+	tA, tB := asOf.Add(-2*time.Hour), asOf.Add(-time.Hour)
+	if err := repo.InsertTradeLookup(context.Background(), league.Historical(leagueA),
+		&TradeLookupResult{Gem: gem, Variant: "20/20", Listings: []TradeListingDetail{{Price: 11, Currency: "chaos"}}, FetchedAt: tA}, "user"); err != nil {
+		t.Fatalf("InsertTradeLookup league A: %v", err)
+	}
+	if err := repo.InsertTradeLookup(context.Background(), league.Historical(leagueB),
+		&TradeLookupResult{Gem: gem, Variant: "20/20", Listings: []TradeListingDetail{{Price: 22, Currency: "chaos"}}, FetchedAt: tB}, "user"); err != nil {
+		t.Fatalf("InsertTradeLookup league B: %v", err)
+	}
+
+	got := lookupsAsOfFor(t, repo, league.Historical(leagueA), asOf, gem)
+
+	if len(got) != 1 || !got[0].FetchedAt.Equal(tA) || got[0].Listings[0].Price != 11 {
+		t.Fatalf("rows = %+v, want only league %q's 11c row at %v", got, leagueA, tA)
+	}
+}

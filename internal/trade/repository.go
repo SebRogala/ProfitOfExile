@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/league"
+	"profitofexile/internal/price/resolve"
 )
 
 // Repository handles trade lookup persistence in TimescaleDB.
@@ -119,4 +121,54 @@ func (r *Repository) LatestLookups(ctx context.Context, scope league.Scope, hour
 	}
 
 	return results, nil
+}
+
+// LookupsAsOf returns the newest stored lookup per gem variant at or before
+// asOf in the scope's league, with no age cap. Only identity, time and the
+// listings are read; malformed listings JSON leaves that row's Listings nil.
+func (r *Repository) LookupsAsOf(ctx context.Context, scope league.Scope, asOf time.Time) ([]TradeLookupResult, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("repo: lookups as of: %w", err)
+	}
+
+	rows, err := r.pool.Query(ctx,
+		`SELECT DISTINCT ON (gem, variant)
+		        time, gem, variant, COALESCE(listings, '[]'::jsonb)
+		 FROM trade_lookups
+		 WHERE league = $1
+		   AND time <= $2
+		 ORDER BY gem, variant, time DESC`,
+		scope.ID(), asOf,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("repo: lookups as of: %w", err)
+	}
+	defer rows.Close()
+
+	var results []TradeLookupResult
+	for rows.Next() {
+		var r TradeLookupResult
+		var listingsJSON []byte
+		if err := rows.Scan(&r.FetchedAt, &r.Gem, &r.Variant, &listingsJSON); err != nil {
+			return nil, fmt.Errorf("repo: lookups as of: %w", err)
+		}
+		if err := json.Unmarshal(listingsJSON, &r.Listings); err != nil {
+			r.Listings = nil
+		}
+		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("repo: lookups as of: %w", err)
+	}
+	return results, nil
+}
+
+// ObservationsAsOf is the trade adapter's read: the stored lookups as of asOf
+// turned into native trade observations for the scope's league.
+func (r *Repository) ObservationsAsOf(ctx context.Context, scope league.Scope, asOf time.Time) ([]resolve.Observation, error) {
+	rows, err := r.LookupsAsOf(ctx, scope, asOf)
+	if err != nil {
+		return nil, err
+	}
+	return Observations(scope.ID(), rows), nil
 }
