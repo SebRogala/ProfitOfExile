@@ -1583,23 +1583,21 @@ pub(crate) mod tests {
     fn missing_read_hotkey_with_boss_loot_capture_on_its_default_falls_back_apart_from_it() {
         let (state, _) = apply_settings_file(
             "read_hotkey_default_on_capture",
-            r#"{"boss_loot":{"captureShortcut":{"key":120,"shift":true,"ctrl":false,"alt":false}}}"#,
+            r#"{"boss_loot":{"captureShortcut":{"key":65,"shift":false,"ctrl":true,"alt":false}}}"#,
         );
-        let read = state.read_hotkey.lock().unwrap().shortcut.clone();
-        let loot = from_state(&state).boss_loot;
-        assert_eq!(loot.capture_shortcut.key, 120);
-        assert_eq!(crate::read_hotkey::apart_from_boss_loot(&read, &loot), Ok(()));
+        let ctrl = |key| crate::read_hotkey::Shortcut { key, shift: false, ctrl: true, alt: false };
+        assert_eq!(from_state(&state).boss_loot.capture_shortcut, ctrl(65));
+        assert_eq!(state.read_hotkey.lock().unwrap().shortcut, ctrl(81));
     }
     #[test]
     fn missing_read_hotkey_with_boss_loot_preview_on_its_default_falls_back_apart_from_it() {
         let (state, _) = apply_settings_file(
             "read_hotkey_default_on_preview",
-            r#"{"boss_loot":{"previewShortcut":{"key":120,"shift":true,"ctrl":false,"alt":false}}}"#,
+            r#"{"boss_loot":{"previewShortcut":{"key":65,"shift":false,"ctrl":true,"alt":false}}}"#,
         );
-        let read = state.read_hotkey.lock().unwrap().shortcut.clone();
-        let loot = from_state(&state).boss_loot;
-        assert_eq!(loot.preview_shortcut.key, 120);
-        assert_eq!(crate::read_hotkey::apart_from_boss_loot(&read, &loot), Ok(()));
+        let ctrl = |key| crate::read_hotkey::Shortcut { key, shift: false, ctrl: true, alt: false };
+        assert_eq!(from_state(&state).boss_loot.preview_shortcut, ctrl(65));
+        assert_eq!(state.read_hotkey.lock().unwrap().shortcut, ctrl(81));
     }
 
     /// The GPU-free flag has no `AppState` owner, so an unrelated save rebuilt
