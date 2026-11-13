@@ -28,6 +28,7 @@
 		LOOT_WINDOW_LABEL,
 		MERCENARY_MODULE_ID,
 		MERCENARY_WINDOW_LABEL,
+		PROMPT_WINDOW_LABEL,
 		TEMPLE_MODULE_ID,
 		TEMPLE_WINDOW_LABEL
 	} from '$lib/overlay/manager';
@@ -147,6 +148,11 @@
 		{
 			label: LOOT_WINDOW_LABEL, moduleId: LOOT_MODULE_ID,
 			granted: () => bossLootGranted, enabled: () => ssot.modules[LOOT_MODULE_ID], debug: () => false
+		},
+		// The global read prompt (POE-388) is no module's: every mechanic arms it, and the route draws only while one is armed.
+		{
+			label: PROMPT_WINDOW_LABEL, moduleId: PROMPT_WINDOW_LABEL,
+			granted: () => true, enabled: () => true, debug: () => false
 		}
 	]);
 	const LAB_COMPARATOR_SPEC = WIDGETS.find((spec) => spec.id === 'lab.comparator')!;

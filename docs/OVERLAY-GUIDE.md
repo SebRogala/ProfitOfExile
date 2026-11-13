@@ -18,7 +18,8 @@ flags and `lab_overlays_enabled` documented here are NOT modules.
 1. **Capabilities:** every overlay label must appear in
    `desktop/src-tauri/capabilities/default.json`. Missing labels make Tauri APIs
    unavailable to that window. The bare `overlay` label in that list is a legacy
-   entry: nothing builds a window under it (checked 2026-09-12).
+   entry: nothing builds a window under it (checked 2026-09-12). The global
+   read prompt window `prompt` (POE-388) is listed there too.
 2. **Physical persistence:** `outerPosition()` and `outerSize()` produce physical
    coordinates. Widget placements persist physical, window-relative geometry;
    OCR previews apply exact `PhysicalPosition`/`PhysicalSize` after construction.
@@ -38,7 +39,8 @@ flags and `lab_overlays_enabled` documented here are NOT modules.
    `Settings.widgets` IS owned by an `AppState` mutex, so it travels through
    `from_state`, and carrying the file's copy forward would undo the write
    `set_widget_geometry` just made. `settings/mod.rs` has a test that fails if it is
-   ever added there.
+   ever added there. The read prompt's `prompt.read` placement is such a
+   widget row; its window has no persisted field of its own.
 6. **Error visibility:** log failed invoke, window, and event operations. Do not
    silently swallow failures in overlay paths.
 
@@ -169,9 +171,19 @@ always-on-top window. The flag is not quite the whole desired state for a
 window with WIDGETS: a live config session is ORed into it so the user can
 arrange positions with the module off (the ordering contract below), which is
 the one thing that raises such a window without any module work running. The
-temple, merc, and lab windows follow the Rust focus poller's
+temple, merc, lab and prompt windows follow the Rust focus poller's
 game-focus show/hide behavior, and appear in `set_debug_mode`'s force-show
-branch. The lab widget window is governed by `lab_overlays_enabled`; its compass, map
+branch.
+
+The read prompt (`prompt`, POE-388) is the one APP-LEVEL widget window
+([ADR-021](adr/021-a-module-draws-one-window-on-the-game-monitor-and-widgets-inside-it.md)
+amendment): no module flag governs it, so its `createModuleWindows` row is
+always granted and enabled, and its route draws the single `prompt.read`
+widget only while `ssot.readPrompt.mechanic` is set. The text is exactly
+`Detected <mechanic> - press <key> to read` with the bound read key. It is
+display only, and it is in `capture.rs` `EXCLUDED_WHILE_GRABBING`
+([ADR-023](adr/023-a-window-excluded-from-the-grab-may-cover-what-its-module-reads.md)
+amendment), so it is never in a read frame. The lab widget window is governed by `lab_overlays_enabled`; its compass, map
 and timer widgets share one lab nav session owned by the lab window page, while
 each keeps its own in-lab visibility rule; the comparator draws on gem results
 whether or not the player is in the lab.
@@ -388,13 +400,8 @@ the timer, compass, path-strip and comparator widgets.
   Stone of Passage would buy in the same purple at half opacity and a radius
   between the two, and BOTH kills marked by a cyan glyph on their own architect
   icon spots inside the room — the block the advisor did NOT choose at a quarter
-  opacity (POE-248); and `temple.waiting` — the WAITING NOTICE (POE-249), one
-  line saying the module heard Alva's start phrase and the layout sheet is not
-  up yet. It is PLACEABLE like the door — the ordinary pair of Settings
-  controls, a Show checkbox and a persisted rectangle — and it ships top-centre,
-  (830, 16) 260×40 on a 1920-wide host, which is measured clear of the panel's
-  OCR crop rather than eye-level. It is the only surface that exists before
-  anything has been read, and it is gone the moment there is a board.
+  opacity (POE-248). POE-249's `temple.waiting` notice moved into the global
+  `prompt.read` widget (POE-388); its stored row is inert.
   `mercenary.verdict` — the MERC VERDICT widget, user-placed and persisted in
   `Settings.widgets`, with its height following content and its width offered
   by `resizable: 'width'`.
@@ -506,9 +513,9 @@ the timer, compass, path-strip and comparator widgets.
   right for a widget whose default has nothing to do with the game; the temple's
   door diamond is the other case — it ships "beside the game's own diamond, below
   the panel, and clear of every read region", which depends on a board the host
-  knows nothing about. Since POE-249 the temple's hook is a DISPATCHER
-  (`widgetDefaults` over `doorDefaults` and `waitingDefaults`), because the
-  waiting notice wants its own game-aware default too. The hook answers with a
+  knows nothing about. Since POE-388 the temple's hook is `doorDefaults` alone
+  (the waiting notice it also dispatched for moved to `prompt.read`, which
+  needs no game-aware default). The hook answers with a
   replacement `defaults` and is used
   exactly where `spec.defaults` would have been, for an unstored widget's position
   and for what config mode seeds one at. A STORED placement outranks it: the user's
@@ -563,8 +570,7 @@ the timer, compass, path-strip and comparator widgets.
   position (top centre) is a function of the HOST alone, so an empty obstacle list
   did not withhold it, it PLACED it, straight over the panel crop the next tick
   reads. A `null` anchor covering the same case in the retired callout was a
-  coincidence, not the rule — and the waiting notice, which wants the same top
-  centre for the same host-only reason, states it explicitly. What the rule does NOT bind is a rectangle the USER owns — a
+  coincidence, not the rule. What the rule does NOT bind is a rectangle the USER owns — a
   stored placement, or the registry default `placementFor` falls back to. Those
   are visible, attributable and one drag from fixed; see ADR-019's carve-out.
 - `WidgetHost.svelte` owns placement and hot rects. Its forwarded action
@@ -1283,33 +1289,28 @@ touching the named path.
   in Settings → Overlay Positions → Temple. The whole monitor must dim, and the
   bar must appear next to the widgets with 14 px copy and buttons at least 32 px
   tall. The anchor is the BOUNDING BOX of every widget being arranged, not one
-  of them, and config mode arranges only the PLACEABLE widgets — since POE-249
-  that is two, `temple.door` at y = 300 and `temple.waiting` at y = 16. The
-  cluster's top edge is therefore 16 px from the top of the monitor, a bar plus
-  the 16 px gap does not fit above it, and on shipped defaults the bar sits
-  BELOW the cluster and centred on the UNION of the two — the second branch of
-  `configBarAnchor`, at {405, 531} on 1920×1080 for the 320×56 bar the suite
-  measures. The union spans x 40…1090, so that centre is in the empty span
-  BETWEEN the two widgets rather than beside either of them. (This item said
-  ABOVE between POE-244 and POE-249, when the door was the only placeable
-  widget, and BELOW before that, against POE-245's registry where
+  of them, and config mode arranges only the PLACEABLE widgets — since POE-388
+  that is `temple.door` alone, at (40, 300) 190×215. A bar plus the 16 px gap
+  fits above it, so on shipped defaults the bar sits ABOVE the door at
+  y = 228, centred on it and clamped to the left edge: {0, 228} on 1920×1080
+  for the 320×56 bar the suite measures. (This item said BELOW between POE-249
+  and POE-388, when `temple.waiting` shipped at y = 16, ABOVE between POE-244
+  and POE-249, and BELOW before that, against POE-245's registry where
   `temple.advice` shipped at y = 40. The branch follows whatever is nearest the
   top edge, so a widget added or moved there inverts it again:
   read `configBarAnchor` and the shipped-defaults case in
   `widget-config-bar.test.ts`, not this paragraph.)
 
-  To flip it, drag the WAITING NOTICE down out of the top band — past the door,
-  anywhere below y = 300 — and leave the door where it is, then press Configure
-  again: the cluster's top is now the door's y = 300, which leaves room for a
-  bar plus the gap, and the bar must sit ABOVE the cluster. Drag the notice back
-  to the top and re-enter: BELOW again. Then drag a widget to the bottom-right
-  corner and re-enter — the bar must stay fully on screen, Save included.
+  To flip it, drag the door to the top of the monitor (above y = 72) and press
+  Configure again: a bar plus the gap no longer fits above it, and the bar
+  must sit BELOW the door. Drag it back down and re-enter: ABOVE again. Then
+  drag it to the bottom-right corner and re-enter — the bar must stay fully on
+  screen, Save included.
 
-  **Owner judgement, not arithmetic**: with the shipped pair the bar lands in
-  the gap between the two widgets rather than beside one of them. The numbers
-  are pinned by the test; what this item asks is whether that READS as the
-  config bar for both widgets when it is on screen over the game, or whether it
-  looks like it belongs to neither. If it reads badly the fix is a product
+  **Owner judgement, not arithmetic**: with the shipped door the bar lands
+  above it, flush with the left edge. The numbers are pinned by the test; what
+  this item asks is whether that READS as the door's config bar when it is on
+  screen over the game. If it reads badly the fix is a product
   decision about the shipped defaults, not a change to `configBarAnchor`.
 - **A monitor change that arrives mid-build** (POE-245): with the temple module
   already on in settings, start the app with PoE running on a non-primary
@@ -1553,22 +1554,21 @@ touching the named path.
   being re-derived on the wrong signal. In the same pass, mistype a cell
   (`abc`), leave it, and click a header: the red mark and its reason must still
   be on THAT cell and no other.
-- **The waiting notice, from Alva's start line to the sheet** (POE-249): with the
-  temple module on and the game focused, click Alva and open the incursion
-  portal WITHOUT opening the layout sheet. `app.log` must carry
-  `Temple: capture armed by Alva's start line — looking for the layout panel`
-  and `Temple: waiting for the temple panel (Alva's start line)`, and the notice
-  must be on screen at the TOP CENTRE (or wherever it was dragged). Then open
-  the sheet: the notice must go the moment the panel is sighted, on the same
-  tick the board appears. The inverse is the half that is easy to get wrong —
-  hear a start line with the sheet ALREADY open (open it, then take the next
-  incursion) and the notice must NOT blink over the board for a tick;
-  `overlayShowsWaiting`'s second clause is what stops it, and a blink means the
-  route is reading `waitingForPanel` alone.
-- **Any other Alva line ends the cycle** (POE-249): with the notice up, let Alva
+- **The read prompt, per mechanic** (POE-388): with the game focused, trigger
+  each mechanic once — Alva's start line (or entering the temple), an Izaro kill
+  or a Divine Font opening, and a mercenary Inspect line. Each must show one
+  line at the TOP CENTRE (or wherever it was dragged), exactly `Detected
+  Incursion - press <key> to read`, `Detected Divine Font - …` or `Detected
+  Mercenary - …`, with `<key>` the bound read key. Rebind the read key and the
+  shown text must follow. A completed read or the context's end (zone change,
+  Alva's END line) must take it down. Then take a debug frame dump while the
+  prompt is up: the prompt must be ABSENT from the dumped frame (it is in
+  `EXCLUDED_WHILE_GRABBING`). No capture may happen until the read key is
+  pressed.
+- **Any other Alva line ends the cycle** (POE-249): with the prompt up, let Alva
   say anything else — `Good job.` at the end of the run is the ordinary case.
   `app.log` must carry `Temple: cycle ended — Alva spoke again` (or
-  `— the zone changed` when a portal or a death got there first) and the notice
+  `— the zone changed` when a portal or a death got there first) and the prompt
   must go down. The room widget goes down on the same line only if it is stamped
   AFTER the read (`Temple: advice cleared — Alva spoke again (the room widget is
   down)`): the line that ARMED a read is spoken seconds before it, and
@@ -1716,16 +1716,9 @@ touching the named path.
   toggled off on the same board — the room title, both architect blocks, the
   incursion count, `current`, `doors` and `unknownRooms` must be identical. Any
   difference is a surface sitting on a crop, and the first suspects are an offer
-  box and a room widget the user has dragged onto a plate. The WAITING NOTICE is
-  not on this list and cannot be got onto it by hand: `overlayShowsWaiting` and
-  the boxes' `overlayShowsBoard` are exact complements, so the notice is off the
-  screen for every frame a board is up, and a reopen answers `Reshown`, which
-  clears the wait. Its one real hazard — the notice inside the frame the FIRST
-  read of a cycle grabs, in the window before the `Anchored` publish — is
-  unreachable from this procedure, and what holds it is
-  `waitingDefaultPlacement`'s `avoidRects` plus the measured 41 px of clearance
-  to the panel crop, not this check.
-  `avoidRects` cannot protect the second one —
+  box and a room widget the user has dragged onto a plate. The READ PROMPT is
+  not on this list: its window is excluded from every grab (POE-388, ADR-023).
+  `avoidRects` cannot protect the room widget —
   once the user places the widget it goes where they put it — so a difference
   that only appears after a drag is the user's placement and not a defect.
 - **The merc widget is OUT of the reader's grab and IN the player's screenshot**
@@ -1895,11 +1888,11 @@ touching the named path.
   have moved up or left. Verify with the Debug-capture diff below rather than by
   eye: the panel's title and both architect blocks must still read.
 - **The Show checkbox reaches the anchored widget** (POE-244, retargeted in
-  POE-249): Settings → Overlay Positions → Temple lists all THREE widgets. The
-  offer boxes' row (`temple.offers`) shows `placed by the game` where the door
-  diamond and the waiting notice show rectangles, and clearing its Show toggle
-  must take BOTH boxes off the screen while leaving the room widget and the
-  notice up. A row that is missing, or a toggle that does nothing, is
+  POE-249): Settings → Overlay Positions → Temple lists both widgets (POE-388
+  moved the waiting notice to Read prompt). The offer boxes' row
+  (`temple.offers`) shows `placed by the game` where the door diamond shows a
+  rectangle, and clearing its Show toggle must take BOTH boxes off the screen
+  while leaving the room widget up. A row that is missing, or a toggle that does nothing, is
   the regression: an anchored widget with no switch is the only overlay surface
   the user cannot turn off. A machine that had switched POE-244's CALLOUT off
   sees the boxes ON — that stored row is inert now, `visible` included — and

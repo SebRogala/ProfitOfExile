@@ -1,7 +1,7 @@
 /**
  * What Settings → Overlay Positions actually lists (POE-226).
  *
- * It is four groups — Lab, Merc, Temple, Boss loot — because each overlay is a single
+ * It is five groups — Lab, Merc, Temple, Boss loot, Read prompt — because each overlay is a single
  * fullscreen canvas with WIDGETS inside it (POE-225), and it is arranged with
  * one in-window config session.
  *
@@ -14,7 +14,13 @@
  *
  * The Lab comparator is a widget row alongside the other Lab widgets.
  */
-import { LAB_WINDOW_LABEL, LOOT_WINDOW_LABEL, MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
+import {
+	LAB_WINDOW_LABEL,
+	LOOT_WINDOW_LABEL,
+	MERCENARY_WINDOW_LABEL,
+	PROMPT_WINDOW_LABEL,
+	TEMPLE_WINDOW_LABEL
+} from '../manager';
 import type { WidgetGeometry } from './widget-geometry';
 import { anchoredWidgetsFor, placeableWidgetsFor, type WidgetSpec } from './widget-registry';
 
@@ -88,7 +94,8 @@ interface GroupSpec {
  * and a device without the `merc` feature never sees that module (POE-203), so
  * the whole group is left out rather than disabled. Temple's overlay is the
  * monitor and has no persisted rect of its own (POE-225 D8), so everything under
- * that heading is a widget.
+ * that heading is a widget. Read prompt is the app-level prompt window
+ * (POE-388), ungated because every mechanic arms it.
  */
 const GROUPS: readonly GroupSpec[] = [
 	{
@@ -114,6 +121,12 @@ const GROUPS: readonly GroupSpec[] = [
 		heading: 'Boss loot',
 		grant: 'beta',
 		module: LOOT_WINDOW_LABEL
+	},
+	{
+		id: 'prompt',
+		heading: 'Read prompt',
+		grant: null,
+		module: PROMPT_WINDOW_LABEL
 	}
 ];
 

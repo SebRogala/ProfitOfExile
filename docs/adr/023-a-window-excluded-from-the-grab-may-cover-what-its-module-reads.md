@@ -152,3 +152,13 @@ grabs retain both surfaces. Linux tests and Windows target checks do not prove
 Windows capture behavior; grab exclusion and ordinary-screenshot inclusion are
 WI-10 runtime evidence. Focus-list wiring and overlay count formatting are
 assigned to WI-9 by plan amendment A3.
+
+## Amendment: the read prompt window is excluded (2026-11-13)
+
+POE-388 adds `prompt` to `EXCLUDED_WHILE_GRABBING`. The read prompt is up
+exactly when a read key press is expected, and it may sit over any module's
+read region, so it is kept out of the grab rather than placed clear of every
+region. Its placement therefore carries no read-region clearance guard. As
+with the other members, Linux tests do not prove the Windows behavior; the
+OVERLAY-GUIDE smoke item "The read prompt, per mechanic" checks that the
+prompt is absent from a debug frame dump.

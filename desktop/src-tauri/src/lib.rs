@@ -1484,6 +1484,12 @@ fn set_debug_mode(app: AppHandle, on: bool) {
                 log::warn!("Failed to force-show mercenary: {}", e);
             }
         }
+        // The read prompt (POE-388) is hidden by the same focus poller.
+        if let Some(win) = app.get_webview_window("prompt") {
+            if let Err(e) = win.show() {
+                log::warn!("Failed to force-show prompt: {}", e);
+            }
+        }
         log::info!("Debug mode ON — overlays force-shown");
     } else {
         log::info!("Debug mode OFF");

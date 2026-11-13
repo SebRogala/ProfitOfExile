@@ -70,6 +70,16 @@ export const MERCENARY_WINDOW_LABEL = 'mercenary';
  */
 export const MERCENARY_MODULE_ID = 'mercenary';
 
+/**
+ * The global read prompt's WINDOW LABEL (POE-388, ADR-021 amendment).
+ *
+ * App-level rather than a module's: the prompt names whichever mechanic
+ * Client.txt armed, so no module window owns it. Listed in
+ * `capabilities/default.json`, the focus poller's list and `capture.rs`
+ * `EXCLUDED_WHILE_GRABBING`.
+ */
+export const PROMPT_WINDOW_LABEL = 'prompt';
+
 /** Native work identity and widget-window identity deliberately differ. */
 export const LOOT_MODULE_ID = 'boss_loot';
 export const LOOT_WINDOW_LABEL = 'loot';

@@ -108,17 +108,12 @@ export interface WidgetSpec {
 /**
  * Every widget every module declares.
  *
- * The temple's three are POE-244's rebuild plus POE-249's notice, the Merc
- * verdict is POE-232's widget migration, and the Lab timer is POE-231's first
- * lab-window widget. Each answers
- * a different question the player has at a different moment of one incursion
- * cycle, which is why they are three widgets and not three lines in one box:
+ * The temple's two are POE-244's rebuild, the Merc verdict is POE-232's
+ * widget migration, the Lab timer is POE-231's first lab-window widget, and
+ * `prompt.read` is POE-388's global read prompt. The temple's two answer
+ * different questions at different moments of one incursion cycle, which is
+ * why they are two widgets and not two lines in one box:
  *
- * - `temple.waiting` (POE-249) says the module HEARD Alva and is waiting for
- *   the layout panel. It is the only surface that exists before there is
- *   anything read — the answer to "is this thing on?" while the sheet is still
- *   shut — and it is gone the moment there is a board to look at
- *   (`overlayShowsWaiting`). Placed by the USER.
  * - `temple.offers` is the pair of offer boxes (POE-249): both architect
  *   blocks, stacked in the sheet's left margin, with the advisor's pick
  *   framed in cyan — which architect to click and what taking either one
@@ -147,6 +142,10 @@ export interface WidgetSpec {
  * writes `temple.offers`'s own row, and a machine that had switched the callout
  * off sees the offer boxes on, which is the honest answer for a surface that
  * did not exist when that switch was flipped.
+ *
+ * `temple.waiting` — POE-249's "waiting for the temple panel" notice — moved
+ * into the global `prompt.read` (POE-388) and its stored row goes inert the
+ * same way: a user's temple placement does not carry over to the prompt.
  *
  * **The order of this list is the order Settings draws the rows in**, within
  * each kind: `widgetsFor` preserves it, and `overlayGroups` lists the placeable
@@ -224,51 +223,6 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		resizable: true
 	},
 	{
-		id: 'temple.waiting',
-		module: 'temple',
-		label: 'Temple waiting notice',
-		// TOP-CENTRE on a 1920-wide host (830 = 960 − 260/2), and deliberately
-		// not screen-centre, which the owner asked for: at 1920x1080 the middle
-		// of the screen is on plates C1/D1/D2, and a box there is OCR input the
-		// app wrote itself (ADR-019). Top-centre is measured clear instead.
-		//
-		// MEASURED, on the ONE full-screen capture this repository holds
-		// (`screen-live-1920x1080.png`, Entrance centre (960, 713) at scale
-		// 1.0): the crop this has to miss is `panel_rect` — `origin.x +
-		// 171·scale`, not the panel's border box — which starts at x 1131, and
-		// a 260 px box centred on a 1920-wide host ends at 1090. That 41 px is
-		// the clearance any decision to widen this box is budgeted against.
-		//
-		// NOT measured, and this comment used to claim otherwise: the 27 px and
-		// 36 px clearances it quoted for "the 1374 and 1539 captures" were
-		// DERIVED at reference scale from a synthetic origin, not read off a
-		// monitor. `board-ref-1374.png` (1374×542) and `board-live-1539.png`
-		// (1539×613) are BOARD CROPS rather than screens — there is no second
-		// screen width in this repository — and the 844 those figures started
-		// from is `673 + 171`, the unit tests' own origin. A second row here
-		// needs a second real capture.
-		//
-		// The DRAWN box is SMALLER than this rectangle, deliberately. The widget
-		// is not resizable, so `placementFor` returns no width and the component
-		// sizes itself to its one line — on the order of 212×31 CSS px at 14 px
-		// type, drawing 830…1042 and centred nearer 936 than 960. Oversizing is
-		// the SAFE direction: these numbers are what `waitingDefaultPlacement`
-		// hands `avoidRects`, so a box declared wider than the ink keeps MORE
-		// margin from the crop than the notice needs. Do not "fix" the 260 down
-		// to the measured text width; that spends the margin.
-		//
-		// It is one drag from the centre if the player wants it there, and that
-		// drag is then their own placement.
-		//
-		// The shipped position is also the LAST RESORT here, the same as the
-		// door's: `defaultsFor` in the temple route offers `waitingDefaultPlacement`
-		// against the last board's read regions whenever there is one, and this
-		// fixed rectangle applies when there is not — which is the cold start
-		// this widget exists for.
-		defaults: { x: 830, y: 16, w: 260, h: 40 },
-		resizable: false
-	},
-	{
 		id: 'mercenary.verdict',
 		module: 'mercenary',
 		label: 'Merc Verdict',
@@ -322,11 +276,23 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// config-mode seed: with `derivedDefaultOnly` an unconfigured stack is
 		// never drawn here in play. `w` is the stack's drawn width; `h` is above
 		// the tallest stack (exceptional ≈160 + 6 + transfigure ≈80 = 246,
-		// prototype sizes), oversized on purpose — the safe direction, as the
-		// waiting notice's comment above explains. Content-sized, display-only.
+		// prototype sizes), oversized on purpose — a declared box wider than
+		// the ink keeps more margin from a read region. Content-sized,
+		// display-only.
 		defaults: { x: 976, y: 220, w: 260, h: 260 },
 		resizable: false,
 		derivedDefaultOnly: true
+	},
+	{
+		id: 'prompt.read',
+		module: 'prompt',
+		label: 'Read prompt',
+		// Top-centre on a 1920-wide host (830 = 960 − 260/2), the rectangle the
+		// temple waiting notice shipped at. One line of text, so not resizable.
+		// The `prompt` window is excluded from the grab (ADR-023), so this
+		// position needs no clearance from any module's read regions.
+		defaults: { x: 830, y: 16, w: 260, h: 40 },
+		resizable: false
 	}
 ];
 

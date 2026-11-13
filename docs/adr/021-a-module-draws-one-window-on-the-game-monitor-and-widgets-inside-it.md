@@ -314,3 +314,14 @@ reasoned from the code; the acceptance is `docs/OVERLAY-GUIDE.md`'s "Windows
 smoke — the overlay-widget migration (POE-231/POE-232)", which is a whole further list of never-run checks, beside the three individual items the
 Status names. The two pixel numbers are
 derived from the CSS box model, not measured in game.
+
+## Amendment: one app-level read prompt window (2026-11-13)
+
+POE-388 adds one widget window that belongs to no module: `prompt`, route
+`/overlay/prompt`, with the single placeable widget `prompt.read`. The prompt
+names whichever mechanic Client.txt armed (Divine Font, Incursion,
+Mercenary), so no module window can own it. Its `createModuleWindows` row is
+always granted and enabled; the route draws the widget only while
+`ssot.readPrompt.mechanic` is set. It follows game focus like the module
+windows and is force-shown by debug mode. It replaces the temple window's
+`temple.waiting` notice, whose stored row goes inert.

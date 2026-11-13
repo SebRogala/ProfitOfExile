@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import hostSource from './WidgetHost.svelte?raw';
-import { MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
+import { MERCENARY_WINDOW_LABEL, PROMPT_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
 import { FULL_BOX_BUDGET_CSS, FULL_BOX_MAX_CSS } from '../../temple/overlay-geometry';
 import {
 	WIDGETS,
@@ -45,13 +45,13 @@ describe('every declared widget', () => {
 			'loot.capture',
 			'temple.offers',
 			'temple.door',
-			'temple.waiting',
 			'mercenary.verdict',
 			'lab.comparator',
 			'lab.compass',
 			'lab.pathstrip',
 			'lab.timer',
-			'lab.fontalerts'
+			'lab.fontalerts',
+			'prompt.read'
 		]);
 	});
 
@@ -146,29 +146,41 @@ describe('the lab module', () => {
 	});
 });
 
+describe('the read prompt module', () => {
+	// One line of fixed text in its own app-level window (POE-388): resizing it
+	// would only crop its sentence, and the user places it.
+	it('declares the read prompt as a placeable, content-sized widget under its window label', () => {
+		expect(widgetsFor(PROMPT_WINDOW_LABEL)).toEqual([
+			expect.objectContaining({
+				id: 'prompt.read',
+				module: 'prompt',
+				label: 'Read prompt',
+				defaults: { x: 830, y: 16, w: 260, h: 40 },
+				resizable: false
+			})
+		]);
+		expect(placeableWidgetsFor(PROMPT_WINDOW_LABEL).map((widget) => widget.id)).toEqual(['prompt.read']);
+	});
+});
+
 describe('the temple module', () => {
-	it('declares the offer boxes, the door diamond and the waiting notice under its window label', () => {
+	it('declares the offer boxes and the door diamond under its window label, without the waiting notice', () => {
 		expect(widgetsFor(TEMPLE_WINDOW_LABEL).map((widget) => widget.id)).toEqual([
 			'temple.offers',
-			'temple.door',
-			'temple.waiting'
+			'temple.door'
 		]);
 	});
 
 	// The offer boxes are placed by the module against the game, so a resize
 	// handle on them would offer a size `placementFor` never applies and a drag
-	// the next read would undo. The waiting notice is placed by the user but is ONE LINE
-	// of fixed text — there is no size to choose, and a resizable widget the
-	// user has dragged an edge on is drawn at the stored size ever after
-	// (`placementFor`), which for this one is a box cropping its own sentence.
-	// The door diamond is the only one with a size worth choosing.
+	// the next read would undo. The door diamond is the one with a size worth
+	// choosing.
 	it('offers resize handles on the door diamond alone', () => {
 		expect(
 			widgetsFor(TEMPLE_WINDOW_LABEL).map((widget) => [widget.id, widget.resizable])
 		).toEqual([
 			['temple.offers', false],
-			['temple.door', true],
-			['temple.waiting', false]
+			['temple.door', true]
 		]);
 	});
 
@@ -178,7 +190,7 @@ describe('the temple module', () => {
 	// point: the only other assertion on `maxWidth` in this suite is inside a
 	// loop that recomputes the rule as an expression, which pins the two sides
 	// together without ever saying what either is.
-	it('caps the door diamond at its shipped width and the notice at nothing', () => {
+	it('caps the door diamond at its shipped width', () => {
 		const host = { width: 1920, height: 1080 };
 		expect(
 			placeableWidgetsFor(TEMPLE_WINDOW_LABEL).map((spec) => [
@@ -187,10 +199,7 @@ describe('the temple module', () => {
 				// never dragged either widget gets.
 				placementFor(spec, undefined, 1, host)?.maxWidth
 			])
-		).toEqual([
-			['temple.door', 190],
-			['temple.waiting', null]
-		]);
+		).toEqual([['temple.door', 190]]);
 	});
 
 	// The one shipped number on the anchored row that is not free to be
@@ -231,10 +240,7 @@ describe('the widgets a host actually places', () => {
 	// that matters now that both halves are non-empty: a widget in neither is a
 	// widget nothing draws, and one in both is drawn twice.
 	it('splits the module\'s widgets into placed and anchored, with none in both', () => {
-		expect(placeableWidgetsFor(TEMPLE_WINDOW_LABEL).map((w) => w.id)).toEqual([
-			'temple.door',
-			'temple.waiting'
-		]);
+		expect(placeableWidgetsFor(TEMPLE_WINDOW_LABEL).map((w) => w.id)).toEqual(['temple.door']);
 		expect(anchoredWidgetsFor(TEMPLE_WINDOW_LABEL).map((w) => w.id)).toEqual(['temple.offers']);
 		expect(
 			placeableWidgetsFor(TEMPLE_WINDOW_LABEL).length +
@@ -253,8 +259,9 @@ describe('the widgets a host actually places', () => {
 });
 
 describe('a placement stored for a widget the registry no longer declares', () => {
-	// TWO of them now. POE-244 retired `temple.board`; POE-249 retired
-	// `temple.advice`, whose id the offer boxes did not inherit. Both rows stay
+	// THREE of them now. POE-244 retired `temple.board`; POE-249 retired
+	// `temple.advice`, whose id the offer boxes did not inherit; POE-388 moved
+	// `temple.waiting` into the global `prompt.read`. All three rows stay
 	// in `Settings.widgets` on every machine that ever arranged the widgets —
 	// Rust does not validate ids against the frontend registry
 	// (`set_widget_geometry` says why), and `get_widget_geometries` returns
@@ -270,7 +277,7 @@ describe('a placement stored for a widget the registry no longer declares', () =
 	// the checkbox now writes `temple.offers`'s own row, and a machine that had
 	// switched the callout off sees the offer boxes ON.
 	const host = { width: 1920, height: 1080 };
-	/** A map with EVERY declared placeable widget's row in it as well as the two
+	/** A map with EVERY declared placeable widget's row in it as well as the three
 	 *  retired ones, so the lookup being exercised is a real one. The previous
 	 *  version of this test passed `stale[spec.id]`, which is `undefined` for
 	 *  every declared spec — it compared `placementFor(spec, undefined)` with
@@ -288,8 +295,7 @@ describe('a placement stored for a widget the registry no longer declares', () =
 	 *  back out of `stored`, so a lookup that returned the same row for every
 	 *  spec (or the retired one) fails here rather than passing by symmetry. */
 	const origins: Record<string, { x: number; y: number }> = {
-		'temple.door': { x: 900, y: 700 },
-		'temple.waiting': { x: 120, y: 60 }
+		'temple.door': { x: 900, y: 700 }
 	};
 
 	it('leaves every declared widget on its own stored placement', () => {
@@ -320,6 +326,7 @@ describe('a placement stored for a widget the registry no longer declares', () =
 		const withoutStale = { ...stored };
 		delete withoutStale['temple.board'];
 		delete withoutStale['temple.advice'];
+		delete withoutStale['temple.waiting'];
 		for (const spec of placeableWidgetsFor(TEMPLE_WINDOW_LABEL)) {
 			expect(placementFor(spec, withStale[spec.id], 1, host)).toEqual(
 				placementFor(spec, withoutStale[spec.id], 1, host)
@@ -328,7 +335,7 @@ describe('a placement stored for a widget the registry no longer declares', () =
 	});
 
 	it('is not something any surface can look up, because nothing declares it', () => {
-		for (const retired of ['temple.board', 'temple.advice']) {
+		for (const retired of ['temple.board', 'temple.advice', 'temple.waiting']) {
 			expect(WIDGETS.map((widget) => widget.id)).not.toContain(retired);
 			// Both lists, because the two retired ids were of different kinds:
 			// the board was placeable and the callout was anchored, so a spec

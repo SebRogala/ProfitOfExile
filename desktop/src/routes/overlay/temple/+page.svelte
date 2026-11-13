@@ -1,20 +1,15 @@
 <script lang="ts">
 	/**
-	 * Temple builder overlay — a waiting notice, two offer boxes and a room
-	 * widget (POE-244, reworked in POE-248, POE-249).
+	 * Temple builder overlay — two offer boxes and a room widget (POE-244,
+	 * reworked in POE-248, POE-249). The "waiting for the temple panel" notice
+	 * moved into the global read prompt window in POE-388.
 	 *
 	 * The window is the whole game monitor and click-through everywhere; what
-	 * the player sees is three widgets inside it, and since POE-244 they are of
-	 * the two different kinds the engine supports. Each one answers the question
-	 * the player has at a different point of one incursion cycle, which is why
-	 * they are three surfaces and not three lines in one box.
+	 * the player sees is two widgets inside it, of the two different kinds the
+	 * engine supports. Each one answers the question the player has at a
+	 * different point of one incursion cycle, which is why they are two
+	 * surfaces and not two lines in one box.
 	 *
-	 * - `temple.waiting` is the WAITING NOTICE (POE-249): one line saying the
-	 *   module heard Alva's start phrase and the layout sheet is not up yet. It
-	 *   is the only surface that exists BEFORE there is anything read, and it is
-	 *   gone the moment there is a board (`overlayShowsWaiting`). USER-PLACED,
-	 *   with a shipped position measured clear of the board's read regions — see
-	 *   `widgetDefaults` below.
 	 * - `temple.offers` is the pair of OFFER BOXES (POE-249): one box per
 	 *   architect block, stacked in the sheet's LEFT MARGIN to mirror the side
 	 *   panel's own block order, each carrying what that kill builds, Vertolka's
@@ -95,7 +90,7 @@
 	 * at all is Rust's: the focus poller shows and hides the `temple` window with
 	 * the game. What is left here is the one thing Rust cannot answer — whether
 	 * there is anything worth drawing — and that is `overlayShowsBoard` /
-	 * `doorWidget` / `overlayShowsWaiting`. Those gates live INSIDE the
+	 * `doorWidget`. Those gates live INSIDE the
 	 * snippets and not around `WidgetHost`: a host that is not mounted has no
 	 * `widget-config` listener, so a window flipped into config mode while there
 	 * is no board would be genuinely interactive with no Save and no Cancel on
@@ -104,7 +99,6 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import TempleDoorDiamond from '$lib/temple/TempleDoorDiamond.svelte';
 	import TempleOfferBoxes from '$lib/temple/TempleOfferBoxes.svelte';
-	import TempleWaitingNotice from '$lib/temple/TempleWaitingNotice.svelte';
 	import WidgetHost from '$lib/overlay/widgets/WidgetHost.svelte';
 	import WidgetActions from '$lib/overlay/widgets/WidgetActions.svelte';
 	import { TEMPLE_WINDOW_LABEL } from '$lib/overlay/manager';
@@ -116,8 +110,7 @@
 		captureToCss,
 		doorDefaultPlacement,
 		neverCoverRects,
-		roiRect,
-		waitingDefaultPlacement
+		roiRect
 	} from '$lib/temple/overlay-geometry';
 	import {
 		chosenOffer,
@@ -127,7 +120,6 @@
 		leaveMapBanner,
 		offerBoxes,
 		overlayShowsBoard,
-		overlayShowsWaiting,
 		recommendedExit,
 		suggestedDoors
 	} from '$lib/temple/view';
@@ -179,11 +171,6 @@
 	 *  lives with the INCURSION. Its `reading…` line is the one status rule on
 	 *  it (POE-276), and `doorWidget` keeps the two apart. */
 	const door = $derived(doorWidget(temple));
-	/** The notice's gate (POE-249): Rust heard a start phrase and there is no
-	 *  board on screen yet. Both halves are `view.ts`'s — Alva can speak over an
-	 *  open sheet, and a notice that blinks over a board the player is reading
-	 *  is the failure POE-246 fixed one layer down. */
-	const waitingVisible = $derived(overlayShowsWaiting(temple));
 	/** One box per architect block the panel printed, in the panel's own order.
 	 *  Empty without advice or without a panel, which is what takes the boxes
 	 *  off screen between the reads of a new cycle. */
@@ -300,60 +287,11 @@
 		return placed === null ? null : { ...spec.defaults, x: placed.x, y: placed.y };
 	}
 
-	/**
-	 * Where the waiting notice ships, for a user who has never placed it
-	 * (POE-249).
-	 *
-	 * Top-centre of the window and clear of every read region, which is the same
-	 * bargain the door's default makes: the registry's fixed rectangle cannot
-	 * know where this screen's panel crop is, so when there IS a board the
-	 * module offers a position measured against it, and when there is not the
-	 * registry number applies.
-	 *
-	 * Null is the ordinary answer here rather than the edge case, and it is the
-	 * DESIGNED cold start. This notice's whole moment is before the first read
-	 * of a cycle: Alva speaks, the sheet is shut, and on a fresh session there
-	 * is no `temple.layout` at all — so there is nothing to place against and
-	 * the shipped rectangle is what draws. That is ADR-019's carve-out, not a
-	 * hole in it: a fixed rectangle the user can see and move is not a placer's
-	 * silent output. Once a board HAS been read this session the host remembers
-	 * the last answer (`lastDefaults`), so the notice keeps a position vetted
-	 * against that screen's crops.
-	 */
-	function waitingDefaults(spec: WidgetSpec, frame: HostFrame): OverlayDefaultGeometry | null {
-		if (spec.id !== 'temple.waiting') return null;
-		const obstacles = neverCoverRects(temple.layout, frame.scaleFactor);
-		// The same rule as the door's, for the same reason: empty is "the layout
-		// is absent or the scale factor has not resolved", never "the screen is
-		// free".
-		if (obstacles.length === 0) return null;
-		const placed = waitingDefaultPlacement({
-			box: { w: spec.defaults.w, h: spec.defaults.h },
-			obstacles,
-			host: frame.host
-		});
-		return placed === null ? null : { ...spec.defaults, x: placed.x, y: placed.y };
-	}
-
-	/**
-	 * The one `defaultsFor` hook the host calls, per widget.
-	 *
-	 * A dispatcher rather than one function with two branches inside it: each
-	 * widget's shipped position is its own argument — the door wants the game's
-	 * diamond, the notice wants the top centre — and each states the empty-set
-	 * rule itself, which is what keeps that rule a property of the function a
-	 * future third widget would be written beside. The anchored offer boxes are
-	 * never asked (`defaultsFor` runs over placed widgets), and an id nothing here
-	 * names answers null, which is "use the registry's number".
-	 */
-	function widgetDefaults(spec: WidgetSpec, frame: HostFrame): OverlayDefaultGeometry | null {
-		return doorDefaults(spec, frame) ?? waitingDefaults(spec, frame);
-	}
 </script>
 
 <WidgetHost
 	module={TEMPLE_WINDOW_LABEL}
-	defaultsFor={widgetDefaults}
+	defaultsFor={doorDefaults}
 >
 	{#snippet content(spec, configMode)}
 		{#if spec.id === 'temple.door'}
@@ -375,13 +313,6 @@
 			{#if debugProbe && door.diamond}
 				<button class="probe" data-hot data-action="hot-probe">hot-rect probe</button>
 			{/if}
-		{:else if spec.id === 'temple.waiting' && waitingVisible}
-			<!-- The one surface that draws before anything has been read
-			     (POE-249). It carries no placement logic of its own: it is a
-			     PLACEABLE widget, so the host puts it where the user did, or
-			     where `waitingDefaults` offered, or where the registry ships
-			     it. -->
-			<TempleWaitingNotice />
 		{:else if configMode}
 			<!-- Nothing to draw. In config mode an unlabelled empty frame is
 			     indistinguishable from a widget that is broken, so the frame

@@ -31,14 +31,11 @@ import {
 	offerStackPlacement,
 	offersCompact,
 	roiRect,
-	sealVisible,
-	waitingDefaultPlacement
+	sealVisible
 } from './overlay-geometry';
 import { latticeEdges, latticePoints } from './view';
 import { rectIsClear } from '$lib/overlay/widgets/widget-avoid';
 import type { WidgetRect } from '$lib/overlay/widgets/widget-geometry';
-import { widgetsFor } from '$lib/overlay/widgets/widget-registry';
-import { TEMPLE_WINDOW_LABEL } from '$lib/overlay/manager';
 import type { CaptureRect, DiamondView, LayoutView, RoiView } from './slice';
 // The room widget's own source. Vite's `?raw`, the mechanism
 // `overlay-defaults.test.ts` documents: one claim below is about a CSS
@@ -57,11 +54,8 @@ const DIAMOND = { x: 600, y: 120, w: 100, h: 100 };
  * of `panel_rect((960, 713), 1.0)` — x0 `origin.x + 171` = 1131, y0 4, x1 1675,
  * y1 458 — and not the panel's border box.
  *
- * One declaration for the two suites that use it: `offerStackPlacement`'s,
- * where it is the first box's fallback top and one of the 42 read regions, and
- * `waitingDefaultPlacement`'s, where it is the crop the shipped notice has to
- * clear. Two copies of one measured rectangle would let one suite go on
- * passing against a number the other had corrected.
+ * Used by `offerStackPlacement`'s suite, where it is the first box's fallback
+ * top and one of the 42 read regions.
  */
 const COMMITTED_PANEL = { x: 1131, y: 4, w: 544, h: 454 };
 
@@ -168,8 +162,8 @@ describe('offerStackPlacement', () => {
 	 * factor 1 — all 42 of them, derived rather than typed in.
 	 *
 	 * The three panel-side rects are `run::panel_rect`, `run::diamond_rect` and
-	 * `run::remaining_rect` at Entrance centre (960, 713): the same panel crop
-	 * `waitingDefaultPlacement`'s suite below measures against, and the budget
+	 * `run::remaining_rect` at Entrance centre (960, 713): the panel crop
+	 * `COMMITTED_PANEL` declares, and the budget
 	 * line `slice.rs`'s own sample prints as `[810, 771, 300, 46]`. The 13
 	 * plates and the 26 corridor patches come off `view.ts`'s lattice — which is
 	 * `lattice.rs`'s table, pinned by its own tests on both sides — with
@@ -349,7 +343,7 @@ describe('offerStackPlacement', () => {
 		// The last rung of the fallback chain, and the only one nothing else
 		// pins: no block to be level with, no panel crop to take the top of, and
 		// no box above to stack under. `BANNER_TOP_CSS` is the same top edge the
-		// leave-the-map banner and the waiting notice ship at, so the boxes
+		// leave-the-map banner ships at, so the boxes
 		// appear where the overlay's other top-of-screen surfaces do rather than
 		// flush against the window's own edge.
 		expect(
@@ -964,83 +958,10 @@ describe('bannerPlacement', () => {
 	});
 });
 
-describe('waitingDefaultPlacement', () => {
-	/** The registry's shipped box for `temple.waiting`, READ OUT OF the registry
-	 *  rather than copied from it. What the route passes is `spec.defaults`, so
-	 *  a literal here would be a second copy of the shipped size — and the
-	 *  clearance case below, which is this suite's only guard on that size
-	 *  growing into the panel's crop, would go on passing against the old
-	 *  numbers while the app shipped the new ones. */
-	const spec = widgetsFor(TEMPLE_WINDOW_LABEL).find((widget) => widget.id === 'temple.waiting');
-	if (!spec) throw new Error('the registry no longer declares temple.waiting');
-	const NOTICE = { w: spec.defaults.w, h: spec.defaults.h };
-	/** Where a box that size WANTS to go — the top centre of the host, which is
-	 *  what the two cases below expect to come back UNTOUCHED. Derived from the
-	 *  registry for the same reason `NOTICE` is. */
-	const WANTED = { x: HOST.width / 2 - NOTICE.w / 2, y: BANNER_TOP_CSS, ...NOTICE };
-
-	it('ships the notice at the top centre of the host when that is clear', () => {
-		// Host centre minus half the box, at `BANNER_TOP_CSS` — 830 on the
-		// shipped 260. The obstacle is a real published rect nowhere near the
-		// top centre (a plate crop, bottom-left): "clear" has to be shown
-		// against a non-empty set, because an EMPTY one is the case below.
-		expect(
-			waitingDefaultPlacement({
-				box: NOTICE,
-				obstacles: [{ x: 200, y: 700, w: 120, h: 60 }],
-				host: HOST
-			})
-		).toEqual(WANTED);
-	});
-
-	it('clears the committed frame\'s panel crop at the shipped width', () => {
-		// The measurement the 260 px default was chosen from (POE-249 A6): a box
-		// that wide centred on this host ends at 1090 and the crop starts at
-		// 1131, so the wanted position stands UNTOUCHED with 41 px to spare.
-		// Both sides come off the registry, so this is the assertion that fails
-		// when the shipped default grows past that margin — the failure that
-		// otherwise happens silently, on screen, inside the module's own read.
-		// (At 400 px wide the wanted rect starts at 760, runs to 1160, and
-		// `avoidRects` slides it left to 731: not `WANTED`, and red here.)
-		expect(
-			waitingDefaultPlacement({ box: NOTICE, obstacles: [COMMITTED_PANEL], host: HOST })
-		).toEqual(WANTED);
-	});
-
-	it('slides a box too wide for that margin off the crop instead of covering it', () => {
-		// 400 px centred runs 760..1160, over a crop that starts at 1131. The
-		// escape is sideways and not upward — the crop reaches y 4, so there is
-		// no room above it — and the answer is flush against its left edge:
-		// 1131 - 400 = 731, at the same top.
-		expect(
-			waitingDefaultPlacement({
-				box: { w: 400, h: 40 },
-				obstacles: [COMMITTED_PANEL],
-				host: HOST
-			})
-		).toEqual({ x: 731, y: BANNER_TOP_CSS, w: 400, h: 40 });
-	});
-
-	it('is null with an empty never-cover set, which is not a free screen', () => {
-		// The same rule its siblings state, and the one this placer needs most:
-		// its wanted position is a function of the HOST alone, so with nothing
-		// passed to `avoidRects` the top centre comes back "clear" — over the
-		// crop the next tick reads. The registry's fixed rectangle is what the
-		// caller falls back to (ADR-019's user-owned carve-out), which is the
-		// cold start this widget exists for.
-		expect(waitingDefaultPlacement({ box: NOTICE, obstacles: [], host: HOST })).toBeNull();
-	});
-
-	it('is null before the box has a size', () => {
-		// Against a real obstacle set, so what is being pinned is the BOX guard
-		// and not the empty-set one: a zero-size rect overlaps nothing, so
-		// without this it would answer the top centre for a widget that has no
-		// width to be centred.
-		expect(
-			waitingDefaultPlacement({ box: { w: 0, h: 0 }, obstacles: [COMMITTED_PANEL], host: HOST })
-		).toBeNull();
-	});
-});
+// `waitingDefaultPlacement`'s suite is retired (POE-388): the temple window no
+// longer draws a waiting notice, and the read prompt that replaced it lives in
+// the `prompt` window, which is excluded from the grab (ADR-023), so no
+// panel-clearance guard carries over to it.
 
 describe('doorDefaultPlacement', () => {
 	it('ships below the panel and in the game diamond\'s own column', () => {

@@ -158,45 +158,24 @@ describe('placing the widget-config bar', () => {
 	 * every rectangle above is hand-built, so the registry could ship a widget
 	 * the bar lands on top of and nothing would say so.
 	 *
-	 * The two placeable temple widgets ship at `temple.door` (40, 300) 190x215
-	 * and `temple.waiting` (830, 16) 260x40, so the cluster is
-	 * 40..1090 x 16..515. There is no room for a bar above y = 16, so the answer
-	 * is branch 2 — BELOW the cluster — at y = 16 + 499 + 16 = 531, centred on
-	 * the union at 40 + 525 - 160 = 405.
+	 * Since POE-388 the only placeable temple widget is `temple.door`, shipped
+	 * at (40, 300) 190x215. A bar plus a gap fits above it, so the answer is
+	 * branch 1 at y = 300 - 16 - 56 = 228; centred on the door it would start at
+	 * x = 40 + 95 - 160 = -25, which `clampToHost` pulls to 0.
 	 *
 	 * Pinned as the ANSWER rather than as the branch: a widget added anywhere
 	 * near the top or the bottom of the screen changes it, and the point is that
 	 * the change is visible here rather than as a Save button under the user's
 	 * hand.
 	 */
-	it('drops below the cluster the shipped temple defaults make', () => {
+	it('sits above the shipped temple defaults, clamped to the left edge', () => {
 		const shipped = placeableWidgetsFor(TEMPLE_WINDOW_LABEL).map((widget) => ({
 			x: widget.defaults.x,
 			y: widget.defaults.y,
 			w: widget.defaults.w,
 			h: widget.defaults.h
 		}));
-		expect(configBarAnchor(shipped, HOST, BAR)).toEqual({ x: 405, y: 531 });
-	});
-
-	/**
-	 * WHICH widget decides that, since the answer above is a property of the
-	 * pair and not of either one. `temple.waiting` ships 16 px from the top of
-	 * the monitor (POE-249) — a bar plus a gap does not fit above it — and the
-	 * door alone would still take branch 1, at 300 - 16 - 56.
-	 */
-	it('takes the space above again once the top widget is out of the cluster', () => {
-		const door = placeableWidgetsFor(TEMPLE_WINDOW_LABEL).find(
-			(widget) => widget.id === 'temple.door'
-		);
-		expect(door).toBeDefined();
-		expect(
-			configBarAnchor(
-				[{ x: door!.defaults.x, y: door!.defaults.y, w: door!.defaults.w, h: door!.defaults.h }],
-				HOST,
-				BAR
-			).y
-		).toBe(228);
+		expect(configBarAnchor(shipped, HOST, BAR)).toEqual({ x: 0, y: 228 });
 	});
 
 	/** Totality, not a frame anyone has seen: the host measures itself in an

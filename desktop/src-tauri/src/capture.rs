@@ -189,7 +189,11 @@ mod platform {
     ///
     /// Labels, not handles: a window that is not built right now is simply
     /// skipped, and one rebuilt later is picked up by the next grab.
-    const EXCLUDED_WHILE_GRABBING: &[&str] = &["mercenary", "overlay-preview", "loot"];
+    ///
+    /// The read prompt (`prompt`, POE-388) is up exactly when a read key press
+    /// is expected, so it is listed rather than placed clear of every module's
+    /// read regions (ADR-023).
+    const EXCLUDED_WHILE_GRABBING: &[&str] = &["mercenary", "overlay-preview", "loot", "prompt"];
 
     /// The affinity held for one grab. `Drop` releases this guard's hold and
     /// the last holder clears it, so an error between `hold` and the end of

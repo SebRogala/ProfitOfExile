@@ -29,7 +29,6 @@ import {
 	offerHeadline,
 	overlayShowsBoard,
 	overlayShowsDoors,
-	overlayShowsWaiting,
 	plateGlyph,
 	convenienceDoor,
 	convenienceNote,
@@ -236,49 +235,6 @@ describe('overlayShowsBoard', () => {
 			'error'
 		] as const) {
 			expect(overlayShowsBoard(status), status).toBe(false);
-		}
-	});
-});
-
-describe('overlayShowsWaiting', () => {
-	/** A slice with Alva's start line heard and nothing read yet. */
-	function waiting(status: TempleStatus) {
-		return { ...templeSliceDefault(), waitingForPanel: true, status };
-	}
-
-	it('shows the notice for every status with no board behind it', () => {
-		// Derived from the two lists rather than transcribed: `off`,
-		// `unavailable` and `error` have no board behind them either, and a
-		// hand-written trio silently stops covering a status added to the wire.
-		// The `off` and `unavailable` rows are truths about THIS pure function
-		// and nothing more — upstream writers make both unreachable on a real
-		// slice (`force_off` clears the flag on every composed snapshot, and a
-		// capture-less module gets `unavailable()`'s `end_cycle` plus
-		// `start_cycle`'s own refusal), which is where that belongs.
-		const noBoard = ALL_STATUSES.filter((s) => !OVERLAY_VISIBLE_STATUSES.includes(s));
-		for (const status of noBoard) {
-			expect(overlayShowsWaiting(waiting(status)), status).toBe(true);
-		}
-	});
-
-	it('never draws the notice over a board', () => {
-		// Alva's start line fires when the PORTAL OPENS, so it can land with the
-		// sheet already on screen and read. Without the second clause the notice
-		// would blink over the board the player is reading.
-		for (const status of ['reading', 'read'] as const) {
-			expect(overlayShowsWaiting(waiting(status)), status).toBe(false);
-		}
-	});
-
-	it('shows nothing while no cycle is waiting, whatever the status', () => {
-		// The flag is the first half of the gate: without it a module that is
-		// merely idle would claim to be waiting for a panel nobody opened. Over
-		// the whole wire vocabulary, because "whatever the status" is the claim.
-		for (const status of ALL_STATUSES) {
-			expect(
-				overlayShowsWaiting({ ...templeSliceDefault(), status }),
-				status
-			).toBe(false);
 		}
 	});
 });
@@ -744,9 +700,9 @@ describe('doorWidget', () => {
 		expect(doorWidget(templeSliceDefault())).toBeNull();
 	});
 
-	it('draws nothing while waiting for the panel — the notice has that moment', () => {
-		// Alva's start line with the sheet not up yet: `TempleWaitingNotice`
-		// speaks, and the door widget hands off from it only at `reading`.
+	it('draws nothing while waiting for the panel — the read prompt has that moment', () => {
+		// Alva's start line with the sheet not up yet: the global read prompt
+		// (POE-388) speaks, and the door widget draws only from `reading`.
 		const waiting = { ...templeSliceDefault(), status: 'idle' as const, waitingForPanel: true };
 		expect(doorWidget(waiting)).toBeNull();
 	});

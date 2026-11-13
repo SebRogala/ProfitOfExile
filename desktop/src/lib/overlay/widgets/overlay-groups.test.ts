@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { canStartConfigure, overlayGroups, widgetGeometryText } from './overlay-groups';
 import { anchoredWidgetsFor, placeableWidgetsFor, type WidgetSpec } from './widget-registry';
-import { LAB_WINDOW_LABEL, MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
+import { LAB_WINDOW_LABEL, MERCENARY_WINDOW_LABEL, PROMPT_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
 
 const ALL_GRANTS = { merc: true, temple: true, beta: true };
 const NO_GRANTS = { merc: false, temple: false, beta: false };
@@ -25,13 +25,20 @@ const FILL: WidgetSpec = {
 const FILL_FIXED: WidgetSpec = { ...FILL, id: 'test.fill-fixed', resizable: false };
 
 describe('the Overlay Positions groups', () => {
-	it('lists Lab, Merc and Temple in that order for a fully granted device', () => {
+	it('lists Lab, Merc, Temple, Boss loot and Read prompt in that order for a fully granted device', () => {
 		expect(overlayGroups(ALL_GRANTS).map((group) => group.heading)).toEqual([
 			'Lab',
 			'Merc',
 			'Temple',
-			'Boss loot'
+			'Boss loot',
+			'Read prompt'
 		]);
+	});
+
+	it('lists the read prompt as a placeable widget under its own window', () => {
+		const prompt = overlayGroups(NO_GRANTS).find((group) => group.heading === 'Read prompt');
+		expect(prompt?.widgets.map((row) => [row.spec.id, row.placeable])).toEqual([['prompt.read', true]]);
+		expect(prompt?.configureModule).toBe(PROMPT_WINDOW_LABEL);
 	});
 
 	it('lists the Lab widgets under the Lab window', () => {
@@ -56,7 +63,7 @@ describe('the Overlay Positions groups', () => {
 
 	it('drops the whole Merc group, widget row included, without the merc feature', () => {
 		const groups = overlayGroups({ merc: false, temple: true, beta: false });
-		expect(groups.map((group) => group.heading)).toEqual(['Lab', 'Temple']);
+		expect(groups.map((group) => group.heading)).toEqual(['Lab', 'Temple', 'Read prompt']);
 		expect(groups.flatMap((group) => group.widgets.map((row) => row.spec.id))).not.toContain(
 			'mercenary.verdict'
 		);
@@ -65,14 +72,15 @@ describe('the Overlay Positions groups', () => {
 	it('drops the whole Temple group without the temple feature', () => {
 		expect(overlayGroups({ merc: true, temple: false, beta: false }).map((group) => group.heading)).toEqual([
 			'Lab',
-			'Merc'
+			'Merc',
+			'Read prompt'
 		]);
 	});
 
-	it('still lists Lab for a device with no features at all', () => {
-		// The lab overlays are ungated; a device that lost every grant must not
-		// lose the section it always had.
-		expect(overlayGroups(NO_GRANTS).map((group) => group.heading)).toEqual(['Lab']);
+	it('still lists Lab and the read prompt for a device with no features at all', () => {
+		// The lab overlays and the read prompt are ungated; a device that lost
+		// every grant must not lose the sections it always had.
+		expect(overlayGroups(NO_GRANTS).map((group) => group.heading)).toEqual(['Lab', 'Read prompt']);
 	});
 
 	it('takes the Temple rows from the widget registry rather than a second list', () => {
@@ -94,7 +102,6 @@ describe('the Overlay Positions groups', () => {
 		const temple = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Temple');
 		expect(temple?.widgets.map((row) => [row.spec.id, row.placeable])).toEqual([
 			['temple.door', true],
-			['temple.waiting', true],
 			['temple.offers', false]
 		]);
 	});
@@ -123,7 +130,8 @@ describe('the Overlay Positions groups', () => {
 			['Lab', LAB_WINDOW_LABEL],
 			['Merc', MERCENARY_WINDOW_LABEL],
 			['Temple', TEMPLE_WINDOW_LABEL],
-			['Boss loot', 'loot']
+			['Boss loot', 'loot'],
+			['Read prompt', PROMPT_WINDOW_LABEL]
 		]);
 	});
 });
@@ -208,7 +216,7 @@ describe('whether another widget Configure session may be started', () => {
 describe('Boss loot placement group', () => {
 	it('omits the whole group without beta', () => {
 		expect(overlayGroups({ merc: true, temple: true, beta: false }).map((group) => group.heading))
-			.toEqual(['Lab', 'Merc', 'Temple']);
+			.toEqual(['Lab', 'Merc', 'Temple', 'Read prompt']);
 	});
 
 	it('offers independent Show rows for confirmation and anchored capture', () => {
