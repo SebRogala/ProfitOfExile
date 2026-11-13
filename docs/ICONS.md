@@ -211,7 +211,7 @@ After the seeded deploy, these should be checked:
 
 ~~~sh
 curl -s -D- -o /dev/null \
-  "https://profitofexile.top/api/icon/temple/Vial%20of%20Fate"
+  "https://profitofexile.top/api/icon/temple/Fate%20of%20the%20Vaal"
 curl -s -D- -o /dev/null \
   "https://profitofexile.top/api/gem-icon/Absolution"
 curl -s -D- -o /dev/null \

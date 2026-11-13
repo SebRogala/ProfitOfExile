@@ -88,22 +88,35 @@ is not mistaken for a fact.
   come from Incursion Threads. The advisor reads it from
   `TempleConfig::entrances_per_map` (`desktop/src-tauri/src/temple/strategy.rs`).
 
-### Vial recipes: nine vials, eleven transformations
+- **3.30.0 renamed three rooms and an architect.** Patch notes
+  (https://www.pathofexile.com/forum/view-thread/4013680, 06 League Changes):
+  Throne of Atziri → Cradle of Creation, Omnitect Forge → Royal Forge,
+  Omnitect Reactor Plant → Grand Reactor, and "Xipocado, Royal Architect is now
+  known as Xipocado, Architect to the Queen." The pre-3.30 names were removed in
+  3.30.0 from the room vocabulary (`desktop/src-tauri/src/temple/rooms.rs`,
+  `ALIASES`; temp league only). The persisted line keys stay
+  (`throne_of_atziri`, `crucible_of_flame`, `conduit_of_lightning`; rooms.rs
+  `RoomLine::key`). Also Vertolka's sheet export 2026-11-13, g744679169.csv
+  rows 17-21.
+- **A temple with a Cradle of Creation is area level 84.** Patch notes: "While
+  the Temple of Atzoatl contains the Cradle of Creation room, it will be area
+  level 84 and contain Uber Atziri." Carried as the `throne_of_atziri` line's
+  content "Uber Atziri, area level 84" (`drops.rs`); sheet gid0.csv row 8,
+  g744679169.csv row 32.
 
-A vial is consumed at the Altar of Sacrifice together with a **base** unique and
-transforms it into an **upgraded** unique. **The direction is the part that is
-easy to get backwards**: the vial's own in-game currency text names the item you
-SACRIFICE, not the item you receive — "Sacrifice this item on the Altar of
-Sacrifice along with Coward's Chains to transform it" means Coward's Chains →
-Coward's Legacy, not the reverse.
+### Vial recipes (removed in 3.30.0)
 
-Verified 2026-09-06 against poedb.tw's per-vial pages, with four independent
-signals agreeing on every row: the game's own currency text, the vial's icon
-file name (`VialCowardsChains`, `VialSlumber`, …), poedb's prose blurb, and its
-Recipe block ("Offer: `<UPGRADED>`; Your Offer: 1x `<BASE>`, 1x `<VIAL>`"). The
-game text settles a disagreement, because it is the item's own description
-rather than a site's rendering of it. Normative home:
-`internal/temple/recipes.go`.
+Vials were removed in 3.30.0 (POE-366). Patch notes: "The following Vials no
+longer drop: … Existing items will remain, but have no functionality." The
+table below is history. The eleven Base → Upgraded pairs survive without the
+vial column; their normative home is `internal/temple/upgrades.go`
+(`uniqueUpgrades`).
+
+Before 3.30.0, a vial was consumed at the Altar of Sacrifice together with a
+**base** unique and transformed it into an **upgraded** unique. The vial's own
+currency text named the item you SACRIFICE, not the item you receive. Verified
+2026-09-06 against poedb.tw's per-vial pages (currency text, icon file name,
+prose blurb and Recipe block agreeing on every row).
 
 | Vial | Base | Upgraded |
 |---|---|---|
@@ -119,87 +132,83 @@ rather than a site's rendering of it. Normative home:
 | Vial of the Ghost | Soul Catcher | Soul Ripper |
 | Vial of the Ritual | Dance of the Offered | Omeyocan |
 
-Nine vials, eleven recipes: Vial of Transcendence upgrades any of Tempered
-Flesh / Mind / Spirit, so it appears three times.
+- **The room → vial pairs were removed in 3.30.0** with the vials (POE-366).
+  In 3.30 eight rooms carry a chest unique, base → upgraded
+  (`desktop/src-tauri/src/temple/drops.rs`, `ChestUnique::new`):
+  - Conduit of Lightning: Dance of the Offered → Omeyocan
+  - Crucible of Flame: Story of the Vaal → Fate of the Vaal
+  - Defense Research Lab: Architect's Hand → Slavedriver's Hand
+  - Glittering Halls: always has its chest and drops one of Sacrificial Heart /
+    Tempered Flesh / Tempered Mind / Tempered Spirit (Operator ruling
+    2026-11-13 00:20; sheet g744679169.csv row 28, gid0.csv row 13)
+  - Hybridisation Chamber: Coward's Chains → Coward's Legacy
+  - Museum of Artefacts: Soul Catcher → Soul Ripper (g744679169.csv row 29,
+    gid0.csv row 25)
+  - Sanctum of Immortality: Mask of the Spirit Drinker → Mask of the Stitched
+    Demon
+  - Toxic Grove: Apep's Slumber → Apep's Supremacy
 
-- **The vial a room rolls for is not always the vial that upgrades that room's
-  own unique.** It is on the six chest lines; Locus of Corruption has no chest
-  unique: its altar corrupts the Sacrificial Garb the player brings into
-  Shadowstitch, and rolls Vial of Sacrifice. Glittering Halls rolls Vial of
-  Transcendence and drops no unique; Throne of Atziri rolls Vial of the Ghost
-  and drops no unique. Source: poedb room pages plus Vertolka's sheet, both read
-  2026-09-06, which agree independently on all nine room → vial pairs
-  (`desktop/src-tauri/src/temple/drops.rs`).
-- **poe.ninja prices no temple-mod item.** The architects' signature drops are
-  mod-rolled RARES, which poe.ninja does not publish at all; the one number the
-  code has for them is Vertolka's stated guess for Crucible of Flame, verbatim:
-  *"Crucible of Flames is giving on average 2 temple gloves per run and their
-  base price is usually around 30c"* (2026-09-06) — **a guess**, carried as
-  `TempleMod::base_price_chaos` and the only manual price in the table.
+  Locus of Corruption has no chest unique. Storm of Corruption "can no longer
+  contain a special chest" (patch notes; POE-370). The Cradle of Creation has
+  no chest of its own.
+- **Temple-mod items were removed in 3.30.0** (POE-367). Patch notes: "Removed
+  all sources of Incursion Architect Modifiers on Magic and Rare items." The
+  pre-3.30 30 c Crucible of Flame glove guess went with them. The rooms' own
+  area modifiers and descriptions stay (`LineDrops::content`, drops.rs).
 
-### Temple room bonuses per tier (poedb, 2026-09-06)
+### Temple room bonuses per tier (3.30, 2026-11-13)
 
-Read off each room's own poedb.tw page for all 75 tiered rooms and carried in
-`desktop/src-tauri/src/temple/drops.rs`. Percentages are `increased Quantity of
-Items` / `increased Rarity of Items` / `increased Pack Size` in this area, tier
-1 / tier 2 / tier 3. Fourteen of the 25 lines print no such line at all and are
-`None` rather than zero.
+Carried in `desktop/src-tauri/src/temple/drops.rs`. Percentages are `increased
+Rarity of Items` / `increased Pack Size` / `increased Magic Pack Size` in this
+area, tier 1 / tier 2 / tier 3. Twelve of the 25 lines print no such line at
+all and are `None` rather than zero. Item quantity was removed in 3.30.0
+(POE-369; sheet g744679169.csv row 8 "remove IIQ bunuses").
 
-| Line (room key) | Quantity % | Rarity % | Pack size % |
+| Line (room key) | Rarity % | Pack size % | Magic pack size % |
 |---|---|---|---|
-| the standard eight (see below) | 2 / 4 / 6 | 4 / 8 / 12 | 1 / 2 / 3 |
-| Factory | 22 / 44 / 66 | 4 / 8 / 12 | 1 / 2 / 3 |
-| Glittering Halls | — | 20 / 40 / 60 | — |
-| Hall of War | — | — | 10 / 20 / 30 |
+| the standard eight (see below) | 4 / 8 / 12 | 1 / 2 / 3 | — |
+| Factory | 4 / 8 / 12 | 1 / 2 / 3 | — |
+| corruption (Locus of Corruption line) | 4 / 8 / 12 | 1 / 2 / 3 | — |
+| Glittering Halls | 12 / 24 / 36 | — | — |
+| Hall of War | — | 10 / 20 / 30 | — |
+| Cradle of Creation (`throne_of_atziri`) | — | — | 10 / 20 / 30 |
+
+Sources: the standard eight and Factory, poedb.tw room pages (2026-09-06).
+Corruption: Vertolka sheet (`SHEET_LOCUS_330`; gid0.csv row 10,
+g744679169.csv row 24), author confirmation relayed by the Operator 2026-11-13
+00:14. Glittering Halls: `SHEET_GLITTERING_330` and the patch notes "up to 36%
+for the Glittering Halls (previously 60%)". Cradle of Creation:
+`SHEET_CRADLE_330`, per tier confirmed by the Operator 2026-11-13 00:20.
 
 The standard eight are `chamber_of_iron`, `conduit_of_lightning`,
 `crucible_of_flame`, `defense_research_lab`, `hall_of_champions`,
 `hybridisation_chamber`, `sanctum_of_immortality` and `upgrade` (Temple Nexus).
-Factory differs on quantity alone; its rarity and pack-size lines are the
-standard ones.
 
 Two places where Vertolka's sheet claims a bonus and poedb prints no percentage:
 Toxic Grove ("increase quantity/rarity") and Storm of Corruption ("high rarity
 buff"). Both are recorded as absent rather than as a figure nobody wrote down.
 
-- **The "chance" integers have no published scale.** poedb prints a per-tier
-  stat on all nine vial lines — `map incursion boss chance to drop <tag> vial %
-  [N]` — and a second on four of them — `map incursion boss chance to drop
-  <tag> item % [33/66/100]`. The vial values run **7 to 2815** (Locus of
-  Corruption and Throne of Atziri share 7 / 13 / 20 at the bottom, Glittering
-  Halls has 929 / 1886 / 2815 at the top) and **nothing on the page states what unit they are in**. They are
-  carried verbatim as `u32` (`vial_chance_raw`, `mod_item_chance_raw`) and are
-  never multiplied by a price. Anyone who finds the scale should record it here
-  first.
-
-  **The scale is still unknown; a CONVENTION was fixed on 2026-09-06 (POE-262)
-  for the vial stat only.** Vertolka's "0.1 vials per run" was stated for six
-  lines, three of which print **1689** at tier 3, so the app reads *raw 1689 =
-  the configured rate per run* and scales every other line and tier by its own
-  integer over 1689. At the shipped 0.1 that gives Glittering Halls 0.1667 per
-  run, Hybridisation Chamber 0.0595, Defense Research Lab 0.0476, Toxic Grove
-  0.0119, and Locus of Corruption and Throne of Atziri 0.00118 — which is his
-  "small chance" as a number. **This is a ratio, not a unit**: it says one
-  line's rate relative to another's, and it says nothing about what raw 1689
-  means in the game. `mod_item_chance_raw` has no such anchor (nobody has stated
-  a per-run rate for the architect's rare) and stays raw and unmultiplied.
+- **The "chance" integers were removed in 3.30.0.** The vial stat and the
+  architect's-rare stat went with vials and temple-mod items (POE-366,
+  POE-367); the code no longer carries `vial_chance_raw` /
+  `mod_item_chance_raw`, and the POE-262 convention (raw 1689 = the
+  configured vial rate) went with them.
 - **Uniques drop at tier 3 only.** Vertolka-stated 2026-09-06: "only tier 3
   rooms can drop unique, but T1 and T2 adding chance to drop vial and provide
-  smaller quant/rarity bonuses". His two drop rates — 0.25 uniques per run and
-  0.1 vials per run at tier 3 — are **guesses**, stated as "price of unique
-  divided by 4 + price of vial divided by 10". The unique rate is flat: no page
-  prints a per-tier chest-unique chance to scale it by. The vial rate is the
-  ANCHOR of the convention above and is a user setting; he proposed doubling it
-  to 0.2 on 2026-09-06.
-- **What a point of quantity or rarity is worth has never been measured.** The
-  only figures anyone has proposed are Vertolka's, in the same 2026-09-06
-  message: *"Maybe there we can setup something like 1% quant = 0,5c, 1% rarity
-  = 0,25c"* — a proposal he flagged as such, and the default of the two knobs
-  the code prices area bonuses with. **Pack size has no proposed rate at all**
-  and is deliberately not priced. All three are flagged wherever they reach a
-  number ([ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md)).
-  Vertolka 2026-09-06 proposed 0.4 c per rarity % as a possible Default; today
-  it is a Custom edit; owner call open.
+  smaller quant/rarity bonuses" (drops.rs). The vial half was removed in 3.30.0
+  (POE-366). Patch notes: "Unique items that required Vials to obtain instead
+  now drop from various places in Temples of Atzoatl that contain a Cradle of
+  Creation." and "Certain Tier 3 Temple Rooms that have special chest no longer
+  always contain a special chest. When they do, they will now always contain
+  the Unique item specific to that room." How a unique is valued is under
+  [Not validated](#not-validated).
+- **What a point of rarity is worth has never been measured.** The quantity
+  half was removed in 3.30.0 (POE-369). The default rarity rate is
+  `C_PER_RARITY_BASE` (`desktop/src-tauri/src/temple/valuation.rs`), a
+  starting base to tune; its value is under [Not validated](#not-validated).
+  **Pack size and magic pack size have no rate** and are deliberately not
+  priced. Both are flagged wherever they reach a number
+  ([ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md)).
 
 ## Divine Font
 
@@ -288,11 +297,13 @@ transfigured gems are two disjoint reroll pools (the two wordings above).
 
 ## Currency Exchange sidebar
 
-The in-game exchange's "I want" column lists sixteen categories (screenshot,
-Allflame league, 2026-08-19): Currency, Essences, Delve, Scarabs, Divination
-Cards, Delirium, Legion, Fragments, Oils, Catalysts, Omens, Tattoos,
+The in-game exchange's "I want" column lists sixteen categories, as served
+by `GAME_CATEGORIES` (`scripts/generate-currency-exchange-items.py`): Currency,
+Essences, Delve, Threads, Divination Cards, Delirium, Legion, Fragments, Oils, Catalysts, Omens, Tattoos,
 Expedition, Harvest, Runegrafts, Allflame, plus Favourites and All. Categories
 carry sub-headers inside (Eldritch Currency under Currency).
+Before 3.30.0 the Threads slot was Scarabs (screenshot, Allflame league,
+2026-08-19); Scarabs were removed in 3.30.0.
 
 3.30 (patch notes, inferred, unverified in game): Scarabs are removed and
 Threads take their sidebar slot ("A new Threads section has been added to the
@@ -404,3 +415,29 @@ Recorded so the status is explicit, not so they can be built on.
   `estimated-provisional-destroy`, and the desktop Comparator says the EV
   depends on an unverified rate. Measure the destroy rate (and the roll count)
   in 3.30.
+
+- **3.30 temple values not yet confirmed in game.** Each is carried by the
+  code as a guess or starting base:
+  - The exact 3.30 patch-note line that removes item quantity is not quoted;
+    the sources are the POE-369 sweep and sheet g744679169.csv row 8.
+  - Unique value = non-upgraded price × 25 % (g744679169.csv row 13;
+    `SHEET_UNIQUES_330`; Operator ruling 2026-11-13 00:20, a guess).
+  - Equal-weight pool over the room's base uniques (the sheet author's guess,
+    same ruling). Glittering Halls counts 0.25 × the mean of its four.
+  - Rarity default 1 c per 1 % (`C_PER_RARITY_BASE`), a starting base to tune
+    (Operator ruling 2026-11-13 00:08 on Vertolka's note "Also probably change
+    base added value per IIR to 1%=1c? for start"). It supersedes the sheet's
+    0.5 c (g744679169.csv row 12) and Vertolka's 2026-09-06 proposal "1% quant
+    = 0,5c, 1% rarity = 0,25c".
+  - Cradle bracket: the upgraded unique from the same chest, only with a Cradle
+    of Creation, shown as 25 % of the upgraded price (g744679169.csv row 13;
+    the cell prints the contribution).
+  - Operator 2026-11-13 00:14, verbatim: "4-6% per tier it should be 4% from
+    rarity and 1-2% from redirected from quantity and yeah pack size 1% per
+    tier". The extra 1-2 %/tier redirected from quantity is unmeasured and has
+    no value term; the sheet's 6 % upper bound is not adopted.
+  - Sheet "?" rows not adopted: Factory rarity "4%-24%?" (gid0.csv rows 11-12);
+    Sadist Den "Atziri is possesed?" / "from T2 architect and Atziri? are
+    possesed" (gid0.csv row 24); Atlas device uses "1/3/5?" (gid0.csv row 23).
+  - The chest-absence chance ("no longer always contain a special chest") is
+    read as covered by the flat 0.25 (drops.rs, inferred).
