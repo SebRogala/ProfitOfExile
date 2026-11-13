@@ -342,14 +342,82 @@ func pointOf(quoteQty, itemQty int64) (pricePoint, bool) {
 // Like priceIn this is a direction mapper, so it lives here: nothing outside
 // this file decides which stored volume belongs to which side.
 func vwapIn(r Row, item, quote string) (float64, bool) {
-	if item == quote {
-		return 0, false
-	}
-	itemVolume, quoteVolume := volumeOf(r, item), volumeOf(r, quote)
-	if itemVolume <= 0 || quoteVolume <= 0 {
+	itemVolume, quoteVolume, ok := tradedVolumes(r, item, quote)
+	if !ok {
 		return 0, false
 	}
 	return float64(quoteVolume) / float64(itemVolume), true
+}
+
+// tradedVolumes returns the units each side of the {item, quote} market traded
+// on the row, or ok == false when item == quote or either side traded nothing.
+// A row of another market reads 0 on at least one side (volumeOf), so it is
+// refused here too. The one per-row qualification vwapIn, PooledVWAP and
+// NewestHourVWAP share.
+func tradedVolumes(r Row, item, quote string) (itemVolume, quoteVolume int64, ok bool) {
+	if item == quote {
+		return 0, 0, false
+	}
+	itemVolume, quoteVolume = volumeOf(r, item), volumeOf(r, quote)
+	if itemVolume <= 0 || quoteVolume <= 0 {
+		return 0, 0, false
+	}
+	return itemVolume, quoteVolume, true
+}
+
+// PooledVWAP returns quote units per item pooled over every row of the
+// {item, quote} market whose Hour inWindow accepts: the quote units traded
+// summed over the item units traded summed. A row counts only when both its
+// sides traded (tradedVolumes) — unlike windowVwapOf, which adds a row's item
+// volume even when its quote side traded nothing. Every qualifying row counts,
+// including two rows of one hour; PriceValid, Config.MinVolumePerHour and the
+// window readers' one-row-per-hour rule are not applied. int64 sums, so the
+// answer does not depend on row order. It is the cross-hour pooled reader for
+// consumers outside the engine (internal/harvest, POE-286); the engine never
+// shows it as a leg price (THE PRICE RULE, doc.go).
+func PooledVWAP(rows []StoredRow, item, quote string, inWindow func(time.Time) bool) (float64, bool) {
+	var itemSum, quoteSum int64
+	found := false
+	for _, r := range rows {
+		if !inWindow(r.Hour) {
+			continue
+		}
+		itemVolume, quoteVolume, ok := tradedVolumes(r.Row, item, quote)
+		if !ok {
+			continue
+		}
+		itemSum += itemVolume
+		quoteSum += quoteVolume
+		found = true
+	}
+	if !found {
+		return 0, false
+	}
+	return float64(quoteSum) / float64(itemSum), true
+}
+
+// NewestHourVWAP returns PooledVWAP over the single newest hour strictly before
+// `before` that has a qualifying row of the market, so a newer hour whose rows
+// do not qualify is skipped; ok == false when there is none.
+func NewestHourVWAP(rows []StoredRow, item, quote string, before time.Time) (float64, bool) {
+	var newestHour time.Time
+	found := false
+	for _, r := range rows {
+		if !r.Hour.Before(before) {
+			continue
+		}
+		if _, _, ok := tradedVolumes(r.Row, item, quote); !ok {
+			continue
+		}
+		if !found || r.Hour.After(newestHour) {
+			newestHour = r.Hour
+			found = true
+		}
+	}
+	if !found {
+		return 0, false
+	}
+	return PooledVWAP(rows, item, quote, func(h time.Time) bool { return h.Equal(newestHour) })
 }
 
 // tickOf returns the coarsest price step the row can express, as a fraction of

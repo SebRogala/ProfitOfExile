@@ -532,6 +532,251 @@ func TestVwapIn_itemSideTradedNothing_returnsNotOk(t *testing.T) {
 	}
 }
 
+func allHours(time.Time) bool { return true }
+
+var flatPair = [2]int64{1, 1}
+
+func TestPooledVWAP_twoHours_poolsTheTradedVolumesNotTheHourlyPrices(t *testing.T) {
+	// Harvest prices a window by its traded mass, so a heavier hour weighs more
+	// than a lighter one instead of each hour's price counting once.
+	rows := []StoredRow{
+		storedBack(0, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{100, 10})),
+		storedBack(1, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{240, 30})),
+	}
+
+	got, ok := PooledVWAP(rows, cardID, chaosID, allHours)
+
+	if !ok {
+		t.Fatalf("ok = false, want true: both hours traded both sides")
+	}
+	if got != 8.5 {
+		t.Errorf("pooled = %v, want 8.5 (340 chaos / 40 cards; the mean of 10 and 8 would be 9)", got)
+	}
+}
+
+func TestPooledVWAP_rowsInBothOrientations_poolsOneMarket(t *testing.T) {
+	// The feed stores a market under either item order, so both orders are the
+	// same market and must land in the same sums.
+	rows := []StoredRow{
+		storedBack(0, pairedHour(cardID, chaosID, flatPair, flatPair, [2]int64{10, 100})),
+		storedBack(1, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{240, 30})),
+	}
+
+	got, ok := PooledVWAP(rows, cardID, chaosID, allHours)
+
+	if !ok {
+		t.Fatalf("ok = false, want true: both rows are the card/chaos market")
+	}
+	if got != 8.5 {
+		t.Errorf("pooled = %v, want 8.5 (reading only A-is-item gives 10, only B-is-item gives 8)", got)
+	}
+}
+
+func TestPooledVWAP_rowWhoseQuoteSideTradedNothing_isLeftOutOfBothSums(t *testing.T) {
+	// A row that sold cards for no chaos says nothing about the chaos price;
+	// adding its card volume alone would drag the price toward zero.
+	rows := []StoredRow{
+		storedBack(0, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{100, 10})),
+		storedBack(1, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{0, 30})),
+	}
+
+	got, ok := PooledVWAP(rows, cardID, chaosID, allHours)
+
+	if !ok {
+		t.Fatalf("ok = false, want true: hour 0 qualifies")
+	}
+	if got != 10 {
+		t.Errorf("pooled = %v, want 10 (windowVwapOf's rule would give 100/40 = 2.5)", got)
+	}
+}
+
+func TestPooledVWAP_rowWhoseItemSideTradedNothing_isLeftOutOfBothSums(t *testing.T) {
+	// The mirror of the quote-side rule: chaos with no cards against it would
+	// inflate the price.
+	rows := []StoredRow{
+		storedBack(0, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{100, 10})),
+		storedBack(1, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{240, 0})),
+	}
+
+	got, ok := PooledVWAP(rows, cardID, chaosID, allHours)
+
+	if !ok {
+		t.Fatalf("ok = false, want true: hour 0 qualifies")
+	}
+	if got != 10 {
+		t.Errorf("pooled = %v, want 10 (counting the quote side alone gives 340/10 = 34)", got)
+	}
+}
+
+func TestPooledVWAP_twoRowsOfOneHour_countsBoth(t *testing.T) {
+	// Unlike the window readers, Harvest pools every row, so a second row of an
+	// hour is mass that traded, not a duplicate to drop.
+	rows := []StoredRow{
+		storedBack(0, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{60, 3})),
+		storedBack(0, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{20, 2})),
+	}
+
+	got, ok := PooledVWAP(rows, cardID, chaosID, allHours)
+
+	if !ok {
+		t.Fatalf("ok = false, want true: both rows qualify")
+	}
+	if got != 16 {
+		t.Errorf("pooled = %v, want 16 (80/5; keeping one row per hour gives 20 or 10)", got)
+	}
+}
+
+func TestPooledVWAP_rowNotPriceValid_stillCounts(t *testing.T) {
+	// PriceValid judges the ratio pairs; the traded volumes are still real, so
+	// the pooled reader does not consult it.
+	spec := pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{100, 10})
+	spec.priceInvalid = true
+	rows := []StoredRow{storedBack(0, spec)}
+
+	got, ok := PooledVWAP(rows, cardID, chaosID, allHours)
+
+	if !ok {
+		t.Fatalf("ok = false, want true: price_valid is not consulted")
+	}
+	if got != 10 {
+		t.Errorf("pooled = %v, want 10 (100 chaos / 10 cards)", got)
+	}
+}
+
+func TestPooledVWAP_hourTheWindowRejects_isLeftOut(t *testing.T) {
+	// The caller's window is the only time filter; an hour outside it must not
+	// leak into the sums.
+	rows := []StoredRow{
+		storedBack(0, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{100, 10})),
+		storedBack(1, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{240, 30})),
+	}
+	newestOnly := func(h time.Time) bool { return h.Equal(feedHour) }
+
+	got, ok := PooledVWAP(rows, cardID, chaosID, newestOnly)
+
+	if !ok {
+		t.Fatalf("ok = false, want true: hour 0 is in the window")
+	}
+	if got != 10 {
+		t.Errorf("pooled = %v, want 10 (100/10; pooling hour 1 too gives 8.5)", got)
+	}
+}
+
+func TestPooledVWAP_onlyAnotherMarketTraded_returnsNotOk(t *testing.T) {
+	// A card/divine row carries no chaos side, so the card/chaos market has no
+	// price rather than a zero one.
+	rows := []StoredRow{
+		storedBack(0, pairedHour(divineID, cardID, flatPair, flatPair, [2]int64{1, 4})),
+	}
+
+	got, ok := PooledVWAP(rows, cardID, chaosID, allHours)
+
+	if ok {
+		t.Fatalf("ok = true (pooled %v), want false: no card/chaos row exists", got)
+	}
+	if got != 0 {
+		t.Errorf("pooled = %v, want 0", got)
+	}
+}
+
+func TestPooledVWAP_itemEqualsQuote_returnsNotOk(t *testing.T) {
+	// Chaos priced in chaos is not a market; without the guard both readings
+	// are the chaos column and the answer is a meaningless 1.
+	rows := []StoredRow{
+		storedBack(0, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{100, 10})),
+	}
+
+	got, ok := PooledVWAP(rows, chaosID, chaosID, allHours)
+
+	if ok {
+		t.Fatalf("ok = true (pooled %v), want false: item equals quote", got)
+	}
+	if got != 0 {
+		t.Errorf("pooled = %v, want 0", got)
+	}
+}
+
+func TestNewestHourVWAP_poolsOnlyTheNewestQualifyingHourBeforeTheCutoff(t *testing.T) {
+	// The last-seen price is the most recent hour before the window, pooled over
+	// every row of that hour and nothing else.
+	before := feedHour.Add(-5 * time.Hour)
+	rows := []StoredRow{
+		storedBack(0, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{500, 1})),
+		storedBack(10, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{60, 3})),
+		storedBack(10, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{20, 2})),
+		storedBack(20, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{100, 1})),
+	}
+
+	got, ok := NewestHourVWAP(rows, cardID, chaosID, before)
+
+	if !ok {
+		t.Fatalf("ok = false, want true: hour 10 qualifies before the cutoff")
+	}
+	if got != 16 {
+		t.Errorf("last seen = %v, want 16 (80/5 at hour 10; hour 0 is after the cutoff → 500, "+
+			"the oldest hour → 100, one row of hour 10 → 20 or 10)", got)
+	}
+}
+
+func TestNewestHourVWAP_rowAtTheCutoffHour_isNotBeforeIt(t *testing.T) {
+	// The cutoff is the window's first hour, which the window itself prices; the
+	// last-seen fallback must look strictly before it.
+	before := feedHour.Add(-5 * time.Hour)
+	rows := []StoredRow{
+		storedBack(5, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{500, 1})),
+		storedBack(10, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{100, 10})),
+	}
+
+	got, ok := NewestHourVWAP(rows, cardID, chaosID, before)
+
+	if !ok {
+		t.Fatalf("ok = false, want true: hour 10 qualifies before the cutoff")
+	}
+	if got != 10 {
+		t.Errorf("last seen = %v, want 10 (100/10 at hour 10; counting the cutoff hour gives 500)", got)
+	}
+}
+
+func TestNewestHourVWAP_newerHourWithoutAQualifyingRow_isSkipped(t *testing.T) {
+	// The newest hour is chosen among qualifying rows; picking a newer hour that
+	// traded no cards first would leave no price at all.
+	before := feedHour.Add(-5 * time.Hour)
+	rows := []StoredRow{
+		storedBack(8, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{999, 0})),
+		storedBack(10, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{60, 3})),
+		storedBack(10, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{20, 2})),
+	}
+
+	got, ok := NewestHourVWAP(rows, cardID, chaosID, before)
+
+	if !ok {
+		t.Fatalf("ok = false, want true: hour 10 qualifies; hour 8 must be skipped")
+	}
+	if got != 16 {
+		t.Errorf("last seen = %v, want 16 (80/5 at hour 10)", got)
+	}
+}
+
+func TestNewestHourVWAP_noQualifyingRowBeforeTheCutoff_returnsNotOk(t *testing.T) {
+	// Rows at or after the cutoff and rows that traded nothing are not a
+	// last-seen price; the caller then omits it rather than showing zero.
+	before := feedHour.Add(-5 * time.Hour)
+	rows := []StoredRow{
+		storedBack(0, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{100, 10})),
+		storedBack(5, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{100, 10})),
+		storedBack(7, pairedHour(chaosID, cardID, flatPair, flatPair, [2]int64{0, 10})),
+	}
+
+	got, ok := NewestHourVWAP(rows, cardID, chaosID, before)
+
+	if ok {
+		t.Fatalf("ok = true (last seen %v), want false: no qualifying row before the cutoff", got)
+	}
+	if got != 0 {
+		t.Errorf("last seen = %v, want 0", got)
+	}
+}
+
 func TestTickOf_bothPairsNonUnit_reportsTheCoarserStep(t *testing.T) {
 	// A step is one unit of the pair's LARGER quantity, so the coarser of the
 	// row's two pairs is the one with the smaller maximum — and it can be

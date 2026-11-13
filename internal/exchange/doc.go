@@ -19,8 +19,10 @@
 // files pricing.go, direct.go, crossquote.go, sim.go and plays.go are pure: no
 // database, no scheduler, no HTTP server, no collector. Callers fetch a payload with
 // Client.FetchHour and derive rows with Normalize; Normalize, PriceOf, Ratio and
-// pricing.go's direction mappers — priceIn, vwapIn, tickOf and the volume
-// readers — are the only places prices are computed.
+// pricing.go's direction mappers — priceIn, vwapIn, tickOf, the volume readers,
+// and PooledVWAP and NewestHourVWAP, the cross-hour pooled readers that
+// consumers outside the engine (internal/harvest) price from — are the only
+// places prices are computed.
 //
 // repository.go, runner.go and service.go are the lifecycle layer — database
 // access, the ticking cursor walk, and the server-side recompute that keeps the
