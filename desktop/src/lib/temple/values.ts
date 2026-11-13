@@ -595,7 +595,7 @@ export const KNOBS: KnobSpec[] = [
 	{
 		field: 'cPerRarity',
 		label: 'Chaos per rarity %',
-		hint: 'Chaos per point of increased Rarity. Unmeasured — Vertolka’s proposed rate.',
+		hint: 'Chaos per point of increased Rarity. Unmeasured — a starting base of 1c per 1% to tune.',
 		step: 0.05,
 		max: null
 	},

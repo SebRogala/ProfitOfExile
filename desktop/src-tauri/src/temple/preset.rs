@@ -739,8 +739,8 @@ mod tests {
     fn the_custom_rates_price_every_room_the_table_does_not_name() {
         // `drops_weight = 0` is the rusher's setting: the ranking collapses to
         // sale value plus bonus. Locus keeps its 846 c sale delta plus its
-        // 12 % sheet rarity at 0.25 c and loses nothing else, because it has
-        // no priced drop term on this capture.
+        // 12 % sheet rarity at the 1 c base and loses nothing else, because it
+        // has no priced drop term on this capture.
         let market = allflame();
         let custom = TempleCustomSettings {
             drops_weight: 0.0,
@@ -749,7 +749,7 @@ mod tests {
 
         let valued = value_table(Preset::Custom, &custom, &market);
 
-        assert_eq!(total(&valued, "corruption", 3), 849.0);
+        assert_eq!(total(&valued, "corruption", 3), 858.0);
         assert!(
             total(&valued, "corruption", 3) > total(&valued, "gem", 3),
             "the feed's own order survives a zero drops weight",
@@ -832,8 +832,8 @@ mod tests {
         let valued = value_table(Preset::Custom, &custom, &allflame());
         assert_eq!(total(&valued, "gem", 3), 50.0);
         // Its formula value on the capture: the 846 c sale delta plus its
-        // 12 % sheet rarity at 0.25 c.
-        assert_eq!(total(&valued, "corruption", 3), 849.0);
+        // 12 % sheet rarity at the 1 c base.
+        assert_eq!(total(&valued, "corruption", 3), 858.0);
     }
 
     #[test]
@@ -964,7 +964,8 @@ mod tests {
 
         assert_eq!(knobs, Knobs::default());
         assert_eq!(knobs.tier_fraction, 0.8);
-        assert_eq!(knobs.c_per_rarity, 0.25);
+        assert_eq!(knobs.c_per_rarity, 1.0);
+        assert_eq!(knobs.c_per_rarity, crate::temple::valuation::C_PER_RARITY_BASE);
         assert_eq!(knobs.drops_weight, 1.0);
         assert_eq!(knobs.combo_premium, 0.0);
     }

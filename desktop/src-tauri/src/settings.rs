@@ -2857,6 +2857,27 @@ pub(crate) mod tests {
         );
     }
 
+    /// POE-370: the shipped rarity rate moved to 1 c per %, and a Custom table
+    /// saved at the old 0.25 c keeps its own number — there is no migration.
+    /// Fails if the loader re-seeds Custom from `Knobs::default`.
+    #[test]
+    fn a_stored_custom_rarity_rate_is_kept_when_the_default_moves() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"temple_preset":"custom","temple_custom":{"cPerRarity":0.25}}"#,
+        )
+        .expect("a stored Custom table must parse");
+
+        let state = test_app_state();
+        let rejected = apply_to_state(&parsed, &state);
+
+        assert_eq!(rejected, Vec::<String>::new(), "nothing to report");
+        assert_eq!(
+            state.temple_settings.lock().unwrap().custom.c_per_rarity,
+            0.25,
+            "the stored rate, not the 1 c default",
+        );
+    }
+
     /// …and the retired key is gone from the next save.
     #[test]
     fn the_retired_c_per_quantity_is_not_written_back_on_the_next_save() {

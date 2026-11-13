@@ -5497,7 +5497,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"status":"idle","waitingForPanel":false,"readRetry":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":false},"preset":"default","custom":{"tierFraction":0.8,"cPerRarity":0.25,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"market":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
+            r#"{"status":"idle","waitingForPanel":false,"readRetry":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":false},"preset":"default","custom":{"tierFraction":0.8,"cPerRarity":1.0,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"market":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
         );
     }
 
@@ -5727,6 +5727,7 @@ mod tests {
             // nested map shape is pinned too.
             preset: Preset::Custom,
             custom: TempleCustomSettings {
+                c_per_rarity: 0.25,
                 drops_weight: 0.0,
                 rooms: BTreeMap::from([(
                     "corruption".to_string(),
@@ -5864,10 +5865,10 @@ mod tests {
     }
 
     /// Locus of Corruption's tier-3 total on the committed capture, and the
-    /// board's top room: its 846 c sale delta plus 3 c rarity (its 12 % from
-    /// the 3.30 sheet, gid0.csv row 10, at 0.25 c per %). POE-366 removed the
-    /// vial term that once sat on top of it.
-    const LOCUS_T3: f64 = 849.0;
+    /// board's top room: its 846 c sale delta plus 12 c rarity (12 % from the
+    /// 3.30 sheet, gid0.csv row 10, at the 1 c base). POE-366 removed the vial
+    /// term that once sat on top of it.
+    const LOCUS_T3: f64 = 858.0;
 
     /// The valuation the bridge tests price against: the committed Allflame
     /// capture under the Default preset, whose top tier-3 room is Locus of
@@ -6431,9 +6432,10 @@ mod tests {
     /// With the 2026-10-17 C-tier rung, Temple Nexus takes 21.15 and
     /// leaves the top five. Since POE-367 removed Crucible of Flame's 60 c
     /// temple-mod term it leaves too, and since POE-369 removed item quantity
-    /// Factory is its 3 c rarity bonus and leaves as well, so Sanctum of
-    /// Immortality, Conduit of Lightning and Defense Research Lab follow the
-    /// two sales, with Temple Nexus sixth.
+    /// Factory is its rarity bonus alone and leaves as well. At POE-370's 1 c
+    /// rarity base Glittering Halls' 36 % rarity is 36 c, so Sanctum of
+    /// Immortality, Conduit of Lightning and Glittering Halls follow the two
+    /// sales, with Defense Research Lab sixth and Temple Nexus seventh.
     #[test]
     fn the_live_captures_five_best_rooms_are_these_in_this_order() {
         let valued = value_read(&TempleSettings::default(), &crate::temple::market::allflame());
@@ -6452,16 +6454,18 @@ mod tests {
                 "gem",
                 "sanctum_of_immortality",
                 "conduit_of_lightning",
-                "defense_research_lab",
+                "glittering_halls",
             ],
         );
         assert_eq!(ranked[0].1, LOCUS_T3, "Locus of Corruption, its sale delta plus rarity");
         assert_eq!(ranked[1].1, 390.0, "Doryani's Institute, its sale delta");
-        assert!(close(ranked[2].1, 51.75), "Sanctum of Immortality");
-        assert!(close(ranked[3].1, 50.625), "Conduit of Lightning");
-        assert!(close(ranked[4].1, 21.85), "Defense Research Lab is fifth");
-        assert_eq!(ranked[5].0, "upgrade", "and Temple Nexus sixth");
-        assert!(close(ranked[5].1, 21.15), "Temple Nexus");
+        assert!(close(ranked[2].1, 60.75), "Sanctum of Immortality");
+        assert!(close(ranked[3].1, 59.625), "Conduit of Lightning");
+        assert!(close(ranked[4].1, 36.0), "Glittering Halls is fifth");
+        assert_eq!(ranked[5].0, "defense_research_lab", "Defense Research Lab sixth");
+        assert!(close(ranked[5].1, 30.85), "Defense Research Lab");
+        assert_eq!(ranked[6].0, "upgrade", "and Temple Nexus seventh");
+        assert!(close(ranked[6].1, 21.15), "Temple Nexus");
     }
 
     /// An offer whose printed target did not resolve publishes no value —
@@ -6517,8 +6521,8 @@ mod tests {
     /// offers, the advice is to switch — and to switch onto the corruption
     /// line rather than the gem one.
     ///
-    /// The board is Pools of Restoration (the Sanctum of Immortality line at tier 1, worth 41.40
-    /// on the committed capture) against Corruption Chamber (676.80) and
+    /// The board is Pools of Restoration (the Sanctum of Immortality line at tier 1, worth 48.60
+    /// on the committed capture) against Corruption Chamber (686.40) and
     /// Gemcutter's Workshop (312.00). Under the shipped rusher fixture all
     /// three of those rooms score ZERO — it prices tiers 1 and 2 at nothing
     /// and the Sanctum line not at all — so the kill would be a free choice and
@@ -6577,7 +6581,7 @@ mod tests {
             .total;
         let corruption = valued.get("corruption", Tier::T2).expect("valued").total;
         let gem = valued.get("gem", Tier::T2).expect("valued").total;
-        assert!(close(staying, 41.4), "the room left is worth {staying}");
+        assert!(close(staying, 48.6), "the room left is worth {staying}");
         assert!(close(corruption, LOCUS_T3 * 0.8), "the corruption switch is {corruption}");
         assert!(close(gem, 312.0), "the gem switch is {gem}");
         assert!(staying < gem && gem < corruption, "switching wins either way");
