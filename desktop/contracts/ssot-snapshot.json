@@ -1,0 +1,175 @@
+{
+  "bossLoot": {
+    "enabled": false,
+    "settings": {
+      "layout": "grid",
+      "autoSaveSeconds": 10,
+      "notCounted": [
+        "Communion Support"
+      ],
+      "captureShortcut": {
+        "key": 2,
+        "shift": true,
+        "ctrl": false,
+        "alt": false
+      },
+      "previewShortcut": {
+        "key": 119,
+        "shift": true,
+        "ctrl": false,
+        "alt": false
+      }
+    },
+    "numberFormat": "auto",
+    "pending": null,
+    "frame": null,
+    "rebind": null,
+    "nowMs": 0
+  },
+  "league": {
+    "name": "Mirage",
+    "generation": 3
+  },
+  "resolving": true,
+  "unreachable": true,
+  "normalVariant": "20/20",
+  "dedicationVariant": "21/23",
+  "dedicationPool": "skill",
+  "modules": {
+    "temple": true
+  },
+  "mercenary": {
+    "status": "off",
+    "capture": null,
+    "learnedFamilies": [],
+    "pooledFamilies": [],
+    "seededFamilies": [],
+    "lastError": null,
+    "burstSpeaker": null,
+    "geometrySource": "default",
+    "sourcesOff": [
+      "guide-b"
+    ],
+    "sync": {
+      "lastPullMs": null,
+      "lastPull": "never",
+      "pooledSamples": 0,
+      "queuedUploads": 0,
+      "lastError": null
+    },
+    "trade": {
+      "status": "off",
+      "queryHash": null,
+      "url": null,
+      "urlAnchors": null,
+      "result": null,
+      "error": null,
+      "searchesUsed": 0
+    },
+    "tradeAuto": true,
+    "tierFloor": 2
+  },
+  "temple": {
+    "status": "idle",
+    "waitingForPanel": false,
+    "readRetry": false,
+    "layout": null,
+    "panel": null,
+    "advice": null,
+    "mode": null,
+    "config": {
+      "artefactsOfTheVaal": true,
+      "scarabOfTimelines": false
+    },
+    "profile": {
+      "apexScore": 2.0,
+      "pathCost": 0.0,
+      "rerollUntilFavourable": false,
+      "r4KeepUpgradeTargets": false
+    },
+    "preset": "default",
+    "custom": {
+      "tierFraction": 0.8,
+      "cPerRarity": 1.0,
+      "dropsWeight": 1.0,
+      "comboPremium": 0.0,
+      "rooms": {}
+    },
+    "market": {
+      "asOf": null,
+      "stale": false,
+      "staleAfterMs": 7200000,
+      "unavailable": true
+    },
+    "pollMarket": {
+      "asOf": null,
+      "stale": false,
+      "staleAfterMs": 7200000,
+      "unavailable": true
+    },
+    "unknownRooms": [],
+    "lastReadAt": null,
+    "calibration": null,
+    "readNotice": null,
+    "lastError": null
+  },
+  "screen": {
+    "width": 1920,
+    "height": 1200,
+    "uiScale": 1.0,
+    "source": "merc-frame",
+    "measuredAtMs": 1700000000000,
+    "verifiedThisSession": true,
+    "monitorId": 65537,
+    "origin": [
+      0,
+      0
+    ],
+    "client": [
+      0,
+      0,
+      1920,
+      1200
+    ],
+    "anchors": {
+      "templeEntrance": [
+        960,
+        713
+      ],
+      "mercPanel": [
+        100,
+        200
+      ]
+    }
+  },
+  "placements": {
+    "temple": {
+      "entranceOrigin": [
+        960,
+        713
+      ]
+    },
+    "merc": {
+      "panel": [
+        100,
+        200,
+        555,
+        477
+      ]
+    },
+    "lab": {
+      "gem": [
+        0,
+        0,
+        1920,
+        44
+      ],
+      "font": [
+        224,
+        244,
+        740,
+        757
+      ]
+    }
+  }
+}

@@ -3537,6 +3537,57 @@ mod tests {
         ssot_snapshot_echoes_the_selected_dedication_variant: dedication_variant = "21/20";
         ssot_snapshot_echoes_the_selected_dedication_pool: dedication_pool = "transfigured";
     }
+
+    // ------------------------------------------------- snapshot wire golden --
+
+    /// Writer of `desktop/contracts/ssot-snapshot.json`; the reader is
+    /// `desktop/src/lib/stores/ssot-contract.test.ts`, which checks its keys
+    /// against the TS `SsotSnapshot`. Regenerate from the repo root with
+    /// `docker compose run --rm -T -e SSOT_CONTRACT_UPDATE=1 -w /app/desktop/src-tauri desktop cargo test --lib ssot::tests::ssot_snapshot_contract`.
+    #[test]
+    fn ssot_snapshot_contract_golden() {
+        let base = AppSsotSnapshot {
+            league: LeagueSlice { name: Some("Mirage".into()), generation: 3 },
+            resolving: true,
+            unreachable: true,
+            ..AppSsotSnapshot::default()
+        };
+        // One key only: a multi-key HashMap would serialize in a random order.
+        let modules: std::collections::HashMap<String, bool> =
+            [(TEMPLE_MODULE_ID.to_string(), true)].into_iter().collect();
+        let screen = ScreenSlice {
+            anchors: Some(Anchors {
+                temple_entrance: Some([960, 713]),
+                merc_panel: Some([100, 200]),
+            }),
+            ..reference_screen()
+        };
+        let snap = compose_snapshot(
+            base,
+            "20/20".into(),
+            "21/23".into(),
+            "skill".into(),
+            modules,
+            crate::mercenary::MercenarySlice::default(),
+            vec!["guide-b".into()],
+            crate::mercenary::sync::MercSyncStatus::default(),
+            true,
+            2,
+            crate::temple::slice::TempleSlice::default(),
+            Some(screen),
+        );
+        let actual = serde_json::to_string_pretty(&snap).unwrap() + "\n";
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/ssot-snapshot.json");
+        if std::env::var("SSOT_CONTRACT_UPDATE").as_deref() == Ok("1") {
+            std::fs::write(path, &actual).unwrap();
+            return;
+        }
+        let golden = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(
+            golden == actual,
+            "{path} differs from the composed snapshot; regenerate with SSOT_CONTRACT_UPDATE=1 cargo test --lib ssot::tests::ssot_snapshot_contract"
+        );
+    }
 }
 
 #[cfg(test)]
