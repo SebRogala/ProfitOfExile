@@ -288,6 +288,20 @@ mod tests {
         assert!(lines[1].starts_with("79,\"\",\"42\",,,1,"));
         assert_eq!(lines.len(), 2);
     }
+    // Goldens are written by internal/bossloot/contract_test.go; regenerate with
+    // docker compose exec -T app go test ./internal/bossloot/ -run TestBossLoot_contractGolden -update
+    fn round_trips_golden<T: serde::de::DeserializeOwned + Serialize>(name: &str) {
+        let path = format!("{}/../contracts/{name}", env!("CARGO_MANIFEST_DIR"));
+        let golden: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let decoded: T = serde_json::from_value(golden.clone()).unwrap_or_else(|e| panic!("{name} no longer decodes: {e}"));
+        assert_eq!(serde_json::to_value(&decoded).unwrap(), golden, "{name}: Rust fields differ from the Go-served shape");
+    }
+    #[test]
+    fn submit_outcome_matches_the_go_golden() { round_trips_golden::<SubmitOutcome>("boss-loot-submit.json"); }
+    #[test]
+    fn runs_page_matches_the_go_golden() { round_trips_golden::<RunsPage>("boss-loot-runs.json"); }
+    #[test]
+    fn boss_stats_match_the_go_golden() { round_trips_golden::<BossStats>("boss-loot-stats.json"); }
 }
 
 #[cfg(test)]

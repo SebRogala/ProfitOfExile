@@ -1260,4 +1260,30 @@ mod tests {
         assert_eq!(slice.market, read, "the read's own market is untouched");
         assert_eq!(slice.poll, after_switch, "and the poll's view is what moved");
     }
+
+    // The golden is written by internal/server/handlers/temple_contract_test.go; regenerate with
+    // docker compose exec -T app go test ./internal/server/handlers/ -run TestTempleMarket_contractGolden -update
+    fn temple_golden() -> String {
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/temple-market.json")).unwrap()
+    }
+
+    #[test]
+    fn the_go_golden_fills_every_defaulted_market_field() {
+        let market: MarketInput = serde_json::from_str(&temple_golden()).unwrap();
+
+        assert!(!market.league.is_empty(), "league parsed empty: Go renamed `league`?");
+        assert!(market.as_of.is_some(), "asOf parsed None: Go renamed `asOf`?");
+        assert!(market.floor > 0.0, "floor parsed 0: Go renamed `floor`?");
+        assert!(!market.rooms.is_empty(), "rooms parsed empty: Go renamed `rooms`?");
+        assert!(!market.items.is_empty(),"items parsed empty: Go renamed `items`?");
+    }
+
+    #[test]
+    fn the_go_golden_carries_every_key_the_wire_market_consumes() {
+        let golden: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&temple_golden()).unwrap();
+
+        for key in ["league", "asOf", "floor", "rooms", "items"] {
+            assert!(golden.contains_key(key), "golden lacks `{key}`, which WireMarket reads");
+        }
+    }
 }
