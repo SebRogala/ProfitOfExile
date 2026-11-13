@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// parityFixture is testdata/page-parity.json: plays with the display values the
+// parityFixture is testdata/wire/page-parity.json: plays with the display values the
 // desktop's TS helpers computed for them, and filter cases over the same plays.
 // It was generated once from the TS chain (ADR-030 WI-6); the regeneration
 // script is recorded in the WI-6 implementation note.
@@ -25,7 +25,7 @@ type parityFixture struct {
 
 func loadParity(t *testing.T) parityFixture {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/page-parity.json")
+	raw, err := os.ReadFile("testdata/wire/page-parity.json")
 	if err != nil {
 		t.Fatalf("read parity fixture: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestPlay_WithoutDisplayOmitsTheKey(t *testing.T) {
 // null), descending for expected/roi and ascending for fastest, null keys last,
 // ties in served (fixture) order. WI-7's SQL parity test reads these orders.
 func TestPageParity_CaseOrderMatchesNormalizedKeys(t *testing.T) {
-	raw, err := os.ReadFile("testdata/page-parity.json")
+	raw, err := os.ReadFile("testdata/wire/page-parity.json")
 	if err != nil {
 		t.Fatalf("read parity fixture: %v", err)
 	}

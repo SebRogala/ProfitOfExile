@@ -60,7 +60,7 @@
 import { describe, it, expect } from 'vitest';
 import dayWire from '../../../../internal/exchange/testdata/wire/day.json';
 import recentWire from '../../../../internal/exchange/testdata/wire/recent.json';
-import parity from '../../../../internal/exchange/testdata/page-parity.json';
+import parity from '../../../../internal/exchange/testdata/wire/page-parity.json';
 import {
 	CHAOS_ID,
 	DIVINE_ID,

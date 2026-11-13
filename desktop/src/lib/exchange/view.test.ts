@@ -45,7 +45,7 @@ import type {
 	CurrencyExchangeResponse,
 	PlayDisplay
 } from '$lib/api';
-import parity from '../../../../internal/exchange/testdata/page-parity.json';
+import parity from '../../../../internal/exchange/testdata/wire/page-parity.json';
 import { setNumberFormat } from '$lib/stores/number-format.svelte';
 
 // The expectations below are written with comma grouping; pin it so they do

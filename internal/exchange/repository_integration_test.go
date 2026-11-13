@@ -936,7 +936,7 @@ type parityCase struct {
 
 func loadParityCases(t *testing.T) []parityCase {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/page-parity.json")
+	raw, err := os.ReadFile("testdata/wire/page-parity.json")
 	if err != nil {
 		t.Fatal(err)
 	}
