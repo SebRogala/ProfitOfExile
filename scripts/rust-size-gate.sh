@@ -31,7 +31,7 @@ check ssot.rs 1800
 # time: a multi-line `use crate::{temple, ...}` import evades it.
 grep -rnE 'crate::(temple|mercenary)::' ssot*.rs ssot/ 2>/dev/null \
 	| grep -vE '::(slice::TempleSlice|MercenarySlice|sync::MercSyncStatus)' && { echo "ssot -> feature internals"; exit 1; }
-# only settings.rs and persist_settings may write the settings file (H3)
-! grep -rn 'settings::save(' --include='*.rs' . | grep -v '^./settings.rs' | grep -v 'fn persist_settings' \
-	|| { echo "settings::save outside settings.rs and persist_settings"; exit 1; }
+# only settings/ and persist_settings may write the settings file (H3)
+! grep -rn 'settings::save(' --include='*.rs' . | grep -v '^./settings/' | grep -v 'fn persist_settings' \
+	|| { echo "settings::save outside settings/ and persist_settings"; exit 1; }
 exit 0

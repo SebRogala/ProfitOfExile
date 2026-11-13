@@ -37,7 +37,7 @@ flags and `lab_overlays_enabled` documented here are NOT modules.
    placements are the exception and must stay out of that function:
    `Settings.widgets` IS owned by an `AppState` mutex, so it travels through
    `from_state`, and carrying the file's copy forward would undo the write
-   `set_widget_geometry` just made. `settings.rs` has a test that fails if it is
+   `set_widget_geometry` just made. `settings/mod.rs` has a test that fails if it is
    ever added there.
 6. **Error visibility:** log failed invoke, window, and event operations. Do not
    silently swallow failures in overlay paths.

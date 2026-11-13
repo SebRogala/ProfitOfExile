@@ -67,8 +67,15 @@ module follows a future default change; an explicit choice survives it.
 
 ## Consequences
 
-- Adding a feature is bounded: spawn fn + `ModuleDef` entry + Sidebar label +
-  a page route. No new lifecycle plumbing, no new persistence pattern.
+- Adding a feature is bounded by a written recipe rather than by the registry
+  alone: the `ModuleDef` entry drives lifecycle, enablement persistence and the
+  `modules` slice; the remaining edit sites are enumerated in the registry's
+  module doc (`modules.rs`, "Recipe — adding a module"), which is normative.
+  No new lifecycle plumbing, no new persistence pattern.
+  Amended 2026-11-13 (POE-342): the earlier bullet ("spawn fn + `ModuleDef`
+  entry + Sidebar label + a page route") had been false since the merc and
+  temple modules, which also need state, SSOT, settings, command, log-watcher,
+  focus-poller and capture-exclusion edits; the list now lives in `modules.rs`.
 - Unused features cost nothing: no background task runs, and the webview side
   polls only from open windows.
 - The four legacy overlay flags (`comparator/compass/pathstrip/timer` +
