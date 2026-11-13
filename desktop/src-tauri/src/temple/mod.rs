@@ -183,3 +183,109 @@ impl std::fmt::Display for ReadError {
 }
 
 impl std::error::Error for ReadError {}
+
+/// The temple module's runtime state, embedded by value in `AppState` as
+/// `AppState.temple_state` (POE-342). Every field keeps its own lock or
+/// atomic — the struct is a grouping, never a lock of its own.
+pub struct TempleState {
+    /// The temple module's persisted settings: the cached anchor calibration,
+    /// the four tunable profile fields and the two config flags. Shared because
+    /// two owners need it — the capture loop reads a snapshot per read and
+    /// writes the calibration back, and the `temple_set_*` commands are what
+    /// the user edits while that loop is running.
+    pub(crate) settings: std::sync::Mutex<slice::TempleSettings>,
+    /// The market read the temple valuation prices a board against (POE-258).
+    ///
+    /// Written ONLY by `temple::market::spawn_temple_market_poll` and by
+    /// `temple::market::on_server_url_changed`; read through `temple::market::temple_market_now`,
+    /// which is what applies the staleness judgement. Nothing reads this field
+    /// directly — the raw payload carries `stale: false` as it arrived from the
+    /// wire, and a board priced off it would be priced off a market of any age.
+    ///
+    /// Not a setting and not persisted: it is a copy of what a server said, and
+    /// a copy reloaded from disk at the next launch would be a price with no
+    /// server behind it. Acquired alone, like every other module-owned Mutex.
+    pub(crate) market: std::sync::Mutex<market::MarketInput>,
+    /// The valuation table computed from the preset, the Custom table and the
+    /// market read above — stored so a read LOOKS IT UP instead of rebuilding
+    /// it (POE-257 WI-3, 2026-09-07; the owner's "computed on update, and the
+    /// module uses already computed weightings each time").
+    ///
+    /// Written and read through `temple::valuation::temple_valuation_now` alone, which is
+    /// the total guard: it rebuilds the `temple::preset::ValuationKey` from the
+    /// CALLER'S settings and the market on every call and hands back what is
+    /// stored only when the two keys are equal. The five warm-up callers
+    /// (`temple::valuation::warm_temple_valuation` from the market poll, from
+    /// `temple::market::on_server_url_changed`, from `temple_set_preset` /
+    /// `temple_set_custom` and from `reset_all_settings`) are what make a read's
+    /// lookup a HIT; a missed one costs that read a recompute, never a wrong
+    /// table.
+    ///
+    /// Not persisted, for the reason `market` is not: it is a function
+    /// of a market read, and one reloaded from disk would be a valuation with
+    /// no server behind it. Acquired ALONE — after the `market` guard
+    /// has been dropped, never inside it — and never held across the table
+    /// BUILD: the accessor takes it to compare keys, drops it, builds, and
+    /// re-takes it to store, so a read is never queued behind another thread's
+    /// 193-245 ms compute.
+    pub(crate) valuation: std::sync::Mutex<Option<preset::CachedValuation>>,
+    /// Whether Client.txt has put an incursion in scope (POE-242) — with, since
+    /// 2026-09-07 (WI-1), the word the next stand-down is reported with
+    /// (`temple::trigger::StandDown`). The single owner of "may the temple loop
+    /// capture right now". Written by the log watcher on every line, by
+    /// `temple_rearm`, and by the capture loop when it has read a board and
+    /// watched the sheet close; read once per loop iteration. Acquired alone,
+    /// like every other module-owned Mutex.
+    ///
+    /// Kept current even while the temple module is OFF: it is a fact about the
+    /// game, and a player who switches the module on inside a temple must get a
+    /// read without pressing anything.
+    pub(crate) arm: std::sync::Mutex<trigger::ArmState>,
+    /// Bumped by `temple_rearm` (and by every settings command that invalidates
+    /// the current advice). The loop's read gate watches it to force one full
+    /// re-read of a board it would otherwise skip as unchanged. An atomic, not
+    /// a Mutex: it is read on every tick and never read together with the
+    /// settings.
+    ///
+    /// **INVARIANT, stated at both fields:** this counter FORCES a read with
+    /// nothing sighted; `epoch` only INVALIDATES one already read. An
+    /// Alva line must never bump this one — that would promote an anchor
+    /// attempt on an empty screen for every voice line, which is the
+    /// free-running capture POE-242 removed.
+    pub(crate) rearm: std::sync::atomic::AtomicU64,
+    /// Bumped by `temple::trigger::on_client_line` on every CYCLE BOUNDARY
+    /// (`trigger::ends_epoch`: a start line, any other Alva line, a zone change
+    /// out of the temple) — POE-249.
+    ///
+    /// The board's identity: within one epoch no incursion has happened, so the
+    /// sheet cannot have changed, and a sheet re-opened in the same epoch shows
+    /// what was already read rather than being read again. The capture loop
+    /// keys its board on it and INVALIDATES that board when it moves.
+    ///
+    /// **INVARIANT, stated at both fields:** `rearm` FORCES a read with
+    /// nothing sighted; this one only invalidates. It must never be read as a
+    /// reason to look at the screen — Alva speaks several times per incursion,
+    /// and each of those lines would otherwise buy an anchor attempt over
+    /// whatever the player happens to be doing.
+    ///
+    /// An atomic for the same reason as its sibling: read once per tick, never
+    /// read together with anything else.
+    pub(crate) epoch: std::sync::atomic::AtomicU64,
+}
+
+impl TempleState {
+    /// The one construction source for `run()` and `test_app_state`.
+    /// Deliberately not a `Default` impl, like `test_app_state`: a new field
+    /// breaking this constructor is the intended signal to decide whether it
+    /// also needs a settings touch point.
+    pub(crate) fn new() -> Self {
+        Self {
+            settings: std::sync::Mutex::new(slice::TempleSettings::default()),
+            market: std::sync::Mutex::new(market::MarketInput::none()),
+            valuation: std::sync::Mutex::new(None),
+            arm: std::sync::Mutex::new(trigger::ArmState::default()),
+            rearm: std::sync::atomic::AtomicU64::new(0),
+            epoch: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}

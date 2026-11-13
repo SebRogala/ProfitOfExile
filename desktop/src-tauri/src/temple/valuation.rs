@@ -1155,7 +1155,8 @@ pub fn temple_valuation_now(
     let state = app.state::<AppState>();
     {
         let slot = state
-            .temple_valuation
+            .temple_state
+            .valuation
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         if let Some(valued) = super::preset::cached_valuation(&slot, &key) {
@@ -1166,7 +1167,8 @@ pub fn temple_valuation_now(
     // held so a concurrent read's lookup above is never queued behind it.
     let valued = super::preset::compute_valuation(&key);
     let mut slot = state
-        .temple_valuation
+        .temple_state
+        .valuation
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     super::preset::store_valuation(&mut slot, key, valued.clone());

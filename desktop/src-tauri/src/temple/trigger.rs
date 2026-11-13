@@ -361,7 +361,7 @@ impl ArmSource {
 
 /// Whether the capture loop may look at the screen at all.
 ///
-/// The single owner of that answer, held in `AppState.temple_arm` and written
+/// The single owner of that answer, held in `AppState.temple_state.arm` and written
 /// from exactly three places: the Client.txt watcher (every line, whether or not
 /// the module is on), `temple_rearm`, and — since WI-1 — the capture loop when
 /// it has read a board and watched the sheet close ([`complete_cycle`]).
@@ -995,7 +995,7 @@ pub fn apply_catch_up_tail(state: &mut ArmState, tail: Option<&str>) -> Option<T
 /// The arm state, copied out. The loop asks once per iteration.
 pub fn arm_state(app: &AppHandle) -> ArmState {
     let state = app.state::<AppState>();
-    let arm = *state.temple_arm.lock().unwrap_or_else(|e| e.into_inner());
+    let arm = *state.temple_state.arm.lock().unwrap_or_else(|e| e.into_inner());
     arm
 }
 
@@ -1029,7 +1029,7 @@ pub fn on_client_line(app: &AppHandle, line: &str) {
     let event = classify(line, now);
     {
         let state = app.state::<AppState>();
-        let mut arm = state.temple_arm.lock().unwrap_or_else(|e| e.into_inner());
+        let mut arm = state.temple_state.arm.lock().unwrap_or_else(|e| e.into_inner());
         // Classified a second time inside, which is two string searches on the
         // handful of lines a map produces: one entry point for the arm beats a
         // second one that only the glue could reach.
@@ -1041,9 +1041,10 @@ pub fn on_client_line(app: &AppHandle, line: &str) {
         return;
     };
     if ends_epoch(event) {
-        // INVALIDATE, never force. See `AppState::temple_epoch`.
+        // INVALIDATE, never force. See `TempleState::epoch`.
         app.state::<AppState>()
-            .temple_epoch
+            .temple_state
+            .epoch
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
     // ONE publish for both writes: `publish` clones the slice to decide whether
@@ -1114,7 +1115,7 @@ pub fn on_client_line(app: &AppHandle, line: &str) {
 pub fn arm_manual(app: &AppHandle) {
     let now = super::run::now_ms();
     let state = app.state::<AppState>();
-    let mut arm = state.temple_arm.lock().unwrap_or_else(|e| e.into_inner());
+    let mut arm = state.temple_state.arm.lock().unwrap_or_else(|e| e.into_inner());
     arm.arm_manual(now);
 }
 
@@ -1145,7 +1146,7 @@ pub fn arm_manual(app: &AppHandle) {
 pub fn complete_cycle(app: &AppHandle, key: (u64, u64)) {
     let key_current = super::run::board_key(app) == key;
     let state = app.state::<AppState>();
-    let mut arm = state.temple_arm.lock().unwrap_or_else(|e| e.into_inner());
+    let mut arm = state.temple_state.arm.lock().unwrap_or_else(|e| e.into_inner());
     arm.complete_cycle(key_current);
 }
 
@@ -1158,7 +1159,7 @@ pub fn complete_cycle(app: &AppHandle, key: (u64, u64)) {
 pub fn catch_up(app: &AppHandle, tail: Option<&str>) {
     let Some(seeded) = ({
         let state = app.state::<AppState>();
-        let mut arm = state.temple_arm.lock().unwrap_or_else(|e| e.into_inner());
+        let mut arm = state.temple_state.arm.lock().unwrap_or_else(|e| e.into_inner());
         apply_catch_up_tail(&mut arm, tail)
     }) else {
         return;

@@ -938,7 +938,7 @@ pub fn update(app: &tauri::AppHandle, f: impl FnOnce(&Settings) -> Settings) {
 pub fn from_state(state: &crate::AppState) -> Settings {
     let boss_loot = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let number_format = *state.number_format.lock().unwrap_or_else(|e| e.into_inner());
-    let temple = state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let temple = state.temple_state.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     // Bound HERE rather than inside the struct literal below: a temporary
     // guard in a literal lives to the end of the whole statement, and this
     // mutex is one of the module-owned ones that are taken alone (see
@@ -1098,7 +1098,7 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
             format!("(Custom table, not in force) {warning}")
         });
     }
-    *state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()) =
+    *state.temple_state.settings.lock().unwrap_or_else(|e| e.into_inner()) =
         crate::temple::slice::TempleSettings {
             profile: match settings.temple_profile.validate() {
                 Ok(()) => settings.temple_profile.clone(),
@@ -1187,7 +1187,7 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     // just written rather than from `settings`, so a rejected value is echoed
     // as the one actually in force. The `temple_settings` guard is released
     // before `temple` is taken; nothing else locks the two together.
-    let temple = state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let temple = state.temple_state.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     {
         let mut slice = state.temple.lock().unwrap_or_else(|e| e.into_inner());
         slice.config = temple.config;
@@ -1774,13 +1774,8 @@ pub(crate) mod tests {
             mercenary: Mutex::new(crate::mercenary::MercenarySlice::default()),
             merc: crate::mercenary::MercState::new(),
             temple: Mutex::new(crate::temple::slice::TempleSlice::default()),
-            temple_settings: Mutex::new(crate::temple::slice::TempleSettings::default()),
-            temple_market: Mutex::new(crate::temple::market::MarketInput::none()),
+            temple_state: crate::temple::TempleState::new(),
             exceptional_prices: Mutex::new(crate::font_alerts::PriceMirror::default()),
-            temple_valuation: Mutex::new(None),
-            temple_arm: Mutex::new(crate::temple::trigger::ArmState::default()),
-            temple_rearm: AtomicU64::new(0),
-            temple_epoch: AtomicU64::new(0),
             screen: Mutex::new(None),
             widgets: Mutex::new(std::collections::BTreeMap::new()),
         }
@@ -2027,7 +2022,7 @@ pub(crate) mod tests {
                 ..Default::default()
             },
         };
-        *state.temple_settings.lock().unwrap() = chosen.clone();
+        *state.temple_state.settings.lock().unwrap() = chosen.clone();
 
         let saved = from_state(&state);
         assert_eq!(saved.temple_config, chosen.config);
@@ -2036,7 +2031,7 @@ pub(crate) mod tests {
         let reloaded = test_app_state();
         let _ = apply_to_state(&saved, &reloaded);
 
-        assert_eq!(*reloaded.temple_settings.lock().unwrap(), chosen);
+        assert_eq!(*reloaded.temple_state.settings.lock().unwrap(), chosen);
     }
 
     /// The slice's settings echo is seeded at load, not at loop start.
@@ -2533,7 +2528,7 @@ pub(crate) mod tests {
             )]),
             ..Default::default()
         };
-        *state.temple_settings.lock().unwrap() = crate::temple::slice::TempleSettings {
+        *state.temple_state.settings.lock().unwrap() = crate::temple::slice::TempleSettings {
             preset: crate::temple::preset::Preset::Custom,
             custom: mine.clone(),
             ..Default::default()
@@ -2541,7 +2536,7 @@ pub(crate) mod tests {
 
         // Switch to Default, and round-trip through the file as a restart
         // would.
-        state.temple_settings.lock().unwrap().preset = crate::temple::preset::Preset::Default;
+        state.temple_state.settings.lock().unwrap().preset = crate::temple::preset::Preset::Default;
         let on_disk = from_state(&state);
         let reloaded: Settings =
             serde_json::from_str(&serde_json::to_string(&on_disk).expect("settings serialise"))
@@ -2550,20 +2545,20 @@ pub(crate) mod tests {
         let _ = apply_to_state(&reloaded, &restarted);
 
         assert_eq!(
-            restarted.temple_settings.lock().unwrap().preset,
+            restarted.temple_state.settings.lock().unwrap().preset,
             crate::temple::preset::Preset::Default,
             "the switch itself persisted",
         );
         assert_eq!(
-            restarted.temple_settings.lock().unwrap().custom,
+            restarted.temple_state.settings.lock().unwrap().custom,
             mine,
             "and the table the player is not currently using survived it",
         );
 
         // Switch back: the same numbers are in force again, unedited.
-        restarted.temple_settings.lock().unwrap().preset =
+        restarted.temple_state.settings.lock().unwrap().preset =
             crate::temple::preset::Preset::Custom;
-        let settings = restarted.temple_settings.lock().unwrap().clone();
+        let settings = restarted.temple_state.settings.lock().unwrap().clone();
         assert_eq!(settings.custom, mine);
         assert_eq!(
             crate::temple::slice::value_read(
@@ -2608,7 +2603,7 @@ pub(crate) mod tests {
             rejected[0].contains("corruption") && rejected[0].contains("tier 3"),
             "the refusal names the offending key and tier: {rejected:?}",
         );
-        let settings = state.temple_settings.lock().unwrap().clone();
+        let settings = state.temple_state.settings.lock().unwrap().clone();
         assert_eq!(
             settings.preset,
             crate::temple::preset::Preset::Custom,
@@ -2659,7 +2654,7 @@ pub(crate) mod tests {
 
         let state = test_app_state();
         let _ = apply_to_state(&parsed, &state);
-        let stored = state.temple_settings.lock().unwrap().custom.clone();
+        let stored = state.temple_state.settings.lock().unwrap().custom.clone();
 
         assert!(
             !stored.rooms.contains_key("corruption"),
@@ -2710,7 +2705,7 @@ pub(crate) mod tests {
 
         let state = test_app_state();
         let rejected = apply_to_state(&parsed, &state);
-        let stored = state.temple_settings.lock().unwrap().custom.clone();
+        let stored = state.temple_state.settings.lock().unwrap().custom.clone();
 
         assert_eq!(stored.tier_fraction, 0.8, "the shipped fraction is in force");
         assert_eq!(stored.drops_weight, 1.0, "and the shipped drops weight");
@@ -2800,7 +2795,7 @@ pub(crate) mod tests {
 
         assert_eq!(rejected, Vec::<String>::new(), "nothing to report");
         assert_eq!(
-            state.temple_settings.lock().unwrap().custom.c_per_rarity,
+            state.temple_state.settings.lock().unwrap().custom.c_per_rarity,
             0.75,
             "the neighbouring knob survives",
         );
@@ -2843,7 +2838,7 @@ pub(crate) mod tests {
 
         assert_eq!(rejected, Vec::<String>::new(), "nothing to report");
         assert_eq!(
-            state.temple_settings.lock().unwrap().custom.c_per_rarity,
+            state.temple_state.settings.lock().unwrap().custom.c_per_rarity,
             0.75,
             "the neighbouring knob survives",
         );
@@ -2864,7 +2859,7 @@ pub(crate) mod tests {
 
         assert_eq!(rejected, Vec::<String>::new(), "nothing to report");
         assert_eq!(
-            state.temple_settings.lock().unwrap().custom.c_per_rarity,
+            state.temple_state.settings.lock().unwrap().custom.c_per_rarity,
             0.25,
             "the stored rate, not the 1 c default",
         );
@@ -2986,7 +2981,7 @@ pub(crate) mod tests {
         let _ = apply_to_state(&parsed, &state);
 
         assert_eq!(
-            *state.temple_settings.lock().unwrap(),
+            *state.temple_state.settings.lock().unwrap(),
             crate::temple::slice::TempleSettings::default(),
         );
     }
@@ -3735,7 +3730,7 @@ pub(crate) mod tests {
 
         let _ = apply_to_state(&settings, &state);
 
-        let applied = state.temple_settings.lock().unwrap().clone();
+        let applied = state.temple_state.settings.lock().unwrap().clone();
         assert_eq!(
             applied.profile,
             crate::temple::slice::TempleProfileSettings::default(),

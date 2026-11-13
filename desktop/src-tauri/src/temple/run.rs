@@ -385,7 +385,7 @@ pub struct LoopState {
 ///
 /// # The identity is `(epoch, rearm)` PLUS the pixel frame
 ///
-/// `epoch` is `crate::AppState::temple_epoch`, bumped when Alva speaks or the
+/// `epoch` is `crate::temple::TempleState::epoch`, bumped when Alva speaks or the
 /// player changes zone — the two events that BRACKET an incursion cycle
 /// (POE-249 WI-1, docs/TEMPLE-LIFECYCLE.md row 4). Only an incursion adds a room
 /// or an upgrade, and `super::trigger::ends_epoch` bumps on the START line as
@@ -394,7 +394,7 @@ pub struct LoopState {
 /// encounter (Operator, 2026-10-10), so the contents the read saw hold until
 /// the END line — see "what is left" below for the superseded kill residual.
 ///
-/// `rearm` is `crate::AppState::temple_rearm`, which the Re-arm button and
+/// `rearm` is `crate::temple::TempleState::rearm`, which the Re-arm button and
 /// every settings command bump. It is in the key because the user pressing it
 /// means "read that again" — a frame could not express that, and this is
 /// the accepted cost of an epoch that a MISSED Alva line would leave running
@@ -844,7 +844,7 @@ pub struct ReadStages {
     /// (`advisor/mod.rs`, `the_conditional_ranking_cost_on_case_eight`).
     ///
     /// **It measures the lookup or the build, never a lock wait.** The accessor
-    /// holds `AppState.temple_valuation` for a `ValuationKey` comparison and
+    /// holds `AppState.temple_state.valuation` for a `ValuationKey` comparison and
     /// drops it before building, so this number cannot be inflated by another
     /// thread's in-flight compute. A `cached` reading here is therefore a claim
     /// about the work this read did and not about what it waited for — which is
@@ -1899,7 +1899,7 @@ pub fn publish(app: &AppHandle, mutate: impl FnOnce(&mut TempleSlice)) {
 /// straddles a change should use one of the two, not half of each.
 pub fn settings_snapshot(app: &AppHandle) -> TempleSettings {
     let state = app.state::<AppState>();
-    let settings = state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let settings = state.temple_state.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     settings
 }
 
@@ -2905,7 +2905,7 @@ fn game_focused(app: &AppHandle) -> bool {
 
 fn rearm_counter(app: &AppHandle) -> u64 {
     let state = app.state::<AppState>();
-    let counter = state.temple_rearm.load(std::sync::atomic::Ordering::SeqCst);
+    let counter = state.temple_state.rearm.load(std::sync::atomic::Ordering::SeqCst);
     counter
 }
 
@@ -2928,7 +2928,7 @@ pub(super) fn board_key(app: &AppHandle) -> (u64, u64) {
 /// "is this a board I have already read?" means.
 fn temple_epoch(app: &AppHandle) -> u64 {
     let state = app.state::<AppState>();
-    let epoch = state.temple_epoch.load(std::sync::atomic::Ordering::SeqCst);
+    let epoch = state.temple_state.epoch.load(std::sync::atomic::Ordering::SeqCst);
     epoch
 }
 

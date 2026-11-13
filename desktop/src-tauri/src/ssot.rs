@@ -1299,7 +1299,7 @@ pub fn screen_from_capture(capture: &crate::capture::Capture) -> ScreenSlice {
 ///   across every tick that cannot see the frame (`mercenary::run`'s
 ///   `next_fitted_scale` keeps it, `cellfit::apply_held` re-applies it). The
 ///   next tick after a Recalibrate would therefore republish that same held
-///   number onto this slice and persist it again. `merc_refit` is bumped so
+///   number onto this slice and persist it again. `merc.refit` is bumped so
 ///   that tick drops `session.fitted` first and measures the panel afresh.
 ///
 /// ONE settings write: `settings::persist_forgetting_screen_scale` rebuilds the
@@ -1310,7 +1310,7 @@ pub fn screen_from_capture(capture: &crate::capture::Capture) -> ScreenSlice {
 /// # Both re-arms are bumped BEFORE the write, and that order is load-bearing
 ///
 /// The merc capture loop runs on its own thread and can tick between any two
-/// statements here. A tick that has not yet seen `merc_refit` still holds the
+/// statements here. A tick that has not yet seen `merc.refit` still holds the
 /// registration it settled on, republishes it through [`publish_screen`] and
 /// persists it — so a write placed before the bump can have the forgotten
 /// number back on disk milliseconds after it was emptied, and the press does
@@ -1327,7 +1327,8 @@ pub fn geometry_recalibrate(app: AppHandle) {
     {
         let state = app.state::<AppState>();
         state
-            .temple_rearm
+            .temple_state
+            .rearm
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         state
             .merc.refit

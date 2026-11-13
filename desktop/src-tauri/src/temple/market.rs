@@ -465,7 +465,7 @@ pub fn judge_market(fetched: Option<&MarketInput>, league: Option<&str>) -> Mark
 pub fn temple_market_now(app: &AppHandle) -> MarketInput {
     let stored = {
         let state = app.state::<AppState>();
-        let market = state.temple_market.lock().unwrap_or_else(|e| e.into_inner());
+        let market = state.temple_state.market.lock().unwrap_or_else(|e| e.into_inner());
         market.clone()
     };
     stored.aged_at(chrono::Utc::now().timestamp_millis())
@@ -582,7 +582,7 @@ async fn poll_temple_market_once(app: &AppHandle) -> PollOutcome {
     let priced = fetched.as_ref().map(|m| (m.as_of, m.rooms.len()));
     let changed = {
         let state = app.state::<AppState>();
-        store_market(&state.temple_market, verdict, fetched)
+        store_market(&state.temple_state.market, verdict, fetched)
     };
     // Published on EVERY poll and not only on a change, because the view
     // carries an age: a last-good read that has just crossed the stale line
@@ -729,7 +729,7 @@ pub fn spawn_temple_market_poll(app: AppHandle) {
 pub fn on_server_url_changed(app: &AppHandle) {
     {
         let state = app.state::<AppState>();
-        drop_market(&state.temple_market);
+        drop_market(&state.temple_state.market);
     }
     publish_market_view(app);
     // The dropped market is an input change like any other, and the very next

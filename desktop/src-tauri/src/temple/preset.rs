@@ -593,7 +593,7 @@ pub struct CachedValuation {
 // COMPUTE MUST NOT HAPPEN UNDER THE SLOT LOCK.
 //
 // One function that took the slot and built a missing table inside it would hold
-// `AppState.temple_valuation` for the whole 193-245 ms build, and that mutex is
+// `AppState.temple_state.valuation` for the whole 193-245 ms build, and that mutex is
 // shared with every read: a read arriving while a warm-up computed would block on
 // it and then report `cached` for a wait it did not spend, and in the interleaving
 // where the market moved between the warm's lookup and its store it would block
@@ -1266,7 +1266,7 @@ mod tests {
     /// A key that misses comes back as `None` and leaves the slot ALONE.
     ///
     /// This is the property that lets `valuation::temple_valuation_now` drop the
-    /// `AppState.temple_valuation` guard before it builds anything: a lookup
+    /// `AppState.temple_state.valuation` guard before it builds anything: a lookup
     /// that computed on a miss would put the 193-245 ms build back under the
     /// lock, where every concurrent read waits behind it.
     ///

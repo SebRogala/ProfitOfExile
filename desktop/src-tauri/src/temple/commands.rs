@@ -12,7 +12,7 @@
 //!
 //! # Why the setters do not touch the loop
 //!
-//! `AppState.temple_settings` is the single owner. The loop reads a snapshot of
+//! `AppState.temple_state.settings` is the single owner. The loop reads a snapshot of
 //! it at the top of every read, so a setter's whole job is to write the owner,
 //! persist the delta and publish — the next tick picks the change up on its
 //! own. The one exception is [`temple_rearm`], which has nothing to write: it
@@ -67,7 +67,8 @@ pub fn temple_set_config(config: TempleConfig, app: AppHandle) -> Result<(), Str
     {
         let state = app.state::<AppState>();
         state
-            .temple_settings
+            .temple_state
+            .settings
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .config = config.clone();
@@ -104,7 +105,8 @@ pub fn temple_set_profile(profile: TempleProfileSettings, app: AppHandle) -> Res
     {
         let state = app.state::<AppState>();
         state
-            .temple_settings
+            .temple_state
+            .settings
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .profile = profile.clone();
@@ -140,7 +142,8 @@ pub fn temple_set_preset(preset: Preset, app: AppHandle) -> Result<(), String> {
     {
         let state = app.state::<AppState>();
         state
-            .temple_settings
+            .temple_state
+            .settings
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .preset = preset;
@@ -198,7 +201,8 @@ pub fn temple_set_custom(
     {
         let state = app.state::<AppState>();
         state
-            .temple_settings
+            .temple_state
+            .settings
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .custom = custom.clone();
@@ -271,7 +275,8 @@ pub fn temple_value_table(
     let settings = {
         let state = app.state::<AppState>();
         let settings = state
-            .temple_settings
+            .temple_state
+            .settings
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         settings.clone()
@@ -315,7 +320,7 @@ pub fn temple_rearm(app: AppHandle) -> Result<(), String> {
 /// mutex would put the loop behind the webview thread once a second.
 fn rearm(app: &AppHandle) {
     let state = app.state::<AppState>();
-    state.temple_rearm.fetch_add(1, Ordering::SeqCst);
+    state.temple_state.rearm.fetch_add(1, Ordering::SeqCst);
 }
 
 // ------------------------------------------------------------- the dump --
