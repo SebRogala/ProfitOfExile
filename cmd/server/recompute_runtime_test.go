@@ -11,6 +11,7 @@ import (
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
+	"profitofexile/internal/price/resolve"
 	"profitofexile/internal/server"
 )
 
@@ -947,5 +948,54 @@ func TestSeedCaches_seedsTheDivineRate(t *testing.T) {
 
 	if got := r.divineRate.Current().Chaos; got != 231.5 {
 		t.Errorf("divine rate after seedCaches = %v, want 231.5 from the poe.ninja fallback", got)
+	}
+}
+
+type stubTradeObservations []resolve.Observation
+
+func (s stubTradeObservations) ObservationsAsOf(context.Context, league.Scope, time.Time) ([]resolve.Observation, error) {
+	return s, nil
+}
+
+type stubGemObservations []resolve.Observation
+
+func (s stubGemObservations) GemObservationsAsOf(context.Context, league.Scope, time.Time) ([]resolve.Observation, error) {
+	return s, nil
+}
+
+func TestSyncBookRate_followsANinjaFallbackChangeWithoutAnExchangeRecompute(t *testing.T) {
+	scope := league.Historical("Temp-POE307")
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	gem := resolve.GemKey(scope.ID(), "Siege Ballista of Splintering", "20/20")
+	divine := resolve.CurrencyKey(scope.ID(), "divine")
+	sd := []resolve.Money{{Amount: 0.25, Currency: "divine"}, {Amount: 40, Currency: "chaos"}, {Amount: 55, Currency: "chaos"}}
+	trades := stubTradeObservations{{Key: gem, Source: resolve.SourceTrade, At: now.Add(-time.Hour), Prices: sd}}
+
+	var mu sync.Mutex
+	ninja := 180.0
+	reader := exchange.NewDivineRateReader(exchange.NewCache(), func(context.Context) (float64, time.Time, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return ninja, now.Add(-30 * time.Minute), nil
+	})
+	if err := reader.RefreshFallback(context.Background()); err != nil {
+		t.Fatalf("RefreshFallback: %v", err)
+	}
+	priceBook := newPriceBook(scope, trades, stubGemObservations{}, reader)
+	if err := priceBook.Seed(context.Background(), now); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	r := &recomputeRuntime{ctx: context.Background(), scope: scope, divineRate: reader, priceBook: priceBook}
+
+	mu.Lock()
+	ninja = 190
+	mu.Unlock()
+	r.refreshDivineRate(context.Background())
+
+	if got, ok := priceBook.Get(divine); !ok || got.Chaos != 190 || got.Source != resolve.Source(exchange.DivineRateSourceNinja) {
+		t.Errorf("Get(divine) = %+v, %v; want Chaos 190, Source ninja", got, ok)
+	}
+	if got, ok := priceBook.Get(gem); !ok || got.Chaos != 47.5 {
+		t.Errorf("Get(gem).Chaos = %v (ok %v), want 47.5 (median of 40, 0.25x190, 55)", got.Chaos, ok)
 	}
 }

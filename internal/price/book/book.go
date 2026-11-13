@@ -148,6 +148,10 @@ func (b *Book) build(obs map[resolve.Key][]resolve.Observation, rate resolve.Rat
 			s.resolved[k] = r
 		}
 	}
+	if rate.Chaos > 0 {
+		divine := resolve.CurrencyKey(b.scope.ID(), "divine")
+		s.resolved[divine] = resolve.Resolved{Key: divine, Source: resolve.Source(rate.Source), Chaos: rate.Chaos, ObservedAt: rate.At}
+	}
 	return s
 }
 

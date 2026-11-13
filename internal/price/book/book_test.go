@@ -287,3 +287,45 @@ func TestBook_observeOwnsTheCallersSampleCount(t *testing.T) {
 		t.Errorf("Reasons after the caller's sample changed to 50 = %v, want %v (observed sample 2 is thin: 125 vs 50)", got.Reasons, want)
 	}
 }
+
+var divineKey = resolve.CurrencyKey(leagueID, "divine")
+
+func rateBook(t *testing.T, rate resolve.Rate) *Book {
+	t.Helper()
+	b := New(league.Historical(leagueID), gemPolicy, &fakeTrade{}, &fakeNinja{}, func() resolve.Rate { return rate })
+	if err := b.Seed(context.Background(), t0); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	return b
+}
+
+func TestBook_divineKeyAnswersTheAppWideRate(t *testing.T) {
+	hour := t0.Add(-time.Hour)
+	b := rateBook(t, resolve.Rate{Chaos: 199, Source: "exchange", At: hour})
+
+	got, ok := b.Get(divineKey)
+
+	want := resolve.Resolved{Key: divineKey, Source: "exchange", Chaos: 199, ObservedAt: hour, Reasons: []resolve.Reason{}}
+	if !ok || got.Key != want.Key || got.Source != want.Source || got.Chaos != want.Chaos || !got.ObservedAt.Equal(hour) {
+		t.Errorf("Get(divine) = %+v, %v; want %+v, true", got, ok, want)
+	}
+}
+
+func TestBook_divineKeyFollowsTheNinjaFallback(t *testing.T) {
+	ninjaAt := t0.Add(-3 * time.Hour)
+	b := rateBook(t, resolve.Rate{Chaos: 180, Source: "ninja", At: ninjaAt})
+
+	got, ok := b.Get(divineKey)
+
+	if !ok || got.Chaos != 180 || got.Source != "ninja" || !got.ObservedAt.Equal(ninjaAt) {
+		t.Errorf("Get(divine) = %+v, %v; want Chaos 180, Source ninja, ObservedAt %v", got, ok, ninjaAt)
+	}
+}
+
+func TestBook_divineKeyIsAbsentWithoutARate(t *testing.T) {
+	b := rateBook(t, resolve.Rate{})
+
+	if got, ok := b.Get(divineKey); ok {
+		t.Errorf("Get(divine) with no rate = %+v, true; want false", got)
+	}
+}

@@ -193,7 +193,7 @@ func main() {
 	// Pairs with ctxCancel above: a pending publish is dropped rather than sent
 	// from a process on its way out, and clients refetch on their next poll.
 	defer exchangeDebounce.Stop()
-	exchangeService := exchange.NewService(exchangeRepo, scope, exchangeCfg, exchangeCache, exchangeDebounce.Signal, slog.Default())
+	exchangeService := exchange.NewService(exchangeRepo, scope, exchangeCfg, exchangeCache, func() { syncBookRate(priceBook, divineRate); exchangeDebounce.Signal() }, slog.Default())
 	// Harvest prices + tiers, recomputed from the same stored exchange rows
 	// (POE-286): the read side of GET /api/harvest and the exchange.Topic dispatch.
 	harvestCache := harvest.NewCache()

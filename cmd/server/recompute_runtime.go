@@ -310,10 +310,23 @@ func (r *recomputeRuntime) seedCaches() {
 // and poe.ninja snapshots, priced at the app-wide divine rate. Nothing reads it
 // yet (POE-310 moves the consumers).
 func newPriceBook(scope league.Scope, trades book.TradeObservations, gems book.NinjaGemObservations, divineRate *exchange.DivineRateReader) *book.Book {
-	return book.New(scope, lab.GemPricePolicy(), trades, gems, func() resolve.Rate {
-		cur := divineRate.Current()
-		return resolve.Rate{Chaos: cur.Chaos, Source: cur.Source, At: cur.PriceHour}
-	})
+	return book.New(scope, lab.GemPricePolicy(), trades, gems, func() resolve.Rate { return bookRate(divineRate) })
+}
+
+// bookRate is the reader's current divine answer as the book reads it.
+func bookRate(divineRate *exchange.DivineRateReader) resolve.Rate {
+	cur := divineRate.Current()
+	return resolve.Rate{Chaos: cur.Chaos, Source: cur.Source, At: cur.PriceHour}
+}
+
+// syncBookRate hands the price book the reader's current divine answer so
+// divine-native observations re-convert at the app-wide rate. It runs after
+// every fallback refresh and every exchange cache update.
+func syncBookRate(priceBook *book.Book, divineRate *exchange.DivineRateReader) {
+	if priceBook == nil {
+		return
+	}
+	priceBook.SetRate(bookRate(divineRate))
 }
 
 // seedNextFetch estimates the next fetch from the interval between the last
@@ -346,6 +359,7 @@ func (r *recomputeRuntime) refreshDivineRate(ctx context.Context) {
 		slog.Warn("divine rate: poe.ninja fallback refresh failed", "error", err)
 		return
 	}
+	syncBookRate(r.priceBook, r.divineRate)
 	cur := r.divineRate.Current()
 	slog.Info("divine rate: poe.ninja fallback refreshed", "rate", cur.Chaos, "source", cur.Source)
 }
