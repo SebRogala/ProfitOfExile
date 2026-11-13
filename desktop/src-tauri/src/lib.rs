@@ -1866,25 +1866,7 @@ fn spawn_log_watcher(app: AppHandle) {
         // seed and the loot attribution below.
         let catch_up_tail = client_log::recent_log_tail(std::path::Path::new(&client_txt));
 
-        // --- Catchup: replay recent Client.txt history to reconstruct lab state ---
-        {
-            let (replay_events, was_in_lab) = lab_navigation::replay_recent_tail(
-                std::path::Path::new(&client_txt),
-                catch_up_tail.as_deref(),
-            );
-            if !replay_events.is_empty() {
-                app_log(&app, format!("Catchup: replaying {} events from Client.txt history", replay_events.len()));
-                let state = app.state::<AppState>();
-                state.in_lab.store(was_in_lab, std::sync::atomic::Ordering::SeqCst);
-                // Emit all replay events to frontend so overlays reconstruct navigation
-                for event in &replay_events {
-                    if let Err(e) = app.emit("lab-nav", event) {
-                        log::warn!("catchup emit failed: {}", e);
-                    }
-                }
-                app_log(&app, format!("Catchup complete: in_lab={}", was_in_lab));
-            }
-        }
+        lab::catch_up(&app, std::path::Path::new(&client_txt), catch_up_tail.as_deref());
 
         // The temple trigger's own catch-up (POE-242), over the SAME 32 KB tail
         // the lab replay's first step reads. `replay_recent_tail` answers the
@@ -1912,12 +1894,9 @@ fn spawn_log_watcher(app: AppHandle) {
         );
         let mut merc_line_history = mercenary::trigger::MercSpeakerHistory::default();
 
-        let mut state_machine = lab_state::LabStateMachine::new();
-        let mut detected_gems: Vec<String> = Vec::new();
+        let mut lab_watch = lab::LabWatchState::new();
         let _matcher = gem_matcher::GemMatcher::new(vec![]); // TODO: fetch from server
-        let mut last_trial_entered = std::time::Instant::now() - std::time::Duration::from_secs(10);
         let mut line_count: u64 = 0;
-        let mut font_opened_count: u32 = 0;
 
         loop {
             tokio::select! {
@@ -1940,24 +1919,7 @@ fn spawn_log_watcher(app: AppHandle) {
                     }
 
                     // --- Aspirant's Trial / Plaza tracking (outside state machine) ---
-                    if line.contains("You have entered") {
-                        let state = app.state::<AppState>();
-                        if line.contains("Aspirants' Plaza") || line.contains("Aspirant's Plaza") {
-                            state.aspirant_trial_count.store(0, Ordering::SeqCst);
-                            font_opened_count = 0;
-                            app_log(&app, "Aspirants' Plaza — trial counter reset".to_string());
-                        } else if line.contains("Aspirant's Trial") {
-                            // Dedup: same Trial zone within 0.5s is a log batch artifact.
-                            if last_trial_entered.elapsed() >= std::time::Duration::from_millis(500) {
-                                last_trial_entered = std::time::Instant::now();
-                                let count = state.aspirant_trial_count.fetch_add(1, Ordering::SeqCst) + 1;
-                                app_log(&app, format!("Aspirant's Trial #{}", count));
-                                if count == 3 {
-                                    app_log(&app, "3rd Aspirant's Trial — final Izaro fight".to_string());
-                                }
-                            }
-                        }
-                    }
+                    lab::on_trial_line(&app, &line, &mut lab_watch);
 
                     // --- Merc OCR trigger (POE-198 / POE-280) ---
                     // Inspect text arms the OCR gate; the trigger owns the
@@ -1977,171 +1939,15 @@ fn spawn_log_watcher(app: AppHandle) {
                     // temple finds it already armed.
                     temple::trigger::on_client_line(&app, &line);
 
-                    // --- Lab navigation events (outside state machine) ---
-                    {
-                        let state = app.state::<AppState>();
-                        let in_lab = state.in_lab.load(Ordering::SeqCst);
-                        let mut nav_emitted = false;
-                        if let Some(nav_event) = lab_navigation::parse_nav_event(&line, in_lab) {
-                            match &nav_event {
-                                lab_navigation::NavEvent::PlazaEntered => {
-                                    state.lab_scan.detection.lock().unwrap_or_else(|e| e.into_inner()).reset();
-                                    state.in_lab.store(true, Ordering::SeqCst);
-                                    app_log(&app, "Lab nav: Plaza entered".to_string());
-                                }
-                                lab_navigation::NavEvent::LabStarted => {
-                                    app_log(&app, "Lab nav: Izaro started".to_string());
-                                }
-                                lab_navigation::NavEvent::RoomChanged { name } => {
-                                    app_log(&app, format!("Lab nav: room {}", name));
-                                }
-                                lab_navigation::NavEvent::LabExited => {
-                                    state.in_lab.store(false, Ordering::SeqCst);
-                                    app_log(&app, "Lab nav: exited lab".to_string());
-                                    // The state machine only emits `ZoneChanged`
-                                    // from FontReady/PickingGems, so a scan
-                                    // spawned at LabFinished for a player who
-                                    // never opened the font has no other stop.
-                                    state.lab_scan.font_scan_generation.fetch_add(1, Ordering::SeqCst);
-                                    let was_live = font_session::font_scan_is_live(
-                                        state.lab_scan.font_scan_live_gen.swap(0, Ordering::SeqCst),
-                                    );
-                                    if was_live {
-                                        app_log(&app, "Font scan stopped (lab exited)".to_string());
-                                    }
-                                    // Emit the navigation event so frontend state resets on LabExited.
-                                    if let Err(e) = app.emit("lab-nav", &nav_event) {
-                                        log::warn!("emit lab-nav (LabExited) failed: {}", e);
-                                    }
-                                    nav_emitted = true;
-                                }
-                                lab_navigation::NavEvent::LabFinished => {
-                                    app_log(&app, "Lab nav: Izaro defeated! Starting font panel OCR".to_string());
-                                    font_opened_count = 0;
-                                    lab::commands::spawn_font_scan(&app);
-                                }
-                                lab_navigation::NavEvent::SectionFinished => {
-                                    app_log(&app, "Lab nav: section finished".to_string());
-                                }
-                                lab_navigation::NavEvent::IzaroBattleStarted => {
-                                    app_log(&app, "Lab nav: Izaro battle started".to_string());
-                                }
-                                lab_navigation::NavEvent::PortalSpawned => {
-                                    app_log(&app, "Lab nav: portal spawned".to_string());
-                                }
-                                lab_navigation::NavEvent::DarkshrineActivated => {
-                                    app_log(&app, "Lab nav: darkshrine activated".to_string());
-                                }
-                            }
-                            if !nav_emitted {
-                                if let Err(e) = app.emit("lab-nav", &nav_event) {
-                                    log::warn!("emit lab-nav failed: {}", e);
-                                }
-                            }
-                        }
-                    }
+                    // --- Lab navigation events, then the lab state machine ---
+                    lab::on_client_line(&app, &line, &mut lab_watch);
 
-                    if let Some(event) = state_machine.process_line(&line) {
-                        let state = app.state::<AppState>();
-                        match &event {
-                            lab_state::LabEvent::FontOpened => {
-                                // Publish the event before anything else: the
-                                // craft ledger reads this counter per OCR frame
-                                // and a frame captured after the click must see
-                                // the new value, or the count change it carries
-                                // reads as a misread.
-                                state.lab_scan.font_opened_seq.fetch_add(1, Ordering::SeqCst);
-                                // The event cannot seal a round — it fires on
-                                // font open as well as on CRAFT, an unbounded
-                                // number of times per craft. Only the panel's
-                                // craft count delimits rounds (`font_ledger`).
-                                font_opened_count += 1;
-                                // A portal trip out of the lab stops the font
-                                // scan for good (`LabFinished` does not fire
-                                // again on return), so the liveness token is
-                                // what decides whether this event has to bring
-                                // the panel OCR back.
-                                let font_scan_live = font_session::font_scan_is_live(
-                                    state.lab_scan.font_scan_live_gen.load(Ordering::SeqCst),
-                                );
-                                for effect in font_session::font_opened_effects(font_opened_count, font_scan_live) {
-                                    match effect {
-                                        font_session::FontOpenedEffect::StartGemScan => {
-                                            // Odd: CRAFT click → start gem scan
-                                            detected_gems.clear();
-                                            lab::commands::spawn_gem_scan(&app, "font");
-                                            app_log(&app, format!("FontOpened #{} — CRAFT, gem scan started", font_opened_count));
-                                        }
-                                        font_session::FontOpenedEffect::StopGemScan => {
-                                            // Even: CONFIRM click → stop scanning, clear comparator
-                                            state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
-                                            *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
-                                                lab_state::LabState::Idle;
-                                            detected_gems.clear();
-                                            *state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
-                                            if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
-                                            app_log(&app, format!("FontOpened #{} — CONFIRM, gem scan stopped", font_opened_count));
-                                        }
-                                        font_session::FontOpenedEffect::RearmFontScan => {
-                                            // `ZoneChanged` owns the session
-                                            // reset, so this starts a fresh
-                                            // segment rather than resuming one.
-                                            app_log(&app, "Font scan re-armed".to_string());
-                                            lab::commands::spawn_font_scan(&app);
-                                        }
-                                    }
-                                }
-                            }
-                            lab_state::LabEvent::ZoneChanged { area } => {
-                                app_log(&app, format!("Zone changed: {} — stopping", area));
-
-                                // Stop both gem and font scans + reset state.
-                                state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
-                                state.lab_scan.font_scan_generation.fetch_add(1, Ordering::SeqCst);
-                                // Synchronously, not by waiting for the loop to
-                                // notice: a `FontOpened` arriving in that window
-                                // must still see a dead scan and re-arm it.
-                                state.lab_scan.font_scan_live_gen.store(0, Ordering::SeqCst);
-                                font_opened_count = 0;
-                                *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
-                                    lab_state::LabState::Idle;
-
-                                if !detected_gems.is_empty() {
-                                    let gems = detected_gems.clone();
-                                    let app_clone = app.clone();
-                                    tauri::async_runtime::spawn(async move {
-                                        send_gems_to_server(&app_clone, gems).await;
-                                    });
-                                    detected_gems.clear();
-                                }
-
-                                // Send accumulated font session data to server.
-                                send_font_session_data(&app);
-
-                                // Clear frontend comparator — player left the area.
-                                *state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) =
-                                    Vec::new();
-                                if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
-                                emit_status(&app);
-                            }
-                            lab_state::LabEvent::FontClosed => {
-                                app_log(&app, "Font closed".to_string());
-                                *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
-                                    lab_state::LabState::Idle;
-                                emit_status(&app);
-                            }
-                            // GameFocused/GameBlurred handled by the focus poller
-                            // (GetForegroundWindow — more reliable than Client.txt)
-                            lab_state::LabEvent::GameFocused | lab_state::LabEvent::GameBlurred => {}
-                        }
-                    }
                     // Upload the previous zone's font session before observing
                     // the new area. Area detection also runs while OCR is idle.
                     if let Some(change) = client_log::parse_area_change(&line) {
                         let state = app.state::<AppState>();
                         state.loot.boss.lock().unwrap_or_else(|e| e.into_inner()).observe_area(&change);
-                        let update = record_lab_detection(&state, |detection| detection.observe_area(change.level, change.area));
-                        publish_lab_detection(&app, update);
+                        lab::on_area_change(&app, &change);
                     }
                 }
             }

@@ -79,7 +79,7 @@ future choice.
 
 ## Code homes
 
-- `desktop/src-tauri/src/lib.rs`: navigation/log handlers.
+- `desktop/src-tauri/src/lab/watch.rs`: navigation/log handlers.
 - `desktop/src-tauri/src/lab/commands.rs`: spawn and session submission.
 - `desktop/src-tauri/src/lab_scan.rs`: shared capture scheduler and per-frame processing.
 - `desktop/src-tauri/src/font_session.rs`: effects, buffers, sealing and finalization.
