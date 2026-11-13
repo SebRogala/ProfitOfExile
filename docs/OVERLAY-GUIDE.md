@@ -42,6 +42,33 @@ flags and `lab_overlays_enabled` documented here are NOT modules.
 6. **Error visibility:** log failed invoke, window, and event operations. Do not
    silently swallow failures in overlay paths.
 
+## Screen reading (GGG policy)
+
+This section is the single normative statement of when the desktop app may read
+the screen. Other documents link here instead of restating it.
+
+GGG's third-party policy ([developer docs](https://www.pathofexile.com/developer/docs),
+fetched 2026-11-13): *"Reading from the screen or clipboard may only be performed
+once per manual key press"*, and an app that reads the screen, the clipboard or
+logs must keep the user aware of what the data is used for.
+
+- **One press, one frame.** Every whole-screen capture goes through the global
+  read hotkey (POE-387, `read_hotkey.rs`): one press takes one `capture_screen`
+  frame and hands it to every armed reader. A press with no armed reader grabs
+  nothing.
+- **No automatic capture.** No capture is triggered by Client.txt events,
+  timers, loops, retries, cursor hover or panel polling. A fixed delay between
+  the press and the grab is allowed; polling until a panel appears is not.
+- **Client.txt stays automatic.** Log reading may arm readers and show the
+  "press <key> to read" prompt (POE-388); it never triggers a capture.
+- **Manual one-shot buttons are allowed.** Recalibrate and debug capture take
+  one grab per click.
+- **Boss-loot capture key.** Its own key is a manual one-shot of the area near
+  the mouse, one press = one grab, and stays allowed (Operator ruling
+  2026-11-13).
+- **No clipboard, no input.** The app reads no clipboard and sends no input to
+  the game.
+
 ## Overlay types
 
 EVERY overlay calls `set_overlay_clickthrough(label)`, and that call does two
@@ -791,6 +818,7 @@ remains; this path covers widget config sessions only.
 - Client.txt uses filesystem notifications with a five-second polling fallback.
 - Font panel scanning begins from the `LabFinished` navigation event. The third
   Aspirant's Trial is logged but is not the scan trigger.
+  The automatic font and gem scan breaks [Screen reading (GGG policy)](#screen-reading-ggg-policy); POE-391 replaces it.
 - The merc verdict overlay does not render `mercenary.trade` yet (POE-202).
   The search state reaches every window on the slice regardless, and both
   pieces the Mercenaries page draws it with are already cross-window for that
@@ -867,6 +895,7 @@ regression test/decision.
 
 > The temple module's arming / detection / OCR / show-hide ORDER is normative in
 > [TEMPLE-LIFECYCLE.md](TEMPLE-LIFECYCLE.md) (POE-249); the smoke items below test the rules it names.
+> Its detect tick and retry rounds break [Screen reading (GGG policy)](#screen-reading-ggg-policy); POE-389 replaces them.
 
 ## Windows smoke checks
 
@@ -994,6 +1023,9 @@ touching the named path.
   header that changes back and forth means the sticky merge (`read.rs`'s
   `merge_header`, applied in `run.rs`'s detect tick) is not being applied to the
   published capture.
+- **Merc probes, hover re-reads and gem icon reads** below break
+  [Screen reading (GGG policy)](#screen-reading-ggg-policy); POE-390 replaces the
+  merc capture loop and POE-397 the gem icon reads.
 - **Merc widget, the done state**: with a recruit window open, hover every cell
   the widget marks `?` or `✕` until the status line reads `done · N rows · all
   icons read`. From then on the log says `capture complete — OCR paused` once,

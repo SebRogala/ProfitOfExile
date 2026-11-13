@@ -23,6 +23,10 @@ the table below (`44fbc5d` partial rounds, POE-249 WI-2, 2026-09-07; `c241ee9`
 POE-269 keyed fallback; `602af3c` Manual-only placed-miss sweep, 2026-09-09;
 `511c3c3` "placed" means anchored, POE-278).
 
+Amended 2026-11-13 (POE-387): for automatic captures, the re-read and retry
+clauses are superseded by [Overlay Guide § Screen reading (GGG policy)](../OVERLAY-GUIDE.md#screen-reading-ggg-policy);
+POE-389 (temple), POE-390 (merc) and POE-391 (lab) carry the replacement.
+
 Merc: clause 1 shipped; clause 4 shipped (`POE-278 WI-B`, `f78786e`); clauses 2, 3 and 5 shipped (`POE-278 WI-C`, `072c98c`).
 
 ## Enforcement

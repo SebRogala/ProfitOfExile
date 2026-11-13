@@ -13,6 +13,9 @@ once (the temple's own banter excepted), and once a board has been READ the firs
 the sheet closing — ends the cycle and the loop stops capturing. Rows 1, 3 and 4, the
 consequences, the residuals and the tails bullet below carry the change; everything tagged
 2026-09-04 or 2026-09-06 is history and is left standing.
+**Superseded for automatic capture (2026-11-13, POE-387)**: the detect tick and retry rounds
+below break [Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy); POE-389
+replaces them.
 **Amended 2026-09-07 (WI-2, owner)**: the retry rounds are PARTIAL. A board is still read at
 most three times, but rounds 2 and 3 OCR only the regions the kept read left unclean, decided
 before the round starts. Row 2, "Where each rule lives", "Cadences and budgets" and "Owner

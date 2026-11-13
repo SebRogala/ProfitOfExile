@@ -85,6 +85,8 @@ Properties:
 
 ### One lookup per click
 
+Screen reading under GGG's policy is ruled in [Overlay Guide § Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy).
+
 Every native GGG trade request starts from a user click (POE-392); the desktop does not search on detection, on compare results, on capture, or on cache age. Each click sends its own lookup through the native queue and limiter, and the desktop displays the result locally:
 
 - Comparator per-gem trade button: one lookup for that gem.
