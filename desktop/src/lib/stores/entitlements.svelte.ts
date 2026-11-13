@@ -37,12 +37,21 @@
  * what the identify dialog calls on open, so a promote the tester was just
  * told about shows up when they look, not on the next 30-minute tick.
  *
+ * **Registration rides the same answer (POE-362).** `/api/device/me` also says
+ * whether this device is registered (`alias`), and `registration` is the one
+ * reading of it — the identify dialog's status row and the top-bar account
+ * button both read it, so nothing else asks `/me`. An answer from a server too
+ * old to send `alias` lands the entitlements but keeps the chain asking for
+ * registration. A successful identify pins its alias (`markRegistered()`)
+ * over the server's cached old alias until the server answers with it.
+ *
  * Usage:
  *   import { entitlements, hasFeature, MERC_FEATURE } from '$lib/stores/entitlements.svelte';
  *   // Read: entitlements.channel / entitlements.features / entitlements.role
  *   // Read: hasFeature(MERC_FEATURE)
  *   // Call loadEntitlements() from initStatusStore() — at startup and on its tick.
  *   // Call refreshEntitlements() to ask NOW; resetEntitlements() + refresh on a server switch.
+ *   // Read: registration.state / .alias / .role; markRegistered(alias) after identify.
  */
 
 /** The two update channels the server can put a device on. */
@@ -105,6 +114,70 @@ export function normalizeEntitlements(raw: unknown): Entitlements {
 /** Reactive store — mutate properties, never reassign the export. */
 export const entitlements = $state<Entitlements>(defaultEntitlements());
 
+/** What the server says this device is: `checking` until a device-identified
+ *  answer, `unknown` when the request failed or the server sends no `alias`. */
+export type RegistrationState = 'checking' | 'registered' | 'unregistered' | 'unknown';
+
+export interface Registration {
+	state: RegistrationState;
+	alias: string;
+	role: string;
+}
+
+/**
+ * Narrow a `/api/device/me` body to a registration: no `alias` key is a server
+ * from before the field (`unknown`); a non-empty string alias is `registered`;
+ * `null`, `""` or any other type is `unregistered`.
+ */
+export function normalizeRegistration(raw: unknown): Registration {
+	if (!raw || typeof raw !== 'object' || !('alias' in raw)) {
+		const role = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).role : '';
+		return { state: 'unknown', alias: '', role: typeof role === 'string' ? role : '' };
+	}
+	const body = raw as Record<string, unknown>;
+	const role = typeof body.role === 'string' ? body.role : '';
+	if (typeof body.alias === 'string' && body.alias !== '') {
+		return { state: 'registered', alias: body.alias, role };
+	}
+	return { state: 'unregistered', alias: '', role };
+}
+
+/** Reactive store — mutate properties, never reassign the export. */
+export const registration = $state<Registration>({ state: 'checking', alias: '', role: '' });
+
+/**
+ * The alias a successful identify just set, held over every `/me` answer until
+ * one carries it: the server caches `/me` and can serve the old alias for its
+ * TTL (`internal/server/handlers/device.go`).
+ */
+let identifiedAlias: string | null = null;
+
+function writeRegistration(answered: Registration): void {
+	if (identifiedAlias !== null) {
+		registration.role = answered.role;
+		if (answered.state === 'registered' && answered.alias === identifiedAlias) identifiedAlias = null;
+		return;
+	}
+	registration.state = answered.state;
+	registration.alias = answered.alias;
+	registration.role = answered.role;
+}
+
+/** A miss — no device id yet or a failed request — unless an identify pinned it. */
+function missRegistration(state: 'checking' | 'unknown'): void {
+	if (identifiedAlias === null) registration.state = state;
+}
+
+/**
+ * Record an identify the server just accepted: registered as `alias` at once,
+ * without asking `/me` again (its cached answer may still be the old one).
+ */
+export function markRegistered(alias: string): void {
+	identifiedAlias = alias;
+	registration.state = 'registered';
+	registration.alias = alias;
+}
+
 /** Whether this device may see a feature. Reactive — reads the store. */
 export function hasFeature(feature: string): boolean {
 	return entitlements.features.includes(feature);
@@ -159,17 +232,20 @@ async function currentDeviceId(): Promise<string> {
 	return store.status?.device_id ?? '';
 }
 
+/** What one attempt came back with. */
+type Attempt = { kind: 'answer'; body: unknown } | { kind: 'no-device' } | { kind: 'failed' };
+
 /**
- * One attempt. The device-identified answer, or null when there is none yet.
+ * One attempt.
  *
- * Returned rather than written: the chain decides whether an answer still
- * stands (see `runLoad` — one that arrives after a refresh was asked for may
- * be the previous server's).
+ * Returned rather than written: the chain decides whether the outcome still
+ * stands (see `runLoad` — one that arrives after a refresh or reset may be the
+ * previous server's).
  *
  * `$lib/api` is imported DYNAMICALLY for the same reason as the status store:
  * it reads `store.status`, which imports this module.
  */
-async function attemptLoad(): Promise<Entitlements | null> {
+async function attemptLoad(): Promise<Attempt> {
 	try {
 		const deviceId = await currentDeviceId();
 		if (!deviceId) {
@@ -177,17 +253,17 @@ async function attemptLoad(): Promise<Entitlements | null> {
 			// anonymous device. Its blank role and stable default (["temple"])
 			// would look settled and hide an entitled device's beta features.
 			console.warn('[entitlements] no device id yet — not asking /api/device/me, will retry');
-			return null;
+			return { kind: 'no-device' };
 		}
 		const { fetchDeviceMe } = await import('$lib/api');
-		return normalizeEntitlements(await fetchDeviceMe());
+		return { kind: 'answer', body: await fetchDeviceMe() };
 	} catch (e) {
 		// Not user-facing: the device keeps the stable/no-features default.
 		console.warn(
 			'[entitlements] /api/device/me failed — staying on stable with no hidden features, will retry:',
 			e
 		);
-		return null;
+		return { kind: 'failed' };
 	}
 }
 
@@ -201,9 +277,33 @@ function write(answered: Entitlements): void {
 let loading: Promise<void> | null = null;
 
 /**
+ * What `loadEntitlements()` hands out: settles when the running chain has
+ * written entitlements, which can be before the chain ends — an answer
+ * without `alias` lands the grant but the chain keeps asking for registration.
+ */
+let landed: { promise: Promise<void>; resolve: () => void } | null = null;
+
+function newLanded(): { promise: Promise<void>; resolve: () => void } {
+	let resolve!: () => void;
+	const promise = new Promise<void>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
+}
+
+/**
+ * Bumped by `refreshEntitlements()` and `resetEntitlements()`. An attempt that
+ * resolves under a different generation than it started in may be the previous
+ * server's, so its outcome — answer or miss — is dropped and the chain asks
+ * again at once.
+ */
+let generation = 0;
+
+/**
  * Ask the server what this device is entitled to, retrying until it answers.
  *
- * The returned promise settles when an answer has been WRITTEN THROUGH, which
+ * The returned promise settles when an answer's entitlements have been WRITTEN
+ * THROUGH (the chain may keep asking for registration after that), which
  * on an unreachable server is never — every caller must therefore treat it as
  * unbounded and bound its own wait (`initStatusStore()` races it against
  * `ENTITLEMENTS_FIRST_CHECK_WAIT_MS`). It never rejects.
@@ -212,20 +312,14 @@ let loading: Promise<void> | null = null;
  * second retry loop on top of a startup load that is still backing off.
  */
 export function loadEntitlements(): Promise<void> {
-	if (!loading) {
+	if (!loading || !landed) {
+		landed = newLanded();
 		loading = runLoad().finally(() => {
 			loading = null;
 		});
 	}
-	return loading;
+	return landed.promise;
 }
-
-/**
- * Raised by `refreshEntitlements()` while a chain is running: the answer the
- * chain is waiting on may be for a server the app has since left, so it is
- * dropped and the chain asks once more. Cleared at the top of every attempt.
- */
-let askAgain = false;
 
 /**
  * Ask NOW rather than on the chain's schedule.
@@ -238,13 +332,13 @@ let askAgain = false;
  * where the tester is looking for the promote they were just told about. This
  * ends a sleeping backoff at once, makes a chain that is mid-request drop that
  * answer and ask again, and with no chain running simply starts one. The
- * returned promise is the chain's, and unbounded like it.
+ * returned promise is `loadEntitlements()`'s, and unbounded like it.
  */
 export function refreshEntitlements(): Promise<void> {
-	if (loading) {
-		askAgain = true;
+	if (loading && landed) {
+		generation++;
 		wake?.();
-		return loading;
+		return landed.promise;
 	}
 	return loadEntitlements();
 }
@@ -258,26 +352,36 @@ export function refreshEntitlements(): Promise<void> {
  * granted. The switch resets first and refreshes second. The store's own
  * failure path never resets (a refresh that cannot reach the server keeps the
  * landed grant), so this is the one place a grant is withdrawn without a
- * server saying so.
+ * server saying so. Registration goes back to `checking` and an identify pin
+ * is dropped with it; a running chain drops what it is waiting on and, if it
+ * had landed, counts as not landed again.
  */
 export function resetEntitlements(): void {
+	generation++;
 	write(defaultEntitlements());
+	identifiedAlias = null;
+	registration.state = 'checking';
+	registration.alias = '';
+	registration.role = '';
+	if (loading) landed = newLanded();
 }
 
 async function runLoad(): Promise<void> {
 	let attempt = 0;
 	for (;;) {
-		askAgain = false;
-		const answered = await attemptLoad();
-		if (answered && !askAgain) {
-			write(answered);
-			return;
-		}
-		if (answered) {
-			// A refresh was asked for while that request was in flight, so the
-			// answer may be the previous server's: drop it and ask again at once.
+		const startedIn = generation;
+		const outcome = await attemptLoad();
+		if (startedIn !== generation) {
 			attempt = 0;
 			continue;
+		}
+		if (outcome.kind === 'answer') {
+			write(normalizeEntitlements(outcome.body));
+			writeRegistration(normalizeRegistration(outcome.body));
+			landed?.resolve();
+			if (registration.state !== 'unknown') return;
+		} else {
+			missRegistration(outcome.kind === 'no-device' ? 'checking' : 'unknown');
 		}
 		await backoff(retryDelayMs(attempt++));
 	}

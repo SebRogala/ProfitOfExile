@@ -100,7 +100,7 @@ describe('normalizeEntitlements', () => {
  */
 describe('loadEntitlements', () => {
 	/** A grant that would be visible in the store if it were written through. */
-	const betaGrant = { role: 'editor', channel: 'beta', features: ['merc'] };
+	const betaGrant = { role: 'editor', channel: 'beta', features: ['merc'], alias: 'Test PC' };
 	let warn: ReturnType<typeof vi.spyOn>;
 
 	beforeEach(() => {
@@ -191,7 +191,12 @@ describe('loadEntitlements', () => {
 		// A channel this build does not know and a non-string feature: assigning
 		// the body straight onto the rune would leak both into every gate.
 		mocks.deviceStatus.status = { device_id: 'device-1' };
-		mocks.fetchDeviceMe.mockResolvedValue({ role: 'editor', channel: 'nightly', features: ['merc', 7] });
+		mocks.fetchDeviceMe.mockResolvedValue({
+			role: 'editor',
+			channel: 'nightly',
+			features: ['merc', 7],
+			alias: null
+		});
 		const mod = await import('./entitlements.svelte');
 
 		await mod.loadEntitlements();
@@ -262,7 +267,7 @@ describe('loadEntitlements', () => {
 		let answerFirst!: (body: unknown) => void;
 		mocks.fetchDeviceMe
 			.mockImplementationOnce(() => new Promise((resolve) => { answerFirst = resolve; }))
-			.mockResolvedValueOnce({ role: 'user', channel: 'stable', features: [] });
+			.mockResolvedValueOnce({ role: 'user', channel: 'stable', features: [], alias: null });
 		const mod = await import('./entitlements.svelte');
 		void mod.loadEntitlements();
 		await vi.advanceTimersByTimeAsync(0);
@@ -313,5 +318,292 @@ describe('retryDelayMs', () => {
 		// either run off the end of the table or keep polling at a minute.
 		const { retryDelayMs } = await import('./entitlements.svelte');
 		expect([retryDelayMs(3), retryDelayMs(50)]).toEqual([300_000, 300_000]);
+	});
+});
+
+/**
+ * The server's registration answer for this device, carried on the same chain
+ * that loads the entitlements (POE-362). Fixture values are the `deviceMe`
+ * records of design/handoffs/poe-362--desktop-app--top-bar--account/fixtures.json.
+ */
+describe('registration', () => {
+	const fx = {
+		registered: { role: 'beta', alias: 'Gaming PC', channel: 'beta', features: ['temple', 'merc', 'exchange', 'beta'] },
+		registeredNoRole: { role: '', alias: 'Gaming PC', channel: 'stable', features: ['temple'] },
+		unregistered: { role: '', alias: null, channel: 'stable', features: ['temple'] },
+		unregisteredEmpty: { role: '', alias: '', channel: 'stable', features: ['temple'] },
+		unknownOldServer: { role: 'beta', channel: 'beta', features: ['temple', 'merc', 'exchange', 'beta'] }
+	};
+	let warn: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(() => {
+		vi.resetModules();
+		vi.useFakeTimers();
+		mocks.deviceStatus.status = null;
+		mocks.fetchDeviceMe.mockReset();
+		warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		warn.mockRestore();
+	});
+
+	function deferred() {
+		let resolve!: (body: unknown) => void;
+		let reject!: (e: unknown) => void;
+		const promise = new Promise((res, rej) => {
+			resolve = res;
+			reject = rej;
+		});
+		return { promise, resolve, reject };
+	}
+
+	async function landWith(body: unknown) {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe.mockResolvedValueOnce(body);
+		const mod = await import('./entitlements.svelte');
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+		return mod;
+	}
+
+	it('reads checking before any answer and while there is no device id', async () => {
+		const mod = await import('./entitlements.svelte');
+		expect(mod.registration.state).toBe('checking');
+
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(mod.RETRY_DELAYS_MS[0] + mod.RETRY_DELAYS_MS[1]);
+
+		expect(mocks.fetchDeviceMe).not.toHaveBeenCalled();
+		expect(mod.registration.state).toBe('checking');
+	});
+
+	it('reads a registered answer with its alias and role', async () => {
+		const mod = await landWith(fx.registered);
+		expect({ ...mod.registration }).toEqual({ state: 'registered', alias: 'Gaming PC', role: 'beta' });
+	});
+
+	it('reads a registered answer without a role', async () => {
+		const mod = await landWith(fx.registeredNoRole);
+		expect({ ...mod.registration }).toEqual({ state: 'registered', alias: 'Gaming PC', role: '' });
+	});
+
+	it('reads a null alias as unregistered', async () => {
+		const mod = await landWith(fx.unregistered);
+		expect(mod.registration.state).toBe('unregistered');
+	});
+
+	it('reads an empty alias as unregistered', async () => {
+		const mod = await landWith(fx.unregisteredEmpty);
+		expect(mod.registration.state).toBe('unregistered');
+	});
+
+	it('reads an answer with no alias key as unknown', async () => {
+		const mod = await landWith(fx.unknownOldServer);
+		expect(mod.registration.state).toBe('unknown');
+	});
+
+	it('reads a rejected request as unknown', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe.mockRejectedValue(new Error('offline'));
+		const mod = await import('./entitlements.svelte');
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mod.registration.state).toBe('unknown');
+	});
+
+	it('moves from unknown to registered on the retry after a rejection', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(fx.registered);
+		const mod = await import('./entitlements.svelte');
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mod.registration.state).toBe('unknown');
+
+		await vi.advanceTimersByTimeAsync(mod.RETRY_DELAYS_MS[0]);
+
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(2);
+		expect(mod.registration.state).toBe('registered');
+	});
+
+	it('lands the entitlements of an alias-less answer and asks again for registration', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe.mockResolvedValueOnce(fx.unknownOldServer).mockResolvedValueOnce(fx.registered);
+		const mod = await import('./entitlements.svelte');
+		let settled = false;
+		void mod.loadEntitlements().then(() => {
+			settled = true;
+		});
+		await vi.advanceTimersByTimeAsync(0);
+		expect(settled).toBe(true);
+		expect(mod.entitlements.channel).toBe('beta');
+		expect(mod.registration.state).toBe('unknown');
+
+		await vi.advanceTimersByTimeAsync(mod.RETRY_DELAYS_MS[0]);
+
+		expect(mod.registration.state).toBe('registered');
+		// Resolved: no further asking.
+		await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(2);
+	});
+
+	it('moves an alias-less answer on to unregistered on the retry', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe.mockResolvedValueOnce(fx.unknownOldServer).mockResolvedValueOnce(fx.unregistered);
+		const mod = await import('./entitlements.svelte');
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mod.registration.state).toBe('unknown');
+
+		await vi.advanceTimersByTimeAsync(mod.RETRY_DELAYS_MS[0]);
+
+		expect(mod.registration.state).toBe('unregistered');
+	});
+
+	it('joins the registration retry rather than starting a second chain', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe.mockResolvedValueOnce(fx.unknownOldServer).mockResolvedValueOnce(fx.registered);
+		const mod = await import('./entitlements.svelte');
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+
+		await mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(1);
+
+		await vi.advanceTimersByTimeAsync(mod.RETRY_DELAYS_MS[0]);
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(2);
+		expect(mod.registration.state).toBe('registered');
+	});
+
+	it('reads unknown when a later load is rejected, keeping the entitlements', async () => {
+		const mod = await landWith(fx.registered);
+		expect(mod.registration.state).toBe('registered');
+
+		mocks.fetchDeviceMe.mockRejectedValue(new Error('server down'));
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(mod.registration.state).toBe('unknown');
+		expect(mod.entitlements.channel).toBe('beta');
+	});
+
+	it('ignores the previous server answering after a switch', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		const serverA = deferred();
+		mocks.fetchDeviceMe
+			.mockImplementationOnce(() => serverA.promise)
+			.mockResolvedValueOnce(fx.unregistered);
+		const mod = await import('./entitlements.svelte');
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+
+		mod.resetEntitlements();
+		void mod.refreshEntitlements();
+		expect(mod.registration.state).toBe('checking');
+		serverA.resolve(fx.registered);
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(2);
+		expect(mod.registration.state).toBe('unregistered');
+		expect(mod.entitlements.channel).toBe('stable');
+	});
+
+	it('ignores the previous server failing after a switch and asks the new one at once', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		const serverA = deferred();
+		const serverB = deferred();
+		mocks.fetchDeviceMe
+			.mockImplementationOnce(() => serverA.promise)
+			.mockImplementationOnce(() => serverB.promise);
+		const mod = await import('./entitlements.svelte');
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+
+		mod.resetEntitlements();
+		void mod.refreshEntitlements();
+		serverA.reject(new Error('server A gone'));
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(mod.registration.state).toBe('checking');
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(2);
+
+		serverB.resolve(fx.registered);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mod.registration.state).toBe('registered');
+	});
+
+	it('keeps an identified alias over the stale answers the server caches', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		const pending = deferred();
+		mocks.fetchDeviceMe.mockImplementationOnce(() => pending.promise);
+		const mod = await import('./entitlements.svelte');
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+
+		mod.markRegistered('Gaming PC');
+		expect({ ...mod.registration }).toEqual({ state: 'registered', alias: 'Gaming PC', role: '' });
+		pending.resolve({ ...fx.unregistered, role: 'beta' });
+		await vi.advanceTimersByTimeAsync(0);
+		expect({ ...mod.registration }).toEqual({ state: 'registered', alias: 'Gaming PC', role: 'beta' });
+
+		mocks.fetchDeviceMe.mockResolvedValueOnce(fx.unregistered);
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mod.registration.state).toBe('registered');
+		expect(mod.registration.alias).toBe('Gaming PC');
+
+		mocks.fetchDeviceMe.mockResolvedValueOnce(fx.registered).mockResolvedValueOnce(fx.unregistered);
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(4);
+		expect(mod.registration.state).toBe('unregistered');
+	});
+
+	it('keeps an identified alias when the request in flight is rejected', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		const pending = deferred();
+		mocks.fetchDeviceMe.mockImplementationOnce(() => pending.promise);
+		const mod = await import('./entitlements.svelte');
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+
+		mod.markRegistered('Gaming PC');
+		pending.reject(new Error('offline'));
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect({ ...mod.registration }).toEqual({ state: 'registered', alias: 'Gaming PC', role: '' });
+	});
+
+	it('keeps an identified alias set while the chain backs off', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(fx.unregistered);
+		const mod = await import('./entitlements.svelte');
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mod.registration.state).toBe('unknown');
+
+		mod.markRegistered('Gaming PC');
+		expect(mod.registration.state).toBe('registered');
+		await vi.advanceTimersByTimeAsync(mod.RETRY_DELAYS_MS[0]);
+
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(2);
+		expect({ ...mod.registration }).toEqual({ state: 'registered', alias: 'Gaming PC', role: '' });
+	});
+
+	it('drops the identified alias on resetEntitlements', async () => {
+		const mod = await landWith(fx.registered);
+		mod.markRegistered('Gaming PC');
+
+		mod.resetEntitlements();
+		expect({ ...mod.registration }).toEqual({ state: 'checking', alias: '', role: '' });
+
+		mocks.fetchDeviceMe.mockResolvedValueOnce(fx.unregistered);
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mod.registration.state).toBe('unregistered');
 	});
 });

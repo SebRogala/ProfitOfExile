@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { store } from '$lib/stores/status.svelte';
-	import { refreshEntitlements } from '$lib/stores/entitlements.svelte';
+	import { markRegistered, refreshEntitlements, registration } from '$lib/stores/entitlements.svelte';
 	import { getVersion } from '@tauri-apps/api/app';
 
 	let { open = $bindable(false) } = $props();
@@ -11,35 +11,6 @@
 	let error = $state('');
 	let success = $state('');
 	let appVersion = $state('');
-	// What the server says this device hash IS — the dialog's whole reason to
-	// ask is that a hash alone cannot tell a registered device from a fresh
-	// one. 'checking' until /api/device/me answers.
-	let registration = $state<'checking' | 'registered' | 'unregistered' | 'unknown'>('checking');
-	let registeredAlias = $state('');
-	let registeredRole = $state('');
-
-	async function loadRegistration() {
-		registration = 'checking';
-		registeredAlias = '';
-		registeredRole = '';
-		try {
-			const { fetchDeviceMe } = await import('$lib/api');
-			const body = (await fetchDeviceMe()) as Record<string, unknown>;
-			registeredRole = typeof body.role === 'string' ? body.role : '';
-			if (!('alias' in body)) {
-				// A server from before the alias field: it answered, but cannot
-				// say whether this device is registered.
-				registration = 'unknown';
-			} else if (typeof body.alias === 'string' && body.alias !== '') {
-				registeredAlias = body.alias;
-				registration = 'registered';
-			} else {
-				registration = 'unregistered';
-			}
-		} catch {
-			registration = 'unknown';
-		}
-	}
 
 	$effect(() => {
 		if (open) {
@@ -51,10 +22,8 @@
 			getVersion()
 				.then(v => { appVersion = v; })
 				.catch(() => {});
-			loadRegistration();
 			// The tester opens this after being told about a promote. The store's
-			// next scheduled ask may be half an hour out, and the role this dialog
-			// reads for its own row does not reach the store — so ask it to refresh.
+			// next scheduled ask may be half an hour out — so ask it to refresh.
 			void refreshEntitlements();
 		}
 	});
@@ -104,10 +73,7 @@
 
 			const body = await resp.json();
 			success = `Identified as "${body.alias}"`;
-			// The /me cache can serve the old alias for its TTL, so the status
-			// row takes the identify response's own answer instead of re-asking.
-			registration = 'registered';
-			registeredAlias = body.alias;
+			markRegistered(body.alias);
 
 			// Auto-close after a short delay
 			setTimeout(() => { open = false; }, 1500);
@@ -150,12 +116,12 @@
 					<span class="hint">Dev-salt build: this is not the id a release build has on this PC (docs/DEV-SETUP.md, "Build-time variables").</span>
 				{/if}
 
-				<div class="registration" class:registered={registration === 'registered'}>
-					{#if registration === 'checking'}
+				<div class="registration" class:registered={registration.state === 'registered'}>
+					{#if registration.state === 'checking'}
 						Checking registration…
-					{:else if registration === 'registered'}
-						Registered as "{registeredAlias}"{registeredRole ? ` · role ${registeredRole}` : ''}
-					{:else if registration === 'unregistered'}
+					{:else if registration.state === 'registered'}
+						Registered as "{registration.alias}"{registration.role ? ` · role ${registration.role}` : ''}
+					{:else if registration.state === 'unregistered'}
 						Not registered on the server yet
 					{:else}
 						Server unreachable — registration unknown
