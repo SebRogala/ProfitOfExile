@@ -108,9 +108,11 @@ export function formatAge(updatedAt: string, now: number): string {
 const COLD_CHIP = '—';
 const LINE_3 = 'Every chaos ↔ divine figure in the app uses this rate.';
 
+const bold = (text: string) => `<div style="font-weight:700">${text}</div>`;
+const secondary = (text: string) => `<div style="color:var(--color-lab-text-secondary)">${text}</div>`;
+
 function lines(head: string, detail: string): string {
-	const secondary = (text: string) => `<div style="color:var(--color-lab-text-secondary)">${text}</div>`;
-	return `<div style="font-weight:700">${head}</div>${secondary(detail)}${secondary(LINE_3)}`;
+	return `${bold(head)}${secondary(detail)}${secondary(LINE_3)}`;
 }
 
 /**
@@ -128,25 +130,16 @@ export function divineRateView(snap: DivineRateSnapshot, now: number, timeZone?:
 			tooltipHtml: lines('No divine rate yet', 'Waiting for the first Currency Exchange hour.')
 		};
 	}
-	const head = `1 divine = ${formatTooltipRate(rate)} chaos`;
-	if (state === 'stale') {
-		const from = snap.priceHour ? formatClock(snap.priceHour, timeZone) : COLD_CHIP;
-		const since = snap.unreachableSince ? formatClock(snap.unreachableSince, timeZone) : COLD_CHIP;
-		return {
-			state,
-			chip: formatChipRate(rate),
-			tooltipHtml: lines(`${head} (stale)`, `Last known rate from ${from}; server unreachable since ${since}.`)
-		};
-	}
-	const hour = snap.priceHour ? formatPriceHour(snap.priceHour, timeZone) : COLD_CHIP;
-	const age = snap.updatedAt ? ` · ${formatAge(snap.updatedAt, now)}` : '';
-	const detail =
-		snap.source === 'ninja'
-			? `poe.ninja snapshot of ${hour}${age}; no Currency Exchange rate yet.`
-			: `Currency Exchange, hour of ${hour}${age}`;
 	return {
 		state,
 		chip: formatChipRate(rate),
-		tooltipHtml: lines(head, detail)
+		tooltipHtml: priceLines(snap, timeZone)
 	};
+}
+
+/** Ready and stale (Operator ruling, POE-339): `Buy 196.0c` / `Sell 203.0c` / `Updated HH:MM`, no explanatory text. */
+function priceLines(snap: DivineRateSnapshot, timeZone: string | undefined): string {
+	const chaos = (r: number | null) => (r === null ? COLD_CHIP : `${formatTooltipRate(r)}c`);
+	const updated = snap.priceHour ? formatClock(snap.priceHour, timeZone) : COLD_CHIP;
+	return `${bold(`Buy ${chaos(snap.buyChaos)}`)}${bold(`Sell ${chaos(snap.sellChaos)}`)}${secondary(`Updated ${updated}`)}`;
 }

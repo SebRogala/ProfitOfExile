@@ -168,23 +168,45 @@ describe('deriveDivineRateState', () => {
 	});
 });
 
+/** The text of each line `divineRateView` puts in the tooltip, markup stripped. */
+function tooltipLines(html: string): string[] {
+	return [...html.matchAll(/<div[^>]*>(.*?)<\/div>/g)].map((m) => m[1]);
+}
+
 describe('divineRateView', () => {
-	it('words the ready state as reference 01', () => {
+	it('words the ready state as the hour buy, sell and update time', () => {
 		expect(divineRateView(snap({}), NOW, 'UTC')).toEqual({
 			state: 'ready',
 			chip: '360',
 			tooltipHtml:
-				'<div style="font-weight:700">1 divine = 360.1 chaos</div>' +
-				'<div style="color:var(--color-lab-text-secondary)">Currency Exchange, hour of 09 Sep 23:00 · updated 6 min ago</div>' +
-				LINE_3
+				'<div style="font-weight:700">Buy —</div>' +
+				'<div style="font-weight:700">Sell —</div>' +
+				'<div style="color:var(--color-lab-text-secondary)">Updated 23:00</div>'
 		});
 	});
 
-	it('words a poe.ninja fallback as a snapshot, not an exchange hour', () => {
+	it('shows the exchange hour buy and sell to one decimal when both are priced', () => {
+		const wide = snap({ divineChaosRate: 199, buyChaos: 196, sellChaos: 203, priceHour: '2026-11-13T10:00:00Z' });
+		expect(tooltipLines(divineRateView(wide, NOW, 'UTC').tooltipHtml)).toEqual(['Buy 196.0c', 'Sell 203.0c', 'Updated 10:00']);
+	});
+
+	it('shows a dash for buy and sell on a poe.ninja fallback', () => {
 		const ninja = snap({ divineChaosRate: 180, priceHour: '2026-11-13T08:00:00Z', source: 'ninja' });
-		const { tooltipHtml } = divineRateView(ninja, NOW, 'UTC');
-		expect(tooltipHtml).toContain('poe.ninja snapshot of 13 Nov 08:00 · updated 6 min ago; no Currency Exchange rate yet.');
-		expect(tooltipHtml).not.toContain('Currency Exchange, hour of');
+		expect(tooltipLines(divineRateView(ninja, NOW, 'UTC').tooltipHtml)).toEqual(['Buy —', 'Sell —', 'Updated 08:00']);
+	});
+
+	it('keeps the three data lines without an outage explanation when stale', () => {
+		const stale = snap({ divineChaosRate: 199, buyChaos: 196, sellChaos: 203, priceHour: '2026-11-13T10:00:00Z', state: 'stale', unreachableSince: '2026-11-13T10:04:00Z' });
+		expect(tooltipLines(divineRateView(stale, NOW, 'UTC').tooltipHtml)).toEqual(['Buy 196.0c', 'Sell 203.0c', 'Updated 10:00']);
+	});
+
+	it('keeps the chip at the whole average rate when buy and sell are priced', () => {
+		const wide = snap({ divineChaosRate: 199, buyChaos: 196, sellChaos: 203, priceHour: '2026-11-13T10:00:00Z' });
+		expect(divineRateView(wide, NOW, 'UTC').chip).toBe('199');
+	});
+
+	it('shows a dash for a missing update time', () => {
+		expect(tooltipLines(divineRateView(snap({ priceHour: null }), NOW, 'UTC').tooltipHtml)).toEqual(['Buy —', 'Sell —', 'Updated —']);
 	});
 
 	it('words the cold state as reference 02', () => {
@@ -203,15 +225,15 @@ describe('divineRateView', () => {
 		expect(`${view.chip}${view.tooltipHtml}`).not.toMatch(/\b0\b|NaN/);
 	});
 
-	it('words the stale state as reference 03', () => {
+	it('words the stale state as reference 03 with the three data lines', () => {
 		const stale = snap({ priceHour: '2026-09-09T21:00:00Z', state: 'stale', unreachableSince: '2026-09-09T21:04:00Z' });
 		expect(divineRateView(stale, NOW, 'UTC')).toEqual({
 			state: 'stale',
 			chip: '360',
 			tooltipHtml:
-				'<div style="font-weight:700">1 divine = 360.1 chaos (stale)</div>' +
-				'<div style="color:var(--color-lab-text-secondary)">Last known rate from 21:00; server unreachable since 21:04.</div>' +
-				LINE_3
+				'<div style="font-weight:700">Buy —</div>' +
+				'<div style="font-weight:700">Sell —</div>' +
+				'<div style="color:var(--color-lab-text-secondary)">Updated 21:00</div>'
 		});
 	});
 });

@@ -483,7 +483,7 @@ describe('divine-rate health polling', () => {
 		expect(divineRateView(s.divineRate, s.divineRate.now, 'UTC')).toEqual({
 			state: 'stale',
 			chip: '360',
-			tooltipHtml: '<div style="font-weight:700">1 divine = 360.1 chaos (stale)</div><div style="color:var(--color-lab-text-secondary)">Last known rate from 23:00; server unreachable since 00:01.</div><div style="color:var(--color-lab-text-secondary)">Every chaos ↔ divine figure in the app uses this rate.</div>'
+			tooltipHtml: '<div style="font-weight:700">Buy —</div><div style="font-weight:700">Sell —</div><div style="color:var(--color-lab-text-secondary)">Updated 23:00</div>'
 		});
 		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', offline);
 	});
