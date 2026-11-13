@@ -115,6 +115,7 @@ function layout(over: Partial<LayoutView> = {}): LayoutView {
 		// fixture that carried 42 rects nothing asserts on would be noise.
 		rois: [],
 		diamond: null,
+		cradle: false,
 		...over
 	};
 }
@@ -2716,5 +2717,95 @@ describe('the door widget through a whole incursion', () => {
 		// The purple seal. Empty here would mean the widget draws a room with no
 		// recommendation in it at the moment the door is actually opened.
 		expect(suggestedDoors(inRoom().advice)).toEqual(['C1-C2']);
+	});
+});
+
+// POE-370 WI-3: the Cradle bracket. Upgraded uniques drop from the same chest
+// only when a Cradle of Creation is present (g744679169.csv line 13), and the
+// bracket is 0.25 x the upgraded price (Operator ruling 2026-11-13 00:20,
+// T28c). Each guard is its own boundary; dropping any one of them breaks the
+// test that names it.
+describe('offerBoxes — the Cradle bracket (POE-370)', () => {
+	const maskDrop = (over: Partial<DriverView> = {}) =>
+		uniqueTerm({
+			name: 'Mask of the Spirit Drinker',
+			unitPrice: 195,
+			chaos: 48.75,
+			upgraded: { name: 'Mask of the Stitched Demon', unitPrice: 427, chaos: 106.75 },
+			...over
+		});
+	const sanctum = (over: Partial<RoomValueView> = {}) =>
+		offer({
+			displayName: 'Sanctum of Immortality',
+			builtTier: 3,
+			value: value({ total: 60.75, drivers: [maskDrop()], ...over })
+		});
+	const boxOn = (cradle: boolean, offered: OfferView) =>
+		offerBoxes(
+			{
+				...templeSliceDefault(),
+				advice: advice(),
+				layout: layout({ cradle }),
+				panel: { room: null, roomRect: null, offers: [offered], incursionsRemaining: 6 },
+				market: LIVE_MARKET
+			},
+			NOW
+		)[0];
+
+	it('brackets the upgraded value only when a Cradle is on the board', () => {
+		const without = boxOn(false, sanctum());
+		const withCradle = boxOn(true, sanctum());
+
+		expect(without.uniqueDrops[0].bracket).toBeNull();
+		expect(withCradle.uniqueDrops[0].bracket).toBe('(+107c)');
+		for (const box of [without, withCradle]) {
+			expect(box.value).toBe(60.75);
+			expect(box.uniqueDrops[0].price).toBe('195c');
+		}
+	});
+
+	it('withholds the bracket on a scaled box', () => {
+		const box = boxOn(true, sanctum({ total: 10, scaledFromTier3: 60.75 }));
+
+		expect(box.uniqueDrops[0].bracket).toBeNull();
+	});
+
+	it('withholds the bracket on a fallback box', () => {
+		const box = boxOn(true, sanctum({ priced: 'fallback' }));
+
+		expect(box.uniqueDrops[0].bracket).toBeNull();
+	});
+
+	it('prints no bracket where the upgraded item has no price', () => {
+		const unpriced = maskDrop({
+			upgraded: { name: 'Mask of the Stitched Demon', unitPrice: null, chaos: null }
+		});
+		const box = boxOn(true, sanctum({ drivers: [unpriced] }));
+
+		expect(box.uniqueDrops[0].bracket).toBeNull();
+	});
+
+	it('never brackets a line with no chest', () => {
+		const storm = offer({
+			displayName: 'Storm of Corruption',
+			builtTier: 3,
+			value: value({ total: 12, drivers: [saleTerm({ name: 'Storm of Corruption' })] })
+		});
+		const box = boxOn(true, storm);
+
+		expect(box.uniqueDrops).toEqual([]);
+		expect(box.drivers.every((row) => row.bracket === null)).toBe(true);
+	});
+
+	it('moves the signature when a bracket appears, not when its text changes', () => {
+		const without = boxOn(false, sanctum());
+		const withCradle = boxOn(true, sanctum());
+		const reworded = {
+			...withCradle,
+			uniqueDrops: [{ ...withCradle.uniqueDrops[0], bracket: '(+99c)' }]
+		};
+
+		expect(offerBoxSignature(withCradle, false)).not.toBe(offerBoxSignature(without, false));
+		expect(offerBoxSignature(reworded, false)).toBe(offerBoxSignature(withCradle, false));
 	});
 });

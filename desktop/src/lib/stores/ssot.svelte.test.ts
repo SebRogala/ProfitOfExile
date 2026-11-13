@@ -961,7 +961,8 @@ describe('temple slice', () => {
 				// verbatim and reads neither, so the fixture carries the shape
 				// and not a board's worth of rectangles.
 				rois: [],
-				diamond: null
+				diamond: null,
+				cradle: false
 			},
 			panel: {
 				room: 'Locus of Corruption',

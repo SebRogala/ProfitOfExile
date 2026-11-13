@@ -93,7 +93,8 @@ function layout(rois: RoiView[]): LayoutView {
 			[0, 0]
 		],
 		rois,
-		diamond: null
+		diamond: null,
+		cradle: false
 	};
 }
 

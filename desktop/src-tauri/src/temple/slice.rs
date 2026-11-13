@@ -464,6 +464,14 @@ pub struct LayoutView {
     /// (POE-244). `None` when the read settled no current room, which is when
     /// there is no room to draw.
     pub diamond: Option<DiamondView>,
+    /// A known plate on this board is the tier-3 room of the `throne_of_atziri`
+    /// line, Cradle of Creation (POE-370). Upgraded uniques drop from a chest
+    /// only when a Cradle is present (g744679169.csv line 13), so this is what
+    /// lets a chest cell bracket its upgraded value (Operator ruling
+    /// 2026-11-13 00:20, T28c). An unread plate never counts, and an
+    /// architect's offer to BUILD a Cradle is not one on the board.
+    #[serde(default)]
+    pub cradle: bool,
 }
 
 /// One rectangle the read takes input from, in CAPTURE px.
@@ -1306,7 +1314,18 @@ fn layout_view(read: &ReadResult<'_>) -> LayoutView {
         centres: layout.slots.map(|(x, y)| [x, y]),
         rois: super::run::read_rois(layout.origin, layout.scale),
         diamond: layout.current.map(|current| diamond_view(layout, current)),
+        cradle: read.rooms.iter().any(|r| is_cradle(r.identity.identity())),
     }
+}
+
+/// Whether a plate's identity is Cradle of Creation: the `throne_of_atziri`
+/// line at [`Tier::T3`], matched on the vocabulary's identity rather than the
+/// printed name.
+fn is_cradle(identity: Option<RoomIdentity>) -> bool {
+    matches!(
+        identity,
+        Some(RoomIdentity::Room { line, tier: Tier::T3 }) if line.key() == "throne_of_atziri"
+    )
 }
 
 /// The current room's diamond, as [`super::markers`]' fitted projection puts
@@ -3679,6 +3698,47 @@ mod tests {
         assert_eq!(line.content, None);
     }
 
+    /// POE-370 (T28c, g744679169.csv line 13): the layout carries whether a
+    /// known plate on the board is Cradle of Creation — the tier-3 room of the
+    /// `throne_of_atziri` line, and only that tier. Fails if `layout_view`
+    /// matches the line at any tier, counts an unread plate, or drops the
+    /// fact.
+    #[test]
+    fn the_layout_says_whether_a_cradle_of_creation_is_on_the_board() {
+        let layout = layout(Some(Slot::D3), &[], &[]);
+        let panel = panel("Tombs", Some(6), Vec::new());
+        let cradle_of = |rooms: &[RoomReading]| {
+            project(&read(&layout, rooms, &panel, None, None, &valued()), None)
+                .layout
+                .expect("a read publishes its layout")
+                .cradle
+        };
+
+        let built = board_rooms(&[(Slot::D3, "Tombs"), (Slot::C1, "Cradle of Creation")]);
+        assert!(cradle_of(&built), "a C1 plate reading Cradle of Creation is a Cradle");
+
+        let unread = board_rooms(&[(Slot::D3, "Tombs")]);
+        assert!(!cradle_of(&unread), "an unread C1 plate is no Cradle");
+
+        let lower_tier = board_rooms(&[(Slot::D3, "Tombs"), (Slot::C1, "Hall of Lords")]);
+        assert!(!cradle_of(&lower_tier), "Hall of Lords is the same line at tier 2");
+    }
+
+    /// A layout written before POE-370 has no `cradle` key and must still
+    /// decode, as no Cradle. Fails if the field loses `#[serde(default)]`.
+    #[test]
+    fn a_layout_json_without_cradle_decodes_as_false() {
+        let mut json: serde_json::Value =
+            serde_json::from_str(SAMPLE_SLICE_JSON).expect("the sample is JSON");
+        json["layout"]
+            .as_object_mut()
+            .expect("the sample has a layout")
+            .remove("cradle");
+        let layout: LayoutView =
+            serde_json::from_value(json["layout"].clone()).expect("a layout without cradle decodes");
+        assert!(!layout.cradle);
+    }
+
     // ------------------------------------------- POE-229: the current room --
 
     /// The 2026-09-02 screenshot's corridors: the Entrance (E1) reaches C2 by
@@ -5648,6 +5708,7 @@ mod tests {
                     top_icon: [0.34, -0.3],
                     bottom_icon: [-0.34, 0.3],
                 }),
+                cradle: false,
             }),
             panel: Some(PanelView {
                 room: Some("Locus of Corruption".to_string()),
@@ -5836,7 +5897,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true,"upgraded":null},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false,"upgraded":null}]},"line":{"kind":"content","content":"Extra monsters (dangerous)","rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]},"cradle":false},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true,"upgraded":null},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false,"upgraded":null}]},"line":{"kind":"content","content":"Extra monsters (dangerous)","rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///

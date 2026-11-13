@@ -203,6 +203,12 @@ export interface LayoutView {
 	/** The current room's own isometric diamond, or null between rooms. Same
 	 *  wire-optionality rule as `rois`. */
 	diamond?: DiamondView | null;
+	/** A known plate on this board reads Cradle of Creation (POE-370): the
+	 *  tier-3 room of the `throne_of_atziri` line. Upgraded uniques drop from
+	 *  a chest only when a Cradle is present (g744679169.csv line 13), so this
+	 *  is what lets a tier-3 chest cell bracket its upgraded value. An unread
+	 *  plate or an offer to build one is not a Cradle. */
+	cradle: boolean;
 }
 
 /** One rectangle the read takes input from. */

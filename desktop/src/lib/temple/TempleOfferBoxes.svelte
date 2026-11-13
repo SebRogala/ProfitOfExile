@@ -283,6 +283,11 @@
 		priced: boolean;
 		/** A rare drop's rate, else null. */
 		caption: string | null;
+		/** The upgraded unique's `(+Nc)` with a Cradle of Creation on the board
+		 *  (POE-370), else null. Drawn on the caption's line; the caption wins
+		 *  if both are ever set (a caption needs a count under 0.05, a chest
+		 *  row's is at least 0.0625). */
+		bracket: string | null;
 	}
 
 	/** The icon endpoint's URL for one item, or null where there is no item.
@@ -311,7 +316,8 @@
 							kind: driver.kind,
 							price: driver.price,
 							priced: driver.priced,
-							caption: driver.caption
+							caption: driver.caption,
+							bracket: driver.bracket
 						}
 					]
 		);
@@ -406,7 +412,7 @@
 	<div class="item">
 		{@render icon(cell.iconName, cell.kind, 39)}
 		<span class="pr" class:none={!cell.priced}>{cell.price}</span>
-		{#if cell.caption}<span class="cap">{cell.caption}</span>{/if}
+		{#if cell.caption}<span class="cap">{cell.caption}</span>{:else if cell.bracket}<span class="cap">{cell.bracket}</span>{/if}
 	</div>
 {/snippet}
 
@@ -501,7 +507,7 @@
 				<div
 					class="items"
 					class:aftersale={sale !== null}
-					class:captioned={cells.some((cell) => cell.caption !== null)}
+					class:captioned={cells.some((cell) => cell.caption !== null || cell.bracket !== null)}
 				>
 					{#each cells as cell (cell.iconName)}
 						{@render itemCell(cell)}
@@ -887,7 +893,9 @@
 
 	/* Names the CELL, not a section, so it is deliberately lighter than a
 	   section label: 400 where those are 700. Under the price, so every cell's
-	   art still sits on the row's own top edge. */
+	   art still sits on the row's own top edge. Carries a rare drop's rate or,
+	   with a Cradle of Creation on the board, the upgraded unique's bracket
+	   (POE-370). */
 	.item .cap {
 		font-size: 10px;
 		font-weight: 400;

@@ -711,6 +711,11 @@ export interface OfferDriver {
 	/** `"4.8% / run"` or `"1 in ~850 runs"` for a rare unique drop
 	 *  ([`formatDropRate`]), or null otherwise. */
 	caption: string | null;
+	/** `"(+107c)"`: what the upgraded unique would ADD with a Cradle of
+	 *  Creation on the board (POE-370; g744679169.csv line 13, Operator ruling
+	 *  2026-11-13 00:20, T28c), or null. Shown, never added to the value.
+	 *  Worded in [`offerDriverTerms`]. */
+	bracket: string | null;
 	marks: DriverMark[];
 }
 
@@ -872,7 +877,11 @@ interface DriverTerm {
  * prints that unit price, which put the tier-3 room's at-floor poe.ninja price
  * on a box the valuation never counted it on.
  */
-function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverTerm[] {
+function offerDriverTerms(
+	value: RoomValueView,
+	state: OfferValueState,
+	cradle: boolean
+): DriverTerm[] {
 	const ladder = state === 'fallback';
 	const scaled = rowsAreTier3(value);
 	return value.drivers
@@ -908,12 +917,34 @@ function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverT
 						driver.count < 0.05
 							? formatDropRate(driver.count)
 							: null,
+					bracket: kind === 'unique' ? cradleBracket(driver, cradle, scaled, ladder) : null,
 					marks: driverMarks(driver)
 				},
 				shown,
 				contributed: driver.chaos
 			};
 		});
+}
+
+/**
+ * A unique row's Cradle bracket, `(+107c)`, or null.
+ *
+ * Upgraded uniques drop from the same chest only when a Cradle of Creation is
+ * present (g744679169.csv line 13), and the bracket is 0.25 x the upgraded
+ * price, pooled like the base (Operator ruling 2026-11-13 00:20, T28c) — the
+ * driver's `upgraded.chaos`, worded with the `+` of what it would add. It is
+ * withheld on a scaled box (a derived tier-3 amount, [`rowsAreTier3`]) and on
+ * the grade fallback, and it never moves the value.
+ */
+function cradleBracket(
+	driver: DriverView,
+	cradle: boolean,
+	scaled: boolean,
+	ladder: boolean
+): string | null {
+	const chaos = driver.upgraded?.chaos ?? null;
+	if (!cradle || scaled || ladder || chaos === null || !(chaos > 0)) return null;
+	return `(+${offerChaos(chaos)}c)`;
 }
 
 /** Whether a sale term is a measured zero above the floor: `0` on a summed
@@ -1152,7 +1183,9 @@ export function offerBoxSignature(box: OfferBox, compact: boolean): string {
 		box.ladder ? 'ladder' : '-',
 		box.ladder?.rarity ? 'r' : '-',
 		`unique${box.uniqueDrops.length}`,
-		box.uniqueDrops.some((drop) => drop.caption) ? 'caption' : '-',
+		// A bracket draws on the caption's line, so its presence is the same
+		// shape change; its text is not.
+		box.uniqueDrops.some((drop) => drop.caption || drop.bracket) ? 'caption' : '-',
 		box.architect !== null ? 'architect' : '-',
 		box.ageLine ? 'age' : '-'
 	].join(' ');
@@ -1220,7 +1253,7 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 		// The five-state classification, made ONCE — see [`offerState`] for why
 		// nothing below may re-read `value.priced` instead.
 		const state = value === null ? null : offerState(value.priced);
-		const terms = value === null || state === null ? [] : offerDriverTerms(value, state);
+		const terms = value === null || state === null ? [] : offerDriverTerms(value, state, slice.layout?.cradle === true);
 		// EVERY term, and the three the full form draws. The chip and box marks
 		// read the first: they describe the number, which is the whole sum, and a
 		// fact hidden by the fold is still a fact about it.
