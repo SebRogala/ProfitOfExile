@@ -1231,11 +1231,24 @@ mod tests {
         ("wealth_of_the_vaal", [0.0035, 0.0035, 0.004375]),
     ];
 
+    /// POE-369 WI-3: the 3.30 sheet values move exactly these two lines off
+    /// [`QUANTITY_ZERO_TOTALS`], at the default 0.25 c per rarity %:
+    /// Locus of Corruption's 846 c sale plus its 12 % rarity (3 c), and
+    /// Glittering Halls' 36 % rarity (9 c) in place of poedb's 60 %.
+    const ROOM_VALUES_330_TOTALS: [(&str, [f64; 3]); 2] = [
+        ("corruption", [679.2, 679.2, 849.0]),
+        ("glittering_halls", [7.2, 7.2, 9.0]),
+    ];
+
     #[test]
     fn the_capture_values_every_room_tier_at_these_totals() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
         assert_eq!(valued.lines().count(), QUANTITY_ZERO_TOTALS.len());
-        for (key, expected) in QUANTITY_ZERO_TOTALS {
+        for (key, quantity_zero) in QUANTITY_ZERO_TOTALS {
+            let expected = ROOM_VALUES_330_TOTALS
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map_or(quantity_zero, |(_, totals)| *totals);
             for (index, want) in expected.iter().enumerate() {
                 let got = value_of(&valued, key, index as u8 + 1).total;
                 assert!(close(got, *want), "{key} tier {}: {got} != {want}", index + 1);
@@ -1368,8 +1381,8 @@ mod tests {
 
         assert_eq!(value.sale, 846.0);
         assert_eq!(driver(&value, DriverKind::Sale).unit_price, Some(856.0));
-        // POE-366 removed Locus's vial term, so the sale is the whole total.
-        assert_eq!(value.total, 846.0);
+        // The sale plus its 12 % sheet rarity at 0.25 c (POE-369).
+        assert_eq!(value.total, 849.0);
     }
 
     #[test]
@@ -1404,12 +1417,12 @@ mod tests {
         let fraction = driver(&t1, DriverKind::TierFraction);
         assert_eq!(fraction.name, "Locus of Corruption");
         assert_eq!(fraction.count, Some(0.8));
-        // Its tier-3 total: the 846 sale.
+        // Its tier-3 total: the 846 sale + 3 rarity.
         assert_eq!(
             fraction.unit_price,
             Some(value_of(&valued, "corruption", 3).total)
         );
-        assert_eq!(fraction.unit_price, Some(846.0));
+        assert_eq!(fraction.unit_price, Some(849.0));
         // A chest line's tier-1 unique driver carries tier 3's 0.25 count
         // unscaled: only the aggregate is scaled by the fraction.
         let conduit_t1 = value_of(&valued, "conduit_of_lightning", 1);
@@ -1505,7 +1518,7 @@ mod tests {
         let valued = Valued::compute(&allflame(), &knobs);
 
         assert_eq!(value_of(&valued, "corruption", 1).total, 0.0);
-        assert_eq!(value_of(&valued, "corruption", 3).total, 846.0);
+        assert_eq!(value_of(&valued, "corruption", 3).total, 849.0);
     }
 
     #[test]
@@ -1534,8 +1547,8 @@ mod tests {
         assert_eq!(value_of(&valued, "gem", 3).total, 390.0, "Doryani's sale");
         assert_eq!(
             value_of(&valued, "corruption", 3).total,
-            846.0,
-            "Locus's sale"
+            849.0,
+            "Locus's sale plus its 3 c sheet rarity"
         );
         assert!(rushed.total < value_of(&valued, "gem", 3).total);
     }
@@ -1834,8 +1847,8 @@ mod tests {
 
     /// Glittering Halls ranks above Factory now that 3.30 removed item quantity.
     ///
-    /// With the vial gone (POE-366, decisions T6) it is its 60 % rarity bonus
-    /// alone, 60 x 0.25 = 15 c. Factory's 66 % quantity was what put it ahead;
+    /// With the vial gone (POE-366, decisions T6) it is its 36 % rarity bonus
+    /// alone (the 3.30 sheet's 12 % per tier, POE-369), 36 x 0.25 = 9 c. Factory's 66 % quantity was what put it ahead;
     /// with quantity gone (POE-369) Factory is its 12 % rarity, 3 c.
     #[test]
     fn glittering_halls_ranks_above_factory_without_item_quantity() {
@@ -1844,7 +1857,7 @@ mod tests {
         let halls = value_of(&valued, "glittering_halls", 3);
         let factory = value_of(&valued, "factory", 3);
 
-        assert!(close(halls.total, 15.0), "{}", halls.total);
+        assert!(close(halls.total, 9.0), "{}", halls.total);
         assert!(close(factory.total, 3.0), "{}", factory.total);
         assert!(halls.total > factory.total, "above Factory");
     }
@@ -2361,7 +2374,7 @@ mod tests {
         assert_eq!(value_of(&cold, "corruption", 3).total, 800.0);
         assert_eq!(value_of(&cold, "gem", 3).total, 800.0);
         let live = Valued::compute(&allflame(), &Knobs::default());
-        assert_eq!(value_of(&live, "corruption", 3).total, 846.0);
+        assert_eq!(value_of(&live, "corruption", 3).total, 849.0);
         assert_eq!(value_of(&live, "gem", 3).total, 390.0);
     }
 
@@ -2462,13 +2475,13 @@ mod tests {
     }
 
     #[test]
-    fn only_locus_and_doryanis_institute_are_free_of_estimates() {
-        // Everything else rests on Vertolka's per-run counts, the two
-        // unmeasured bonus rates, or the grade ladder — and says so.
+    fn only_doryanis_institute_is_free_of_estimates() {
+        // Everything else rests on Vertolka's per-run counts, the unmeasured
+        // rarity rate, or the grade ladder — and says so.
         //
-        // Two rooms. Locus of Corruption rejoined at POE-366: its derived vial
-        // term is gone, so its 846 c sale is its whole value, as Doryani's
-        // Institute's 390 c sale is.
+        // One room: Doryani's Institute's 390 c sale is its whole value.
+        // Locus of Corruption left at POE-369: its 3.30 sheet rarity is
+        // priced through the guessed chaos-per-rarity rate.
         let valued = Valued::compute(&allflame(), &Knobs::default());
 
         let measured: Vec<&str> = valued
@@ -2477,6 +2490,6 @@ mod tests {
             .map(|(key, _)| key)
             .collect();
 
-        assert_eq!(measured, vec!["corruption", "gem"]);
+        assert_eq!(measured, vec!["gem"]);
     }
 }

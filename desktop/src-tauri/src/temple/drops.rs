@@ -19,7 +19,7 @@
 //! [`LineDrops::has_guess`] answers "is anything in this room's value guessed?"
 //! so the overlay (POE-260) can mark it.
 //!
-//! Three sources for the NUMBERS, and only three:
+//! Four sources for the NUMBERS, and only four:
 //!
 //! - [`POEDB`] — the room's own page on poedb.tw, read 2026-09-06. This is the
 //!   game's data: the rarity / pack-size lines, the item-chance stat
@@ -30,6 +30,10 @@
 //! - [`VERTOLKA_MSG`] — Vertolka's 2026-09-06 message quoted on POE-124. Every
 //!   number from it is a [`Basis::Guess`], because he said so: "price of unique
 //!   divided by 4" (hence 0.25 per run at tier 3).
+//! - Vertolka's 3.30 sheet export, 2026-11-13 (POE-369) — the rows cited by
+//!   [`SHEET_LOCUS_330`], [`SHEET_CRADLE_330`] and [`SHEET_GLITTERING_330`]:
+//!   the corruption rooms' rarity and pack size, the Cradle of Creation line's
+//!   magic pack size and Glittering Halls' rarity. Measured.
 //!
 //! # Uniques drop at tier 3 only
 //!
@@ -64,7 +68,7 @@
 //!
 //! # What this table deliberately does not model
 //!
-//! The schema is numeric — counts per run and percentages. Eight further statements on those pages and on the sheet are
+//! The schema is numeric — counts per run and percentages. Five further statements on those pages and on the sheet are
 //! real drops or real bonuses with no number and no field here. They are
 //! listed rather than passed over in silence, because a reader of this table
 //! would otherwise conclude the rooms state nothing.
@@ -73,19 +77,24 @@
 //!
 //! - `apex_of_ascension`, tiers 1-3 — "Ahuana drops an additional Unique Item".
 //!   An extra unique per run, on the one line whose own value is the sacrifice.
+//!   3.30: the altar returns multiple uniques proportional to the one
+//!   sacrificed.
 //! - `atlas_of_worlds` tier 3 — "Temple Architects drop 1 additional Scarabs".
 //! - `sadists_den`, all tiers — "Area is haunted by 5 additional Tormented
 //!   Spirits".
-//! - `upgrade`, tiers 2 and 3 — "Monsters drop items 1 Levels higher".
 //!
-//! [`VERTOLKA_SHEET`]'s `global temple modifier` column states four more with
-//! no percentage in them at all: Temple Nexus "increases item level of items",
-//! Sadist Den "from T2 is Omnitect possesed", Storm of Corruption "adding
-//! corrupting/radiating tempest - high rarity buff", Throne of Atziri "increase
-//! magic monster packs".
+//! [`VERTOLKA_SHEET`]'s `global temple modifier` column states two more with
+//! no percentage in them at all: Sadist Den "from T2 is Omnitect possesed" and
+//! Storm of Corruption "adding corrupting/radiating tempest - high rarity
+//! buff".
 //!
-//! All eight are **accepted as outside POE-256's numeric scope**. Each would
-//! need either a unit no field here has (an item level, a monster rarity, a
+//! Removed in 3.30, and so no longer listed: `upgrade` "Monsters drop items 1
+//! Levels higher" and Temple Nexus "increases item level of items". Throne of
+//! Atziri's "increase magic monster packs" is now carried as
+//! [`TierDrops::magic_pack_size_pct`].
+//!
+//! All five are **accepted as outside POE-256's numeric scope**. Each would
+//! need either a unit no field here has (a monster rarity, a
 //! scarab) or a count nobody has stated (what a Tormented Spirit is worth), and
 //! giving them a shape here would hand POE-257 a fabricated number. The prose
 //! half of the sheet that IS carried is [`LineDrops::note`].
@@ -108,6 +117,14 @@ pub const POEDB: &str = "poedb.tw room page, 2026-09-06";
 /// Vertolka's room sheet, read 2026-09-06 — the source of [`LineDrops::note`].
 #[allow(dead_code)] // Named by the docs only since POE-367 removed the temple-mod rows that cited it.
 pub const VERTOLKA_SHEET: &str = "Vertolka's sheet, 2026-09-06";
+/// The 3.30 corruption-room bonus (POE-369, Operator ruling T27 2026-11-13
+/// 00:14: "4% from rarity ... and yeah pack size 1% per tier").
+pub const SHEET_LOCUS_330: &str = "Vertolka's sheet export 2026-11-13: gid0.csv row 10 (Locus of Corruption 4-6% rarity, 1% pack size per tier) and g744679169.csv row 24 (1% pack size per tier where the room gives 4% IIR), read at the standard eight's 4/8/12 and 1/2/3; not yet confirmed in game";
+/// The 3.30 Cradle of Creation bonus (POE-369, Operator ruling T28 2026-11-13
+/// 00:20 confirmed 10 % per tier).
+pub const SHEET_CRADLE_330: &str = "Vertolka's sheet export 2026-11-13: gid0.csv row 8 (Cradle of Creations 10% to magic monster pack size) and g744679169.csv row 24 (Cradle of Creation 10% to magic pack size), read per tier like Hall of War's 10/20/30; per tier confirmed by the Operator 2026-11-13 00:20";
+/// The 3.30 Glittering Halls rarity (POE-369).
+pub const SHEET_GLITTERING_330: &str = "Vertolka's sheet export 2026-11-13: gid0.csv row 13 (Glittering Halls 12% rarity) and g744679169.csv row 27 (12% IIR per tier, exact)";
 /// Vertolka's 2026-09-06 message, quoted on epic POE-124. Everything sourced
 /// here is a [`Basis::Guess`]; he offered the numbers as his own estimates.
 pub const VERTOLKA_MSG: &str = "Vertolka, 2026-09-06 message (POE-124)";
@@ -213,6 +230,7 @@ pub struct TierDrops {
     uniques_per_run: Option<Estimate>,
     rarity_pct: Option<Estimate>,
     pack_size_pct: Option<Estimate>,
+    magic_pack_size_pct: Option<Estimate>,
 }
 
 impl TierDrops {
@@ -222,6 +240,7 @@ impl TierDrops {
         uniques_per_run: None,
         rarity_pct: None,
         pack_size_pct: None,
+        magic_pack_size_pct: None,
     };
 
     /// Expected tier-3 chest uniques per run. Always `None` at tiers 1 and 2 —
@@ -241,6 +260,13 @@ impl TierDrops {
         self.pack_size_pct
     }
 
+    /// `increased Magic Monster Pack size`, in percent. Carried, not priced and
+    /// not on the wire, like pack size.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
+    pub fn magic_pack_size_pct(self) -> Option<Estimate> {
+        self.magic_pack_size_pct
+    }
+
     /// Whether nobody has stated anything at all about this tier.
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn is_empty(self) -> bool {
@@ -254,6 +280,7 @@ impl TierDrops {
             self.uniques_per_run,
             self.rarity_pct,
             self.pack_size_pct,
+            self.magic_pack_size_pct,
         ])
     }
 }
@@ -331,7 +358,7 @@ impl LineDrops {
 
     /// Vertolka's own `Commentary` cell for this line, **verbatim** —
     /// [`VERTOLKA_SHEET`] is the source and its typos are his ("you should't
-    /// need it", the stray closing bracket on Wealth of the Vaal). Eight of the
+    /// need it", the stray closing bracket on Wealth of the Vaal). Seven of the
     /// twenty-five rows carry one; the rest are `None`.
     ///
     /// It is prose for the overlay, never a join key and never a number. In
@@ -392,7 +419,9 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "apex_of_ascension",
         unique: None,
-        content: Some("Sacrifice a unique, get a random one"),
+        // 3.30 patch note: "can now generate multiple Unique Items, proportional
+        // to the value of the Unique Item sacrificed".
+        content: Some("Sacrifice a unique for uniques of its worth"),
         note: None,
         tiers: [
             TierDrops::NONE,
@@ -403,7 +432,10 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "atlas_of_worlds",
         unique: None,
-        content: Some("Map drops"),
+        // 3.30 patch note: the device has "multiple uses in higher-tier rooms";
+        // sheet export 2026-11-13 gid0.csv row 23 "corrupt maps for second time
+        // (higher tier provide more uses)" (its 1/3/5? counts not adopted).
+        content: Some("Map drops; re-corrupt maps (uses rise by tier)"),
         note: None,
         tiers: [
             TierDrops::NONE,
@@ -422,16 +454,19 @@ pub const DROPS: [LineDrops; 25] = [
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
+                magic_pack_size_pct: None,
             },
         ],
     },
@@ -445,16 +480,19 @@ pub const DROPS: [LineDrops; 25] = [
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
+                magic_pack_size_pct: None,
             },
         ],
     },
@@ -479,16 +517,19 @@ pub const DROPS: [LineDrops; 25] = [
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
+                magic_pack_size_pct: None,
             },
         ],
     },
@@ -502,16 +543,19 @@ pub const DROPS: [LineDrops; 25] = [
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
+                magic_pack_size_pct: None,
             },
         ],
     },
@@ -529,23 +573,28 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "factory",
         unique: None,
-        content: Some("Extra item quantity"),
+        // Sheet export 2026-11-13 gid0.csv row 11 "increase yield of items";
+        // 3.30 removed item quantity.
+        content: Some("Extra item drops"),
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
+                magic_pack_size_pct: None,
             },
         ],
     },
@@ -553,22 +602,26 @@ pub const DROPS: [LineDrops; 25] = [
         key: "glittering_halls",
         unique: None,
         content: Some("Jewellery drops"),
-        note: Some("sometimes can drop fractured item"),
+        // The 3.30 sheet row (gid0.csv row 13) carries no fractured note.
+        note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(20.0, POEDB)),
+                rarity_pct: Some(Estimate::measured(12.0, SHEET_GLITTERING_330)),
                 pack_size_pct: None,
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(40.0, POEDB)),
+                rarity_pct: Some(Estimate::measured(24.0, SHEET_GLITTERING_330)),
                 pack_size_pct: None,
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(60.0, POEDB)),
+                rarity_pct: Some(Estimate::measured(36.0, SHEET_GLITTERING_330)),
                 pack_size_pct: None,
+                magic_pack_size_pct: None,
             },
         ],
     },
@@ -582,16 +635,19 @@ pub const DROPS: [LineDrops; 25] = [
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
+                magic_pack_size_pct: None,
             },
         ],
     },
@@ -616,16 +672,19 @@ pub const DROPS: [LineDrops; 25] = [
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: Some(Estimate::measured(10.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: Some(Estimate::measured(20.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: Some(Estimate::measured(30.0, POEDB)),
+                magic_pack_size_pct: None,
             },
         ],
     },
@@ -655,16 +714,19 @@ pub const DROPS: [LineDrops; 25] = [
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
+                magic_pack_size_pct: None,
             },
         ],
     },
@@ -681,18 +743,21 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: None,
-                pack_size_pct: None,
+                rarity_pct: Some(Estimate::measured(4.0, SHEET_LOCUS_330)),
+                pack_size_pct: Some(Estimate::measured(1.0, SHEET_LOCUS_330)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: None,
-                pack_size_pct: None,
+                rarity_pct: Some(Estimate::measured(8.0, SHEET_LOCUS_330)),
+                pack_size_pct: Some(Estimate::measured(2.0, SHEET_LOCUS_330)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: None,
-                pack_size_pct: None,
+                rarity_pct: Some(Estimate::measured(12.0, SHEET_LOCUS_330)),
+                pack_size_pct: Some(Estimate::measured(3.0, SHEET_LOCUS_330)),
+                magic_pack_size_pct: None,
             },
         ],
     },
@@ -728,16 +793,19 @@ pub const DROPS: [LineDrops; 25] = [
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
+                magic_pack_size_pct: None,
             },
         ],
     },
@@ -773,39 +841,47 @@ pub const DROPS: [LineDrops; 25] = [
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(4.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(8.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(12.0, POEDB)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
+                magic_pack_size_pct: None,
             },
         ],
     },
     LineDrops {
         key: "throne_of_atziri",
         unique: None,
-        content: Some("Queen Atziri"),
+        // 3.30 patch note: "area level 84 and contain Uber Atziri"; sheet export
+        // 2026-11-13 gid0.csv row 8 "Area level 84, uber Atziri".
+        content: Some("Uber Atziri, area level 84"),
         note: None,
         tiers: [
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: None,
+                magic_pack_size_pct: Some(Estimate::measured(10.0, SHEET_CRADLE_330)),
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: None,
+                magic_pack_size_pct: Some(Estimate::measured(20.0, SHEET_CRADLE_330)),
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: None,
+                magic_pack_size_pct: Some(Estimate::measured(30.0, SHEET_CRADLE_330)),
             },
         ],
     },
@@ -819,16 +895,19 @@ pub const DROPS: [LineDrops; 25] = [
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: None,
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: None,
+                magic_pack_size_pct: None,
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
                 rarity_pct: None,
                 pack_size_pct: None,
+                magic_pack_size_pct: None,
             },
         ],
     },
@@ -887,17 +966,17 @@ mod tests {
         "toxic_grove",
     ];
 
-    /// Eight of Vertolka's nine non-blank `Commentary` cells, transcribed from
+    /// Seven of Vertolka's nine non-blank `Commentary` cells, transcribed from
     /// the CSV with his typos left in place ("you should't", the unmatched
     /// bracket on Wealth of the Vaal), in [`DROPS`] order. Reworded commentary
     /// is not his commentary, so this is a character-for-character copy.
-    /// Chamber of Iron's cell is dropped as stale in 3.30 pending a re-read.
-    const SHEET_COMMENTARY: [(&str, &str); 8] = [
+    /// Chamber of Iron's and Glittering Halls' cells are dropped as stale in
+    /// 3.30 pending a re-read.
+    const SHEET_COMMENTARY: [(&str, &str); 7] = [
         (
             "court_of_sealed_death",
             "In T3 Arcanist and Diviner Stronboxes are quite common",
         ),
-        ("glittering_halls", "sometimes can drop fractured item"),
         (
             "hall_of_legends",
             "there are much better ways how to farm legion",
@@ -1031,21 +1110,23 @@ mod tests {
         }
     }
 
-    // POE-367 acceptance: "The room's global temple-modifier text is
-    // unchanged." Every row's content prose, in DROPS order, pinned in one
-    // table. Fails if any line's text is edited, blanked or moved.
+    // Every row's content prose, in DROPS order, pinned in one table. POE-369
+    // updated four lines to the 3.30 notes (Apex, Atlas, Factory, Throne).
+    // The box clamps content to two lines, so every string is at most 46
+    // characters. Fails if any line's text is edited, blanked, moved or grown
+    // past the clamp.
     #[test]
-    fn every_rooms_global_modifier_text_is_unchanged() {
+    fn every_rooms_content_text_is_this() {
         const EXPECTED: [(&str, Option<&str>); 25] = [
-            ("apex_of_ascension", Some("Sacrifice a unique, get a random one")),
-            ("atlas_of_worlds", Some("Map drops")),
+            ("apex_of_ascension", Some("Sacrifice a unique for uniques of its worth")),
+            ("atlas_of_worlds", Some("Map drops; re-corrupt maps (uses rise by tier)")),
             ("chamber_of_iron", Some("Armour drops")),
             ("conduit_of_lightning", None),
             ("court_of_sealed_death", Some("Arcanist & Diviner strongboxes")),
             ("crucible_of_flame", None),
             ("defense_research_lab", None),
             ("gem", Some("Double-corrupt a gem")),
-            ("factory", Some("Extra item quantity")),
+            ("factory", Some("Extra item drops")),
             ("glittering_halls", Some("Jewellery drops")),
             ("hall_of_champions", Some("Weapon drops")),
             ("hall_of_legends", Some("Legion encounter")),
@@ -1059,7 +1140,7 @@ mod tests {
             ("explosive", Some("Destroy rooms / explosives")),
             ("storm_of_corruption", Some("Corrupting tempest")),
             ("upgrade", Some("Upgrade a room")),
-            ("throne_of_atziri", Some("Queen Atziri")),
+            ("throne_of_atziri", Some("Uber Atziri, area level 84")),
             ("toxic_grove", None),
             ("wealth_of_the_vaal", Some("Currency drops")),
         ];
@@ -1067,6 +1148,14 @@ mod tests {
         let carried: Vec<(&str, Option<&str>)> =
             DROPS.iter().map(|row| (row.key(), row.content())).collect();
         assert_eq!(carried, EXPECTED);
+        for (key, content) in carried {
+            if let Some(content) = content {
+                assert!(
+                    content.chars().count() <= 46,
+                    "{key} content {content:?} is over the two-line clamp"
+                );
+            }
+        }
     }
 
     /// The kind is DERIVED rather than stored, and this is what that buys: the
@@ -1185,7 +1274,7 @@ mod tests {
     // prices; Locus of Corruption has no chest unique — its altar makes
     // Shadowstitch from the Sacrificial Garb the player brings. Fails if the
     // 0.25 is applied to Locus by pattern rather than because his sheet
-    // states it, or if a bonus is transcribed onto it.
+    // states it.
     #[test]
     fn the_rushed_lines_name_no_unique_rate() {
         let doryani = drops_for("gem");
@@ -1200,9 +1289,94 @@ mod tests {
                 "Locus tier {} claims a unique rate",
                 index + 1
             );
-            assert_eq!(drops.rarity_pct(), None, "Locus tier {}", index + 1);
-            assert_eq!(drops.pack_size_pct(), None, "Locus tier {}", index + 1);
         }
+    }
+
+    // POE-369, T24/T27: the 3.30 sheet gives the corruption rooms 4 % rarity
+    // and 1 % pack size per tier, not yet confirmed in game. The extra 1-2 %
+    // redirected from quantity has no value term, which the exact 4/8/12
+    // pins. Fails if a tier's figure, its basis or the unverified marking
+    // drifts, or if the room gains a unique rate.
+    #[test]
+    fn the_corruption_rooms_add_the_sheets_rarity_and_pack_size() {
+        let locus = drops_for("corruption");
+        let measured = Basis::Measured { source: SHEET_LOCUS_330 };
+        let rarity: Vec<Option<(f64, Basis)>> = locus
+            .tiers()
+            .iter()
+            .map(|t| t.rarity_pct().map(|e| (e.value(), e.basis())))
+            .collect();
+        assert_eq!(
+            rarity,
+            vec![Some((4.0, measured)), Some((8.0, measured)), Some((12.0, measured))]
+        );
+        let pack: Vec<Option<(f64, Basis)>> = locus
+            .tiers()
+            .iter()
+            .map(|t| t.pack_size_pct().map(|e| (e.value(), e.basis())))
+            .collect();
+        assert_eq!(
+            pack,
+            vec![Some((1.0, measured)), Some((2.0, measured)), Some((3.0, measured))]
+        );
+        assert!(SHEET_LOCUS_330.contains("not yet confirmed in game"));
+        assert_eq!(locus.unique(), None);
+        assert!(locus.tiers().iter().all(|t| t.uniques_per_run().is_none()));
+    }
+
+    // POE-369, T24/T28: the 3.30 sheet gives the Cradle of Creation line 10 %
+    // magic monster pack size per tier. Fails if a tier's figure or its basis
+    // drifts, or if the bonus is filed as rarity or plain pack size.
+    #[test]
+    fn cradle_of_creation_adds_ten_percent_magic_pack_size_per_tier() {
+        let cradle = drops_for("throne_of_atziri");
+        let measured = Basis::Measured { source: SHEET_CRADLE_330 };
+        let magic: Vec<Option<(f64, Basis)>> = cradle
+            .tiers()
+            .iter()
+            .map(|t| t.magic_pack_size_pct().map(|e| (e.value(), e.basis())))
+            .collect();
+        assert_eq!(
+            magic,
+            vec![Some((10.0, measured)), Some((20.0, measured)), Some((30.0, measured))]
+        );
+        for t in cradle.tiers() {
+            assert_eq!(t.rarity_pct(), None);
+            assert_eq!(t.pack_size_pct(), None);
+        }
+    }
+
+    // Magic pack size is the Cradle line's alone. Fails if the bonus is
+    // copied onto any other row.
+    #[test]
+    fn no_line_but_the_cradle_line_carries_magic_pack_size() {
+        for row in DROPS.iter().filter(|row| row.key() != "throne_of_atziri") {
+            for (index, t) in row.tiers().iter().enumerate() {
+                assert_eq!(
+                    t.magic_pack_size_pct(),
+                    None,
+                    "{} tier {} carries magic pack size",
+                    row.key(),
+                    index + 1
+                );
+            }
+        }
+    }
+
+    // POE-369, T24: the 3.30 sheet gives Glittering Halls 12 % rarity per
+    // tier. Fails if a tier keeps poedb's old 20/40/60 or loses its source.
+    #[test]
+    fn glittering_halls_rarity_is_12_24_36_per_the_3_30_sheet() {
+        let measured = Basis::Measured { source: SHEET_GLITTERING_330 };
+        let rarity: Vec<Option<(f64, Basis)>> = drops_for("glittering_halls")
+            .tiers()
+            .iter()
+            .map(|t| t.rarity_pct().map(|e| (e.value(), e.basis())))
+            .collect();
+        assert_eq!(
+            rarity,
+            vec![Some((12.0, measured)), Some((24.0, measured)), Some((36.0, measured))]
+        );
     }
 
     // POE-366: 3.30 removed vials, so Glittering Halls — whose only guessed
@@ -1291,10 +1465,10 @@ mod tests {
 
     // Every area bonus poedb prints is one figure and its multiples: T1, twice
     // T1, three times T1, for rarity and pack size alike (4/8/12, 1/2/3,
-    // 20/40/60, 10/20/30). That
+    // 12/24/36, 10/20/30). That
     // shape is what makes a slipped digit visible at all — 6 for 60 reads as
     // perfectly plausible on its own. Fails on Glittering Halls tier-3 rarity
-    // 60 -> 6, or on any tier-2 value transposed with its tier-3 neighbour.
+    // 36 -> 6, or on any tier-2 value transposed with its tier-3 neighbour.
     #[test]
     fn every_area_bonus_is_its_tier_one_figure_times_the_tier() {
         let bonuses: [(&str, fn(TierDrops) -> Option<Estimate>); 2] = [

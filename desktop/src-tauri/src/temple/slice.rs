@@ -3561,9 +3561,7 @@ mod tests {
     }
 
     /// A line with no tier-3 chest publishes the prose the box draws in place
-    /// of the chest row. Cradle of Creation is the case that also carries a vial,
-    /// so the content cell has to reach the wire beside a drop rather than
-    /// instead of one.
+    /// of the chest row.
     #[test]
     fn a_content_line_publishes_its_kind_and_the_rooms_own_prose() {
         let input = offer("Quipolatl", "Cradle of Creation", OfferKind::Upgrade);
@@ -3571,7 +3569,7 @@ mod tests {
         let line = view.line.expect("a resolved offer carries line facts");
 
         assert_eq!(line.kind, LineKind::Content);
-        assert_eq!(line.content.as_deref(), Some("Queen Atziri"));
+        assert_eq!(line.content.as_deref(), Some("Uber Atziri, area level 84"));
     }
 
     /// The other half, and the pair is the point: a `kind` wired to a constant
@@ -5866,9 +5864,10 @@ mod tests {
     }
 
     /// Locus of Corruption's tier-3 total on the committed capture, and the
-    /// board's top room: its 846 c sale delta. POE-366 removed the vial term
-    /// that once sat on top of it.
-    const LOCUS_T3: f64 = 846.0;
+    /// board's top room: its 846 c sale delta plus 3 c rarity (its 12 % from
+    /// the 3.30 sheet, gid0.csv row 10, at 0.25 c per %). POE-366 removed the
+    /// vial term that once sat on top of it.
+    const LOCUS_T3: f64 = 849.0;
 
     /// The valuation the bridge tests price against: the committed Allflame
     /// capture under the Default preset, whose top tier-3 room is Locus of
@@ -6456,7 +6455,7 @@ mod tests {
                 "defense_research_lab",
             ],
         );
-        assert_eq!(ranked[0].1, LOCUS_T3, "Locus of Corruption, its sale delta");
+        assert_eq!(ranked[0].1, LOCUS_T3, "Locus of Corruption, its sale delta plus rarity");
         assert_eq!(ranked[1].1, 390.0, "Doryani's Institute, its sale delta");
         assert!(close(ranked[2].1, 51.75), "Sanctum of Immortality");
         assert!(close(ranked[3].1, 50.625), "Conduit of Lightning");
