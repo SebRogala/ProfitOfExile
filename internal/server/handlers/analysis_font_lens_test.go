@@ -2,9 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
 )
@@ -22,9 +27,14 @@ type lensQuoteWire struct {
 }
 
 type lensWire struct {
-	Outcome lensQuoteWire `json:"outcome"`
-	Feeder  lensQuoteWire `json:"feeder"`
-	EV      *float64      `json:"ev"`
+	Outcome lensQuoteWire  `json:"outcome"`
+	Feeder  lensFeederWire `json:"feeder"`
+	EV      *float64       `json:"ev"`
+}
+
+type lensFeederWire struct {
+	lensQuoteWire
+	TradeURL string `json:"tradeUrl"`
 }
 
 func chaosLensListings(prices ...float64) []trade.TradeListingDetail {
@@ -163,16 +173,93 @@ func TestFontAnalysis_NilTradeCacheServesAnAllNullLens(t *testing.T) {
 	}
 }
 
+var settlersScope = league.Historical("Settlers")
+
+// settlersLensCache is a trade cache bound to Settlers holding priced lens and
+// support observations tagged with Settlers.
+func settlersLensCache(t *testing.T) *trade.TradeCache {
+	t.Helper()
+	tc := trade.NewTradeCache(10, settlersScope)
+	for gem, prices := range map[string][]float64{
+		trade.FixedTargetLens60Outcome: {400, 412, 450},
+		trade.FixedTargetLens60Feeder:  {90, 95, 99},
+	} {
+		r := trade.BuildResult(gem, trade.FixedTargetVariantFont, settlersScope.ID(), trade.SearchResponse{}, chaosLensListings(prices...), 0)
+		tc.For(settlersScope).Set(trade.CacheKey(gem, trade.FixedTargetVariantFont), r)
+	}
+	return tc
+}
+
+func warmEmptyFont(scope league.Scope) *lab.Cache {
+	c := lab.NewCache(scope)
+	c.For(scope).SetFont(lab.FontAnalysis{})
+	return c
+}
+
+// A trade cache is bound to one league and For rejects any other scope by
+// panicking, so a foreign cache reaching the handler must never price it.
 func TestFontAnalysis_AnotherLeaguesObservationNeverFillsTheLens(t *testing.T) {
-	other := trade.NewTradeCache(10, league.Historical("Settlers"))
-	r := lensObservation(trade.FixedTargetLens60Outcome, chaosLensListings(400, 412, 450), 0, time.Hour)
-	other.For(league.Historical("Settlers")).Set(trade.CacheKey(r.Gem, r.Variant), r)
-	own := trade.NewTradeCache(10, corpusScope)
+	h := FontAnalysis(nil, warmEmptyFont(corpusScope), settlersLensCache(t), corpusScope)
+	w := httptest.NewRecorder()
 
-	lens := serveLens(t, own, "/api/analysis/font")
+	rejected := func() (panicked bool) {
+		defer func() { panicked = recover() != nil }()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/analysis/font", nil))
+		return false
+	}()
 
-	if lens.Outcome.Chaos != nil || lens.Outcome.FetchedAt != nil {
-		t.Fatalf("outcome = %+v, want null: only this league's cache prices the lens", lens.Outcome)
+	if !rejected {
+		t.Fatalf("a Settlers trade cache served the %s Font analysis: body %s", corpusScope.ID(), w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "412") {
+		t.Errorf("body carries the Settlers lens price: %s", w.Body.String())
+	}
+}
+
+func TestFontAnalysis_OwningLeaguesCachePricesTheLens(t *testing.T) {
+	w := serveWithoutRepository(t, FontAnalysis(nil, warmEmptyFont(settlersScope), settlersLensCache(t), settlersScope),
+		"/api/analysis/font")
+
+	var body struct {
+		Lens lensWire `json:"lens"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Lens.EV == nil || *body.Lens.EV != 317 {
+		t.Fatalf("ev = %v, want 317 from the owning league's cache", body.Lens.EV)
+	}
+}
+
+func TestFontAnalysis_SupportTradeURLSearchesTheScopeLeagueWithANullPrice(t *testing.T) {
+	lens := serveLens(t, nil, "/api/analysis/font")
+
+	if lens.Feeder.Chaos != nil {
+		t.Fatalf("feeder chaos = %v, want null", *lens.Feeder.Chaos)
+	}
+	u, err := url.Parse(lens.Feeder.TradeURL)
+	if err != nil || u.Path != "/trade/search/"+corpusScope.ID() || u.Query().Get("q") == "" {
+		t.Fatalf("feeder tradeUrl = %q, want a search in %s carrying q", lens.Feeder.TradeURL, corpusScope.ID())
+	}
+	support, _ := trade.LookupFixedTarget(trade.FixedTargetLens60Feeder, trade.FixedTargetVariantFont)
+	if lens.Feeder.TradeURL != support.TradeURL(corpusScope.ID()) {
+		t.Errorf("feeder tradeUrl = %q, want the registry support search", lens.Feeder.TradeURL)
+	}
+}
+
+func TestFontAnalysis_LensOutcomeCarriesNoTradeURL(t *testing.T) {
+	w := serveWithoutRepository(t, FontAnalysis(nil, warmEmptyCorpora(t), nil, corpusScope), "/api/analysis/font")
+
+	var body struct {
+		Lens struct {
+			Outcome map[string]json.RawMessage `json:"outcome"`
+		} `json:"lens"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := body.Lens.Outcome["tradeUrl"]; ok {
+		t.Errorf("outcome = %v, want no tradeUrl", body.Lens.Outcome)
 	}
 }
 

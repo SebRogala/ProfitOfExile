@@ -2,6 +2,7 @@ package trade
 
 import (
 	"context"
+	"net/url"
 	"sync"
 	"time"
 
@@ -82,6 +83,16 @@ var fixedTargets = []FixedTarget{
 			}
 		},
 	},
+}
+
+// TradeURL returns the trade-site search for the target in leagueName, carrying
+// the same body the gate sends.
+func (t FixedTarget) TradeURL(leagueName string) string {
+	body, err := buildFixedTargetQuery(t)
+	if err != nil {
+		return ""
+	}
+	return "https://www.pathofexile.com/trade/search/" + url.PathEscape(leagueName) + "?q=" + url.QueryEscape(string(body))
 }
 
 // FixedTargets returns the registry in scheduling order.

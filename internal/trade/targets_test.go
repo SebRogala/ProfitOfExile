@@ -1,6 +1,9 @@
 package trade
 
 import (
+	"encoding/json"
+	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -138,5 +141,32 @@ func TestFixedTargetScheduler_FailedClaimBacksOffWithoutStarvingTheOther(t *test
 	}
 	if gem := claimGem(t, s, t0.Add(FixedTargetMinAge)); gem != FixedTargetLens60Outcome {
 		t.Fatalf("retry claim = %q, want the lens after %v", gem, FixedTargetMinAge)
+	}
+}
+
+// wantSupportSearchBody is the body the gate sends for the support target
+// (client_test.go pins the same string against the captured request).
+const wantSupportSearchBody = `{"query":{"filters":{"type_filters":{"filters":{"category":{"option":"gem.supportgem"}}},"req_filters":{"filters":{"lvl":{"min":76}}},"misc_filters":{"filters":{"gem_level":{"min":3}}}},"status":{"option":"securable"}},"sort":{"price":"asc"}}`
+
+func TestFixedTargetTradeURL_SupportSearchCarriesTheGateBodyInTheLeague(t *testing.T) {
+	support, _ := LookupFixedTarget(FixedTargetLens60Feeder, FixedTargetVariantFont)
+
+	u, err := url.Parse(support.TradeURL("Mirage Hardcore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if u.Host != "www.pathofexile.com" || u.Path != "/trade/search/Mirage Hardcore" {
+		t.Errorf("url = %s, want the trade search in league %q", u, "Mirage Hardcore")
+	}
+	var got, want any
+	if err := json.Unmarshal([]byte(u.Query().Get("q")), &got); err != nil {
+		t.Fatalf("q is not JSON: %v", err)
+	}
+	if err := json.Unmarshal([]byte(wantSupportSearchBody), &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("q = %v, want %v", got, want)
 	}
 }

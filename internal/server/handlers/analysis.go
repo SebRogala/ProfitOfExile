@@ -447,15 +447,26 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 }
 
 // lensCraftResponse is the Facetor's Lens craft: the lens (outcome) and support
-// (feeder) quotes and their signed EV, null unless both are usable.
+// (feeder) quotes and their signed EV, null unless both are usable. The feeder
+// carries the trade search that buys it, present even without a price.
 type lensCraftResponse struct {
 	Outcome trade.Quote `json:"outcome"`
-	Feeder  trade.Quote `json:"feeder"`
+	Feeder  lensFeeder  `json:"feeder"`
 	EV      *float64    `json:"ev"`
+}
+
+type lensFeeder struct {
+	trade.Quote
+	TradeURL string `json:"tradeUrl"`
 }
 
 func lensCraft(tradeCache *trade.TradeCache, scope league.Scope, now time.Time) lensCraftResponse {
 	var resp lensCraftResponse
+	for _, t := range trade.FixedTargets() {
+		if t.Role == trade.FixedTargetRoleFeeder {
+			resp.Feeder.TradeURL = t.TradeURL(scope.ID())
+		}
+	}
 	if tradeCache == nil {
 		return resp
 	}
@@ -466,7 +477,7 @@ func lensCraft(tradeCache *trade.TradeCache, scope league.Scope, now time.Time) 
 		case trade.FixedTargetRoleOutcome:
 			resp.Outcome = trade.UsableQuote(result, now)
 		case trade.FixedTargetRoleFeeder:
-			resp.Feeder = trade.UsableQuote(result, now)
+			resp.Feeder.Quote = trade.UsableQuote(result, now)
 		}
 	}
 	resp.EV = lab.LensCraftEV(resp.Outcome.Chaos, resp.Feeder.Chaos)
