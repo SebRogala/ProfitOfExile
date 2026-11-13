@@ -47,8 +47,8 @@ describe('BossResultsTables render alternatives', () => {
 			scope: 'own', sort: 'rate', notCounted: (await createFixtureModuleSettings(source.moduleSettings).load()).notCounted })
 		expect(tableNames(html.stacked)).toEqual([[
 			'Cinderswallow Urn', 'Spinehail', 'Cane of Kulemak', 'The Devouring Diadem', "The Queen's Hunger", 'Bitterbind Point',
-			"Zorath's Eye of the Endless", 'Veiled Exalted Orb', 'Allflame Ember of Kulemak',
-			'Communion Support', "Nook's Crown"
+			'Allflame Ember of Kulemak', 'Allflame Ember of Propagation', 'Allflame Ember of the Ethereal',
+			"Zorath's Eye of the Endless", 'Veiled Exalted Orb', 'Communion Support', "Nook's Crown"
 		]])
 	})
 	it('separates the original fixture pools from additional drops in the wide layout', async () => {
@@ -56,9 +56,9 @@ describe('BossResultsTables render alternatives', () => {
 		const html = layouts({ profile, stats: await createFixtureStats(source.stats).load(profile, 'own'),
 			scope: 'own', sort: 'rate', notCounted: (await createFixtureModuleSettings(source.moduleSettings).load()).notCounted })
 		expect(tableNames(html.columns)).toEqual([
-			['Cinderswallow Urn', 'Spinehail', 'Cane of Kulemak', 'The Devouring Diadem', "The Queen's Hunger", 'Bitterbind Point'],
-			["Zorath's Eye of the Endless", 'Veiled Exalted Orb', 'Allflame Ember of Kulemak',
-				'Communion Support', "Nook's Crown"]
+			['Cinderswallow Urn', 'Spinehail', 'Cane of Kulemak', 'The Devouring Diadem', "The Queen's Hunger", 'Bitterbind Point',
+				'Allflame Ember of Kulemak', 'Allflame Ember of Propagation', 'Allflame Ember of the Ethereal'],
+			["Zorath's Eye of the Endless", 'Veiled Exalted Orb', 'Communion Support', "Nook's Crown"]
 		])
 	})
 	it('provides one stacked table with every group in profile order for narrow panels', () => {

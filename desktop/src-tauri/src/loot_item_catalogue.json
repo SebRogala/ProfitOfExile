@@ -6,16 +6,20 @@
       "name": "Veiled Exalted Orb"
     },
     {
+      "id": "Metadata/Items/MapFragments/PropagationAllflamePack",
+      "name": "Allflame Ember of Propagation"
+    },
+    {
       "id": "Metadata/Items/MapFragments/BetrayalAllflamePack",
       "name": "Allflame Ember of Kulemak"
     },
     {
-      "id": "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
-      "name": "Zorath's Eye of the Endless"
+      "id": "Metadata/Items/MapFragments/CleansedAllflamePack",
+      "name": "Allflame Ember of the Ethereal"
     },
     {
-      "id": "Metadata/Items/Currency/AstrolabeGeneric",
-      "name": "Templar Astrolabe"
+      "id": "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+      "name": "Zorath's Eye of the Endless"
     },
     {
       "id": "Metadata/Items/DivinationCards/DivinationCardNooksCrown",

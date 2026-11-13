@@ -22,9 +22,10 @@ const CATARINA_KEYS: Record<string, string> = {
 	queens: "The Queen's Hunger",
 	eye: 'Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly',
 	veiledex: 'Metadata/Items/Currency/CurrencyRerollRareVeiled',
+	propagation: 'Metadata/Items/MapFragments/PropagationAllflamePack',
 	allflame: 'Metadata/Items/MapFragments/BetrayalAllflamePack',
+	ethereal: 'Metadata/Items/MapFragments/CleansedAllflamePack',
 	communion: 'Communion Support',
-	astrolabe: 'Metadata/Items/Currency/AstrolabeGeneric',
 	nooks: 'Metadata/Items/DivinationCards/DivinationCardNooksCrown',
 	keepers: 'Metadata/Items/DivinationCards/DivinationCardKeepersCorruption', // Historical only; absent from the current profile.
 	rareveiled: 'category:catarina:1:rare-two-veiled-modifiers'
@@ -64,7 +65,7 @@ export function createFixtureProfiles(source: Record<string, FixtureProfile>): P
 			}
 			const item = (value: LootItem): LootItem => ({ ...value, id: key(value.id) })
 			return {
-				...profile, boss, profileKey: profile.key, profileVersion: 1,
+				...profile, boss, profileKey: profile.key, profileVersion: 2,
 				groups: profile.groups.map((group) => ({ ...group, items: group.items.map(item) })),
 				extra: profile.extra.map(item), categories: profile.categories.map(item),
 				...(profile.capture ? { capture: mapSelection(profile.capture, key) } : {})
@@ -80,7 +81,7 @@ export function createFixtureCapture(source: Capture): CapturePort {
 }
 
 /** Synthetic envelopes preserve the designer's unknown historical identity and dates. */
-const FIXTURE_PROFILE: ProfileRef = { boss: 'catarina', profileKey: 'Normal', profileVersion: 1 }
+const FIXTURE_PROFILE: ProfileRef = { boss: 'catarina', profileKey: 'Normal', profileVersion: 2 }
 
 function requireFixtureProfile(profile: ProfileRef): void {
 	if (profile.boss !== FIXTURE_PROFILE.boss || profile.profileKey !== FIXTURE_PROFILE.profileKey ||

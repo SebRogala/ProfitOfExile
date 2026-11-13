@@ -61,9 +61,26 @@ impl Shortcut {
 pub struct LootSettings {
     pub layout: LootLayout,
     pub auto_save_seconds: u32,
+    #[serde(deserialize_with = "not_counted_without_group_items")]
     pub not_counted: Vec<String>,
     pub capture_shortcut: Shortcut,
     pub preview_shortcut: Shortcut,
+}
+/// Saved before 3.30, the Allflame Ember of Kulemak was a not-counted extra;
+/// it is now a guaranteed-group item, so the stale key is dropped on load
+/// rather than failing validation and resetting every boss-loot setting.
+fn not_counted_without_group_items<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    let mut keys = Vec::<String>::deserialize(deserializer)?;
+    keys.retain(|key| {
+        !crate::loot_profiles::built_in_profiles()
+            .iter()
+            .flat_map(|p| &p.groups)
+            .flat_map(|g| &g.items)
+            .any(|i| &i.id == key)
+    });
+    Ok(keys)
 }
 impl Default for LootSettings {
     fn default() -> Self {
@@ -1322,6 +1339,7 @@ mod owner_tests {
     use std::collections::VecDeque;
 
     const EYE: &str = "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly";
+    const KULEMAK_EMBER: &str = "Metadata/Items/MapFragments/BetrayalAllflamePack";
     fn profile() -> LootProfile {
         crate::loot_profiles::built_in_profiles()[0].clone()
     }
@@ -1366,7 +1384,7 @@ mod owner_tests {
             seed: Some("42".into()),
             version,
             items: RunItems {
-                quantities: selection(&[("Cinderswallow Urn", 1)]),
+                quantities: selection(&[("Cinderswallow Urn", 1), (KULEMAK_EMBER, 1)]),
                 counted: counted(&profile(), &LootSettings::default()),
             },
         }
@@ -1424,7 +1442,7 @@ mod owner_tests {
         assert_eq!(owner.retire_and_due_id(now_ms()), None);
     }
     fn pending(settings: &LootSettings) -> (Mutex<LootOwner>, u64) {
-        pending_with_ocr(settings, &["Serpentine Staff"])
+        pending_with_ocr(settings, &["Serpentine Staff", "Allflame Ember of Kulemak"])
     }
     fn pending_with_ocr(settings: &LootSettings, lines: &[&str]) -> (Mutex<LootOwner>, u64) {
         let mut owner = LootOwner::default();
@@ -1445,6 +1463,22 @@ mod owner_tests {
         );
         owner.ready(id, None, 1, settings, 0);
         (Mutex::new(owner), id)
+    }
+    #[test]
+    fn saved_not_counted_ember_is_dropped_and_other_settings_kept() {
+        let saved: LootSettings = serde_json::from_value(serde_json::json!({
+            "layout": "list",
+            "notCounted": ["Metadata/Items/MapFragments/BetrayalAllflamePack", "Communion Support"],
+            "captureShortcut": {"key": 3, "shift": false, "ctrl": true, "alt": false},
+        }))
+        .unwrap();
+        assert_eq!(saved.validate(), Ok(()));
+        assert_eq!(saved.not_counted, ["Communion Support"]);
+        assert_eq!(saved.layout, LootLayout::List);
+        assert_eq!(
+            saved.capture_shortcut,
+            Shortcut { key: 3, shift: false, ctrl: true, alt: false }
+        );
     }
     #[test]
     fn keepers_corruption_ocr_is_reported_as_unknown() {
@@ -1497,16 +1531,11 @@ mod owner_tests {
                     ("Metadata/Items/MapFragments/BetrayalAllflamePack", 1),
                 ])
             );
-            for key in [
-                "Metadata/Items/Currency/CurrencyRerollRareVeiled",
-                "Metadata/Items/MapFragments/BetrayalAllflamePack",
-            ] {
-                o.select(id, key, 0, &s, 2).unwrap();
-                assert!(!o.pending.as_ref().unwrap().incoming.contains_key(key));
-            }
+            let veiled = "Metadata/Items/Currency/CurrencyRerollRareVeiled";
+            o.select(id, veiled, 0, &s, 2).unwrap();
             assert_eq!(
                 o.pending.as_ref().unwrap().incoming,
-                selection(&[("Cane of Kulemak", 1)])
+                selection(&[("Cane of Kulemak", 1), (KULEMAK_EMBER, 1)])
             );
             assert_eq!(
                 o.pending.as_ref().unwrap().read_lines,
@@ -1524,7 +1553,7 @@ mod owner_tests {
         let json = serde_json::to_value(&requests[0]).unwrap();
         assert_eq!(
             json["items"]["quantities"],
-            serde_json::json!({"Cane of Kulemak": 1})
+            serde_json::json!({"Cane of Kulemak": 1, "Metadata/Items/MapFragments/BetrayalAllflamePack": 1})
         );
     }
     #[tokio::test]
@@ -1572,9 +1601,9 @@ mod owner_tests {
             let mut o = owner.lock().unwrap();
             o.select(id, "Cane of Kulemak", 0, &s, 1).unwrap();
             let p = o.pending.as_ref().unwrap();
-            assert!(p.incoming.is_empty());
+            assert_eq!(p.incoming, selection(&[(KULEMAK_EMBER, 1)]));
             assert_eq!(p.deadline_ms, None);
-            assert_eq!(p.read_lines, ["Serpentine Staff"]);
+            assert_eq!(p.read_lines, ["Serpentine Staff", "Allflame Ember of Kulemak"]);
         }
         let http = Http::default();
         submit_pending(&owner, &s, &http, 2, true).await;
@@ -1589,9 +1618,12 @@ mod owner_tests {
             o.select(id, "Cinderswallow Urn", 1, &s, 1).unwrap();
             assert_eq!(
                 o.pending.as_ref().unwrap().incoming,
-                selection(&[("Cinderswallow Urn", 1)])
+                selection(&[("Cinderswallow Urn", 1), (KULEMAK_EMBER, 1)])
             );
-            assert_eq!(o.pending.as_ref().unwrap().read_lines, ["Serpentine Staff"]);
+            assert_eq!(
+                o.pending.as_ref().unwrap().read_lines,
+                ["Serpentine Staff", "Allflame Ember of Kulemak"]
+            );
         }
         let http = Http::default();
         submit_pending(&owner, &s, &http, 2, true).await;
@@ -1600,7 +1632,7 @@ mod owner_tests {
         let json = serde_json::to_value(&requests[0]).unwrap();
         assert_eq!(
             json["items"]["quantities"],
-            serde_json::json!({"Cinderswallow Urn": 1})
+            serde_json::json!({"Cinderswallow Urn": 1, "Metadata/Items/MapFragments/BetrayalAllflamePack": 1})
         );
     }
     #[tokio::test]
@@ -1710,11 +1742,11 @@ mod owner_tests {
         let json = serde_json::to_value(&requests[0]).unwrap();
         assert_eq!(
             json["items"]["quantities"],
-            serde_json::json!({"Cane of Kulemak":1})
+            serde_json::json!({"Cane of Kulemak": 1, "Metadata/Items/MapFragments/BetrayalAllflamePack": 1})
         );
         assert_eq!(
             json["incomingPositiveKeys"],
-            serde_json::json!(["Cane of Kulemak", EYE])
+            serde_json::json!(["Cane of Kulemak", EYE, KULEMAK_EMBER])
         );
         assert_eq!(requests[0].items.counted, target.items.counted);
         assert_eq!(
@@ -1738,7 +1770,7 @@ mod owner_tests {
         let merged = merge_items(&p, &target, &incoming).unwrap();
         assert_eq!(
             merged.quantities,
-            selection(&[("Cinderswallow Urn", 1), (EYE, 4)])
+            selection(&[("Cinderswallow Urn", 1), (EYE, 4), (KULEMAK_EMBER, 1)])
         );
     }
     #[tokio::test]
@@ -1953,7 +1985,7 @@ mod owner_tests {
         );
         assert_eq!(
             o.pending.as_ref().unwrap().items.quantities,
-            selection(&[("Cane of Kulemak", 1)])
+            selection(&[("Cane of Kulemak", 1), (KULEMAK_EMBER, 1)])
         );
         assert!(o.pending.as_ref().unwrap().deadline_ms.is_some());
     }

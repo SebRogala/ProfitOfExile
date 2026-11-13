@@ -53,9 +53,10 @@ in `502fb05c` and the A7 correction proof in `215f6854`.
 without restarting that cadence. The displayed clock performs no submission.
 Shipped: `12080814`, hardened in `b29d04d1`.
 
-`loot_profiles::built_in_profiles` currently contains Catarina Normal version 1,
-matched by area and level. Its profile owns the unique group and additional
-items; Communion Support defaults to not counted. Exchange-backed names and
+`loot_profiles::built_in_profiles` currently contains Catarina Normal version 2
+(3.30 changed her pool: exactly one of three Allflame Embers per kill), matched
+by area and level. Its profile owns the unique and Allflame Ember groups and
+additional items; Communion Support defaults to not counted. Exchange-backed names and
 keys come from `loot_item_catalogue.json`. Shipped: `c656c6a7`; the trimmed
 current pool shipped in `41ec67ea` (A9a). These are implemented profile choices,
 not independently verified game drop rates.

@@ -10,9 +10,10 @@ SOURCE = ROOT / "internal/exchange/itemdata/items.json"
 TARGET = ROOT / "desktop/src-tauri/src/loot_item_catalogue.json"
 ITEM_IDS = (
     "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+    "Metadata/Items/MapFragments/PropagationAllflamePack",
     "Metadata/Items/MapFragments/BetrayalAllflamePack",
+    "Metadata/Items/MapFragments/CleansedAllflamePack",
     "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
-    "Metadata/Items/Currency/AstrolabeGeneric",
     "Metadata/Items/DivinationCards/DivinationCardNooksCrown",
     "Metadata/Items/DivinationCards/DivinationCardKeepersCorruption",
 )
@@ -31,7 +32,7 @@ def main():
     if args.check:
         if not TARGET.exists() or TARGET.read_text() != rendered:
             parser.exit(1, "Boss loot catalogue is stale; run scripts/generate-boss-loot-catalogue.py\n")
-        print("Boss loot catalogue: 6 source entries match")
+        print(f"Boss loot catalogue: {len(ITEM_IDS)} source entries match")
     else:
         TARGET.write_text(rendered)
 

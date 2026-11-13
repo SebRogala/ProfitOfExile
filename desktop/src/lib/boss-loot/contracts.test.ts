@@ -7,7 +7,7 @@ import {
 import { editRunItems, serializeSubmitRun } from './contracts'
 import type { BossStats, StoredRun, SubmitOutcome, SubmitRun } from './contracts'
 
-const profile = { boss: 'catarina', profileKey: 'Normal', profileVersion: 1 }
+const profile = { boss: 'catarina', profileKey: 'Normal', profileVersion: 2 }
 const eye = 'Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly'
 const urn = 'Cinderswallow Urn'
 const cane = 'Cane of Kulemak'
@@ -33,9 +33,9 @@ describe('owner fixture independence', () => {
 	it('isolates a profile read from caller mutation', async () => {
 		const profiles = createFixtureProfiles(source.profiles)
 		const first = await profiles.load()
-		first[0].extra[3].notCountedDefault = false
+		first[0].extra[2].notCountedDefault = false
 		const next = await profiles.load()
-		expect(next[0].extra[3].notCountedDefault).toBe(true)
+		expect(next[0].extra[2].notCountedDefault).toBe(true)
 	})
 
 	it('does not rewrite the capture when not-counted settings change', async () => {
@@ -50,7 +50,7 @@ describe('owner fixture independence', () => {
 		const runs = createFixtureRuns(source.runs)
 		await settings.save({ ...await settings.load(), notCounted: [eye] })
 		const page = await runs.list(profile, 8, 10)
-		expect(page.items.find((row) => row.run === 8)?.items.quantities).toEqual({ [cane]: 1, [eye]: 1 })
+		expect(page.items.find((row) => row.run === 8)?.items.quantities).toEqual({ [cane]: 1, [eye]: 1, ['Metadata/Items/MapFragments/BetrayalAllflamePack']: 1 })
 	})
 
 	it('reads Own from only the stats owner', async () => {
@@ -104,8 +104,7 @@ describe('original fixture meanings', () => {
 		const [catarina] = await createFixtureProfiles(source.profiles).load()
 		expect(catarina.extra.map((item) => item.id)).toEqual([
 			eye, 'Metadata/Items/Currency/CurrencyRerollRareVeiled',
-			'Metadata/Items/MapFragments/BetrayalAllflamePack', 'Communion Support',
-			'Metadata/Items/DivinationCards/DivinationCardNooksCrown'
+			'Communion Support', 'Metadata/Items/DivinationCards/DivinationCardNooksCrown'
 		])
 	})
 
@@ -116,7 +115,7 @@ describe('original fixture meanings', () => {
 
 	it('preserves wiki text without parsing it', async () => {
 		const [catarina] = await createFixtureProfiles(source.profiles).load()
-		expect(catarina.extra.map((item) => item.wikiRate)).toEqual(['~50%', '25%', '60%', '10%', '<0.5%'])
+		expect(catarina.extra.map((item) => item.wikiRate)).toEqual(['~50%', '25%', '10%', '<0.5%'])
 	})
 
 	it('retains the seed as the original string', async () => {
@@ -124,7 +123,7 @@ describe('original fixture meanings', () => {
 	})
 
 	it('maps capture picks onto canonical item keys', async () => {
-		expect((await createFixtureCapture(source.capture).load())?.picks).toEqual({ unique: [urn] })
+		expect((await createFixtureCapture(source.capture).load())?.picks).toEqual({ unique: [urn], allflame: ['Metadata/Items/MapFragments/BetrayalAllflamePack'] })
 	})
 
 	it('retains unknown OCR lines', async () => {
@@ -173,7 +172,7 @@ describe('original fixture meanings', () => {
 	})
 
 	it('rejects an unknown profile version', async () => {
-		await expect(createFixtureStats(source.stats).load({ ...profile, profileVersion: 2 }, 'own')).rejects.toThrow('Unknown fixture profile')
+		await expect(createFixtureStats(source.stats).load({ ...profile, profileVersion: 1 }, 'own')).rejects.toThrow('Unknown fixture profile')
 	})
 
 	it('rejects page zero', async () => {

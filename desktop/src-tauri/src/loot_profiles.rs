@@ -132,7 +132,7 @@ mod tests {
         let mut profile = LootProfile {
             boss: boss.into(), name: value["name"].as_str().unwrap().into(),
             full_name: value["fullName"].as_str().unwrap_or(value["name"].as_str().unwrap()).into(),
-            key: value["key"].as_str().unwrap().into(), version: 1,
+            key: value["key"].as_str().unwrap().into(), version: 2,
             area: value["area"].as_str().unwrap().into(),
             level: value["level"].as_u64().unwrap_or(0) as u32,
             groups: serde_json::from_value(value["groups"].clone()).unwrap(),
@@ -142,8 +142,9 @@ mod tests {
         let aliases = [
             ("eye", "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly"),
             ("veiledex", "Metadata/Items/Currency/CurrencyRerollRareVeiled"),
+            ("propagation", "Metadata/Items/MapFragments/PropagationAllflamePack"),
             ("allflame", "Metadata/Items/MapFragments/BetrayalAllflamePack"),
-            ("astrolabe", "Metadata/Items/Currency/AstrolabeGeneric"),
+            ("ethereal", "Metadata/Items/MapFragments/CleansedAllflamePack"),
             ("nooks", "Metadata/Items/DivinationCards/DivinationCardNooksCrown"),
             ("keepers", "Metadata/Items/DivinationCards/DivinationCardKeepersCorruption"),
         ];
@@ -295,7 +296,7 @@ mod tests {
 
     #[test]
     fn guaranteed_group_accepts_maximum() {
-        assert_eq!(fixture_profile("catarina").validate_selection(&selected(&["Cane of Kulemak"])), Ok(()));
+        assert_eq!(fixture_profile("catarina").validate_selection(&selected(&["Cane of Kulemak", "Metadata/Items/MapFragments/BetrayalAllflamePack"])), Ok(()));
     }
 
     #[test]
@@ -337,8 +338,55 @@ mod tests {
         category.id = "category:test:1:manual".into();
         profile.categories.push(category);
         let selection = [("Cane of Kulemak".into(), 1),
+            ("Metadata/Items/MapFragments/BetrayalAllflamePack".into(), 1),
             ("category:test:1:manual".into(), 4)].into_iter().collect();
         assert_eq!(profile.validate_selection(&selection), Ok(()));
+    }
+
+    const PROPAGATION: &str = "Metadata/Items/MapFragments/PropagationAllflamePack";
+    const KULEMAK: &str = "Metadata/Items/MapFragments/BetrayalAllflamePack";
+    const ETHEREAL: &str = "Metadata/Items/MapFragments/CleansedAllflamePack";
+
+    #[test]
+    fn catarina_accepts_unique_with_one_ember() {
+        assert_eq!(built_in_profiles()[0].validate_selection(&selected(&["Cane of Kulemak", ETHEREAL])), Ok(()));
+    }
+
+    #[test]
+    fn catarina_rejects_unique_without_an_ember() {
+        assert_eq!(built_in_profiles()[0].validate_selection(&selected(&["Cane of Kulemak"])), Err(SelectionError::Group {
+            id: "allflame".into(), min: 1, max: 1, selected: 0
+        }));
+    }
+
+    #[test]
+    fn catarina_rejects_two_embers() {
+        assert_eq!(built_in_profiles()[0].validate_selection(&selected(&["Cane of Kulemak", PROPAGATION, KULEMAK])), Err(SelectionError::Group {
+            id: "allflame".into(), min: 1, max: 1, selected: 2
+        }));
+    }
+
+    #[test]
+    fn each_ember_full_name_resolves_to_its_item() {
+        let profile = &built_in_profiles()[0];
+        for (text, id) in [("ALLFLAME EMBER OF PROPAGATION", PROPAGATION), ("Allflame Ember of Kulemak", KULEMAK), ("allflame ember of the ethereal", ETHEREAL)] {
+            assert_eq!(profile.match_line(text), LineMatch::Item(id.into()), "{text}");
+        }
+    }
+
+    #[test]
+    fn catalogue_holds_the_three_embers_without_the_astrolabe() {
+        let catalogue: Value = serde_json::from_str(include_str!("loot_item_catalogue.json")).unwrap();
+        let ids: Vec<&str> = catalogue["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap()).collect();
+        assert!(!ids.contains(&"Metadata/Items/Currency/AstrolabeGeneric"), "{ids:?}");
+        for id in [PROPAGATION, KULEMAK, ETHEREAL] {
+            assert!(ids.contains(&id), "{id} missing from {ids:?}");
+        }
+    }
+
+    #[test]
+    fn catarina_profile_is_version_two() {
+        assert_eq!(built_in_profiles()[0].version, 2);
     }
 
     #[test]
@@ -401,7 +449,7 @@ fn catarina() -> LootProfile {
     communion.not_counted_default = true;
     LootProfile {
         boss: "catarina".into(), name: "Catarina".into(),
-        full_name: "Catarina, Master of Undeath".into(), key: "Normal".into(), version: 1,
+        full_name: "Catarina, Master of Undeath".into(), key: "Normal".into(), version: 2,
         area: "BetrayalMastermindFight".into(), level: 83,
         groups: vec![LootGroup {
             id: "unique".into(), label: "Unique".into(), min: 1, max: 1,
@@ -413,11 +461,22 @@ fn catarina() -> LootProfile {
                 item("Bitterbind Point", "Titanium Spirit Shield", "10%"),
                 item("The Queen's Hunger", "Vaal Regalia", "6%"),
             ],
+        }, LootGroup {
+            id: "allflame".into(), label: "Allflame Ember".into(), min: 1, max: 1,
+            items: [
+                "Metadata/Items/MapFragments/PropagationAllflamePack",
+                "Metadata/Items/MapFragments/BetrayalAllflamePack",
+                "Metadata/Items/MapFragments/CleansedAllflamePack",
+            ].into_iter().map(|id| {
+                // Full names as bases: a shared "Allflame Ember" base would make OCR Ambiguous.
+                let mut ember = catalogue_item(id, "", "—");
+                ember.base = ember.name.clone();
+                ember
+            }).collect(),
         }],
         extra: vec![
             catalogue_item("Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly", "Map fragment", "~50%"),
             catalogue_item("Metadata/Items/Currency/CurrencyRerollRareVeiled", "Currency", "25%"),
-            catalogue_item("Metadata/Items/MapFragments/BetrayalAllflamePack", "Allflame Ember", "60%"),
             communion,
             catalogue_item("Metadata/Items/DivinationCards/DivinationCardNooksCrown", "Divination card", "<0.5%"),
         ],

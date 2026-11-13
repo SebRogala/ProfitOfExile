@@ -154,7 +154,7 @@ describe('Runs controller', () => {
 		h.page.toggleEditorItem('Cinderswallow Urn')
 		h.page.cancelEdit()
 		expect(h.writes).toEqual([])
-		expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cane of Kulemak'])
+		expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cane of Kulemak', 'Metadata/Items/MapFragments/BetrayalAllflamePack'])
 	})
 	it('preserves the full hidden Eye history while correcting a unique', async () => {
 		const eye = 'Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly'
@@ -165,7 +165,7 @@ describe('Runs controller', () => {
 		expect(h.page.editorView?.extra.map((item) => item.id)).not.toContain(eye)
 		h.page.toggleEditorItem('Cinderswallow Urn')
 		await h.page.saveEditor()
-		expect(h.writes[0].items).toEqual({ quantities: { 'Cinderswallow Urn': 1, [eye]: 1 }, counted })
+		expect(h.writes[0].items).toEqual({ quantities: { 'Cinderswallow Urn': 1, [eye]: 1, 'Metadata/Items/MapFragments/BetrayalAllflamePack': 1 }, counted })
 	})
 	it('changes only the explicitly toggled additional key', async () => {
 		const h = await runsHarness()
@@ -174,7 +174,7 @@ describe('Runs controller', () => {
 		h.page.toggleEditorItem('Metadata/Items/Currency/CurrencyRerollRareVeiled')
 		await h.page.saveEditor()
 		expect(h.writes[0].items.quantities).toEqual({ 'Cane of Kulemak': 1,
-			'Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly': 1, 'Metadata/Items/Currency/CurrencyRerollRareVeiled': 1 })
+			'Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly': 1, 'Metadata/Items/Currency/CurrencyRerollRareVeiled': 1, 'Metadata/Items/MapFragments/BetrayalAllflamePack': 1 })
 	})
 	it('preserves newly stored hidden quantities when a stale edit is reapplied', async () => {
 		const eye = 'Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly'
@@ -188,7 +188,7 @@ describe('Runs controller', () => {
 		latest.items.quantities['historical-unknown'] = 3
 		await h.page.saveEditor()
 		expect(h.writes.at(-1)).toMatchObject({ expectedVersion: 2, items: {
-			quantities: { 'Cinderswallow Urn': 1, [eye]: 4, 'historical-unknown': 3 }, counted: latest.items.counted } })
+			quantities: { 'Cinderswallow Urn': 1, [eye]: 4, 'historical-unknown': 3, 'Metadata/Items/MapFragments/BetrayalAllflamePack': 1 }, counted: latest.items.counted } })
 		expect(h.writes.at(-1)!.items.quantities).not.toHaveProperty('Cane of Kulemak')
 	})
 	it('retains an intervening visible change that the editor did not touch', async () => {
@@ -202,7 +202,7 @@ describe('Runs controller', () => {
 		latest.items.quantities['Spinehail'] = 1
 		await h.page.saveEditor()
 		expect(h.writes.at(-1)!.items.quantities).toEqual({ Spinehail: 1,
-			'Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly': 1, 'Metadata/Items/Currency/CurrencyRerollRareVeiled': 1 })
+			'Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly': 1, 'Metadata/Items/Currency/CurrencyRerollRareVeiled': 1, 'Metadata/Items/MapFragments/BetrayalAllflamePack': 1 })
 	})
 	it('preserves the server-confirmed row when a save is rejected', async () => {
 		const h = await runsHarness()
@@ -211,7 +211,7 @@ describe('Runs controller', () => {
 		h.page.toggleEditorItem('Cinderswallow Urn')
 		h.setEditError('edit offline')
 		await h.page.saveEditor()
-		expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cane of Kulemak'])
+		expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cane of Kulemak', 'Metadata/Items/MapFragments/BetrayalAllflamePack'])
 		expect(h.page.runMutationError).toContain('edit offline')
 		expect(h.page.editorView?.groups[0].items.find((item) => item.id === 'Cinderswallow Urn')?.selected).toBe(true)
 	})
@@ -221,7 +221,7 @@ describe('Runs controller', () => {
 		h.page.beginEdit('fixture-catarina-8')
 		h.page.toggleEditorItem('Cinderswallow Urn')
 		await h.page.saveEditor()
-		expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cinderswallow Urn'])
+		expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cinderswallow Urn', 'Metadata/Items/MapFragments/BetrayalAllflamePack'])
 		expect(h.page.editorView).toBeNull()
 	})
 	it('preserves the server-confirmed row when delete is rejected', async () => {
@@ -302,7 +302,7 @@ describe('Runs controller', () => {
 				return edit(request)
 			}
 			await h.page.saveEditor()
-			expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cane of Kulemak'])
+			expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cane of Kulemak', 'Metadata/Items/MapFragments/BetrayalAllflamePack'])
 			expect(h.page.runMutationError).toContain('changed again')
 		})
 		it('loads owned Runs while the separate statistics source is unreachable', async () => {
@@ -397,7 +397,7 @@ describe('Settings controller', () => {
 		const page = createBossLootPageController(ports())
 		await page.load()
 		await page.setNotCounted('Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly', true)
-		expect(page.results?.groups[1].items.find((item) => item.name === "Zorath's Eye of the Endless"))
+		expect(page.results?.groups[2].items.find((item) => item.name === "Zorath's Eye of the Endless"))
 			.toMatchObject({ disabled: true, rate: '—', drops: null })
 	})
 	it('propagates accepted exclusions to the next Runs editor without losing history', async () => {

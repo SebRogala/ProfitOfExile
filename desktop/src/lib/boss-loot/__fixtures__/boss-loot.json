@@ -72,6 +72,32 @@
       }
      ],
      "_note": "Base types confirmed on poe.ninja 2026-11-01. Cane of Kulemak has plain / 3-veiled / 4-veiled variants on one base: one entry, variant not recorded (owner 2026-11-01)."
+    },
+    {
+     "id": "allflame",
+     "label": "Allflame Ember",
+     "min": 1,
+     "max": 1,
+     "items": [
+      {
+       "id": "propagation",
+       "name": "Allflame Ember of Propagation",
+       "base": "Allflame Ember of Propagation",
+       "wikiRate": "—"
+      },
+      {
+       "id": "allflame",
+       "name": "Allflame Ember of Kulemak",
+       "base": "Allflame Ember of Kulemak",
+       "wikiRate": "—"
+      },
+      {
+       "id": "ethereal",
+       "name": "Allflame Ember of the Ethereal",
+       "base": "Allflame Ember of the Ethereal",
+       "wikiRate": "—"
+      }
+     ]
     }
    ],
    "extra": [
@@ -86,12 +112,6 @@
      "name": "Veiled Exalted Orb",
      "base": "Currency",
      "wikiRate": "25%"
-    },
-    {
-     "id": "allflame",
-     "name": "Allflame Ember of Kulemak",
-     "base": "Allflame Ember",
-     "wikiRate": "60%"
     },
     {
      "id": "communion",
@@ -384,12 +404,14 @@
   "picks": {
    "unique": [
     "urn"
+   ],
+   "allflame": [
+    "allflame"
    ]
   },
   "extra": {
    "eye": 1,
-   "veiledex": 1,
-   "allflame": 1
+   "veiledex": 1
   },
   "categories": {},
   "ambiguous": null,
@@ -420,7 +442,6 @@
     "devices": 1,
     "items": {
      "allflame": 22,
-     "astrolabe": 2,
      "bitterbind": 6,
      "cane": 14,
      "communion": 1,
@@ -437,7 +458,6 @@
     "devices": 1,
     "items": {
      "allflame": 22,
-     "astrolabe": 2,
      "bitterbind": 6,
      "cane": 14,
      "communion": 1,
@@ -505,8 +525,7 @@
       "urn",
       "eye",
       "veiledex",
-      "allflame",
-      "astrolabe"
+      "allflame"
      ]
     },
     {
@@ -521,7 +540,8 @@
      "date": null,
      "items": [
       "cane",
-      "eye"
+      "eye",
+      "allflame"
      ]
     },
     {
@@ -970,8 +990,7 @@
      "run": 63,
      "date": null,
      "items": [
-      "spinehail",
-      "astrolabe"
+      "spinehail"
      ]
     },
     {

@@ -121,8 +121,7 @@ it('shows a stepper only for a selected quantity item', async () => {
 })
 it('omits removed Catarina entries from the overlay', async () => {
 	expect(buildOverlayView(await input()).extra.map((item) => item.name)).toEqual([
-		"Zorath's Eye of the Endless", 'Veiled Exalted Orb', 'Allflame Ember of Kulemak',
-		'Communion Support', "Nook's Crown"
+		"Zorath's Eye of the Endless", 'Veiled Exalted Orb', 'Communion Support', "Nook's Crown"
 	])
 })
 it('always shows the category stepper at zero', async () => {
