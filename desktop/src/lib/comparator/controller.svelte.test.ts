@@ -26,22 +26,23 @@ function setup(resolveLeague = true) {
 	if (resolveLeague) applySnapshot({ league: { name: 'A', generation: ssot.leagueGeneration + 1 } });
 	const compares: ReturnType<typeof deferred<CompareGem[]>>[] = [];
 	const trades: ReturnType<typeof deferred<TradeLookupResult>>[] = [];
+	const tradeGems: string[] = [];
 	const overlays: { results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null>; divineRate: number; tradeLoading: Record<string, boolean>; tradeError: Record<string, boolean> }[] = [];
 	const queued: string[] = [];
 	const names = deferred<string[]>();
 	const handlers: Record<string, (event: { payload: unknown }) => void> = {};
 	const controller = createComparatorController({
 		names: () => names.promise,
-		selection: () => ({ variant: '20/20', mode: 'normal', divineRate: 300, autoTrade: false }),
+		selection: () => ({ variant: '20/20', mode: 'normal', divineRate: 300 }),
 		compare: () => { const d = deferred<CompareGem[]>(); compares.push(d); return d.promise; },
-		trade: () => { const d = deferred<TradeLookupResult>(); trades.push(d); return d.promise; },
+		trade: (gem) => { tradeGems.push(gem); const d = deferred<TradeLookupResult>(); trades.push(d); return d.promise; },
 		listen: async (event, handler) => { handlers[event] = handler as (event: { payload: unknown }) => void; return () => {}; },
 		pushOverlay: (payload) => { overlays.push(payload); },
 		queue: (name) => queued.push(name)
 	});
 	stop = controller.start();
 	controller.selectGem('Arc');
-	return { controller, compares, trades, overlays, queued, names, handlers };
+	return { controller, compares, trades, tradeGems, overlays, queued, names, handlers };
 }
 const row = (price: number) => ({ name: 'Arc', variant: '20/20', transPrice: price, history: [price] } as unknown as CompareGem);
 const trade = (league: string) => ({ league, variant: '20/20', priceFloor: 99 } as TradeLookupResult);
@@ -349,4 +350,66 @@ it('lab setConnected leaves a null status null', () => {
 	const { lab } = labSetup();
 	lab.setConnected(true);
 	expect(lab.state.status).toBeNull();
+});
+
+const flush = async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); };
+const staleTrade = () => ({ ...trade('A'), fetchedAt: '2000-01-01T00:00:00Z' } as TradeLookupResult);
+
+it.each([
+	{ label: 'no trade data', rows: () => [row(42)] },
+	{ label: 'old cached trade data', rows: () => [{ ...row(42), trade: staleTrade() }] }
+])('compare results with $label start no trade lookup', async ({ rows }) => {
+	const { compares, tradeGems } = setup();
+	compares[0].resolve(rows());
+	await flush();
+	expect(tradeGems).toEqual([]);
+});
+
+it('an explicit loadResults reload starts no trade lookup', async () => {
+	const { controller, compares, tradeGems } = setup();
+	compares[0].resolve([row(42)]);
+	await flush();
+	const reload = controller.loadResults();
+	compares[1].resolve([row(43)]);
+	await reload;
+	expect(tradeGems).toEqual([]);
+});
+
+it('a gem-detected OCR event starts no trade lookup', async () => {
+	vi.useFakeTimers();
+	const { controller, compares, handlers, tradeGems } = setup();
+	compares[0].resolve([row(42)]);
+	await flush();
+	handlers['gem-detected']({ payload: 'Spark' });
+	await vi.advanceTimersByTimeAsync(300);
+	expect(controller.state.selectedGems).toEqual(['Arc', 'Spark']);
+	compares[1].resolve([row(42), { ...row(10), name: 'Spark' }]);
+	await flush();
+	expect(tradeGems).toEqual([]);
+});
+
+it('a selection sync reload starts no trade lookup', async () => {
+	const { controller, compares, tradeGems } = setup();
+	compares[0].resolve([row(42)]);
+	await flush();
+	controller.syncSelection();
+	compares[1].resolve([{ ...row(42), trade: staleTrade() }]);
+	await flush();
+	expect(tradeGems).toEqual([]);
+});
+
+it('the per-gem trade button starts exactly one lookup for that gem', async () => {
+	const { controller, compares, tradeGems } = setup();
+	compares[0].resolve([row(42)]);
+	await flush();
+	void controller.invokeRustTrade('Arc');
+	expect(tradeGems).toEqual(['Arc']);
+});
+
+it('an overlay-trade-refresh click starts exactly one lookup for that gem', async () => {
+	const { compares, handlers, tradeGems } = setup();
+	compares[0].resolve([row(42)]);
+	await flush();
+	handlers['overlay-trade-refresh']({ payload: { name: 'Arc' } });
+	expect(tradeGems).toEqual(['Arc']);
 });

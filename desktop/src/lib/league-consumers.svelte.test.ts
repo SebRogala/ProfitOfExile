@@ -283,7 +283,7 @@ it.each(['failed', 'cold'] as const)('withdraws every outgoing consumer while B 
 	const queued: string[] = [];
 	const comparator = createComparatorController({
 		names: async () => [],
-		selection: () => ({ variant: '20/20', mode: 'normal', divineRate: currentDivineRate() ?? 0, autoTrade: false }),
+		selection: () => ({ variant: '20/20', mode: 'normal', divineRate: currentDivineRate() ?? 0 }),
 		compare: () => compareA.promise,
 		trade: async () => { throw new Error('unused'); }, listen: async () => () => {},
 		pushOverlay: (value) => overlay.push(value), queue: (name) => queued.push(name)

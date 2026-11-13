@@ -66,7 +66,7 @@ Mercure delivery is not the authority for these prices. PostgreSQL snapshots are
 The Tauri desktop application can query the Path of Exile trade API directly.
 
 ```text
-User action or opted-in auto refresh
+User click
     -> Tauri trade_lookup
     -> local Rust queue and limiter
     -> GGG search/fetch from the user's network address
@@ -83,9 +83,14 @@ Properties:
 - League comes from the Rust-owned SSOT slice, resolved from server status.
   The queue captures that league before waiting and refuses an unresolved league.
 
-### Manual lookup
+### One lookup per click
 
-The user explicitly refreshes trade information for a gem. The desktop performs one queued native lookup and displays the result locally.
+Every native GGG trade request starts from a user click; nothing searches on detection, on compare results, or on cache age. Each click sends its own lookup through the native queue and limiter, and the desktop displays the result locally:
+
+- Comparator per-gem trade button: one lookup for that gem.
+- Overlay refresh button (`overlay-trade-refresh`): one lookup for that gem.
+- LabPage "Refresh queue": one click, one lookup per queued item.
+- Mercenary Search button: one lookup for that mercenary.
 
 ### Trade price definition
 
@@ -117,27 +122,13 @@ combines these listing sets. Submitted results accept listing corruption flags
 as supplied, however, so the shared cache does not guarantee homogeneous flags.
 POE-302 adds no corruption filter.
 
-### Opt-in automatic stale refresh
-
-**Current behavior:** Implemented in the native desktop comparator.
-
-Automatic lookup is disabled by default. When enabled, the desktop comparator examines the age of server-cached or previously loaded trade data.
-
-- Missing data is eligible for refresh.
-- Data older than the configured automatic refresh age is eligible.
-- The user controls that threshold in desktop settings.
-- The current default is 900 seconds (15 minutes).
-- Automatic and manual lookups use the same native queue and limiter.
-
-This setting controls when the user's desktop performs native GGG lookup requests. It is separate from contribution consent, server cache retention, and analysis trade-data freshness weighting.
-
 ### Mercenary capture auto-search
 
 **Current behavior:** Implemented (POE-202). Desktop-only; the server knows nothing about mercenary listings.
 
-This is the second automatic path through the native lookup, and it is not governed by the stale-refresh setting above. When the mercenary module has fully read a recruit window, the desktop builds a trade query for that exact mercenary and searches for it without the user asking.
+This is the second automatic path through the native lookup, When the mercenary module has fully read a recruit window, the desktop builds a trade query for that exact mercenary and searches for it without the user asking.
 
-- It has its own toggle, `merc_trade_auto`, default **on**. It is independent of the comparator's automatic stale refresh (default off) and of contribution consent.
+- It has its own toggle, `merc_trade_auto`, default **on**. It is independent of contribution consent.
 - The query the app **posts** is one `and` group holding every cell that names exactly one support, plus one `count` group of `value.min = 1` per cell that names several (an icon read the app could not narrow, or a support loosened down to the tier floor). It carries **no** `mercenary` group and so no row scoping: a mercenary with the same skills and links arranged across different rows also matches, which is an accepted false-positive class. GGG's complexity budget is what forces it — a `mercenary` group costs 21 of a budget of 35, so two of them never fit and a captured panel is four or five rows. Against that budget an `and` filter costs 1 and a `count` group costs 3 plus 2 per filter; over it, the app drops its own tier loosening first and then support cells from the last row inward. Only the second is reported to the user as a looser query than the capture asked for — a query that lost just the loosening still asks for exactly what the panel showed.
 - The `trade ↗` **link** carries a different query (since 2026-09-06). It opens in the user's browser under the user's own login, where GGG's budget is the larger logged-in one ("Logging in will increase this limit", the API's own words, verified 2026-09-05), so it takes the guides' shape: one `and` group of the rolled skills — a recognised class's two fixed primaries left out, since every listing of the class has them (`docs/GAME-FACTS.md`, "Mercenary class primaries") — and one row-scoped `mercenary` group per linked row asking for the skill plus its links at any tier the floor admits, one link short on a row with two or more (`value.min` = 1 + cells − 1, `LINK_TOLERANCE`; measured 2026-09-06 — every link on every row found no listing, one short per row found several). It is built from the rows before the budget walk, so it keeps the loosening the posted body may have dropped. The logged-in budget is measured only as a lower bound, so a wide panel at a low floor may still be refused in the browser; that is an open experiment, not a guarantee. The posted body was kept flat because the app has no login.
 - A second shape of the same link, **anchor rows**, is published beside it (`urlAnchors`, since 2026-09-06, on trial): only the linked rows whose skill is a combat skill — a primary, a rolled secondary, or one the class table does not know — each as a `mercenary` group with the same one-link slack, and an `and` group of just those anchor skills. Utility rows (movement, auras, curses) and rows without links are left out, because a mercenary is priced by a desired combat skill and the links on that row (`docs/GAME-FACTS.md`, "Mercenary classes and their skill pools"). When nothing anchors it is the every-row link. The page shows one button per shape so the two can be judged on the same capture, plus a link to a third party's warrant price check, which takes a pasted warrant and nothing from the capture.
@@ -167,7 +158,7 @@ returns 400, a mismatch returns 409 with `error: league_mismatch` and the active
 league. The native submitter treats 409 as terminal and triggers status
 reconciliation; it does not relabel or replay the outgoing result.
 
-Contribution is a separate persisted opt-in, disabled by default; it is not implied by enabling automatic stale refresh. When the user enables it, every successful native lookup should be contributed to the server so other users and analysis can benefit from a fresher shared pool.
+Contribution is a separate persisted opt-in, disabled by default. When the user enables it, every successful native lookup should be contributed to the server so other users and analysis can benefit from a fresher shared pool.
 
 ```text
 Successful desktop result
@@ -409,7 +400,7 @@ This workflow:
 - Does not consume desktop or server Trade Gate capacity.
 - Does not currently provide a reverse remote-command channel to the native desktop trade client.
 
-The native desktop's own opt-in automatic stale refresh is a separate workflow. If browser-to-desktop remote lookup is added later, it requires explicit consent, authentication, command identity, result acknowledgement, and rate-limit visibility.
+If browser-to-desktop remote lookup is added later, it requires explicit consent, authentication, command identity, result acknowledgement, and rate-limit visibility.
 
 ## 7. Shared cache lifecycle
 
@@ -432,7 +423,6 @@ Consumers include:
 Cache freshness is not one universal threshold:
 
 - Desktop warning/critical colors are user-facing settings.
-- Desktop automatic refresh age controls user opt-in requests.
 - Optional server cadence minimum age controls shared-server refresh eligibility.
 - Analysis may weight or ignore trade evidence at its own documented ages.
 

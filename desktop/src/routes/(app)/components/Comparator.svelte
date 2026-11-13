@@ -48,9 +48,8 @@
 
 
 	const controller = createComparatorController(productionDependencies(
-		() => ({ variant, mode: labMode, divineRate, autoTrade: autoTradeEnabled }),
-		(gem, market, roi, trade) => onQueueGem?.(gem, market, roi, trade),
-		isTradeAutoRefreshDue
+		() => ({ variant, mode: labMode, divineRate }),
+		(gem, market, roi, trade) => onQueueGem?.(gem, market, roi, trade)
 	));
 	const selectedGems = $derived(controller.state.selectedGems);
 	const tradeData = $derived(controller.state.tradeData);
@@ -134,8 +133,6 @@
 	const highlightedIndex = $derived(controller.state.highlightedIndex);
 	let inputRef = $state<HTMLInputElement | null>(null);
 
-	let autoTradeEnabled = $state(store.status?.auto_trade_enabled ?? false);
-
 	/** Trade cache age in milliseconds, or null if no data. */
 	function tradeCacheAge(gem: string): number | null {
 		const td = tradeData[gem];
@@ -161,14 +158,6 @@
 		if (age >= critMs) return 'critical';
 		if (age >= warnMs) return 'warn';
 		return 'normal';
-	}
-
-	/** Check if trade data is stale enough to warrant auto-refresh. */
-	function isTradeAutoRefreshDue(gem: string): boolean {
-		const age = tradeCacheAge(gem);
-		if (age == null) return true; // no data at all
-		const refreshMs = (store.status?.trade_auto_refresh_secs ?? 900) * 1000;
-		return age >= refreshMs;
 	}
 
 	const resetSearch = controller.resetSearch;
@@ -320,10 +309,6 @@
 			{#if selectedGems.length > 0}
 				<button class="clear-btn" onclick={() => clearAll()}>Clear All</button>
 			{/if}
-			<Tooltip text="When enabled, auto-invokes GGG trade lookup on cache miss or stale data"><label class="auto-trade-toggle">
-				<input type="checkbox" bind:checked={autoTradeEnabled} onchange={() => invoke('set_auto_trade', { enabled: autoTradeEnabled }).catch(e => console.warn('set_auto_trade failed:', e))} />
-				<span class="toggle-label">Auto-trade</span>
-			</label></Tooltip>
 			<div class="variant-select">
 				<span class="select-label">Variant:</span>
 				<SegmentedButtons
@@ -645,22 +630,6 @@
 		font-weight: 600;
 		cursor: pointer;
 		font-family: inherit;
-	}
-	.auto-trade-toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		cursor: pointer;
-		font-size: 0.8125rem;
-		color: var(--color-lab-text-secondary);
-		user-select: none;
-	}
-	.auto-trade-toggle input {
-		accent-color: var(--color-lab-yellow, #eab308);
-		cursor: pointer;
-	}
-	.toggle-label {
-		white-space: nowrap;
 	}
 	.clear-btn:hover {
 		background: rgba(239, 68, 68, 0.2);

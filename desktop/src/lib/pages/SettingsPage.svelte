@@ -290,7 +290,6 @@
 	// --- Trade Staleness Settings ---
 	let tradeStaleWarnSecs = $state(store.status?.trade_stale_warn_secs ?? 120);
 	let tradeStaleCriticalSecs = $state(store.status?.trade_stale_critical_secs ?? 600);
-	let tradeAutoRefreshSecs = $state(store.status?.trade_auto_refresh_secs ?? 900);
 	let editingTradeStaleness = $state(false);
 	let tradeStalenessError = $state('');
 
@@ -299,7 +298,6 @@
 		if (store.status && !editingTradeStaleness) {
 			tradeStaleWarnSecs = store.status.trade_stale_warn_secs ?? 120;
 			tradeStaleCriticalSecs = store.status.trade_stale_critical_secs ?? 600;
-			tradeAutoRefreshSecs = store.status.trade_auto_refresh_secs ?? 900;
 		}
 	});
 
@@ -312,16 +310,12 @@
 			tradeStalenessError = 'Warn threshold must be less than critical threshold.';
 			return;
 		}
-		if (tradeStaleCriticalSecs >= tradeAutoRefreshSecs) {
-			tradeStalenessError = 'Critical threshold must be less than auto-refresh interval.';
-			return;
-		}
 		tradeStalenessError = '';
 		try {
 			await invoke('set_trade_staleness_settings', {
 				warnSecs: tradeStaleWarnSecs,
 				criticalSecs: tradeStaleCriticalSecs,
-				autoRefreshSecs: tradeAutoRefreshSecs,
+				autoRefreshSecs: store.status?.trade_auto_refresh_secs ?? 900,
 			});
 			editingTradeStaleness = false;
 		} catch (e) {
@@ -333,7 +327,6 @@
 	function cancelEditTradeStaleness() {
 		tradeStaleWarnSecs = store.status?.trade_stale_warn_secs ?? 120;
 		tradeStaleCriticalSecs = store.status?.trade_stale_critical_secs ?? 600;
-		tradeAutoRefreshSecs = store.status?.trade_auto_refresh_secs ?? 900;
 		tradeStalenessError = '';
 		editingTradeStaleness = false;
 	}
@@ -758,25 +751,6 @@
 					</div>
 				{:else}
 					<span class="setting-value mono">{store.status?.trade_stale_critical_secs ?? 600}s</span>
-				{/if}
-			</div>
-
-			<div class="setting-row">
-				<Tooltip text="When auto-trade is enabled, trade data older than this is automatically re-fetched from GGG when a gem appears in the comparator. Set higher to reduce API calls, lower for fresher data.">
-					<span class="setting-label">Auto-refresh (sec)</span>
-				</Tooltip>
-				{#if editingTradeStaleness}
-					<div class="setting-edit">
-						<input
-							type="number"
-							class="setting-input narrow"
-							bind:value={tradeAutoRefreshSecs}
-							min="60"
-							max="7200"
-						/>
-					</div>
-				{:else}
-					<span class="setting-value mono">{store.status?.trade_auto_refresh_secs ?? 900}s</span>
 				{/if}
 			</div>
 

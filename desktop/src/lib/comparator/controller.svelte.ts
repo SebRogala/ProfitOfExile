@@ -8,7 +8,7 @@ import { isSource, type TradeLookupResult, type TradeQueueDisplay, type TradeQue
 import { floorQuote, quoteDelta, type QueueItem } from '$lib/session-queue';
 import { createLeagueReadGuard } from './league-fence';
 
-interface Selection { variant: string; mode: string; divineRate: number; autoTrade: boolean }
+interface Selection { variant: string; mode: string; divineRate: number }
 interface OverlayPayload {
 	results: CompareGem[];
 	tradeData: Record<string, TradeLookupResult | null>;
@@ -25,7 +25,6 @@ interface ComparatorDependencies {
 	listen: <T>(event: string, handler: (event: { payload: T }) => void) => Promise<() => void>;
 	pushOverlay: (payload: OverlayPayload) => void;
 	queue: (gem: string, variant: string, roi: number, trade: TradeLookupResult | null) => void;
-	autoRefreshDue?: (gem: string) => boolean;
 }
 
 // Queue events carry no league/request identity, and settled promises do not
@@ -109,7 +108,7 @@ export function createComparatorController(dependencies: ComparatorDependencies)
 		const request = ++compareGeneration;
 		compareAbort?.abort();
 		compareAbort = new AbortController();
-		const { variant, mode, autoTrade } = dependencies.selection();
+		const { variant, mode } = dependencies.selection();
 		if (!state.selectedGems.length) { state.results = []; pushOverlay(); return; }
 		try {
 			const rows = await dependencies.compare([...state.selectedGems], variant, compareAbort.signal, mode === 'dedication' ? mode : undefined);
@@ -120,9 +119,6 @@ export function createComparatorController(dependencies: ComparatorDependencies)
 				if (row.trade?.league === ssot.league) state.tradeData[row.name] = row.trade;
 			}
 			pushOverlay();
-			if (autoTrade) for (const row of state.results) {
-				if (!state.tradeData[row.name] || dependencies.autoRefreshDue?.(row.name)) void invokeRustTrade(row.name);
-			}
 		} catch (error) {
 			if (disposed || mine !== generation || request !== compareGeneration || (error as Error)?.name === 'AbortError') return;
 			console.error('[Comparator] Failed to load results:', error);
@@ -231,11 +227,10 @@ export function createComparatorController(dependencies: ComparatorDependencies)
 }
 
 export function productionDependencies(
-	selection: ComparatorDependencies['selection'], queue: ComparatorDependencies['queue'],
-	autoRefreshDue: (gem: string) => boolean
+	selection: ComparatorDependencies['selection'], queue: ComparatorDependencies['queue']
 ): ComparatorDependencies {
 	return {
-		selection, queue, autoRefreshDue, compare: fetchCompare, names: fetchGemNames,
+		selection, queue, compare: fetchCompare, names: fetchGemNames,
 		trade: (gem, { variant, divineRate, mode }) => invoke<TradeLookupResult>('trade_lookup', {
 			gem, variant, divineRate: divineRate || undefined, mode: mode === 'dedication' ? mode : undefined
 		}),
