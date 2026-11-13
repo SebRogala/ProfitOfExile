@@ -70,8 +70,14 @@
 		templeDebugCapture,
 		templeValueTable
 	} from '$lib/stores/ssot.svelte';
+	import { shortcutLabel } from '$lib/boss-loot/native-adapters';
 
 	const temple = $derived(ssot.temple);
+	const statusBadge = $derived(
+		temple.status === 'idle' && ssot.readHotkey
+			? `press ${shortcutLabel(ssot.readHotkey.shortcut)} to read`
+			: TEMPLE_STATUS_LABEL[temple.status]
+	);
 	const layout = $derived(temple.layout);
 	const panel = $derived(temple.panel);
 	const advice = $derived(temple.advice);
@@ -319,7 +325,7 @@
 	<div class="page-head">
 		<h1>Temple of Atzoatl</h1>
 		<span class="badge tone-{TEMPLE_STATUS_TONE[temple.status]}"
-			>{TEMPLE_STATUS_LABEL[temple.status]}</span
+			>{statusBadge}</span
 		>
 		{#if modeLabel(temple.mode)}
 			<span class="badge tone-bonus" title="Which of the profile's two modes the advisor is in."
@@ -327,12 +333,6 @@
 			>
 		{/if}
 	</div>
-
-	<p class="intro">
-		Open the temple's layout panel in game. The module reads the board once per panel open and
-		ranks the two decisions an incursion asks for — which architect to kill, and which passage to
-		open. Every recommendation carries the rules that produced it.
-	</p>
 
 	<!-- 1. What the module is doing, and the two levers that fix it. -->
 	<section class="card status-card">
@@ -420,9 +420,7 @@
 		{#if layout}
 			<TempleLattice {layout} highlightDoors={recommendedDoors} />
 		{:else}
-			<p class="meta">
-				Nothing read yet. Open the temple's layout panel with the module switched on.
-			</p>
+			<p class="meta">Nothing read yet.</p>
 		{/if}
 	</section>
 
@@ -736,12 +734,6 @@
 	h1 {
 		font-size: 1.2rem;
 		color: var(--color-lab-text);
-	}
-
-	.intro {
-		font-size: 0.8rem;
-		color: var(--color-lab-text-secondary);
-		margin-bottom: 1rem;
 	}
 
 	.card {
