@@ -54,6 +54,22 @@ pub fn apart_from_boss_loot(
     }
     Ok(())
 }
+
+/// What stands in for a refused read hotkey: the default, or the first of
+/// Shift+F10 / Shift+F11 when the boss-loot keys already hold it. Two boss-loot
+/// keys can block at most two of the three.
+pub fn fallback_apart_from(loot: &crate::loot_capture::LootSettings) -> ReadHotkeySettings {
+    let default = ReadHotkeySettings::default();
+    [120, 121, 122]
+        .into_iter()
+        .map(|key| ReadHotkeySettings {
+            shortcut: Shortcut { key, ..default.shortcut.clone() },
+            ..default.clone()
+        })
+        .find(|candidate| apart_from_boss_loot(&candidate.shortcut, loot).is_ok())
+        .expect("two boss-loot keys cannot block three candidates")
+}
+
 impl ReadHotkeySettings {
     pub fn validate(&self) -> Result<(), String> {
         self.shortcut.validate()?;
@@ -69,13 +85,17 @@ pub fn read_hotkey_set_settings(
     app: tauri::AppHandle,
     settings: ReadHotkeySettings,
 ) -> Result<(), String> {
+    store_settings(&app.state::<crate::AppState>(), settings)?;
+    crate::persist_settings(&app);
+    crate::ssot::emit_ssot(&app);
+    Ok(())
+}
+/// The owner write behind `read_hotkey_set_settings`; refuses before touching state.
+pub(crate) fn store_settings(state: &crate::AppState, settings: ReadHotkeySettings) -> Result<(), String> {
     settings.validate()?;
-    let state = app.state::<crate::AppState>();
     let loot = state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     apart_from_boss_loot(&settings.shortcut, &loot)?;
     *state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()) = settings;
-    crate::persist_settings(&app);
-    crate::ssot::emit_ssot(&app);
     Ok(())
 }
 
@@ -111,33 +131,91 @@ mod tests {
         let loot = crate::loot_capture::LootSettings::default();
         assert_eq!(apart_from_boss_loot(&ReadHotkeySettings::default().shortcut, &loot), Ok(()));
     }
-    #[test]
-    fn read_hotkey_equal_to_the_boss_loot_capture_key_is_refused() {
-        let loot = crate::loot_capture::LootSettings::default();
-        assert!(apart_from_boss_loot(&loot.capture_shortcut.clone(), &loot).is_err());
+    use crate::loot_capture::LootSettings;
+    use crate::settings::tests::test_app_state;
+
+    fn read_of(state: &crate::AppState) -> ReadHotkeySettings {
+        state.read_hotkey.lock().unwrap().clone()
+    }
+    fn loot_of(state: &crate::AppState) -> LootSettings {
+        state.loot.settings.lock().unwrap().clone()
     }
     #[test]
-    fn read_hotkey_equal_to_the_boss_loot_preview_key_is_refused() {
-        let loot = crate::loot_capture::LootSettings::default();
-        assert!(apart_from_boss_loot(&loot.preview_shortcut.clone(), &loot).is_err());
+    fn storing_a_read_hotkey_on_the_boss_loot_capture_key_is_refused_and_keeps_the_old_one() {
+        let state = test_app_state();
+        let capture = loot_of(&state).capture_shortcut;
+        let refused = ReadHotkeySettings { shortcut: capture, delay_ms: 100 };
+        assert!(store_settings(&state, refused).is_err());
+        assert_eq!(read_of(&state), ReadHotkeySettings::default());
     }
     #[test]
-    fn boss_loot_capture_key_rebound_onto_the_read_key_is_refused() {
-        let read = key(65).shortcut;
-        let loot = crate::loot_capture::LootSettings {
-            capture_shortcut: read.clone(),
+    fn storing_a_read_hotkey_on_the_boss_loot_preview_key_is_refused_and_keeps_the_old_one() {
+        let state = test_app_state();
+        let preview = loot_of(&state).preview_shortcut;
+        let refused = ReadHotkeySettings { shortcut: preview, delay_ms: 100 };
+        assert!(store_settings(&state, refused).is_err());
+        assert_eq!(read_of(&state), ReadHotkeySettings::default());
+    }
+    #[test]
+    fn storing_a_read_hotkey_apart_from_the_boss_loot_keys_is_kept() {
+        let state = test_app_state();
+        assert_eq!(store_settings(&state, key(65)), Ok(()));
+        assert_eq!(read_of(&state), key(65));
+    }
+    #[test]
+    fn storing_boss_loot_capture_on_the_read_key_is_refused_and_keeps_the_old_settings() {
+        let state = test_app_state();
+        let refused = LootSettings {
+            capture_shortcut: read_of(&state).shortcut,
+            auto_save_seconds: 30,
             ..Default::default()
         };
-        assert!(apart_from_boss_loot(&read, &loot).is_err());
+        assert!(crate::loot_capture::store_settings(&state, refused).is_err());
+        assert_eq!(loot_of(&state), LootSettings::default());
     }
     #[test]
-    fn boss_loot_preview_key_rebound_onto_the_read_key_is_refused() {
-        let read = key(65).shortcut;
-        let loot = crate::loot_capture::LootSettings {
-            preview_shortcut: read.clone(),
+    fn storing_boss_loot_preview_on_the_read_key_is_refused_and_keeps_the_old_settings() {
+        let state = test_app_state();
+        let refused = LootSettings {
+            preview_shortcut: read_of(&state).shortcut,
+            auto_save_seconds: 30,
             ..Default::default()
         };
-        assert!(apart_from_boss_loot(&read, &loot).is_err());
+        assert!(crate::loot_capture::store_settings(&state, refused).is_err());
+        assert_eq!(loot_of(&state), LootSettings::default());
+    }
+    #[test]
+    fn storing_boss_loot_keys_apart_from_the_read_key_is_kept() {
+        let state = test_app_state();
+        let kept = LootSettings { auto_save_seconds: 30, ..Default::default() };
+        assert_eq!(crate::loot_capture::store_settings(&state, kept.clone()), Ok(()));
+        assert_eq!(loot_of(&state), kept);
+    }
+    #[test]
+    fn fallback_skips_a_default_held_by_boss_loot_capture() {
+        let loot = LootSettings { capture_shortcut: ReadHotkeySettings::default().shortcut, ..Default::default() };
+        let fallback = fallback_apart_from(&loot);
+        assert_eq!(fallback.shortcut.key, 121);
+        assert_eq!(apart_from_boss_loot(&fallback.shortcut, &loot), Ok(()));
+    }
+    #[test]
+    fn fallback_skips_a_default_held_by_boss_loot_preview() {
+        let loot = LootSettings { preview_shortcut: ReadHotkeySettings::default().shortcut, ..Default::default() };
+        assert_eq!(fallback_apart_from(&loot).shortcut.key, 121);
+    }
+    #[test]
+    fn fallback_skips_two_candidates_held_by_both_boss_loot_keys() {
+        let default = ReadHotkeySettings::default().shortcut;
+        let loot = LootSettings {
+            capture_shortcut: default.clone(),
+            preview_shortcut: Shortcut { key: 121, ..default },
+            ..Default::default()
+        };
+        assert_eq!(fallback_apart_from(&loot).shortcut.key, 122);
+    }
+    #[test]
+    fn fallback_is_the_default_when_boss_loot_leaves_it_free() {
+        assert_eq!(fallback_apart_from(&LootSettings::default()), ReadHotkeySettings::default());
     }
     #[test]
     fn read_hotkey_with_other_modifiers_than_a_boss_loot_key_is_accepted() {

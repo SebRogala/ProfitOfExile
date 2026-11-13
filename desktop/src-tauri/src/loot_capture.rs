@@ -822,8 +822,14 @@ pub fn boss_loot_profiles() -> Vec<LootProfile> {
 }
 #[tauri::command]
 pub fn boss_loot_set_settings(app: tauri::AppHandle, settings: LootSettings) -> Result<(), String> {
+    store_settings(&app.state::<crate::AppState>(), settings)?;
+    crate::persist_settings(&app);
+    crate::ssot::emit_ssot(&app);
+    Ok(())
+}
+/// The owner write behind `boss_loot_set_settings`; refuses before touching state.
+pub(crate) fn store_settings(state: &crate::AppState, settings: LootSettings) -> Result<(), String> {
     settings.validate()?;
-    let state = app.state::<crate::AppState>();
     let read = state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()).shortcut.clone();
     crate::read_hotkey::apart_from_boss_loot(&read, &settings)?;
     *state
@@ -836,8 +842,6 @@ pub fn boss_loot_set_settings(app: tauri::AppHandle, settings: LootSettings) -> 
             p.restart(&settings, now_ms());
         }
     }
-    crate::persist_settings(&app);
-    crate::ssot::emit_ssot(&app);
     Ok(())
 }
 #[tauri::command]
