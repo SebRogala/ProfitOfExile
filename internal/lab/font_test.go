@@ -645,3 +645,27 @@ func TestAnalyzeFont_PricedGemsExcludesLowConfidenceGems(t *testing.T) {
 			got.PricedGems)
 	}
 }
+
+func TestLensCraftEV_LensAboveSupportIsPositive(t *testing.T) {
+	lens, support := 412.0, 95.0
+	if ev := LensCraftEV(&lens, &support); ev == nil || *ev != 317 {
+		t.Fatalf("ev = %v, want 317", ev)
+	}
+}
+
+func TestLensCraftEV_LensBelowSupportIsNegative(t *testing.T) {
+	lens, support := 60.0, 95.0
+	if ev := LensCraftEV(&lens, &support); ev == nil || *ev != -35 {
+		t.Fatalf("ev = %v, want -35", ev)
+	}
+}
+
+func TestLensCraftEV_MissingEitherPriceHasNoEV(t *testing.T) {
+	price := 95.0
+	if ev := LensCraftEV(nil, &price); ev != nil {
+		t.Errorf("missing lens: ev = %v, want nil", *ev)
+	}
+	if ev := LensCraftEV(&price, nil); ev != nil {
+		t.Errorf("missing support: ev = %v, want nil", *ev)
+	}
+}

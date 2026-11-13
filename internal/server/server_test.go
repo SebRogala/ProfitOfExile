@@ -19,9 +19,11 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"profitofexile/internal/exchange"
+	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 	"profitofexile/internal/mercenary"
 	"profitofexile/internal/server/handlers"
+	"profitofexile/internal/trade"
 )
 
 func TestNewRouter_HealthRoute(t *testing.T) {
@@ -641,5 +643,55 @@ func TestRouter_CurrencyExchangePlaysRejectsABadPageSize(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "pageSize") {
 		t.Errorf("body %s does not name pageSize", w.Body.String())
+	}
+}
+
+func TestRouter_FontAnalysisCarriesTheLensCraftFromTheConfiguredTradeCache(t *testing.T) {
+	scope := league.Historical("Mirage")
+	labCache := lab.NewCache(scope)
+	labCache.For(scope).SetFont(lab.FontAnalysis{
+		Safe: []lab.FontResult{{Time: time.Now(), Color: "BLUE", Variant: "20/20", Profit: 5}},
+	})
+	tradeCache := trade.NewTradeCache(10, scope)
+	for gem, prices := range map[string][]float64{
+		trade.FixedTargetLens60Outcome: {400, 412, 450},
+		trade.FixedTargetLens60Feeder:  {90, 95, 99},
+	} {
+		listings := make([]trade.TradeListingDetail, len(prices))
+		for i, p := range prices {
+			listings[i] = trade.TradeListingDetail{Price: p, Currency: "chaos"}
+		}
+		r := trade.BuildResult(gem, trade.FixedTargetVariantFont, scope.ID(), trade.SearchResponse{}, listings, 0)
+		tradeCache.For(scope).Set(trade.CacheKey(gem, trade.FixedTargetVariantFont), r)
+	}
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{
+		League:     scope,
+		LabRepo:    lab.NewRepository(nil),
+		LabCache:   labCache,
+		TradeCache: tradeCache,
+	})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/analysis/font?variant=20/20", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Safe []struct {
+			Color string `json:"color"`
+		} `json:"safe"`
+		Lens struct {
+			EV *float64 `json:"ev"`
+		} `json:"lens"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Safe) != 1 || body.Safe[0].Color != "BLUE" {
+		t.Errorf("safe = %+v, want the one stored BLUE row", body.Safe)
+	}
+	if body.Lens.EV == nil || *body.Lens.EV != 317 {
+		t.Errorf("lens.ev = %v, want 317", body.Lens.EV)
 	}
 }

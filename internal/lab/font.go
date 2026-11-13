@@ -499,3 +499,14 @@ func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
 
 	return analysis
 }
+
+// LensCraftEV is the expected value of crafting a Facetor's Lens: the lens
+// price minus the support gem fed into it. Signed; nil when either price is
+// missing.
+func LensCraftEV(lens, support *float64) *float64 {
+	if lens == nil || support == nil {
+		return nil
+	}
+	ev := *lens - *support
+	return &ev
+}

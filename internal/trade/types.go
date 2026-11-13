@@ -247,3 +247,48 @@ func medianChaosPrice(listings []TradeListingDetail) float64 {
 	}
 	return prices[n/2]
 }
+
+// UsableQuoteMaxAge is how old a quote may be and still price a craft
+// (ADR-027 D3, 24 h usability).
+const UsableQuoteMaxAge = 24 * time.Hour
+
+// usableQuoteConfidentListings is the listing count below which a usable quote
+// is low confidence (ADR-027 amendment N=3).
+const usableQuoteConfidentListings = 3
+
+// Quote is a trade observation judged for pricing (POE-329 D3). Chaos is nil
+// when the observation is missing, empty, older than UsableQuoteMaxAge or holds
+// a listing that cannot be converted to chaos; FetchedAt is nil only when no
+// check exists.
+type Quote struct {
+	Chaos         *float64   `json:"chaos"`
+	Listings      int        `json:"listings"`
+	FetchedAt     *time.Time `json:"fetchedAt"`
+	LowConfidence bool       `json:"lowConfidence"`
+}
+
+// UsableQuote applies the usable-quote rule to result at now. It reads the
+// listings and DivinePrice rather than trusting MedianTop3 alone, because
+// TradeCache.Set re-derives MedianTop3 from the raw listings.
+func UsableQuote(result *TradeLookupResult, now time.Time) Quote {
+	if result == nil {
+		return Quote{}
+	}
+	fetchedAt := result.FetchedAt
+	q := Quote{Listings: len(result.Listings), FetchedAt: &fetchedAt}
+	if len(result.Listings) == 0 || now.Sub(result.FetchedAt) > UsableQuoteMaxAge {
+		return q
+	}
+	for _, l := range result.Listings {
+		switch {
+		case l.Currency == "chaos":
+		case l.Currency == "divine" && result.DivinePrice > 0:
+		default:
+			return q
+		}
+	}
+	chaos := result.MedianTop3
+	q.Chaos = &chaos
+	q.LowConfidence = len(result.Listings) < usableQuoteConfidentListings
+	return q
+}

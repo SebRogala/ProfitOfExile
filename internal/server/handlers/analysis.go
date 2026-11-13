@@ -16,6 +16,7 @@ import (
 
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
+	"profitofexile/internal/trade"
 )
 
 // normalizeVariant converts frontend variant format ("1/0", "20/0") to DB format
@@ -292,7 +293,9 @@ func DoubleCorruptAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.
 // Safe (LOW+ tier winners), Premium (MID-HIGH+ tier winners), and Jackpot (TOP only).
 // Query params: variant (optional, e.g. "20/20"), limit (default 50, max 500).
 // Uses in-memory cache when available, falls back to DB query.
-func FontAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
+// The top-level lens object carries the Facetor's Lens craft quotes and EV from
+// tradeCache, independent of the variant filter; tradeCache may be nil.
+func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.TradeCache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
 
@@ -436,10 +439,38 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) ht
 			"bestColorSafe":    bestColor(safeResults),
 			"bestColorPremium": bestColor(premiumResults),
 			"bestColorJackpot": bestColor(jackpotResults),
+			"lens":             lensCraft(tradeCache, scope, time.Now()),
 		}); err != nil {
 			slog.Error("font analysis: encode response", "error", err)
 		}
 	}
+}
+
+// lensCraftResponse is the Facetor's Lens craft: the lens (outcome) and support
+// (feeder) quotes and their signed EV, null unless both are usable.
+type lensCraftResponse struct {
+	Outcome trade.Quote `json:"outcome"`
+	Feeder  trade.Quote `json:"feeder"`
+	EV      *float64    `json:"ev"`
+}
+
+func lensCraft(tradeCache *trade.TradeCache, scope league.Scope, now time.Time) lensCraftResponse {
+	var resp lensCraftResponse
+	if tradeCache == nil {
+		return resp
+	}
+	cache := tradeCache.For(scope)
+	for _, t := range trade.FixedTargets() {
+		result, _ := cache.Get(t.Key())
+		switch t.Role {
+		case trade.FixedTargetRoleOutcome:
+			resp.Outcome = trade.UsableQuote(result, now)
+		case trade.FixedTargetRoleFeeder:
+			resp.Feeder = trade.UsableQuote(result, now)
+		}
+	}
+	resp.EV = lab.LensCraftEV(resp.Outcome.Chaos, resp.Feeder.Chaos)
+	return resp
 }
 
 // bestColor returns the color with the highest EV among the given font results.

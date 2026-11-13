@@ -105,7 +105,7 @@ func decodeFontModes(t *testing.T, w *httptest.ResponseRecorder) fontModes {
 // no colour cleared the tier threshold at this snapshot. Reading it as cold cost
 // three LatestFontResults queries per request.
 func TestFontAnalysis_WarmButEmptyCorpusAnswersWithoutQuerying(t *testing.T) {
-	w := serveWithoutRepository(t, FontAnalysis(nil, warmEmptyCorpora(t), corpusScope),
+	w := serveWithoutRepository(t, FontAnalysis(nil, warmEmptyCorpora(t), nil, corpusScope),
 		"/api/analysis/font?variant=20/20")
 
 	modes := decodeFontModes(t, w)
@@ -117,7 +117,7 @@ func TestFontAnalysis_WarmButEmptyCorpusAnswersWithoutQuerying(t *testing.T) {
 func TestFontAnalysis_ColdCacheFallsBackToTheRepository(t *testing.T) {
 	cold := lab.NewCache(corpusScope)
 
-	if !queriedRepository(FontAnalysis(nil, cold, corpusScope),
+	if !queriedRepository(FontAnalysis(nil, cold, nil, corpusScope),
 		"/api/analysis/font?variant=20/20") {
 		t.Fatal("cold cache did not reach the repository; the database fallback is gone")
 	}
@@ -131,7 +131,7 @@ func TestFontAnalysis_WarmCorpusWithOneEmptyModeAnswersWithoutQuerying(t *testin
 		Safe: []lab.FontResult{{Time: time.Now(), Color: "BLUE", Variant: "20/20", EV: 12, Profit: 5}},
 	})
 
-	w := serveWithoutRepository(t, FontAnalysis(nil, cache, corpusScope),
+	w := serveWithoutRepository(t, FontAnalysis(nil, cache, nil, corpusScope),
 		"/api/analysis/font?variant=20/20")
 
 	modes := decodeFontModes(t, w)
