@@ -95,7 +95,7 @@ func MedianCheapest(prices []Money, n int, divineRate float64) (float64, bool) {
 			converted = append(converted, c)
 		}
 	}
-	if len(converted) == 0 {
+	if n <= 0 || len(converted) == 0 {
 		return 0, false
 	}
 	sort.SliceStable(converted, func(i, j int) bool { return converted[i] < converted[j] })

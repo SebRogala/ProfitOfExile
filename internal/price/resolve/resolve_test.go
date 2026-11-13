@@ -98,6 +98,20 @@ func TestMedianCheapest_matchesTheSharedTradePriceVectors(t *testing.T) {
 	}
 }
 
+func TestMedianCheapest_zeroCountIsNoPrice(t *testing.T) {
+	got, ok := MedianCheapest(chaos(50), 0, 200)
+	if ok || got != 0 {
+		t.Errorf("MedianCheapest = %v, %v; want 0, false", got, ok)
+	}
+}
+
+func TestMedianCheapest_negativeCountIsNoPrice(t *testing.T) {
+	got, ok := MedianCheapest(chaos(50), -1, 200)
+	if ok || got != 0 {
+		t.Errorf("MedianCheapest = %v, %v; want 0, false", got, ok)
+	}
+}
+
 func TestChaosOf_divineWithoutARateIsNotConvertible(t *testing.T) {
 	got, ok := ChaosOf(Money{Amount: 0.25, Currency: "divine"}, 0)
 	if ok || got != 0 {
