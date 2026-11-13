@@ -63,7 +63,7 @@ func TestMarketOverview_EmptyOfferingTimingIsStoredAndThenServedWithoutTheDataba
 	// so every offering's current-price query returns NULL.
 	scope := league.Historical("POE152-NoFragments")
 	cache := lab.NewCache(scope)
-	handler := MarketOverview(cache, lab.NewRepository(pool), scope)
+	handler := MarketOverview(cache, lab.NewRepository(pool), nil, scope)
 
 	serve := func() {
 		t.Helper()
@@ -162,7 +162,7 @@ type offeringJSON struct {
 func serveOfferings(t *testing.T, pool *pgxpool.Pool, cache *lab.Cache, scope league.Scope) ([]offeringJSON, []map[string]json.RawMessage) {
 	t.Helper()
 	w := httptest.NewRecorder()
-	MarketOverview(cache, lab.NewRepository(pool), scope).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/analysis/market-overview", nil))
+	MarketOverview(cache, lab.NewRepository(pool), nil, scope).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/analysis/market-overview", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}

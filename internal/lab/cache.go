@@ -147,7 +147,6 @@ type Cache struct {
 
 	lastUpdated    time.Time
 	nextFetch      time.Time
-	divineRate     float64
 	gcpPrice       float64
 	offeringTiming json.RawMessage // pre-computed offering timing JSON
 
@@ -407,20 +406,6 @@ func (c *Cache) NextFetch() time.Time {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.nextFetch
-}
-
-// SetDivineRate stores the latest divine→chaos exchange rate.
-func (c *Cache) SetDivineRate(rate float64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.divineRate = rate
-}
-
-// DivineRate returns the cached divine→chaos exchange rate.
-func (c *Cache) DivineRate() float64 {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.divineRate
 }
 
 // SetOfferingTiming stores pre-computed offering timing JSON.

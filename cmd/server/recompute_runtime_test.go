@@ -912,3 +912,40 @@ func TestRunDelayedRecompute_LiveServiceContextRunsV2(t *testing.T) {
 		t.Fatalf("delayed recompute rows on a live service context = %d, want 1", got)
 	}
 }
+
+// fakeFallback is a poe.ninja fallback that always answers chaos at at.
+func fakeFallback(chaos float64, at time.Time) exchange.DivineRateFallback {
+	return func(context.Context) (float64, time.Time, error) { return chaos, at, nil }
+}
+
+var divineSnapshotAt = time.Date(2026, 11, 13, 8, 0, 0, 0, time.UTC)
+
+func TestRefreshDivineRate_storesTheNinjaSnapshotInTheReader(t *testing.T) {
+	r := &recomputeRuntime{divineRate: exchange.NewDivineRateReader(exchange.NewCache(), fakeFallback(231.5, divineSnapshotAt))}
+
+	r.refreshDivineRate(context.Background())
+
+	got := r.divineRate.Current()
+	if got.Chaos != 231.5 || got.Source != exchange.DivineRateSourceNinja {
+		t.Errorf("Current() = %v from %q, want 231.5 from %q", got.Chaos, got.Source, exchange.DivineRateSourceNinja)
+	}
+}
+
+func TestSeedCaches_seedsTheDivineRate(t *testing.T) {
+	scope := league.Historical("Mirage")
+	r := &recomputeRuntime{
+		ctx:        context.Background(),
+		scope:      scope,
+		labCache:   lab.NewCache(scope),
+		divineRate: exchange.NewDivineRateReader(exchange.NewCache(), fakeFallback(231.5, divineSnapshotAt)),
+		latestSnapshotTimes: func(context.Context, league.Scope) (time.Time, time.Time, error) {
+			return time.Time{}, time.Time{}, errors.New("no snapshots in a unit test")
+		},
+	}
+
+	r.seedCaches()
+
+	if got := r.divineRate.Current().Chaos; got != 231.5 {
+		t.Errorf("divine rate after seedCaches = %v, want 231.5 from the poe.ninja fallback", got)
+	}
+}

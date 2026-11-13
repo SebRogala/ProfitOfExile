@@ -80,6 +80,8 @@ type RouterConfig struct {
 	// exchange.Service in cmd/server. May be nil — the handler then reads as
 	// COLD and answers 200 with no plays rather than failing.
 	ExchangeCache *exchange.Cache
+	// DivineRate is the app-wide divine rate; nil reads as no rate.
+	DivineRate *exchange.DivineRateReader
 	// HarvestCache holds per-horizon Harvest prices and tiers; nil reads as cold.
 	HarvestCache *harvest.Cache
 	// AllowedOrigins for CORS (desktop app needs cross-origin access).
@@ -193,11 +195,11 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/compare", handlers.CompareAnalysis(cfg.LabRepo, cfg.LabCache, cfg.TradeCache, cfg.League))
 		r.Get("/api/analysis/gems/names", handlers.GemNamesAutocomplete(cfg.LabRepo, cfg.LabCache, cfg.League))
 		r.Get("/api/analysis/gems/dictionary", handlers.GemDictionary(cfg.LabRepo, cfg.LabCache, cfg.League))
-		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache, cfg.Pool, cfg.League))
+		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache, cfg.DivineRate, cfg.League))
 		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo, cfg.LabCache, cfg.League))
-		r.Get("/api/analysis/exceptional-supports", handlers.ExceptionalSupportPrices(cfg.LabRepo, cfg.LabCache, cfg.League))
+		r.Get("/api/analysis/exceptional-supports", handlers.ExceptionalSupportPrices(cfg.LabRepo, cfg.DivineRate, cfg.League))
 
-		r.Get("/api/analysis/market-overview", handlers.MarketOverview(cfg.LabCache, cfg.LabRepo, cfg.League))
+		r.Get("/api/analysis/market-overview", handlers.MarketOverview(cfg.LabCache, cfg.LabRepo, cfg.DivineRate, cfg.League))
 		// Sibling of market-overview, not a section of it: one aggregated,
 		// league-keyed, cache-backed object per consumer, so the temple module's
 		// poll cannot be widened by a change made for the gem dashboard. It reads
@@ -230,7 +232,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		exchangePager = exchange.ScopedPlaysPager{Repo: exchange.NewRepository(cfg.Pool), Scope: cfg.League}
 	}
 	r.Get("/api/currency-exchange/plays", handlers.CurrencyExchangePlaysPaged(cfg.ExchangeCache, exchangePager))
-	r.Get("/api/currency-exchange/divine-rate", handlers.CurrencyExchangeDivineRate(cfg.ExchangeCache))
+	r.Get("/api/currency-exchange/divine-rate", handlers.CurrencyExchangeDivineRate(cfg.DivineRate))
 	r.Get("/api/harvest", handlers.Harvest(cfg.HarvestCache))
 
 	// Entitlements come from the device record the middleware attached, so this

@@ -113,9 +113,12 @@ Read `internal/exchange/doc.go` before changing it — the feed's semantics, the
 cursor rule, and the event payload fields are documented there.
 
 Two more reads come from the same stored hours. `GET
-/api/currency-exchange/divine-rate` serves the recent horizon's
-divine:chaos rate (`{divineChaosRate, priceHour, warm}`, nulls while cold) for
-the desktop's app-wide rate (POE-284). `GET /api/harvest?horizon=recent|day`
+/api/currency-exchange/divine-rate` serves the app-wide divine rate (POE-339)
+(`{divineChaosRate, priceHour, warm, buyChaos, sellChaos, source}`, nulls while
+there is none): the recent horizon's newest-hour VWAP, or the latest poe.ninja
+snapshot with `source: "ninja"` and `warm: false` while the exchange has none;
+`buyChaos`/`sellChaos` are that hour's cheapest/dearest divine trade, null
+otherwise. `GET /api/harvest?horizon=recent|day`
 (default `day`) serves Harvest Flipping's live read (POE-286): one snapshot
 `{prices, families}` per horizon, recomputed by `harvest.Service` at boot and
 on every `poe/collector/currency-exchange` event. Prices are pooled VWAP over

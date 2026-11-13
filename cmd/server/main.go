@@ -156,6 +156,11 @@ func main() {
 	// internal/exchange/doc.go).
 	exchangeRepo := exchange.NewRepository(pool)
 	exchangeCache := exchange.NewCache()
+	// The one app-wide divine→chaos rate (POE-339): the exchange's newest-hour
+	// VWAP; the poe.ninja snapshot only while the exchange has none.
+	divineRate := exchange.NewDivineRateReader(exchangeCache, func(ctx context.Context) (float64, time.Time, error) {
+		return labRepo.LatestNinjaDivinePrice(ctx, scope)
+	})
 
 	// Temple market: the read side of item_snapshots (POE-255). Its own
 	// repository, cache and recompute service for the same reason the exchange
@@ -245,22 +250,9 @@ func main() {
 		tradeClient := trade.NewClient(tradeCfg)
 		tradePub := &mercure.HubPublisher{URL: mercureURL, Secret: mercureSecret}
 
-		// Divine rate function: queries latest currency snapshot from DB.
-		// Cached in a goroutine-safe variable, refreshed on each call (query is fast).
-		divineRateFn := func() float64 {
-			qCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			var rate float64
-			err := pool.QueryRow(qCtx,
-				`SELECT chaos FROM currency_snapshots WHERE league = $1 AND currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
-				scope.ID(),
-			).Scan(&rate)
-			if err != nil {
-				slog.Warn("trade: failed to get divine rate, using 0", "error", err)
-				return 0
-			}
-			return rate
-		}
+		// The app-wide rate; 0 while neither the exchange nor the poe.ninja
+		// snapshot has one.
+		divineRateFn := func() float64 { return divineRate.Current().Chaos }
 
 		tradeGate = trade.NewGate(tradeCfg, scope, tradeLimiter, tradeClient, tradePub, tradeCache, divineRateFn, tradeRepo)
 
@@ -282,6 +274,7 @@ func main() {
 		LayoutRepo:           layoutRepo,
 		LabCache:             labCache,
 		ExchangeCache:        exchangeCache,
+		DivineRate:           divineRate,
 		HarvestCache:         harvestCache,
 		TempleCache:          templeCache,
 		MercureSubscriberKey: serviceCfg.MercureSubscriberKey,
@@ -331,20 +324,8 @@ func main() {
 			server.HandleTradeTick(eventCtx, tradeGate, tradeCache, fixedTargets, labCache, scope, raw, deps.KnownGem)
 		}
 	}
-	runtime.updateRate = func(_ context.Context) {
-		qCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		var rate float64
-		if err := pool.QueryRow(qCtx,
-			`SELECT chaos FROM currency_snapshots WHERE league = $1 AND currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
-			scope.ID(),
-		).Scan(&rate); err != nil {
-			slog.Warn("currency event: divine rate query failed", "error", err)
-			return
-		}
-		labCache.For(scope).SetDivineRate(rate)
-		slog.Info("currency event: divine rate updated", "rate", rate)
-	}
+	runtime.divineRate = divineRate
+	runtime.updateRate = runtime.refreshDivineRate
 	runtime.latestSnapshotTimes = labRepo.LatestTwoSnapshotTimes
 	runtime.refreshOfferingTiming = func(_ context.Context) {
 		qCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

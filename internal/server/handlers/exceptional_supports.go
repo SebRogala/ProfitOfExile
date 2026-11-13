@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"profitofexile/internal/exchange"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 )
@@ -34,7 +35,7 @@ type exceptionalSupportGem struct {
 // level-1 uncorrupted poe.ninja prices in fixed order, with the divine rate
 // (0 when unknown). The shared accessor of POE-328 and POE-329.
 // GET /api/analysis/exceptional-supports
-func ExceptionalSupportPrices(repo exceptionalSupportPricer, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
+func ExceptionalSupportPrices(repo exceptionalSupportPricer, divineRate *exchange.DivineRateReader, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		snap, err := repo.ExceptionalSupportPrices(r.Context(), scope)
 		if err != nil {
@@ -51,9 +52,7 @@ func ExceptionalSupportPrices(repo exceptionalSupportPricer, cache *lab.Cache, s
 			asOf := snap.AsOf.UTC()
 			resp.AsOf = &asOf
 		}
-		if cache != nil {
-			resp.DivineRate = cache.For(scope).DivineRate()
-		}
+		resp.DivineRate = divineRate.Current().Chaos
 		for _, p := range snap.Prices() {
 			resp.Gems = append(resp.Gems, exceptionalSupportGem{Name: p.Name, Chaos: p.Chaos})
 		}

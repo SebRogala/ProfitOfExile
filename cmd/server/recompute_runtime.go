@@ -70,6 +70,7 @@ type recomputeRuntime struct {
 
 	pool                  *pgxpool.Pool
 	labCache              *lab.Cache
+	divineRate            *exchange.DivineRateReader
 	throttler             *lab.Throttler
 	analyzer              recomputeAnalyzer
 	exchange              recomputeService
@@ -294,7 +295,7 @@ func (r *recomputeRuntime) seedCaches() {
 	defer cancel()
 
 	r.seedNextFetch(qCtx)
-	r.seedDivineRate(qCtx)
+	r.refreshDivineRate(qCtx)
 }
 
 // seedNextFetch estimates the next fetch from the interval between the last
@@ -319,16 +320,16 @@ func (r *recomputeRuntime) seedNextFetch(ctx context.Context) {
 	slog.Info("startup: seeded nextFetch", "lastSnap", lastSnap, "interval", interval, "nextFetch", nextFetch)
 }
 
-func (r *recomputeRuntime) seedDivineRate(qCtx context.Context) {
-	// Seed divine rate.
-	var divRate float64
-	if err := r.pool.QueryRow(qCtx,
-		`SELECT chaos FROM currency_snapshots WHERE league = $1 AND currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
-		r.scope.ID(),
-	).Scan(&divRate); err == nil && divRate > 0 {
-		r.labCache.For(r.scope).SetDivineRate(divRate)
-		slog.Info("startup: seeded divine rate", "rate", divRate)
+// refreshDivineRate reloads the reader's poe.ninja fallback.
+func (r *recomputeRuntime) refreshDivineRate(ctx context.Context) {
+	qCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := r.divineRate.RefreshFallback(qCtx); err != nil {
+		slog.Warn("divine rate: poe.ninja fallback refresh failed", "error", err)
+		return
 	}
+	cur := r.divineRate.Current()
+	slog.Info("divine rate: poe.ninja fallback refreshed", "rate", cur.Chaos, "source", cur.Source)
 }
 
 func (r *recomputeRuntime) startupV2AndFont() {

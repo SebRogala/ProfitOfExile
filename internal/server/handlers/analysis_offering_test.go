@@ -43,7 +43,7 @@ func TestMarketOverview_EmptyCachedOfferingTimingIsServedNotRecomputed(t *testin
 		}
 	}()
 
-	MarketOverview(cache, unusableRepo(), offeringScope).ServeHTTP(w, req)
+	MarketOverview(cache, unusableRepo(), nil, offeringScope).ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
@@ -65,7 +65,7 @@ func TestMarketOverview_PopulatedCachedOfferingTimingIsServedFromTheCache(t *tes
 		}
 	}()
 
-	MarketOverview(cache, unusableRepo(), offeringScope).ServeHTTP(w, req)
+	MarketOverview(cache, unusableRepo(), nil, offeringScope).ServeHTTP(w, req)
 
 	var resp struct {
 		Offerings []struct {
@@ -92,12 +92,31 @@ func TestMarketOverview_ColdOfferingTimingCacheReachesThePool(t *testing.T) {
 				reached = true
 			}
 		}()
-		MarketOverview(cache, unusableRepo(), offeringScope).
+		MarketOverview(cache, unusableRepo(), nil, offeringScope).
 			ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/analysis/market-overview", nil))
 		return false
 	}()
 
 	if !reached {
 		t.Fatal("cold cache did not reach the pool; offering timings would never be computed")
+	}
+}
+
+func TestMarketOverview_divineRateIsTheAppWideRateRounded(t *testing.T) {
+	cache := lab.NewCache(offeringScope)
+	cache.For(offeringScope).SetOfferingTiming(json.RawMessage(`[]`))
+	w := httptest.NewRecorder()
+
+	MarketOverview(cache, unusableRepo(), readerWithDivineRate(199.6), offeringScope).
+		ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/analysis/market-overview", nil))
+
+	var resp struct {
+		DivineRate float64 `json:"divineRate"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.DivineRate != 200 {
+		t.Errorf("divineRate = %v, want 200 (the app-wide 199.6, rounded)", resp.DivineRate)
 	}
 }

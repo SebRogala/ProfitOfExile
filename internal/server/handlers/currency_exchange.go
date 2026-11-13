@@ -293,39 +293,61 @@ func CurrencyExchangePlaysPaged(cache *exchange.Cache, store exchange.PlaysPager
 
 // divineRateResponse is the GET /api/currency-exchange/divine-rate body.
 //
-// DivineChaosRate is null when the default horizon is cold or its divine/chaos
-// market did not trade, so a client can tell "no rate yet" from a rate of zero.
-// PriceHour is the newest feed hour the rate was read at, RFC3339 UTC, or null
-// when the horizon has no hour.
+// DivineChaosRate is the app-wide divine rate (POE-339), null when there is
+// none, so a client can tell "no rate yet" from a rate of zero. PriceHour is the
+// hour the rate was read at, RFC3339 UTC: the exchange's newest feed hour, or
+// the poe.ninja snapshot time; null when there is no hour. BuyChaos and
+// SellChaos are that exchange hour's cheapest and dearest divine trade, null
+// otherwise. Source names where the rate came from ("exchange" or "ninja"),
+// null with no rate. Every key is always present.
 type divineRateResponse struct {
 	DivineChaosRate *float64 `json:"divineChaosRate"`
 	PriceHour       *string  `json:"priceHour"`
 	Warm            bool     `json:"warm"`
+	BuyChaos        *float64 `json:"buyChaos"`
+	SellChaos       *float64 `json:"sellChaos"`
+	Source          *string  `json:"source"`
 }
 
-// CurrencyExchangeDivineRate serves the chaos-per-divine rate the currency
-// exchange valued its plays with, read from the default horizon's cache entry.
+// CurrencyExchangeDivineRate serves the app-wide divine→chaos rate (POE-339)
+// from the reader: the default horizon's newest-hour VWAP, or the poe.ninja
+// snapshot while the exchange has none.
 //
 // GET /api/currency-exchange/divine-rate takes no parameters. The handler never
-// touches the database, and a nil or cold cache answers 200 with warm:false and
-// null fields, the same contract as CurrencyExchangePlays.
+// touches the database; a nil reader answers 200 with warm:false and null
+// fields. Released clients map `warm && divineChaosRate` to a ready rate, so
+// warm is never true on a poe.ninja answer and an old client shows the fallback
+// as a cold "—"; current clients read source.
 //
 // Responses are Cache-Control: no-store, because the rate moves with every feed
 // hour.
-func CurrencyExchangeDivineRate(cache *exchange.Cache) http.HandlerFunc {
+func CurrencyExchangeDivineRate(divineRate *exchange.DivineRateReader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// A nil *exchange.Cache reads as cold; Snapshot handles the nil receiver.
-		result, warm := cache.Snapshot(exchange.DefaultHorizon)
+		cur := divineRate.Current()
 
 		var body divineRateResponse
-		body.Warm = warm
-		if warm && result.DivineChaosRate > 0 {
-			rate := result.DivineChaosRate
+		body.Warm = cur.ExchangeWarm && cur.Source != exchange.DivineRateSourceNinja
+		if cur.Chaos > 0 {
+			rate := cur.Chaos
 			body.DivineChaosRate = &rate
 		}
-		if last, ok := exchange.LastUpdated(result); warm && ok {
-			hour := last.UTC().Format(time.RFC3339)
+		if !cur.PriceHour.IsZero() {
+			hour := cur.PriceHour.UTC().Format(time.RFC3339)
 			body.PriceHour = &hour
+		}
+		if cur.Source == exchange.DivineRateSourceExchange {
+			if cur.Buy > 0 {
+				buy := cur.Buy
+				body.BuyChaos = &buy
+			}
+			if cur.Sell > 0 {
+				sell := cur.Sell
+				body.SellChaos = &sell
+			}
+		}
+		if cur.Source != "" {
+			source := cur.Source
+			body.Source = &source
 		}
 
 		w.Header().Set("Content-Type", "application/json")

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"profitofexile/internal/exchange"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 )
@@ -28,11 +29,11 @@ func (f *fakeExceptionalPricer) ExceptionalSupportPrices(_ context.Context, scop
 
 var exceptionalTestScope = league.Historical("Mirage")
 
-func serveExceptionalSupports(t *testing.T, fake *fakeExceptionalPricer, cache *lab.Cache) *httptest.ResponseRecorder {
+func serveExceptionalSupports(t *testing.T, fake *fakeExceptionalPricer, divineRate *exchange.DivineRateReader) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/analysis/exceptional-supports", nil)
-	ExceptionalSupportPrices(fake, cache, exceptionalTestScope)(rec, req)
+	ExceptionalSupportPrices(fake, divineRate, exceptionalTestScope)(rec, req)
 	return rec
 }
 
@@ -45,10 +46,13 @@ func readExceptionalGolden(t *testing.T, file string) string {
 	return strings.TrimSpace(string(b))
 }
 
-func cacheWithDivineRate(rate float64) *lab.Cache {
-	c := lab.NewCache(exceptionalTestScope)
-	c.SetDivineRate(rate)
-	return c
+// readerWithDivineRate is an app-wide divine rate reader over a warm one-hour
+// default horizon at rate, with no poe.ninja fallback.
+func readerWithDivineRate(rate float64) *exchange.DivineRateReader {
+	cache := exchange.NewCache()
+	hour := time.Date(2026, 11, 13, 7, 0, 0, 0, time.UTC)
+	cache.Set(exchange.DefaultHorizon, exchange.Result{From: hour, To: hour.Add(time.Hour), Hours: 1, DivineChaosRate: rate})
+	return exchange.NewDivineRateReader(cache, nil)
 }
 
 var fixtureAsOf = time.Date(2026, 9, 9, 0, 33, 0, 0, time.UTC)
@@ -68,7 +72,7 @@ func TestExceptionalSupportPrices_servesTheContractBody(t *testing.T) {
 		Chaos: map[string]float64{"Empower Support": 43.2, "Enhance Support": 9, "Enlighten Support": 185},
 	}}
 
-	rec := serveExceptionalSupports(t, fake, cacheWithDivineRate(230))
+	rec := serveExceptionalSupports(t, fake, readerWithDivineRate(230))
 
 	if got, want := strings.TrimSpace(rec.Body.String()), readExceptionalGolden(t, "priced.json"); got != want {
 		t.Errorf("body\n got %s\nwant %s", got, want)
@@ -81,7 +85,7 @@ func TestExceptionalSupportPrices_missingGemServesNull(t *testing.T) {
 		Chaos: map[string]float64{"Empower Support": 43.2, "Enhance Support": 9},
 	}}
 
-	rec := serveExceptionalSupports(t, fake, cacheWithDivineRate(230))
+	rec := serveExceptionalSupports(t, fake, readerWithDivineRate(230))
 
 	if got, want := strings.TrimSpace(rec.Body.String()), readExceptionalGolden(t, "missing.json"); got != want {
 		t.Errorf("body\n got %s\nwant %s", got, want)
@@ -89,7 +93,7 @@ func TestExceptionalSupportPrices_missingGemServesNull(t *testing.T) {
 }
 
 func TestExceptionalSupportPrices_noSnapshotServesNullAsOf(t *testing.T) {
-	rec := serveExceptionalSupports(t, &fakeExceptionalPricer{}, cacheWithDivineRate(230))
+	rec := serveExceptionalSupports(t, &fakeExceptionalPricer{}, readerWithDivineRate(230))
 
 	asOf, ok := decodeExceptionalFields(t, rec)["asOf"]
 	if !ok || string(asOf) != "null" {
@@ -97,7 +101,7 @@ func TestExceptionalSupportPrices_noSnapshotServesNullAsOf(t *testing.T) {
 	}
 }
 
-func TestExceptionalSupportPrices_nilCacheServesZeroDivineRate(t *testing.T) {
+func TestExceptionalSupportPrices_nilReaderServesZeroDivineRate(t *testing.T) {
 	fake := &fakeExceptionalPricer{snap: lab.ExceptionalSupportSnapshot{AsOf: fixtureAsOf}}
 
 	rec := serveExceptionalSupports(t, fake, nil)
@@ -110,7 +114,7 @@ func TestExceptionalSupportPrices_nilCacheServesZeroDivineRate(t *testing.T) {
 func TestExceptionalSupportPrices_repositoryErrorIs500(t *testing.T) {
 	fake := &fakeExceptionalPricer{err: errors.New("db down")}
 
-	rec := serveExceptionalSupports(t, fake, cacheWithDivineRate(230))
+	rec := serveExceptionalSupports(t, fake, readerWithDivineRate(230))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", rec.Code)

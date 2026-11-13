@@ -12,8 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"profitofexile/internal/exchange"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
@@ -683,7 +682,7 @@ func filterQuality(all []lab.QualityResult, variant string, limit int) []lab.Qua
 }
 
 // AnalysisStatus returns cache health information.
-func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) http.HandlerFunc {
+func AnalysisStatus(cache *lab.Cache, divineRate *exchange.DivineRateReader, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -729,21 +728,9 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 			resp["nextFetch"] = nf.UTC().Format(time.RFC3339)
 		}
 
-		// Divine→chaos rate for display in the header.
-		if dr := cache.For(scope).DivineRate(); dr > 0 {
+		// The app-wide rate (POE-339); absent while there is none, as before.
+		if dr := divineRate.Current().Chaos; dr > 0 {
 			resp["divinePrice"] = dr
-		} else if pool != nil {
-			// Fallback to DB query if cache not yet populated.
-			var divRate float64
-			if err := pool.QueryRow(r.Context(),
-				`SELECT chaos FROM currency_snapshots WHERE league = $1 AND currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
-				scope.ID(),
-			).Scan(&divRate); err != nil {
-				slog.Warn("analysis status: divine rate query failed", "error", err)
-			} else {
-				resp["divinePrice"] = divRate
-				cache.For(scope).SetDivineRate(divRate)
-			}
 		}
 
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
@@ -1151,7 +1138,7 @@ func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 // MarketOverview returns an aggregated market overview built from cached data.
 // No query params — returns a single object with market stats, sell confidence
 // spread, signal distribution, temporal mode, and divine rate.
-func MarketOverview(cache *lab.Cache, repo *lab.Repository, scope league.Scope) http.HandlerFunc {
+func MarketOverview(cache *lab.Cache, repo *lab.Repository, divineRate *exchange.DivineRateReader, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -1186,7 +1173,7 @@ func MarketOverview(cache *lab.Cache, repo *lab.Repository, scope league.Scope) 
 		}
 
 		// Divine rate.
-		resp.DivineRate = math.Round(cache.For(scope).DivineRate())
+		resp.DivineRate = math.Round(divineRate.Current().Chaos)
 
 		// Temporal mode from MarketContext.
 		if mc := cache.For(scope).MarketContext(); mc != nil {

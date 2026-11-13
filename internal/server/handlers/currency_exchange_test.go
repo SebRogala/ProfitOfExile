@@ -1057,6 +1057,9 @@ type divineRateBody struct {
 	DivineChaosRate *float64 `json:"divineChaosRate"`
 	PriceHour       *string  `json:"priceHour"`
 	Warm            bool     `json:"warm"`
+	BuyChaos        *float64 `json:"buyChaos"`
+	SellChaos       *float64 `json:"sellChaos"`
+	Source          *string  `json:"source"`
 }
 
 // divineRateCache holds a warm one-hour result for the default horizon at rate,
@@ -1088,8 +1091,15 @@ func divineRateCache(t *testing.T, rate float64) *exchange.Cache {
 // mounts the handler, and returns the recorder.
 func getDivineRate(t *testing.T, cache *exchange.Cache) *httptest.ResponseRecorder {
 	t.Helper()
+	return getDivineRateFrom(t, exchange.NewDivineRateReader(cache, nil))
+}
+
+// getDivineRateFrom is getDivineRate over a reader the test built, so it can
+// carry a poe.ninja fallback.
+func getDivineRateFrom(t *testing.T, divineRate *exchange.DivineRateReader) *httptest.ResponseRecorder {
+	t.Helper()
 	router := chi.NewRouter()
-	router.Get("/api/currency-exchange/divine-rate", CurrencyExchangeDivineRate(cache))
+	router.Get("/api/currency-exchange/divine-rate", CurrencyExchangeDivineRate(divineRate))
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/currency-exchange/divine-rate", nil))
@@ -1158,6 +1168,11 @@ func TestCurrencyExchangeDivineRate_coldIsNullAndNotWarm(t *testing.T) {
 		}
 		if v := requireDivineRateKey(t, fields, "priceHour"); v != nil {
 			t.Errorf("%s: priceHour key = %v, want present with null", name, v)
+		}
+		for _, key := range []string{"buyChaos", "sellChaos", "source"} {
+			if v := requireDivineRateKey(t, fields, key); v != nil {
+				t.Errorf("%s: %s key = %v, want present with null", name, key, v)
+			}
 		}
 	}
 }
@@ -1243,6 +1258,86 @@ func TestCurrencyExchangeDivineRate_isNeverCached(t *testing.T) {
 
 	if got := w.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
+	}
+}
+
+// show renders a nullable body field for a failure message.
+func show[T any](p *T) string {
+	if p == nil {
+		return "null"
+	}
+	return fmt.Sprint(*p)
+}
+
+var ninjaDivineAt = time.Date(2026, 11, 13, 8, 0, 0, 0, time.UTC)
+
+// readerWithNinjaFallback reads cache with a poe.ninja fallback refreshed to
+// 180 chaos at ninjaDivineAt.
+func readerWithNinjaFallback(t *testing.T, cache *exchange.Cache) *exchange.DivineRateReader {
+	t.Helper()
+	reader := exchange.NewDivineRateReader(cache, func(context.Context) (float64, time.Time, error) {
+		return 180, ninjaDivineAt, nil
+	})
+	if err := reader.RefreshFallback(context.Background()); err != nil {
+		t.Fatalf("RefreshFallback: %v", err)
+	}
+	return reader
+}
+
+func TestCurrencyExchangeDivineRate_coldServesTheNinjaFallbackNotWarm(t *testing.T) {
+	w := getDivineRateFrom(t, readerWithNinjaFallback(t, exchange.NewCache()))
+	body := decodeDivineRate(t, w)
+
+	if body.DivineChaosRate == nil || *body.DivineChaosRate != 180 {
+		t.Errorf("divineChaosRate = %v, want 180 from the poe.ninja snapshot", show(body.DivineChaosRate))
+	}
+	if body.Warm {
+		t.Error("warm = true, want false: a released client must not read a poe.ninja answer as an exchange rate")
+	}
+	if body.Source == nil || *body.Source != "ninja" {
+		t.Errorf("source = %v, want \"ninja\"", show(body.Source))
+	}
+	if body.PriceHour == nil || *body.PriceHour != "2026-11-13T08:00:00Z" {
+		t.Errorf("priceHour = %v, want the snapshot time 2026-11-13T08:00:00Z", show(body.PriceHour))
+	}
+	if body.BuyChaos != nil || body.SellChaos != nil {
+		t.Errorf("buyChaos, sellChaos = %v, %v, want null on a poe.ninja answer", show(body.BuyChaos), show(body.SellChaos))
+	}
+}
+
+func TestCurrencyExchangeDivineRate_warmServesTheHoursBuyAndSell(t *testing.T) {
+	cache := exchange.NewCache()
+	cache.Set(exchange.DefaultHorizon, exchange.Result{
+		From: fixtureLastHour, To: fixtureLastHour.Add(time.Hour), Hours: 1,
+		DivineChaosRate: 199, DivineChaosBuy: 196, DivineChaosSell: 203,
+	})
+	body := decodeDivineRate(t, getDivineRate(t, cache))
+
+	if body.BuyChaos == nil || *body.BuyChaos != 196 {
+		t.Errorf("buyChaos = %v, want 196 (the hour's cheapest divine)", show(body.BuyChaos))
+	}
+	if body.SellChaos == nil || *body.SellChaos != 203 {
+		t.Errorf("sellChaos = %v, want 203 (the hour's dearest divine)", show(body.SellChaos))
+	}
+	if body.Source == nil || *body.Source != "exchange" {
+		t.Errorf("source = %v, want \"exchange\"", show(body.Source))
+	}
+	if !body.Warm {
+		t.Error("warm = false, want true")
+	}
+}
+
+func TestCurrencyExchangeDivineRate_warmHourWithoutARateServesTheNinjaFallbackNotWarm(t *testing.T) {
+	body := decodeDivineRate(t, getDivineRateFrom(t, readerWithNinjaFallback(t, divineRateCache(t, 0))))
+
+	if body.Warm {
+		t.Error("warm = true, want false on a poe.ninja answer")
+	}
+	if body.DivineChaosRate == nil || *body.DivineChaosRate != 180 {
+		t.Errorf("divineChaosRate = %v, want 180 from the poe.ninja snapshot", show(body.DivineChaosRate))
+	}
+	if body.Source == nil || *body.Source != "ninja" {
+		t.Errorf("source = %v, want \"ninja\"", show(body.Source))
 	}
 }
 
