@@ -162,6 +162,7 @@ func main() {
 	divineRate := exchange.NewDivineRateReader(exchangeCache, func(ctx context.Context) (float64, time.Time, error) {
 		return labRepo.LatestNinjaDivinePrice(ctx, scope)
 	})
+	priceBook := newPriceBook(scope, trade.NewRepository(pool), labRepo, divineRate)
 
 	// Temple market: the read side of item_snapshots (POE-255). Its own
 	// repository, cache and recompute service for the same reason the exchange
@@ -330,6 +331,7 @@ func main() {
 		}
 	}
 	runtime.divineRate = divineRate
+	runtime.priceBook = priceBook
 	runtime.updateRate = runtime.refreshDivineRate
 	runtime.latestSnapshotTimes = labRepo.LatestTwoSnapshotTimes
 	runtime.refreshOfferingTiming = func(_ context.Context) {

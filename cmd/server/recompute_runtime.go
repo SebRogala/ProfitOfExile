@@ -14,6 +14,8 @@ import (
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
+	"profitofexile/internal/price/book"
+	"profitofexile/internal/price/resolve"
 	"profitofexile/internal/server"
 	"profitofexile/internal/temple"
 )
@@ -71,6 +73,7 @@ type recomputeRuntime struct {
 	pool                  *pgxpool.Pool
 	labCache              *lab.Cache
 	divineRate            *exchange.DivineRateReader
+	priceBook             *book.Book
 	throttler             *lab.Throttler
 	analyzer              recomputeAnalyzer
 	exchange              recomputeService
@@ -296,6 +299,21 @@ func (r *recomputeRuntime) seedCaches() {
 
 	r.seedNextFetch(qCtx)
 	r.refreshDivineRate(qCtx)
+	if r.priceBook != nil {
+		if err := r.priceBook.Seed(qCtx, time.Now()); err != nil {
+			slog.Warn("price book seed failed", "error", err)
+		}
+	}
+}
+
+// newPriceBook builds the scope's gem price book over the stored trade lookups
+// and poe.ninja snapshots, priced at the app-wide divine rate. Nothing reads it
+// yet (POE-310 moves the consumers).
+func newPriceBook(scope league.Scope, trades book.TradeObservations, gems book.NinjaGemObservations, divineRate *exchange.DivineRateReader) *book.Book {
+	return book.New(scope, lab.GemPricePolicy(), trades, gems, func() resolve.Rate {
+		cur := divineRate.Current()
+		return resolve.Rate{Chaos: cur.Chaos, Source: cur.Source, At: cur.PriceHour}
+	})
 }
 
 // seedNextFetch estimates the next fetch from the interval between the last
