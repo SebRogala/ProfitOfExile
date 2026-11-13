@@ -205,7 +205,7 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 	// background refresh (OldestStale) re-picked the same key every tick.
 	if len(searchResp.IDs) == 0 {
 		slog.Info("trade gate: no listings found, skipping fetch", "gem", req.Gem)
-		result := BuildResult(req.Gem, req.Variant, g.client.leagueName, *searchResp, []TradeListingDetail{}, g.divineRate())
+		result := BuildResult(req.Gem, req.Variant, g.client.leagueName, *searchResp, []TradeListingDetail{}, 0, g.divineRate())
 		g.completeLookup(ctx, req, key, result)
 		return
 	}
@@ -217,7 +217,7 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 
 	// Phase 2: Fetch listing details.
 	g.limiter.Record("fetch")
-	listings, fetchHeaders, err := g.client.Fetch(ctx, searchResp.QueryID, searchResp.IDs)
+	listings, uniqueAccounts, fetchHeaders, err := g.client.Fetch(ctx, searchResp.QueryID, searchResp.IDs)
 	g.limiter.ObserveResponse("fetch", fetchHeaders, err)
 	if err != nil {
 		slog.Warn("trade gate: fetch failed", "gem", req.Gem, "error", err)
@@ -225,7 +225,7 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 		return
 	}
 
-	result := BuildResult(req.Gem, req.Variant, g.client.leagueName, *searchResp, listings, g.divineRate())
+	result := BuildResult(req.Gem, req.Variant, g.client.leagueName, *searchResp, listings, uniqueAccounts, g.divineRate())
 	g.completeLookup(ctx, req, key, result)
 }
 

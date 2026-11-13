@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -17,6 +18,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/db"
+	"profitofexile/internal/lab"
+	"profitofexile/internal/league"
+	"profitofexile/internal/trade"
 )
 
 func testSetup(t *testing.T) (*pgxpool.Pool, *migrate.Migrate) {
@@ -773,5 +777,138 @@ func TestGemSnapshotNinjaSampleCompressedHistoryMigration(t *testing.T) {
 				t.Errorf("%s columns after rollback = %d, want 0", column, columns)
 			}
 		})
+	}
+}
+
+// POE-394: the unique_accounts migration keeps each stored row's seller
+// concentration while removing every seller name from trade_lookups.listings.
+func TestTradeLookupsUniqueAccountsMigrationStripsNamesAndKeepsConcentration(t *testing.T) {
+	pool, m := testSetup(t)
+	defer pool.Close()
+	defer m.Close()
+	requireTimescaleDB(t, pool)
+	ctx := context.Background()
+	const previousVersion uint = 20261113002101
+	const gem = "POE394 Seller Count Fixture"
+	const variant = "20/20"
+	scope := league.Historical("Mirage")
+	// Isolated from the 2099 and 2101 migration fixtures' chunks.
+	lookupTime := time.Date(2102, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Ten listings, cheapest first. Sellers: A, B, C, D, E, "" (an explicit "",
+	// a JSON null and a missing key all count as the one seller "" under the
+	// pre-change Go rule) = 6 distinct.
+	listings := `[
+		{"price":10,"currency":"chaos","chaosPrice":10,"account":"SellerA","indexedAt":"2026-01-01T00:00:00Z"},
+		{"price":11,"currency":"chaos","chaosPrice":11,"account":"SellerB","indexedAt":"2026-01-01T00:00:00Z"},
+		{"price":12,"currency":"chaos","chaosPrice":12,"account":null,"indexedAt":"2026-01-01T00:00:00Z"},
+		{"price":13,"currency":"chaos","chaosPrice":13,"account":"SellerC","indexedAt":"2026-01-01T00:00:00Z"},
+		{"price":14,"currency":"chaos","chaosPrice":14,"account":"SellerD","indexedAt":"2026-01-01T00:00:00Z"},
+		{"price":15,"currency":"chaos","chaosPrice":15,"account":"SellerE","indexedAt":"2026-01-01T00:00:00Z"},
+		{"price":16,"currency":"chaos","chaosPrice":16,"account":"","indexedAt":"2026-01-01T00:00:00Z"},
+		{"price":17,"currency":"chaos","chaosPrice":17,"indexedAt":"2026-01-01T00:00:00Z"},
+		{"price":18,"currency":"chaos","chaosPrice":18,"account":"SellerB","indexedAt":"2026-01-01T00:00:00Z"},
+		{"price":19,"currency":"chaos","chaosPrice":19,"account":"SellerA","indexedAt":"2026-01-01T00:00:00Z"}
+	]`
+	var chunk string
+	defer func() {
+		if chunk != "" {
+			if _, err := pool.Exec(ctx, `SELECT decompress_chunk($1::regclass, if_compressed => true)`, chunk); err != nil {
+				t.Errorf("decompress fixture chunk: %v", err)
+			}
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM trade_lookups WHERE league = 'Mirage' AND time = $1 AND gem = $2`, lookupTime, gem); err != nil {
+			t.Errorf("delete fixture row: %v", err)
+		}
+		if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+			t.Errorf("restore fully migrated schema: %v", err)
+		}
+	}()
+	if err := m.Migrate(previousVersion); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatalf("migrate to pre-unique-accounts version: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO trade_lookups (league, time, gem, variant, total_listings, price_floor, price_ceiling, median_top10, divine_rate, source, listings)
+		VALUES ('Mirage', $1, $2, $3, 10, 10, 19, 14.5, 200, 'desktop', $4::jsonb)
+		RETURNING tableoid::regclass::text`, lookupTime, gem, variant, listings).Scan(&chunk); err != nil {
+		t.Fatalf("insert pre-migration row: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `SELECT compress_chunk($1::regclass)`, chunk); err != nil {
+		t.Fatalf("compress fixture chunk: %v", err)
+	}
+	migrateUp(t, m)
+
+	t.Run("stored_row", func(t *testing.T) {
+		var uniqueAccounts, withAccount int
+		var prices []float64
+		if err := pool.QueryRow(ctx, `
+			SELECT unique_accounts,
+			       (SELECT count(*) FROM jsonb_array_elements(listings) e WHERE e ? 'account'),
+			       (SELECT array_agg((e->>'price')::float8 ORDER BY ord) FROM jsonb_array_elements(listings) WITH ORDINALITY AS t(e, ord))
+			FROM trade_lookups WHERE league = 'Mirage' AND time = $1 AND gem = $2`, lookupTime, gem).Scan(&uniqueAccounts, &withAccount, &prices); err != nil {
+			t.Fatalf("read migrated row: %v", err)
+		}
+		if uniqueAccounts != 6 {
+			t.Errorf("unique_accounts = %d, want 6", uniqueAccounts)
+		}
+		if withAccount != 0 {
+			t.Errorf("%d listings still carry an account key, want 0", withAccount)
+		}
+		want := []float64{10, 11, 12, 13, 14, 15, 16, 17, 18, 19}
+		if !reflect.DeepEqual(prices, want) {
+			t.Errorf("listing prices in stored order = %v, want %v", prices, want)
+		}
+	})
+
+	t.Run("warm_cache_and_lab_features", func(t *testing.T) {
+		results, err := trade.NewRepository(pool).LatestLookups(ctx, scope, 24)
+		if err != nil {
+			t.Fatalf("LatestLookups: %v", err)
+		}
+		var row []trade.TradeLookupResult
+		for _, r := range results {
+			if r.Gem == gem && r.Variant == variant {
+				row = append(row, r)
+			}
+		}
+		if len(row) != 1 {
+			t.Fatalf("LatestLookups returned %d fixture rows, want 1", len(row))
+		}
+		cache := trade.NewTradeCache(10, scope)
+		cache.Warm(row)
+		cached, ok := cache.Get(trade.CacheKey(gem, variant))
+		if !ok {
+			t.Fatal("warm cache lost the fixture row")
+		}
+		// Pre-change rule on this row: 6 distinct sellers -> CONCENTRATED.
+		if cached.Signals.SellerConcentration != "CONCENTRATED" || cached.Signals.UniqueAccounts != 6 {
+			t.Errorf("warm signals = %s/%d, want CONCENTRATED/6", cached.Signals.SellerConcentration, cached.Signals.UniqueAccounts)
+		}
+		features := lab.ComputeGemFeatures(lookupTime.Add(time.Minute),
+			[]lab.GemPrice{{Name: gem, Variant: variant, Chaos: 15, Listings: 10, IsTransfigured: true, GemColor: "BLUE"}}, nil, lab.MarketContext{}, nil, cache)
+		if len(features) != 1 {
+			t.Fatalf("ComputeGemFeatures returned %d features, want 1", len(features))
+		}
+		if features[0].TradeSellerConcentration != "CONCENTRATED" {
+			t.Errorf("TradeSellerConcentration = %q, want CONCENTRATED", features[0].TradeSellerConcentration)
+		}
+		// Base 0.5+0.5*5/45 for 10 listings, then CONCENTRATED (x0.9) and STALE
+		// (x0.9) = 0.45; a count read as 0 (MONOPOLY, x0.8) gives 0.40.
+		const wantSellProbabilityFactor = 0.45
+		if got := features[0].SellProbabilityFactor; math.Abs(got-wantSellProbabilityFactor) > 1e-9 {
+			t.Errorf("SellProbabilityFactor = %v, want %v", got, wantSellProbabilityFactor)
+		}
+	})
+
+	if err := m.Migrate(previousVersion); err != nil {
+		t.Fatalf("roll back unique_accounts migration: %v", err)
+	}
+	var columns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'trade_lookups' AND column_name = 'unique_accounts'`).Scan(&columns); err != nil {
+		t.Fatalf("lookup rolled-back unique_accounts: %v", err)
+	}
+	if columns != 0 {
+		t.Errorf("unique_accounts columns after rollback = %d, want 0", columns)
 	}
 }

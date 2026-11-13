@@ -29,7 +29,7 @@ func makeCachedResult(gem, variant string) *trade.TradeLookupResult {
 		PriceCeiling: 50.0,
 		PriceSpread:  40.0,
 		MedianTop10:  25.0,
-		Listings:     []trade.TradeListingDetail{{Price: 10.0, Currency: "chaos", Account: "test"}},
+		Listings:     []trade.TradeListingDetail{{Price: 10.0, Currency: "chaos"}},
 		Signals: trade.TradeSignals{
 			SellerConcentration: "NORMAL",
 			CheapestStaleness:   "FRESH",
@@ -542,6 +542,48 @@ func TestTradeSubmit_KnownNameReachesCacheAndPersistence(t *testing.T) {
 				t.Fatalf("persisted=%+v, want the accepted contribution", persisted)
 			}
 		})
+	}
+}
+
+// An old desktop still sends seller names in listings (POE-394 M1). Decoding
+// drops them, so the persisted listings marshal without any name and the row
+// keeps the client's signals.uniqueAccounts.
+func TestTradeSubmit_OldDesktopAccountNamesPersistOnlyTheSellerCount(t *testing.T) {
+	scope := league.Historical("Mirage")
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	var persisted []trade.TradeLookupResult
+	handler := tradeSubmitHandler(trade.NewTradeCache(10, scope), scope, func(_ context.Context, result *trade.TradeLookupResult) bool {
+		persisted = append(persisted, *result)
+		return true
+	}, tradeSubmitOptions{
+		dictionary: warmTradeDictionary(),
+		checker:    func(context.Context, league.Scope, string) (bool, error) { return true, nil },
+		now:        func() time.Time { return now },
+	})
+	body := `{"league":"Mirage","gem":"Spark of Nova","variant":"20/20","total":3,"priceFloor":10,` +
+		`"listings":[{"price":10,"currency":"chaos","chaosPrice":10,"account":"OldSellerOne"},` +
+		`{"price":11,"currency":"chaos","chaosPrice":11,"account":"OldSellerTwo"},` +
+		`{"price":12,"currency":"chaos","chaosPrice":12,"account":"OldSellerOne"}],` +
+		`"signals":{"sellerConcentration":"MONOPOLY","cheapestStaleness":"FRESH","priceOutlier":false,"uniqueAccounts":2},` +
+		`"fetchedAt":"2026-11-13T11:59:00Z"}`
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/trade/submit", strings.NewReader(body)))
+
+	if w.Code != http.StatusNoContent || len(persisted) != 1 {
+		t.Fatalf("status=%d persisted=%d, want 204 and one persisted row; body: %s", w.Code, len(persisted), w.Body.String())
+	}
+	listingsJSON, err := json.Marshal(persisted[0].Listings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(listingsJSON), "OldSeller") || strings.Contains(string(listingsJSON), `"account"`) {
+		t.Errorf("persisted listings = %s, want no seller name or account key", listingsJSON)
+	}
+	if len(persisted[0].Listings) != 3 {
+		t.Errorf("persisted %d listings, want all 3", len(persisted[0].Listings))
+	}
+	if persisted[0].Signals.UniqueAccounts != 2 {
+		t.Errorf("persisted uniqueAccounts = %d, want the posted 2", persisted[0].Signals.UniqueAccounts)
 	}
 }
 

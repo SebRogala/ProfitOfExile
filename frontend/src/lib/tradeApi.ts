@@ -27,7 +27,6 @@ export interface TradeListingDetail {
 	price: number;
 	currency: string;
 	chaosPrice: number;
-	account: string;
 	indexedAt: string;
 	gemLevel: number;
 	gemQuality: number;

@@ -195,8 +195,9 @@ func (c *Client) postSearch(ctx context.Context, body []byte) (*SearchResponse, 
 
 // Fetch retrieves listing details for the given result IDs from a prior search.
 // At most 10 IDs are fetched (the GGG API limit per request).
-// Returns parsed listing details, raw HTTP headers, and any error.
-func (c *Client) Fetch(ctx context.Context, queryID string, ids []string) ([]TradeListingDetail, http.Header, error) {
+// Returns parsed listing details, the count of distinct seller accounts among
+// them (names are counted here and never copied), raw HTTP headers, and any error.
+func (c *Client) Fetch(ctx context.Context, queryID string, ids []string) ([]TradeListingDetail, int, http.Header, error) {
 	if len(ids) > 10 {
 		ids = ids[:10]
 	}
@@ -205,19 +206,19 @@ func (c *Client) Fetch(ctx context.Context, queryID string, ids []string) ([]Tra
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("trade fetch: create request: %w", err)
+		return nil, 0, nil, fmt.Errorf("trade fetch: create request: %w", err)
 	}
 	req.Header.Set("User-Agent", c.userAgent)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("trade fetch: %w", err)
+		return nil, 0, nil, fmt.Errorf("trade fetch: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		excerpt, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, resp.Header, &HTTPStatusError{
+		return nil, 0, resp.Header, &HTTPStatusError{
 			StatusCode: resp.StatusCode,
 			Operation:  "fetch",
 			Excerpt:    string(excerpt),
@@ -226,15 +227,16 @@ func (c *Client) Fetch(ctx context.Context, queryID string, ids []string) ([]Tra
 
 	var parsed tradeFetchResp
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, resp.Header, fmt.Errorf("trade fetch: decode response: %w", err)
+		return nil, 0, resp.Header, fmt.Errorf("trade fetch: decode response: %w", err)
 	}
 
 	listings := make([]TradeListingDetail, 0, len(parsed.Result))
+	sellers := make(map[string]struct{}, len(parsed.Result))
 	for _, entry := range parsed.Result {
+		sellers[entry.Listing.Account.Name] = struct{}{}
 		detail := TradeListingDetail{
 			Price:     entry.Listing.Price.Amount,
 			Currency:  entry.Listing.Price.Currency,
-			Account:   entry.Listing.Account.Name,
 			IndexedAt: entry.Listing.Indexed,
 			Corrupted: entry.Item.Corrupted,
 		}
@@ -253,7 +255,7 @@ func (c *Client) Fetch(ctx context.Context, queryID string, ids []string) ([]Tra
 		listings = append(listings, detail)
 	}
 
-	return listings, resp.Header, nil
+	return listings, len(sellers), resp.Header, nil
 }
 
 // parseVariant splits a variant string like "20/20" into level and quality.

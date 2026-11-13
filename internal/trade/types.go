@@ -70,7 +70,6 @@ type TradeListingDetail struct {
 	Price      float64   `json:"price"`
 	Currency   string    `json:"currency"`
 	ChaosPrice float64   `json:"chaosPrice"` // normalized to chaos using divine rate
-	Account    string    `json:"account"`
 	IndexedAt  time.Time `json:"indexedAt"`
 	GemLevel   int       `json:"gemLevel"`
 	GemQuality int       `json:"gemQuality"`
@@ -106,8 +105,9 @@ func ParseCacheKey(key string) (gem, variant string) {
 	return key, ""
 }
 
-// ComputeSignals derives market health signals from the top listings.
-func ComputeSignals(listings []TradeListingDetail) TradeSignals {
+// ComputeSignals derives market health signals from the top listings and the
+// count of distinct sellers among them (seller names are never kept).
+func ComputeSignals(listings []TradeListingDetail, uniqueAccounts int) TradeSignals {
 	if len(listings) == 0 {
 		return TradeSignals{
 			SellerConcentration: "NORMAL",
@@ -117,12 +117,7 @@ func ComputeSignals(listings []TradeListingDetail) TradeSignals {
 		}
 	}
 
-	// Count unique accounts.
-	seen := make(map[string]struct{}, len(listings))
-	for _, l := range listings {
-		seen[l.Account] = struct{}{}
-	}
-	unique := len(seen)
+	unique := uniqueAccounts
 
 	// Seller concentration.
 	var concentration string
@@ -173,7 +168,7 @@ func NormalizeToChaos(price float64, currency string, divineRate float64) float6
 // docs/TRADE-LIFECYCLE.md#trade-price-definition (POE-302).
 const tradePriceListingCount = 3
 
-func BuildResult(gem, variant, league string, sr SearchResponse, listings []TradeListingDetail, divineRate float64) *TradeLookupResult {
+func BuildResult(gem, variant, league string, sr SearchResponse, listings []TradeListingDetail, uniqueAccounts int, divineRate float64) *TradeLookupResult {
 	// Normalize all listing prices to chaos.
 	for i := range listings {
 		listings[i].ChaosPrice = NormalizeToChaos(listings[i].Price, listings[i].Currency, divineRate)
@@ -215,7 +210,7 @@ func BuildResult(gem, variant, league string, sr SearchResponse, listings []Trad
 		result.MedianTop10 = medianChaosPrice(listings)
 	}
 
-	result.Signals = ComputeSignals(listings)
+	result.Signals = ComputeSignals(listings, uniqueAccounts)
 
 	return result
 }

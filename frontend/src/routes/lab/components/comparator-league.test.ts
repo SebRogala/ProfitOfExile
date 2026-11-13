@@ -20,7 +20,7 @@ function tradeHit(league: string) {
 	return Response.json({
 		gem: name, variant: '20/20', league, total: 1, priceFloor: 123, priceCeiling: 123, priceSpread: 0,
 		medianTop10: 123, medianTop3: 123, divinePrice: 200, tradeUrl: '', fetchedAt: new Date().toISOString(),
-		signals: {}, listings: [{ price: 123, currency: 'chaos', chaosPrice: 123, account: 'x', indexedAt: new Date().toISOString(), gemLevel: 20, gemQuality: 20 }]
+		signals: {}, listings: [{ price: 123, currency: 'chaos', chaosPrice: 123,indexedAt: new Date().toISOString(), gemLevel: 20, gemQuality: 20 }]
 	});
 }
 const cacheMiss = () => new Response(null, { status: 204 });

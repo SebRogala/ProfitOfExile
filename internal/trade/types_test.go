@@ -33,7 +33,7 @@ func readTradePriceVectors(t *testing.T) []tradePriceVector {
 func TestBuildResult_TradePriceVectors(t *testing.T) {
 	for _, vector := range readTradePriceVectors(t) {
 		t.Run(vector.Name, func(t *testing.T) {
-			result := BuildResult("Arc", "20/20", "Test", SearchResponse{}, vector.Listings, vector.DivineRate)
+			result := BuildResult("Arc", "20/20", "Test", SearchResponse{}, vector.Listings, 0, vector.DivineRate)
 			if result.MedianTop3 != vector.MedianTop3 {
 				t.Errorf("MedianTop3 = %v, want %v", result.MedianTop3, vector.MedianTop3)
 			}
@@ -44,7 +44,7 @@ func TestBuildResult_TradePriceVectors(t *testing.T) {
 func TestBuildResult_MedianTop10Unchanged(t *testing.T) {
 	for _, vector := range readTradePriceVectors(t) {
 		t.Run(vector.Name, func(t *testing.T) {
-			result := BuildResult("Arc", "20/20", "Test", SearchResponse{}, vector.Listings, vector.DivineRate)
+			result := BuildResult("Arc", "20/20", "Test", SearchResponse{}, vector.Listings, 0, vector.DivineRate)
 			if result.MedianTop10 != vector.MedianTop10 {
 				t.Errorf("MedianTop10 = %v, want %v", result.MedianTop10, vector.MedianTop10)
 			}
@@ -59,7 +59,7 @@ func TestBuildResult_JSONIncludesTradePrice(t *testing.T) {
 		{Price: 55, Currency: "chaos"},
 		{Price: 60, Currency: "chaos"},
 		{Price: 70, Currency: "chaos"},
-	}, 0)
+	}, 0, 0)
 	data, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestBuildResult_JSONIncludesTradePrice(t *testing.T) {
 func TestBuildResultCarriesLeague(t *testing.T) {
 	for _, queryID := range []string{"", "query"} {
 		t.Run(queryID, func(t *testing.T) {
-			result := BuildResult("Arc", "20/20", "New League", SearchResponse{QueryID: queryID}, nil, 0)
+			result := BuildResult("Arc", "20/20", "New League", SearchResponse{QueryID: queryID}, nil, 0, 0)
 			data, err := json.Marshal(result)
 			if err != nil {
 				t.Fatal(err)
@@ -109,7 +109,7 @@ func chaosListings(prices ...float64) []TradeListingDetail {
 }
 
 func TestUsableQuote_ThreeChaosListingsPriceAtTheMedianTop3(t *testing.T) {
-	r := BuildResult("g", "v", "L", SearchResponse{}, chaosListings(400, 412, 500, 900), 0)
+	r := BuildResult("g", "v", "L", SearchResponse{}, chaosListings(400, 412, 500, 900), 0, 0)
 	r.FetchedAt = quoteNow.Add(-time.Hour)
 
 	q := UsableQuote(r, quoteNow)
@@ -123,7 +123,7 @@ func TestUsableQuote_ThreeChaosListingsPriceAtTheMedianTop3(t *testing.T) {
 }
 
 func TestUsableQuote_FewerThanThreeListingsKeepThePriceAsLowConfidence(t *testing.T) {
-	r := BuildResult("g", "v", "L", SearchResponse{}, chaosListings(90, 100), 0)
+	r := BuildResult("g", "v", "L", SearchResponse{}, chaosListings(90, 100), 0, 0)
 	r.FetchedAt = quoteNow
 
 	q := UsableQuote(r, quoteNow)
@@ -134,7 +134,7 @@ func TestUsableQuote_FewerThanThreeListingsKeepThePriceAsLowConfidence(t *testin
 }
 
 func TestUsableQuote_ExactlyTwentyFourHoursOldIsUsable(t *testing.T) {
-	r := BuildResult("g", "v", "L", SearchResponse{}, chaosListings(5, 5, 5), 0)
+	r := BuildResult("g", "v", "L", SearchResponse{}, chaosListings(5, 5, 5), 0, 0)
 	r.FetchedAt = quoteNow.Add(-UsableQuoteMaxAge)
 
 	if q := UsableQuote(r, quoteNow); q.Chaos == nil {
@@ -143,7 +143,7 @@ func TestUsableQuote_ExactlyTwentyFourHoursOldIsUsable(t *testing.T) {
 }
 
 func TestUsableQuote_OlderThanTwentyFourHoursHasNoPriceButKeepsFetchedAt(t *testing.T) {
-	r := BuildResult("g", "v", "L", SearchResponse{}, chaosListings(5, 5, 5), 0)
+	r := BuildResult("g", "v", "L", SearchResponse{}, chaosListings(5, 5, 5), 0, 0)
 	r.FetchedAt = quoteNow.Add(-UsableQuoteMaxAge - time.Second)
 
 	q := UsableQuote(r, quoteNow)
@@ -157,7 +157,7 @@ func TestUsableQuote_OlderThanTwentyFourHoursHasNoPriceButKeepsFetchedAt(t *test
 }
 
 func TestUsableQuote_EmptyResultHasNoPriceButKeepsFetchedAt(t *testing.T) {
-	r := BuildResult("g", "v", "L", SearchResponse{}, nil, 0)
+	r := BuildResult("g", "v", "L", SearchResponse{}, nil, 0, 0)
 	r.FetchedAt = quoteNow
 
 	q := UsableQuote(r, quoteNow)
@@ -178,7 +178,7 @@ func TestUsableQuote_NoObservationHasNoPriceAndNoFetchedAt(t *testing.T) {
 func TestUsableQuote_DivineListingWithoutARateIsUnusable(t *testing.T) {
 	listings := []TradeListingDetail{{Price: 5, Currency: "divine"}, {Price: 5, Currency: "divine"}, {Price: 6, Currency: "divine"}}
 	c := NewTradeCache(10, league.Historical("Test"))
-	r := BuildResult("g", "v", "Test", SearchResponse{}, listings, 0)
+	r := BuildResult("g", "v", "Test", SearchResponse{}, listings, 0, 0)
 	r.FetchedAt = quoteNow
 	c.Set("k", r)
 	cached, _ := c.Get("k")
@@ -192,7 +192,7 @@ func TestUsableQuote_DivineListingWithoutARateIsUnusable(t *testing.T) {
 
 func TestUsableQuote_DivineListingWithARateIsUsable(t *testing.T) {
 	listings := []TradeListingDetail{{Price: 2, Currency: "divine"}, {Price: 400, Currency: "chaos"}, {Price: 500, Currency: "chaos"}}
-	r := BuildResult("g", "v", "L", SearchResponse{}, listings, 200)
+	r := BuildResult("g", "v", "L", SearchResponse{}, listings, 0, 200)
 	r.FetchedAt = quoteNow
 
 	q := UsableQuote(r, quoteNow)
@@ -204,7 +204,7 @@ func TestUsableQuote_DivineListingWithARateIsUsable(t *testing.T) {
 
 func TestUsableQuote_MixedChaosAndDivineWithoutARateIsUnusable(t *testing.T) {
 	listings := []TradeListingDetail{{Price: 100, Currency: "chaos"}, {Price: 110, Currency: "chaos"}, {Price: 1, Currency: "divine"}}
-	r := BuildResult("g", "v", "L", SearchResponse{}, listings, 0)
+	r := BuildResult("g", "v", "L", SearchResponse{}, listings, 0, 0)
 	r.FetchedAt = quoteNow
 
 	if q := UsableQuote(r, quoteNow); q.Chaos != nil {
@@ -214,7 +214,7 @@ func TestUsableQuote_MixedChaosAndDivineWithoutARateIsUnusable(t *testing.T) {
 
 func TestUsableQuote_OtherCurrencyListingIsUnusable(t *testing.T) {
 	listings := []TradeListingDetail{{Price: 100, Currency: "chaos"}, {Price: 110, Currency: "chaos"}, {Price: 3, Currency: "exalted"}}
-	r := BuildResult("g", "v", "L", SearchResponse{}, listings, 200)
+	r := BuildResult("g", "v", "L", SearchResponse{}, listings, 0, 200)
 	r.FetchedAt = quoteNow
 
 	if q := UsableQuote(r, quoteNow); q.Chaos != nil {

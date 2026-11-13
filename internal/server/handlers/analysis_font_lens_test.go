@@ -46,7 +46,7 @@ func chaosLensListings(prices ...float64) []trade.TradeListingDetail {
 }
 
 func lensObservation(gem string, listings []trade.TradeListingDetail, divineRate float64, age time.Duration) *trade.TradeLookupResult {
-	r := trade.BuildResult(gem, trade.FixedTargetVariantFont, corpusScope.ID(), trade.SearchResponse{}, listings, divineRate)
+	r := trade.BuildResult(gem, trade.FixedTargetVariantFont, corpusScope.ID(), trade.SearchResponse{}, listings, 0, divineRate)
 	r.FetchedAt = time.Now().Add(-age).UTC().Truncate(time.Second)
 	return r
 }
@@ -184,7 +184,7 @@ func settlersLensCache(t *testing.T) *trade.TradeCache {
 		trade.FixedTargetLens60Outcome: {400, 412, 450},
 		trade.FixedTargetLens60Feeder:  {90, 95, 99},
 	} {
-		r := trade.BuildResult(gem, trade.FixedTargetVariantFont, settlersScope.ID(), trade.SearchResponse{}, chaosLensListings(prices...), 0)
+		r := trade.BuildResult(gem, trade.FixedTargetVariantFont, settlersScope.ID(), trade.SearchResponse{}, chaosLensListings(prices...), 0, 0)
 		tc.For(settlersScope).Set(trade.CacheKey(gem, trade.FixedTargetVariantFont), r)
 	}
 	return tc

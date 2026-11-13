@@ -267,7 +267,8 @@ func loadTradeDataNear(ctx context.Context, pool *pgxpool.Pool, scope league.Sco
 		        COALESCE(price_ceiling, 0),
 		        COALESCE(median_top10, 0),
 		        COALESCE(divine_rate, 0),
-		        COALESCE(listings, '[]'::jsonb)
+		        COALESCE(listings, '[]'::jsonb),
+		        COALESCE(unique_accounts, 0)
 		 FROM trade_lookups
 		 WHERE league = $1 AND time >= $2 AND time <= $3
 		 ORDER BY gem, variant, ABS(EXTRACT(EPOCH FROM time - $4)) ASC`,
@@ -281,10 +282,11 @@ func loadTradeDataNear(ctx context.Context, pool *pgxpool.Pool, scope league.Sco
 	for rows.Next() {
 		var r trade.TradeLookupResult
 		var listingsJSON []byte
+		var uniqueAccounts int
 		if err := rows.Scan(
 			&r.FetchedAt, &r.Gem, &r.Variant, &r.Total,
 			&r.PriceFloor, &r.PriceCeiling, &r.MedianTop10,
-			&r.DivinePrice, &listingsJSON,
+			&r.DivinePrice, &listingsJSON, &uniqueAccounts,
 		); err != nil {
 			continue
 		}
@@ -292,7 +294,7 @@ func loadTradeDataNear(ctx context.Context, pool *pgxpool.Pool, scope league.Sco
 			r.Listings = nil
 		}
 		if r.Listings != nil {
-			r.Signals = trade.ComputeSignals(r.Listings)
+			r.Signals = trade.ComputeSignals(r.Listings, uniqueAccounts)
 		}
 		results = append(results, r)
 	}

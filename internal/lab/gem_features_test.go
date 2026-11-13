@@ -675,7 +675,7 @@ func TestComputeGemFeatures_MarketRegime_Boundary(t *testing.T) {
 
 // oneListing is a placeholder listing for fixtures whose prices are set
 // directly: enrichment treats a zero-listing result as no trade data.
-var oneListing = []trade.TradeListingDetail{{Price: 1, Currency: "chaos", ChaosPrice: 1, Account: "acc"}}
+var oneListing = []trade.TradeListingDetail{{Price: 1, Currency: "chaos", ChaosPrice: 1}}
 
 // newTestTradeCache creates a TradeCache pre-populated with the given entries.
 func newTestTradeCache(entries map[string]*trade.TradeLookupResult) *trade.TradeCache {
@@ -867,7 +867,7 @@ func TestComputeGemFeatures_EmptyTradeResult_MatchesNoTradeEntry(t *testing.T) {
 	mc := testMarketContext()
 
 	empty := trade.BuildResult("Spark of Nova", "20/20", "Mirage",
-		trade.SearchResponse{QueryID: "q", Total: 0}, []trade.TradeListingDetail{}, 200)
+		trade.SearchResponse{QueryID: "q", Total: 0}, []trade.TradeListingDetail{}, 0, 200)
 	snapTime := empty.FetchedAt.Add(time.Minute) // fresh: weight 1.0
 	tc := newTestTradeCache(map[string]*trade.TradeLookupResult{
 		trade.CacheKey("Spark of Nova", "20/20"): empty,

@@ -192,7 +192,7 @@ func TestLatestLookups_readsLegacyGateDesktopSources(t *testing.T) {
 			cleanupTradeGem(t, pool, gem)
 			price := float64(100 + i)
 			row := BuildResult(gem, "20/20", leagueID,
-				SearchResponse{Total: 1}, []TradeListingDetail{{Price: price, Currency: "chaos"}}, 200)
+				SearchResponse{Total: 1}, []TradeListingDetail{{Price: price, Currency: "chaos"}}, 1, 200)
 			if err := repo.InsertTradeLookup(ctx, scope, row, source); err != nil {
 				t.Fatalf("InsertTradeLookup source %q: %v", source, err)
 			}
@@ -233,12 +233,12 @@ func TestLatestLookups_emptyResultReplacesStalePriceOnWarm(t *testing.T) {
 	cleanupTradeGem(t, pool, gem)
 	scope := league.Historical(leagueID)
 	old := BuildResult(gem, variant, leagueID,
-		SearchResponse{Total: 1}, []TradeListingDetail{{Price: 42, Currency: "chaos"}}, 200)
+		SearchResponse{Total: 1}, []TradeListingDetail{{Price: 42, Currency: "chaos"}}, 1, 200)
 	old.FetchedAt = time.Now().Add(-time.Hour)
 	if err := repo.InsertTradeLookup(ctx, scope, old, "user"); err != nil {
 		t.Fatalf("insert stale price: %v", err)
 	}
-	empty := BuildResult(gem, variant, leagueID, SearchResponse{}, []TradeListingDetail{}, 200)
+	empty := BuildResult(gem, variant, leagueID, SearchResponse{}, []TradeListingDetail{}, 0, 200)
 	if err := repo.InsertTradeLookup(ctx, scope, empty, "server-gate"); err != nil {
 		t.Fatalf("insert empty check: %v", err)
 	}

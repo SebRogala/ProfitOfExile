@@ -54,12 +54,13 @@ func (r *Repository) InsertTradeLookup(ctx context.Context, scope league.Scope, 
 	}
 
 	_, err = r.pool.Exec(ctx,
-		`INSERT INTO trade_lookups (league, time, gem, variant, total_listings, price_floor, price_ceiling, median_top10, divine_rate, source, listings)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`INSERT INTO trade_lookups (league, time, gem, variant, total_listings, price_floor, price_ceiling, median_top10, divine_rate, source, listings, unique_accounts)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 ON CONFLICT DO NOTHING`,
 		scope.ID(), result.FetchedAt, result.Gem, result.Variant,
 		result.Total, result.PriceFloor, result.PriceCeiling,
 		result.MedianTop10, result.DivinePrice, source, listingsJSON,
+		result.Signals.UniqueAccounts,
 	)
 	if err != nil {
 		return fmt.Errorf("repo: insert trade lookup: %w", err)
@@ -81,7 +82,7 @@ func (r *Repository) LatestLookups(ctx context.Context, scope league.Scope, hour
 		        time, gem, variant, COALESCE(total_listings, 0),
 		        COALESCE(price_floor, 0), COALESCE(price_ceiling, 0),
 		        COALESCE(median_top10, 0), COALESCE(divine_rate, 0),
-		        COALESCE(listings, '[]'::jsonb)
+		        COALESCE(listings, '[]'::jsonb), COALESCE(unique_accounts, 0)
 		 FROM trade_lookups
 		 WHERE league = $1
 		   AND time > NOW() - make_interval(hours => $2)
@@ -97,10 +98,11 @@ func (r *Repository) LatestLookups(ctx context.Context, scope league.Scope, hour
 	for rows.Next() {
 		var r TradeLookupResult
 		var listingsJSON []byte
+		var uniqueAccounts int
 		if err := rows.Scan(
 			&r.FetchedAt, &r.Gem, &r.Variant, &r.Total,
 			&r.PriceFloor, &r.PriceCeiling, &r.MedianTop10,
-			&r.DivinePrice, &listingsJSON,
+			&r.DivinePrice, &listingsJSON, &uniqueAccounts,
 		); err != nil {
 			return nil, fmt.Errorf("repo: scan latest lookup: %w", err)
 		}
@@ -108,7 +110,7 @@ func (r *Repository) LatestLookups(ctx context.Context, scope league.Scope, hour
 			r.Listings = nil // non-fatal: listings may be malformed
 		}
 		if r.Listings != nil {
-			r.Signals = ComputeSignals(r.Listings)
+			r.Signals = ComputeSignals(r.Listings, uniqueAccounts)
 		}
 		results = append(results, r)
 	}

@@ -661,7 +661,7 @@ func TestRouter_FontAnalysisCarriesTheLensCraftFromTheConfiguredTradeCache(t *te
 		for i, p := range prices {
 			listings[i] = trade.TradeListingDetail{Price: p, Currency: "chaos"}
 		}
-		r := trade.BuildResult(gem, trade.FixedTargetVariantFont, scope.ID(), trade.SearchResponse{}, listings, 0)
+		r := trade.BuildResult(gem, trade.FixedTargetVariantFont, scope.ID(), trade.SearchResponse{}, listings, 0, 0)
 		tradeCache.For(scope).Set(trade.CacheKey(gem, trade.FixedTargetVariantFont), r)
 	}
 	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{

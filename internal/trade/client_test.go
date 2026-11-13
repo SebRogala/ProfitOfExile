@@ -186,7 +186,7 @@ func TestFetch_UserAgent(t *testing.T) {
 	defer server.Close()
 
 	c := testTradeClient(t, server)
-	if _, _, err := c.Fetch(context.Background(), "q", []string{"a"}); err != nil {
+	if _, _, _, err := c.Fetch(context.Background(), "q", []string{"a"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -279,7 +279,7 @@ func TestFetch_Success(t *testing.T) {
 	defer server.Close()
 
 	c := testTradeClient(t, server)
-	listings, headers, err := c.Fetch(context.Background(), "qid123", []string{"id1", "id2"})
+	listings, _, headers, err := c.Fetch(context.Background(), "qid123", []string{"id1", "id2"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -296,9 +296,6 @@ func TestFetch_Success(t *testing.T) {
 	}
 	if l.Currency != "chaos" {
 		t.Errorf("Currency = %q, want %q", l.Currency, "chaos")
-	}
-	if l.Account != "seller1" {
-		t.Errorf("Account = %q, want %q", l.Account, "seller1")
 	}
 	if !l.IndexedAt.Equal(indexed) {
 		t.Errorf("IndexedAt = %v, want %v", l.IndexedAt, indexed)
@@ -325,6 +322,36 @@ func TestFetch_Success(t *testing.T) {
 	}
 }
 
+func TestFetch_ReturnsDistinctSellerCountWithoutNames(t *testing.T) {
+	entry := func(seller string, price float64) tradeFetchEntry {
+		return tradeFetchEntry{Listing: tradeFetchListing{
+			Account: tradeFetchAccount{Name: seller},
+			Price:   tradeFetchPrice{Amount: price, Currency: "chaos"},
+		}}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(tradeFetchResp{Result: []tradeFetchEntry{
+			entry("seller-alpha", 10), entry("seller-beta", 11), entry("seller-alpha", 12), entry("", 13),
+		}})
+	}))
+	defer server.Close()
+
+	listings, uniqueAccounts, _, err := testTradeClient(t, server).Fetch(context.Background(), "qid", []string{"a", "b", "c", "d"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if uniqueAccounts != 3 {
+		t.Errorf("uniqueAccounts = %d, want 3 (alpha, beta and the empty name; alpha's second listing is not a new seller)", uniqueAccounts)
+	}
+	data, err := json.Marshal(listings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "seller-") || strings.Contains(string(data), `"account"`) {
+		t.Errorf("listings JSON = %s, want no seller name or account key", data)
+	}
+}
+
 func TestFetch_TruncatesTo10(t *testing.T) {
 	var receivedURL string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +366,7 @@ func TestFetch_TruncatesTo10(t *testing.T) {
 		ids[i] = "id" + strings.Repeat("x", i)
 	}
 
-	_, _, err := c.Fetch(context.Background(), "qid", ids)
+	_, _, _, err := c.Fetch(context.Background(), "qid", ids)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -370,7 +397,7 @@ func TestFetch_HeadersReturned(t *testing.T) {
 	defer server.Close()
 
 	c := testTradeClient(t, server)
-	_, headers, err := c.Fetch(context.Background(), "qid", []string{"id1"})
+	_, _, headers, err := c.Fetch(context.Background(), "qid", []string{"id1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -428,7 +455,7 @@ func TestClient_RejectionStatusPreserved(t *testing.T) {
 				if endpoint == "search" {
 					_, _, err = c.Search(context.Background(), "Arc", "20/20")
 				} else {
-					_, _, err = c.Fetch(context.Background(), "qid", []string{"id1"})
+					_, _, _, err = c.Fetch(context.Background(), "qid", []string{"id1"})
 				}
 				var statusErr *HTTPStatusError
 				if !errors.As(err, &statusErr) || statusErr.StatusCode != status || statusErr.Operation != endpoint || statusErr.Excerpt != "rejection detail" {
@@ -444,7 +471,7 @@ func TestFetch_RateLimitedIdentity(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer server.Close()
-	_, _, err := testTradeClient(t, server).Fetch(context.Background(), "qid", []string{"id1"})
+	_, _, _, err := testTradeClient(t, server).Fetch(context.Background(), "qid", []string{"id1"})
 	if !errors.Is(err, ErrRateLimited) {
 		t.Errorf("fetch 429 error = %v, want errors.Is ErrRateLimited", err)
 	}

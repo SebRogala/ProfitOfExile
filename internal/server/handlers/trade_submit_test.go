@@ -38,8 +38,8 @@ func validSubmitBody(gem, variant string) string {
 		PriceSpread:  77.5,
 		MedianTop10:  65.0,
 		Listings: []trade.TradeListingDetail{
-			{Price: 42.5, Currency: "chaos", ChaosPrice: 42.5, Account: "seller1", GemLevel: 20, GemQuality: 20},
-			{Price: 55.0, Currency: "chaos", ChaosPrice: 55.0, Account: "seller2", GemLevel: 20, GemQuality: 20},
+			{Price: 42.5, Currency: "chaos", ChaosPrice: 42.5, GemLevel: 20, GemQuality: 20},
+			{Price: 55.0, Currency: "chaos", ChaosPrice: 55.0, GemLevel: 20, GemQuality: 20},
 		},
 		Signals: trade.TradeSignals{
 			SellerConcentration: "NORMAL",
