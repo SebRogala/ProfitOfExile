@@ -53,6 +53,9 @@ function requestedDifficulties(fetchMock: ReturnType<typeof vi.fn>): string[] {
 /** Long enough for every sleep the attempt budget allows. */
 const WHOLE_BUDGET_MS = STATUS_RETRY_MS * (MAX_STATUS_ATTEMPTS + 1);
 
+/** When the budget's last check runs, measured from the call. */
+const LAST_CHECK_MS = (MAX_STATUS_ATTEMPTS - 1) * STATUS_RETRY_MS;
+
 let originalFetch: typeof globalThis.fetch;
 
 beforeEach(() => {
@@ -92,22 +95,23 @@ describe('fetchLabLayout', () => {
 		expect(fetchMock.mock.calls[0][0]).toBe(`${SERVER}/api/lab/layout/Uber`);
 	});
 
-	it('gives up after the attempt budget of checks', async () => {
+	it('gives up on a url carried just after the last check', async () => {
 		// The bound is what stops a server url that never arrives from leaving a
-		// 2s poll running for the life of the window. A url carried just after
-		// the last check is not picked up; one carried just before it is.
-		const lastCheckMs = (MAX_STATUS_ATTEMPTS - 1) * STATUS_RETRY_MS;
+		// 2s poll running for the life of the window.
 		const fetchMock = vi.fn(async () => layoutResponse());
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-		carryAfter(lastCheckMs + 1, SERVER);
+		carryAfter(LAST_CHECK_MS + 1, SERVER);
 		const late = fetchLabLayout({ log: () => {} });
 		await vi.advanceTimersByTimeAsync(WHOLE_BUDGET_MS);
 		expect(await late).toBeNull();
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
 
-		resetServerBaseForTests();
-		carryAfter(lastCheckMs - 1, SERVER);
+	it('uses a url carried just before the last check', async () => {
+		globalThis.fetch = vi.fn(async () => layoutResponse()) as unknown as typeof fetch;
+
+		carryAfter(LAST_CHECK_MS - 1, SERVER);
 		const justInTime = fetchLabLayout({ log: () => {} });
 		await vi.advanceTimersByTimeAsync(WHOLE_BUDGET_MS);
 		expect(await justInTime).toEqual(LAYOUT);
