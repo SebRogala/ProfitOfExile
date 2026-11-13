@@ -143,7 +143,7 @@ pub trait PendingRead<C>: Send {
 }
 
 /// Every reader the read key serves, in dispatch order.
-pub const READERS: &[&dyn ScreenReader<tauri::AppHandle>] = &[];
+pub const READERS: &[&dyn ScreenReader<tauri::AppHandle>] = &[&crate::temple::press::TEMPLE_READER];
 
 /// A press with its readers already armed, waiting for its grab.
 pub struct ArmedPress<C> {

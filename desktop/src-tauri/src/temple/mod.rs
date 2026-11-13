@@ -47,8 +47,16 @@
 //!   building one. The three are separate so the accessor can build with the
 //!   slot mutex DROPPED.
 //!
-//! The lifecycle these modules implement — what arms the loop, when a full read
+//! The lifecycle these modules implement — what arms the reader, when a read
 //! runs, when each overlay shows — is normative in `docs/TEMPLE-LIFECYCLE.md`.
+//!
+//! **Since POE-389 there is no capture loop.** One press of the app-wide read
+//! key grabs one frame (`crate::read_hotkey`); [`press::TEMPLE_READER`] arms
+//! only under Client.txt temple context ([`trigger::ArmReason::AlvaStart`] or
+//! [`trigger::ArmReason::TempleArea`]) and hands that frame to the module
+//! thread, which reads it once ([`run`]). The history bullets below name loop
+//! pieces (`LoopState`, the gate, retries, sweeps, `cycle_complete`) that
+//! POE-389 deleted; they stay as history only.
 //!
 //! Later changes that moved where things live (2026-09-03/04):
 //! - POE-234: the anchor's cold start is `anchor::Scene::pyramid_sweep` behind
@@ -65,9 +73,9 @@
 //! - POE-249: [`trigger::classify`] is the ONE owner of what a Client.txt line
 //!   means ([`trigger::LineEvent`], [`trigger::ends_epoch`], the three measured
 //!   START phrases, [`trigger::ArmReason::AlvaStart`] armed with no deadline);
-//!   the loop reads a board ONCE per identity — [`run::LoopState::gate`] →
-//!   [`run::GateAnswer`] over the epoch, the re-arm counter and
-//!   [`slice::BoardFrame`], with [`run::RETRIES`] merged re-reads
+//!   the loop reads a board ONCE per identity — `run::LoopState::gate` →
+//!   `run::GateAnswer` over the epoch, the re-arm counter and
+//!   [`slice::BoardFrame`], with `run::RETRIES` merged re-reads
 //!   ([`slice::KeptRead`], [`slice::merge_reads`], [`slice::unclean`], and
 //!   `run::kept_for`) and the placed-origin recheck plus explicit cold fallback
 //!   owning anchor recovery. `slice::panel_signature` and the periodic panel
@@ -77,24 +85,27 @@
 //! - 2026-09-07 (WI-1): the capture has no tails left. `ALVA_TAIL_MS` and
 //!   `PANEL_TAIL_MS` are gone with [`trigger::ArmReason`]'s `AlvaLine`, a
 //!   non-START Alva line STANDS THE CAPTURE DOWN (the temple's own banter
-//!   excepted), the panel input is one tick ([`run::LoopState::live`]) rather
+//!   excepted), the panel input is one tick (`run::LoopState::live`) rather
 //!   than 120 s, and the loop ends its own cycle once a board has been read and
-//!   the sheet closes ([`run::cycle_complete`],
-//!   [`trigger::ArmState::complete_cycle`]). The stand-down names its cause
+//!   the sheet closes (`run::cycle_complete`,
+//!   `trigger::ArmState::complete_cycle`). The stand-down names its cause
 //!   ([`trigger::StandDown`]). Two guards from the same day's fix round: a tick
 //!   whose screen GRAB failed is not evidence about the sheet and leaves the
-//!   panel input alone ([`run::LoopState::on_blind_tick`]), and a completion is
+//!   panel input alone (`run::LoopState::on_blind_tick`), and a completion is
 //!   refused when the board key has moved on since the tick that observed it
 //!   (`ArmState::complete_cycle`'s `key_current`).
 //! - 2026-09-11 (POE-275, owner): the sheet retires on the SECOND consecutive
 //!   clean miss (`run::RETIRE_AFTER` = 2), so the panel input above is two
-//!   ticks. The first is a held miss ([`run::DetectOutcome::HeldMiss`]) that
-//!   publishes nothing ([`run::miss_publish`]): it neither hides the sheet-bound
+//!   ticks. The first is a held miss (`run::DetectOutcome::HeldMiss`) that
+//!   publishes nothing (`run::miss_publish`): it neither hides the sheet-bound
 //!   overlays nor ends the cycle.
+//! - POE-389: the loop above is gone. [`press`] arms on the read key under
+//!   Client.txt temple context, and [`run`] reads each pressed frame once.
 //!
 //! - [`trigger`] (POE-242) — what puts an incursion in scope, and so whether
-//!   [`run`]'s loop may capture at all: a pure state machine over the Client.txt
-//!   lines Alva and the temple area write, plus a thin `AppState` wrapper.
+//!   [`press`] arms the temple reader at all: a pure state machine over the
+//!   Client.txt lines Alva and the temple area write, plus a thin `AppState`
+//!   wrapper.
 //! - The overlay (POE-171) lands as a sibling module and is the only intended
 //!   consumer of this one.
 //!
@@ -146,6 +157,7 @@ pub mod market;
 pub mod markers;
 pub mod panel;
 pub mod preset;
+pub mod press;
 pub mod reader;
 pub mod rooms;
 pub mod run;
@@ -271,6 +283,11 @@ pub struct TempleState {
     /// An atomic for the same reason as its sibling: read once per tick, never
     /// read together with anything else.
     pub(crate) epoch: std::sync::atomic::AtomicU64,
+    /// The temple read worker's inbox (POE-389): `Some` while the module thread
+    /// runs with an OCR engine, `None` otherwise. The read key's
+    /// [`press::TEMPLE_READER`] hands each pressed frame down it; `None` means
+    /// the temple takes no grab.
+    pub(crate) press: std::sync::Mutex<Option<std::sync::mpsc::Sender<press::PressedFrame>>>,
 }
 
 impl TempleState {
@@ -286,6 +303,7 @@ impl TempleState {
             arm: std::sync::Mutex::new(trigger::ArmState::default()),
             rearm: std::sync::atomic::AtomicU64::new(0),
             epoch: std::sync::atomic::AtomicU64::new(0),
+            press: std::sync::Mutex::new(None),
         }
     }
 }

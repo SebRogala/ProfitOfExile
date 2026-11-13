@@ -1319,13 +1319,17 @@ impl TextRecognizer for SystemOcr {
 
 /// One bounded crop's OCR lines, in CAPTURE px.
 ///
-/// The single seam both readers of the panel's text go through — the capture
-/// loop (`super::run::panel_text`) and the debug dump
+/// The single seam both readers of the panel's text go through — the press
+/// read (`super::run::read_board`) and the debug dump
 /// (`super::commands::debug_capture_blocking`) — so the two cannot disagree
 /// about where a line is. `origin` is the crop's clipped top-left corner in
 /// capture px; see [`translated`].
-pub fn crop_lines(crop: &DynamicImage, origin: (i32, i32)) -> Result<Vec<OcrLineBox>, String> {
-    Ok(SystemOcr
+pub fn crop_lines(
+    recognizer: &dyn TextRecognizer,
+    crop: &DynamicImage,
+    origin: (i32, i32),
+) -> Result<Vec<OcrLineBox>, String> {
+    Ok(recognizer
         .recognize(crop)?
         .into_iter()
         .map(|line| translated(line, origin))

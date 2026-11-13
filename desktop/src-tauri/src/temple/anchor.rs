@@ -20,9 +20,9 @@
 //! at full resolution. Coarse scores nominate only; the final anchor is always
 //! selected by a fine score. On the 1539 px board the ÷4 pass ranked scale 1.09
 //! above the true 1.13 (0.968 vs 0.961), and trusting it anchored at NCC 0.829.
-//! The caller budgets this fallback per `(temple_epoch, temple_rearm)` key
-//! because the shared slice is corroborated across modules (ADR-020), while the
-//! placed origin is verified on every tick by the recheck.
+//! The caller (POE-389) runs this fallback only for a null or unplaced slice,
+//! once per read-key press and on the pressed frame alone; a placed origin is
+//! verified by the recheck on every press.
 //!
 //! # Why there is a floor
 //!

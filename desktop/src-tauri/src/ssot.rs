@@ -1280,25 +1280,18 @@ pub fn screen_from_capture(capture: &crate::capture::Capture) -> ScreenSlice {
 /// its owner and in the file. The temple's hint is derived from this slice
 /// through `k` on every tick, so emptying the slice is what un-calibrates the
 /// temple — there is no second store left to clear, and none to forget to.
-/// The per-key fallback is sufficient because the shared slice is corroborated
-/// across modules (ADR-020), while the placed origin is verified on every tick
-/// by the temple recheck.
+/// The temple's locate needs no budget: it runs only on a read-key press over
+/// a null or unplaced slice (POE-389), while a placed origin is verified on
+/// every press by the temple recheck.
 ///
 /// Clearing it is not enough on its own, because neither module re-measures
 /// just because the store is empty:
 ///
-/// - the temple's placed-origin recheck reads the newly empty slice as a null
-///   placement, so its one cold-start fallback per `(temple_epoch,
-///   temple_rearm)` key can locate the panel again. If that fallback finds an
-///   anchor but its proposed slice is withheld, the key is released for one
-///   retry; a second withheld sweep keeps it spent until the
-///   `(temple_epoch, temple_rearm)` key changes. A successful fallback read
-///   remembers the discovered origin through this module. There is no second
-///   temple plate-memory store to clear. **Amended 2026-09-11 (POE-275
-///   WI-2):** the null-slice fallback is no longer one per key — it sweeps
-///   every `NULL_SWEEP_EVERY` consecutive clean misses up to `NULL_SWEEP_CAP`
-///   per key, off the loop thread (`temple::run::cold_sweep_reason`,
-///   `docs/TEMPLE-LIFECYCLE.md` "Cadences and budgets");
+/// - the temple's placed-origin recheck reads the newly empty slice as an
+///   unplaced one, so the next read-key press under temple context locates
+///   the panel on its pressed frame (`temple::run::locate_on_miss`, POE-389).
+///   A successful located read remembers the discovered origin through this
+///   module. There is no second temple plate-memory store to clear;
 /// - the merc session HOLDS the frame registration it settled on and carries it
 ///   across every tick that cannot see the frame (`mercenary::run`'s
 ///   `next_fitted_scale` keeps it, `cellfit::apply_held` re-applies it). The

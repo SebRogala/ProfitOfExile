@@ -76,21 +76,14 @@
 //! - an **area** is a state, not a burst: `: You have entered The Temple of
 //!   Atzoatl.` arms with NO deadline, and the next `You have entered` line —
 //!   whatever it names — is what ends it;
-//! - the **panel on screen** is not in Client.txt at all: while the capture
-//!   loop holds the layout panel live — from a sighting until `RETIRE_AFTER`
-//!   consecutive clean misses retire it (two since 2026-09-11, POE-275) — the
-//!   gate stays open ([`arm_source`]'s `panel_live`,
-//!   `super::run::LoopState::live`), whatever
-//!   Client.txt says. That is what lets a Re-arm read finish and retry while the
-//!   player holds the sheet open past the grace;
 //! - **Re-arm** arms for [`MANUAL_ARM_GRACE_MS`], the one deadline left in this
-//!   module.
+//!   module. Since POE-389 a Re-arm arm is not temple context: the read key's
+//!   temple reader (`super::press`) arms only under the two arms above.
 //!
-//! Four things shut it, and each has a word for the app log
-//! ([`StandDown`]): the sheet was read and then closed
-//! ([`ArmState::complete_cycle`], driven by the capture loop), a non-START Alva
-//! line, a `You have entered <not the temple>` line, and Re-arm's grace running
-//! out.
+//! Three things shut it, and each has a word for the app log ([`StandDown`]):
+//! a non-START Alva line, a `You have entered <not the temple>` line, and
+//! Re-arm's grace running out. The screen is no input since POE-389: nothing
+//! looks between presses, so nothing can see a sheet open or close.
 //!
 //! # There are no tails any more (2026-09-07, WI-1)
 //!
@@ -101,66 +94,10 @@
 //! already stop OCRing, hide the explanation, keep the diamond overlay, and upon
 //! stop encounter, we hide the diamond overlay."*
 //!
-//! What replaces them is a CYCLE rather than a clock: the START arm holds
-//! indefinitely, the loop reads the board once, and the retire after that read
-//! completes the cycle and stands the capture down
-//! (`super::run::cycle_complete`). The retire is the second consecutive clean
-//! miss since 2026-09-11 (POE-275, owner — `super::run::RETIRE_AFTER`); from
-//! WI-1 until then it was the first. A sheet closed BEFORE a read completed does
-//! not complete anything — the loop keeps probing, which is the case the tails
-//! were really covering.
-//!
-//! The accepted cost, owner-decided 2026-09-07: reopening the sheet later in the
-//! SAME incursion shows no offer boxes until Re-arm, because nothing is looking
-//! any more. The room diamond is unaffected — it lives with the incursion, not
-//! with the capture (POE-248).
-//!
-//! What POE-246 measured still holds and is what `panel_live` keeps. MEASURED on
-//! the laptop, 2026-09-03, on the build POE-242 shipped:
-//!
-//! - 14:30:24 `capture armed by Re-arm` → 14:36:14 `layout panel found` →
-//!   14:37:00 `capture stood down — waiting for Alva`, **with the layout panel
-//!   still open on screen**. The overlay went with the status — `waiting` is not
-//!   in the webview's `OVERLAY_VISIBLE_STATUSES` — so the advice vanished out
-//!   from under a player who was reading the board it described.
-//! - 17:28:31 the module was toggled off and on with the panel already open and
-//!   Alva silent: `capture loop started`, then `capture stood down` in the same
-//!   second. Owner: *"it blinked and disappeared"*.
-//!
-//! Both are one bug: nothing asked the SCREEN. The gate therefore still reads
-//! whether the loop's last tick found the panel, and the trust that buys is
-//! unchanged — a detector that anchored on background pixels every tick would
-//! hold the gate open with nothing on screen. `anchor::NCC_FLOOR` is what that
-//! rests on, and it is the same floor the read itself is believed on. What WI-1
-//! changed is the clock behind it: `panel_live` is one tick (650 ms at
-//! `super::run::DETECT_INTERVAL`), not two minutes. Two ticks since 2026-09-11
-//! (POE-275): `panel_live` survives one held miss and goes on the second
-//! consecutive one.
-//!
-//! # The start-up probe
-//!
-//! A gate that reads the screen has to look at least once. A module switched on
-//! — or an app started — with the panel already open has no Client.txt event
-//! coming (the 17:28:31 line above is that case), so the first detect tick a
-//! loop runs is not gated on the arm at all: [`ArmSource::StartupProbe`] opens
-//! the gate for exactly one tick and what that tick sees decides the rest. It
-//! anchors, the panel is live and the gate stays open on it; it finds nothing,
-//! the next iteration stands down.
-//!
-//! ONE tick per loop start, spent whatever the tick found — by
-//! `super::run::LoopState::on_detect` on a tick that looked and by
-//! `super::run::LoopState::on_blind_tick` on a tick whose grab failed,
-//! **including a tick that could not look at all**.
-//! That is deliberate: the alternative is a loop that keeps the gate open for
-//! the whole session on a machine whose capture never succeeds, which is the
-//! free-running capture with an error message on it. The cost is that a single
-//! transient grab failure at module start costs the probe, and Re-arm is the
-//! recovery. `temple_rearm` does not re-arm it and does not need
-//! to: the button already arms the capture for [`MANUAL_ARM_GRACE_MS`], which is
-//! a longer version of the same look. Keying the probe on that counter would be
-//! worse than redundant — every settings command bumps it (see
-//! the temple read gate), so a settings change would start a capture nobody
-//! asked for, which is the behaviour POE-242 removed.
+//! What replaced them was a CYCLE ended by the capture loop watching the sheet
+//! close; POE-389 deleted that loop and its cycle rule with it. A START arm now
+//! holds until an END line or a zone change, and each read-key press under it
+//! reads once.
 //!
 //! Arming never SHORTENS what is already armed ([`TempleArm::arm`]). Since WI-1
 //! retired the voice-line tail the only bid that could shorten anything is
@@ -253,8 +190,7 @@ pub enum ArmReason {
     /// deadline: the start line fires when the portal OPENS, and nothing in the
     /// game times an open portal out — the mining holds one gap of 22 minutes
     /// between a start and its end, the player being away from the PC. What
-    /// ends this arm is an end line, an area change or the completed cycle
-    /// (`super::run::cycle_complete`), never a clock.
+    /// ends this arm is an end line or an area change, never a clock.
     AlvaStart,
     /// The player is inside The Temple of Atzoatl.
     TempleArea,
@@ -285,8 +221,7 @@ impl ArmReason {
 /// EVENTS with no trace left in [`TempleArm`] afterwards — a disarmed arm looks
 /// the same whichever line disarmed it. What the field holds is the cause the
 /// NEXT stand-down reports, so every writer of the arm sets it: the two
-/// disarming lines in [`apply_line`], [`ArmState::complete_cycle`], and
-/// [`ArmState::arm_manual`], which sets [`Self::GraceOver`] up front because the
+/// disarming lines in [`apply_line`] and [`ArmState::arm_manual`], which sets [`Self::GraceOver`] up front because the
 /// grace expiring is the one stand-down no event announces.
 ///
 /// The two deadline-free arms ([`ArmReason::AlvaStart`], [`ArmReason::TempleArea`])
@@ -310,61 +245,12 @@ pub enum StandDown {
     GraceOver,
 }
 
-impl StandDown {
-    /// The words the app log uses for this stand-down.
-    pub fn label(self) -> &'static str {
-        match self {
-            // The wording POE-242 shipped, kept verbatim: it is what
-            // `docs/OVERLAY-GUIDE.md` smoke item 12 tells the runner to look
-            // for.
-            StandDown::Waiting => "waiting for Alva",
-            StandDown::CycleComplete => "the sheet was read and closed",
-            StandDown::AlvaLine => "Alva's line",
-            StandDown::LeftArea => "the zone changed",
-            StandDown::GraceOver => "Re-arm's grace is over",
-        }
-    }
-}
-
-/// Why the capture loop is looking — [`arm_source`]'s answer, and the app log's
-/// whole vocabulary for the gate.
-///
-/// [`ArmReason`] is the Client.txt half: the two ways a LINE can put an
-/// incursion in scope, plus Re-arm. The other two answers come from the loop
-/// itself and have
-/// no line behind them, which is why this is a second enum rather than two more
-/// variants of the first — a [`TempleArm`] can only ever hold an [`ArmReason`],
-/// and a type that could also hold [`ArmSource::PanelOnScreen`] would be able to
-/// claim Client.txt said something it cannot say.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArmSource {
-    /// Client.txt put an incursion in scope.
-    Trigger(ArmReason),
-    /// The loop's LAST detect tick found the layout panel, or missed it once
-    /// after one that did (`super::run::LoopState::live`, POE-275). Two ticks,
-    /// not a tail — see the module doc's "There are no tails any more".
-    PanelOnScreen,
-    /// The one tick a starting loop runs before it may stand down.
-    StartupProbe,
-}
-
-impl ArmSource {
-    /// The words the app log uses for this source.
-    pub fn label(self) -> &'static str {
-        match self {
-            ArmSource::Trigger(reason) => reason.label(),
-            ArmSource::PanelOnScreen => "the panel on screen",
-            ArmSource::StartupProbe => "the start-up probe",
-        }
-    }
-}
-
-/// Whether the capture loop may look at the screen at all.
+/// Whether an incursion is in scope — what the read key's temple reader
+/// (`super::press`) asks at each press.
 ///
 /// The single owner of that answer, held in `AppState.temple_state.arm` and written
-/// from exactly three places: the Client.txt watcher (every line, whether or not
-/// the module is on), `temple_rearm`, and — since WI-1 — the capture loop when
-/// it has read a board and watched the sheet close ([`complete_cycle`]).
+/// from exactly two places: the Client.txt watcher (every line, whether or not
+/// the module is on) and `temple_rearm`.
 ///
 /// **Written while the module is off, too.** The state is a fact about the
 /// game, not about the module, and keeping it current is what lets a player who
@@ -406,8 +292,7 @@ pub enum Transition {
     /// not "it now reaches further". Silent: Alva speaks several times per
     /// incursion.
     Extended(ArmReason),
-    /// Something ended the arm: an area change, a non-START Alva line, or the
-    /// completed cycle ([`ArmState::complete_cycle`]).
+    /// Something ended the arm: an area change or a non-START Alva line.
     Disarmed,
 }
 
@@ -552,99 +437,6 @@ impl ArmState {
         }
         transition
     }
-
-    /// The capture loop read this incursion's board and has now watched the
-    /// sheet close: the cycle is over, so stop looking (WI-1, owner
-    /// 2026-09-07).
-    ///
-    /// The loop OWNS the observation — it is the only thing that can see a sheet
-    /// close, and `super::run::cycle_complete` is the rule it applies — and this
-    /// owns what the observation does to the gate. What re-opens the gate is the
-    /// next START phrase or Re-arm, both of which arm from `Disarmed` like any
-    /// other resting state.
-    ///
-    /// # The exception, and it is the same one the END line has
-    ///
-    /// A live [`ArmReason::TempleArea`] arm is NOT ended by a completed cycle.
-    /// Inside The Temple of Atzoatl the sheet is the navigation aid and the
-    /// player opens and closes it once per ROOM, with nothing between the rooms
-    /// that moves the board key — no `EnteredTemple` bumps the epoch and the run
-    /// writes no area lines — so a cycle that completed on the first close would
-    /// cost a Re-arm for every remaining room of the run.
-    ///
-    /// That arm ends on leaving the area, as it always has. It is the same
-    /// carve-out [`apply_line`] gives Alva's temple banter and it is keyed the
-    /// same way, on the reason the temple's own area line ASSIGNS.
-    ///
-    /// # `key_current` — the observation is about a cycle that may be over
-    ///
-    /// The loop reads the board key `(temple_epoch, temple_rearm)` at the TOP of
-    /// its tick and reaches this at the BOTTOM, and a tick takes seconds — 5.3 s
-    /// for a cold sweep, ~4 s for a full read on a debug build. A START phrase
-    /// heard inside that window bumps the epoch and arms a fresh cycle; Re-arm
-    /// bumps the counter. Either way the arm this would disarm is no longer the
-    /// arm the sheet closed under, and standing it down would leave the NEXT
-    /// board unread until the player pressed Re-arm.
-    ///
-    /// **Amended 2026-09-11 (POE-275 WI-2):** the cold sweep runs off the loop
-    /// thread since then, so the 5.3 s above is no longer inside a tick. The
-    /// guard stays for the window that is left: the tick's grab and its detect,
-    /// which are what run between the key read and a miss.
-    ///
-    /// So the caller says whether the key it observed is still the current one,
-    /// and a stale observation moves nothing — [`Transition::Ignored`], the same
-    /// word a line that changed nothing gets. A bool rather than the key itself
-    /// keeps the rule testable without an `AppHandle`, as [`arm_source`]'s two
-    /// loop inputs are; `complete_cycle` (the glue) is what reads the two
-    /// counters.
-    pub fn complete_cycle(&mut self, key_current: bool) -> Transition {
-        if !key_current {
-            return Transition::Ignored;
-        }
-        if self.arm.reason() == Some(ArmReason::TempleArea) {
-            return Transition::Extended(ArmReason::TempleArea);
-        }
-        self.stood_down = StandDown::CycleComplete;
-        self.arm.disarm()
-    }
-}
-
-/// The capture loop's whole arm gate: may it look right now, and on whose word.
-///
-/// `None` is stood down, and [`ArmState::stood_down`] is the word for it. The
-/// three inputs are ORed — each is its own reason to look and none can shorten
-/// another — so the order below decides only which source the app log names
-/// ([`super::run::gate_line`]).
-///
-/// Client.txt comes first because a live incursion is what the module exists to
-/// follow and `armed by Alva's start line` is the line the smoke item reads. The
-/// panel comes second, and is what is left of POE-246 after WI-1 retired its
-/// tail: `panel_live` is `super::run::LoopState::live`, which is true from a
-/// sighting until the loop retires the sheet — `super::run::RETIRE_AFTER`
-/// consecutive clean misses, two since 2026-09-11 (POE-275). A player holding
-/// the sheet open therefore keeps the gate open whatever Client.txt says, which
-/// is what lets a Re-arm read finish and retry past the sixty-second grace; a
-/// sheet that closes takes it with them on the second tick after. The probe
-/// comes last because it
-/// is not evidence at all — it is the one look a starting loop owes itself
-/// before it may believe an empty screen.
-///
-/// `probe_pending` is that state machine's unspent first look. Both loop inputs
-/// are plain bools here, so the whole gate is tested on Linux without a screen
-/// or a clock.
-pub fn arm_source(
-    state: ArmState,
-    panel_live: bool,
-    probe_pending: bool,
-    now_ms: u64,
-) -> Option<ArmSource> {
-    if let Some(reason) = state.arm.reason().filter(|_| state.arm.is_armed(now_ms)) {
-        return Some(ArmSource::Trigger(reason));
-    }
-    if panel_live {
-        return Some(ArmSource::PanelOnScreen);
-    }
-    probe_pending.then_some(ArmSource::StartupProbe)
 }
 
 /// The three phrases Alva speaks when a portal OPENS, exactly as Client.txt
@@ -1117,37 +909,6 @@ pub fn arm_manual(app: &AppHandle) {
     let state = app.state::<AppState>();
     let mut arm = state.temple_state.arm.lock().unwrap_or_else(|e| e.into_inner());
     arm.arm_manual(now);
-}
-
-/// The cycle is over: the capture loop read this incursion's board and then
-/// watched the sheet close (WI-1).
-///
-/// The loop's own seam into the arm, and the sibling of [`arm_manual`] — both
-/// are one lock and one call, with the RULE next door: `super::run::cycle_complete`
-/// decides, [`ArmState::complete_cycle`] writes.
-///
-/// `key` is the board key the observation was taken under, read at the top of
-/// the tick that is now reporting the sheet closed. This re-reads the pair
-/// through `super::run::board_key` — the same two counters, in the same order,
-/// under the atomics the loop itself uses — and hands
-/// [`ArmState::complete_cycle`] the comparison, so a cycle that a START line or
-/// a Re-arm has already replaced during the tick is not stood down on the
-/// strength of the cycle before it. See that method for why a whole tick is
-/// long enough for that to happen.
-///
-/// The counters are read BEFORE the arm lock is taken: the window this closes is
-/// the tick's own seconds, and holding the lock across the reads would narrow
-/// nothing (they are atomics, and `on_client_line` bumps the epoch after it has
-/// released this lock).
-///
-/// It logs nothing, for the same reason [`on_client_line`] does not: the
-/// stand-down line has one owner, and it is `super::run::gate_line` on the next
-/// iteration of the loop that called this.
-pub fn complete_cycle(app: &AppHandle, key: (u64, u64)) {
-    let key_current = super::run::board_key(app) == key;
-    let state = app.state::<AppState>();
-    let mut arm = state.temple_state.arm.lock().unwrap_or_else(|e| e.into_inner());
-    arm.complete_cycle(key_current);
 }
 
 /// Seed the arm state from the log the watcher is about to tail.
@@ -1650,248 +1411,6 @@ mod tests {
         assert_eq!(state.stood_down, StandDown::Waiting, "nothing has shut this gate yet");
         apply_line(&mut state, &map_line(NOW + 2_000), NOW + 2_000);
         assert_eq!(state.stood_down, StandDown::LeftArea);
-    }
-
-    // ------------------------------------------------ the completed cycle --
-
-    /// WI-1's own state (owner, 2026-09-07): the loop read the sheet and then
-    /// watched it close, so the arm goes down and the log has a word for why.
-    ///
-    /// Fails if `complete_cycle` leaves the arm alone — the loop would go on
-    /// probing for the rest of the incursion, which is the report this work item
-    /// answers.
-    #[test]
-    fn a_completed_cycle_stands_a_start_arm_down() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &alva_start(NOW), NOW);
-
-        let transition = state.complete_cycle(true);
-
-        assert_eq!(transition, Transition::Disarmed);
-        assert!(!state.arm.is_armed(NOW + 1_000));
-        assert_eq!(state.stood_down, StandDown::CycleComplete);
-    }
-
-    /// A completion whose board key has moved on stands NOTHING down: the tick
-    /// that observed the sheet close read its key seconds ago, and a START
-    /// phrase or a Re-arm inside that window armed a different cycle.
-    ///
-    /// The arm here is the FRESH one — the sheet the observation is about closed
-    /// under the previous key — so disarming it would leave the next incursion's
-    /// board unread until the player pressed Re-arm, with nothing on screen to
-    /// suggest why.
-    ///
-    /// Fails if the guard is dropped, or inverted so that only a stale key
-    /// completes.
-    #[test]
-    fn a_completed_cycle_whose_key_has_moved_on_stands_nothing_down() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &alva_start(NOW), NOW);
-
-        let transition = state.complete_cycle(false);
-
-        assert_eq!(transition, Transition::Ignored);
-        assert!(state.arm.is_armed(NOW + 1_000), "the fresh cycle is still armed");
-        assert_eq!(
-            state.stood_down,
-            StandDown::Waiting,
-            "and the log has not been handed a cause that did not happen",
-        );
-    }
-
-    /// And the next incursion is a fresh one. The completion is a resting state,
-    /// not a latch: a START phrase arms out of it exactly as it does out of
-    /// `Waiting`.
-    ///
-    /// Fails if completion is spelled as anything a later arm has to clear
-    /// explicitly — the module would read one incursion per session and then go
-    /// quiet, with Re-arm the only way back.
-    #[test]
-    fn a_start_phrase_after_a_completed_cycle_arms_a_fresh_one() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &alva_start(NOW), NOW);
-        state.complete_cycle(true);
-
-        let transition = apply_line(&mut state, &alva_start(NOW + 300_000), NOW + 300_000);
-
-        assert_eq!(transition, Transition::Armed(ArmReason::AlvaStart));
-        assert!(state.arm.is_armed(NOW + 300_000));
-    }
-
-    /// The Temple of Atzoatl run is the exception, and it is the same one the
-    /// END line has: the sheet is the navigation aid in there, opened and closed
-    /// once per ROOM, with nothing between the rooms that moves the board key.
-    ///
-    /// Fails if the completion is applied to every arm: the first room's close
-    /// would stand the capture down and every remaining room of the run would
-    /// need a Re-arm to get a board — which is the surface the run is played on.
-    #[test]
-    fn a_completed_cycle_does_not_stand_a_temple_arm_down() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &alva_start(NOW), NOW);
-        apply_line(&mut state, &temple_line(NOW + 1_000), NOW + 1_000);
-
-        let transition = state.complete_cycle(true);
-
-        assert_eq!(transition, Transition::Extended(ArmReason::TempleArea));
-        assert!(state.arm.is_armed(NOW + 3_600_000), "an hour into the run, still armed");
-        assert_eq!(state.stood_down, StandDown::Waiting, "and nothing has shut this gate");
-    }
-
-    /// …and the area line OUT is what does end it, cycle or no cycle. Fails if
-    /// the exception above is written as a latch rather than as a property of
-    /// the live arm — the temple would then hold the gate open into the next
-    /// map.
-    #[test]
-    fn leaving_the_temple_ends_the_arm_a_completed_cycle_spared() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &temple_line(NOW), NOW);
-        state.complete_cycle(true);
-
-        let transition = apply_line(&mut state, &map_line(NOW + 60_000), NOW + 60_000);
-
-        assert_eq!(transition, Transition::Disarmed);
-        assert_eq!(state.stood_down, StandDown::LeftArea);
-    }
-
-    /// Re-arm is the other way back, and it is the one a player reaches for when
-    /// they want the sheet read again inside the SAME incursion — the reopen the
-    /// owner accepted the cost of.
-    ///
-    /// Fails for the same mutation as the test above, through the surface the
-    /// user can actually press.
-    #[test]
-    fn a_rearm_after_a_completed_cycle_arms_again() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &alva_start(NOW), NOW);
-        state.complete_cycle(true);
-
-        state.arm_manual(NOW + 5_000);
-
-        assert!(state.arm.is_armed(NOW + 5_000));
-    }
-
-    // --------------------------------------------- the panel on screen --
-
-    /// The 2026-09-03 bug, as the gate answers it: Client.txt has nothing in
-    /// scope and the sheet is still on screen, so the loop keeps looking.
-    ///
-    /// Fails if the gate reads [`TempleArm`] alone — which is what stood the
-    /// capture down at 14:37:00 over a layout panel the player was reading, and
-    /// took the overlay with it.
-    #[test]
-    fn a_live_panel_keeps_the_loop_armed_with_nothing_in_client_txt() {
-        let state = ArmState::default();
-        assert!(!state.arm.is_armed(NOW), "Client.txt has nothing to say");
-
-        assert_eq!(
-            arm_source(state, true, false, NOW),
-            Some(ArmSource::PanelOnScreen),
-        );
-    }
-
-    /// The case rule 5 of WI-1 names: a Re-arm's sixty seconds have run out and
-    /// the player still has the sheet open, so the read that Re-arm bought may
-    /// finish and retry.
-    ///
-    /// Fails if the panel input is dropped or is ANDed with the arm instead of
-    /// ORed with it — pressing Re-arm and reading a slow board would then go
-    /// blind at the minute mark with the sheet in front of the player.
-    #[test]
-    fn a_live_panel_keeps_a_manual_arm_alive_past_its_grace() {
-        let mut state = ArmState::default();
-        state.arm_manual(NOW);
-        let expired = NOW + MANUAL_ARM_GRACE_MS + 1;
-        assert!(!state.arm.is_armed(expired), "the grace has nothing left");
-
-        assert_eq!(
-            arm_source(state, true, false, expired),
-            Some(ArmSource::PanelOnScreen),
-        );
-    }
-
-    /// POE-242's goal, and WI-1's: nothing in the log and nothing on screen
-    /// means the loop stops looking.
-    ///
-    /// Fails if the panel branch is a constant, or reads "was ever seen" rather
-    /// than "the last tick saw it" — either is the free-running capture POE-242
-    /// removed.
-    #[test]
-    fn a_panel_that_is_no_longer_live_stands_the_loop_down() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &alva_start(NOW), NOW);
-        apply_line(&mut state, &alva_end(NOW + 30_000), NOW + 30_000);
-
-        assert_eq!(arm_source(state, false, false, NOW + 30_001), None);
-    }
-
-    /// A live Client.txt arm is what the log names, even with the panel on
-    /// screen. Fails if the panel branch is tried first — `capture armed by
-    /// Alva's start line` is the line smoke item 12 reads, and it would become
-    /// `by the panel on screen` for every incursion the player has a panel open
-    /// during.
-    #[test]
-    fn a_live_client_txt_arm_is_the_source_the_log_names() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &alva_start(NOW), NOW);
-
-        assert_eq!(
-            arm_source(state, true, false, NOW + 1_000),
-            Some(ArmSource::Trigger(ArmReason::AlvaStart)),
-        );
-    }
-
-    /// Walking out ends CLIENT.TXT's claim on the gate, and after that only a
-    /// sheet the loop's LAST tick saw can hold it open — which is the accepted
-    /// one-tick residual of WI-1 retiring `left_area_ms`.
-    ///
-    /// The tick that carries it is the tick that finds the new zone empty, so
-    /// the gate is shut 650 ms later. Fails if the area line stops disarming, in
-    /// which case the map carries the whole arm rather than one tick of it.
-    /// (two ticks since 2026-09-11, POE-275: `live` survives one held miss)
-    #[test]
-    fn an_area_change_leaves_only_a_live_panel_holding_the_gate() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &alva_start(NOW), NOW);
-
-        apply_line(&mut state, &map_line(NOW + 5_000), NOW + 5_000);
-
-        assert_eq!(
-            arm_source(state, false, false, NOW + 5_000),
-            None,
-            "the zone change stands the loop down",
-        );
-        assert_eq!(
-            arm_source(state, true, false, NOW + 5_000),
-            Some(ArmSource::PanelOnScreen),
-            "and a sheet still live holds the gate until the retire",
-        );
-    }
-
-    // -------------------------------------------------- the start-up probe --
-
-    /// The 17:28:31 case: the module is switched on with the panel already open
-    /// and Alva silent, so nothing in the log will ever arm it. The loop owes
-    /// itself one look before it may believe the screen is empty.
-    ///
-    /// Fails if the probe is dropped from the gate — the module then stands down
-    /// in the same second it started, which is what "it blinked and
-    /// disappeared" was.
-    #[test]
-    fn a_starting_loop_owes_itself_one_look_before_it_may_stand_down() {
-        assert_eq!(
-            arm_source(ArmState::default(), false, true, NOW),
-            Some(ArmSource::StartupProbe),
-        );
-    }
-
-    /// And the look is ONE. A probe that has been spent over a screen with no
-    /// panel on it leaves the loop stood down. Fails if the probe is a constant
-    /// rather than a debt the tick settles — the gate would then never close,
-    /// which is the free-running capture with extra steps.
-    #[test]
-    fn a_spent_probe_that_saw_nothing_leaves_the_loop_stood_down() {
-        assert_eq!(arm_source(ArmState::default(), false, false, NOW), None);
     }
 
     // ---------------------------------------------------------- catch-up --

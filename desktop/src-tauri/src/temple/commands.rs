@@ -554,7 +554,7 @@ fn debug_capture_blocking(
         }
         // The loop's own seam, so the dump's coordinates are the loop's
         // coordinates and not a second conversion that could disagree.
-        match panel::crop_lines(&crop, origin) {
+        match panel::crop_lines(&panel::SystemOcr, &crop, origin) {
             Ok(read) => {
                 dumped.push(DumpRegion {
                     region: name.to_string(),
@@ -626,7 +626,7 @@ fn debug_capture_blocking(
             if let Some(line) = note_write(&mut report, &file, crop.save(dir.join(&file))) {
                 crate::app_log(&app, format!("Temple debug: {line}"));
             }
-            match panel::crop_lines(&crop, origin) {
+            match panel::crop_lines(&panel::SystemOcr, &crop, origin) {
                 Ok(read) => {
                     let texts: Vec<&str> = read.iter().map(|l| l.text.as_str()).collect();
                     let note = format!("{name} — OCR {texts:?}");

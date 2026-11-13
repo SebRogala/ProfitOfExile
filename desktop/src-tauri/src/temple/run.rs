@@ -1,168 +1,58 @@
-//! The temple capture loop (POE-171) — the module's Windows glue.
+//! The temple read worker (POE-171, POE-389) — the module's Windows glue.
 //!
 //! `modules.rs::spawn_temple` delegates here. Like the merc loop, this is a
 //! [`ModuleJoin::Thread`](crate::modules::ModuleJoin::Thread) rather than a
-//! task: screen capture and `Windows.Media.Ocr` are apartment-threaded and
-//! deadlock on the async runtime (see `spawn_gem_scan` in lab/commands.rs). Threads
-//! cannot be aborted, so every wait goes through [`nap`], which polls
-//! `*cancel.borrow()` every 100 ms — two orders under the registry's 5 s
-//! `MODULE_THREAD_POLL_CEILING`.
+//! task: `Windows.Media.Ocr` is apartment-threaded and deadlocks on the async
+//! runtime (see `spawn_gem_scan` in lab/commands.rs). Threads cannot be
+//! aborted, so the worker waits in [`CANCEL_POLL`] slices — two orders under the
+//! registry's 5 s `MODULE_THREAD_POLL_CEILING`.
+//!
+//! # One press, one read (POE-389)
+//!
+//! The module takes no screen grab of its own. The app-wide read key
+//! (`crate::read_hotkey`) grabs one frame per press and hands it to every
+//! armed reader; [`super::press::TEMPLE_READER`] arms only under Client.txt
+//! temple context and sends the frame down the channel this thread installs in
+//! `TempleState.press`. [`worker_loop`] reads each received frame exactly once
+//! ([`read_press`]); between presses nothing is captured. The policy is
+//! normative in docs/OVERLAY-GUIDE.md § "Screen reading (GGG policy)".
+//!
+//! # What one press reads
+//!
+//! One full-resolution windowed NCC at the Entrance origin supplied by
+//! [`crate::ssot::placements`] ([`anchor::detect_cheap`]) is the presence test.
+//! When it misses, [`locate_on_miss`] decides whether the pressed frame is
+//! searched with [`anchor::anchor_for_loop`]'s pyramid: only for a null or
+//! unplaced slice. A placed miss is the sheet not being open, and
+//! Recalibrate is the manual fix for a wrong placement. Nothing is searched on
+//! any frame but the pressed one.
+//!
+//! A hit reads the whole board once — two bounded text crops and two crops per
+//! plate, 28 OCR calls ([`read_board`]) — with no merge and no retry. A press
+//! that finds no panel publishes [`TickOutcome::NoPanel`], which takes the
+//! sheet-bound overlays down.
 //!
 //! # No `#[cfg(windows)]`, on purpose
 //!
-//! The platform difference arrives as an `Err` from three calls —
-//! `capture::capture_screen`, `ocr::recognize_lines`, `ocr::engine_ready` —
-//! each of which already has a non-Windows arm. Gating the loop body as well
-//! would add a second place for the two arms to diverge and would stop the
-//! Linux container compiling the code it is meant to protect. This follows
-//! `mercenary::run`, which does the same.
-//!
-//! # Before any of it: the arm gate (POE-242, POE-246)
-//!
-//! The four gates below are all *inside* a tick. Ahead of them sits the one
-//! that decides whether a tick runs at all: the loop captures only while
-//! something has put an incursion in scope ([`super::trigger::arm_source`]).
-//! Until then it publishes [`TempleStatus::Waiting`] once and naps — no
-//! capture, no correlation, nothing. The module being ON is not the trigger.
-//!
-//! Three things open it, and only the first is Client.txt's: Alva's START line
-//! or the temple area, the layout panel this loop's last tick SAW
-//! ([`LoopState::live`], POE-246), and the one probe tick a starting loop runs
-//! before it may believe an empty screen ([`LoopState::probe_pending`]). The
-//! panel input is what stops a stand-down landing on a sheet the player is still
-//! reading — measured 2026-09-03, before it existed, the overlay went off a
-//! panel that was open.
-//!
-//! # What shuts it, and the cycle that WI-1 added (2026-09-07)
-//!
-//! Client.txt shuts it on a non-START Alva line or a zone change
-//! ([`super::trigger::apply_line`]). The fourth way is this loop's own, and it
-//! is the owner's rule that there are no tails any more: once a board has been
-//! READ, the retire after it — the sheet closing — completes the cycle and the
-//! loop stops capturing entirely ([`cycle_complete`],
-//! [`super::trigger::ArmState::complete_cycle`]). A sheet closed BEFORE any read
-//! completed does not complete anything: the loop keeps probing, because the
-//! sheet it was armed for has not been read yet.
-//!
-//! The retire is the SECOND consecutive clean miss since 2026-09-11 (POE-275,
-//! owner — [`RETIRE_AFTER`]); from WI-1 until then it was the first. The miss
-//! before it is a held miss ([`DetectOutcome::HeldMiss`]): it publishes
-//! nothing ([`miss_publish`]), keeps [`LoopState::live`] and with it the gate,
-//! and completes nothing — one miss is a misread or a tooltip over the plate,
-//! not a close.
-//!
-//! The offer boxes come down on the retiring miss ([`miss_publish`] answers
-//! [`TickOutcome::NoPanel`] there) and the room diamond survives it (POE-248),
-//! so what the completion adds is the capture stopping. Accepted cost, owner
-//! 2026-09-07: reopening the sheet later in the same incursion shows no boxes
-//! until Re-arm, because nothing is looking any more.
-//!
-//! [`loop_step`] is that gate plus the focus check and the cadence check, as
-//! one pure function, so the property that matters ("a disarmed loop never
-//! reaches `capture_screen`") is a property of the step rather than of a
-//! status.
-//!
-//! # Two gates before an expensive read (POE-249, POE-269)
-//!
-//! A full read is 28 OCR calls: two bounded text crops and two per plate for
-//! all 13. The detect half therefore does one full-resolution, windowed NCC at
-//! the Entrance origin supplied by [`crate::ssot::placements`]. That recheck is
-//! both the panel-presence test and the only steady-state anchor work.
-//!
-//! A score below [`anchor::NCC_FLOOR`] is a miss. When the slice is null or has
-//! no anchored Entrance origin, the loop counts its consecutive clean misses and
-//! starts a cold sweep on every [`NULL_SWEEP_EVERY`]-th of them, up to
-//! [`NULL_SWEEP_CAP`] sweeps per `(temple_epoch, temple_rearm)` key (POE-275
-//! WI-2, owner 2026-09-11). Until then the FIRST such miss per key spent the one
-//! sweep — before the sheet could be open — and a sweep that found nothing left
-//! the key spent, so the player needed Re-arm or Recalibrate. If a sweep finds an
-//! anchor whose proposed slice is withheld, the cadence goes on once; a second
-//! withheld result ends that key's null sweeps until the key changes. A placed
-//! board gets one explicit fallback sweep per key only under the Manual arm
-//! (Re-arm): a miss under AlvaStart or TempleArea is the sheet not being open
-//! yet, not a wrong placement — see [`cold_sweep_reason`]. No sweep starts over a
-//! live panel. A sweep that finds another origin logs the contradiction, uses
-//! that origin for this read, and the successful read remembers it through the
-//! SSOT effects seam. The null-slice cadence is the only sweep cadence; there is
-//! no moving-origin budget or session plate memory. The per-key budget is
-//! sufficient because the shared slice is corroborated across modules (ADR-020),
-//! while the placed origin is verified on every tick by the recheck.
-//!
-//! The OCR gate remains independent: [`LoopState::gate`] compares the board key,
-//! pays for the read and its bounded [`RETRIES`] partial rounds, and re-shows a
-//! board whose read is done — clean, or the budget spent — as LOCKED (POE-282).
-//! A moved [`slice::BoardFrame`] is a new board only before the lock; a locked
-//! board keeps its read and its geometry until START, END, a zone change or
-//! Re-arm. [`LoopState::on_detect`]
-//! and [`publish_anchor_scale`] still run before that gate on every sighting.
-//!
-//! # The detect cadence
-//!
-//! Every [`DETECT_INTERVAL`] the loop captures and runs the placed-origin
-//! recheck. Its NCC and elapsed milliseconds are logged once for the first
-//! placed recheck that anchors in a session. A successful read logs [`read_timings_line`];
-//! these timings are measurements, not gates.
-//!
-//! # The cold fallback (POE-234, POE-269, POE-275)
-//!
-//! [`cold_sweep`] uses [`anchor::anchor_for_loop`]'s coarse-to-fine pyramid
-//! only on the explicit fallback paths above. A null or unplaced screen slice
-//! spends it every [`NULL_SWEEP_EVERY`] consecutive clean misses, up to
-//! [`NULL_SWEEP_CAP`] times per `(temple_epoch, temple_rearm)` key; a second
-//! found-but-withheld result ends that key's null sweeps until it changes. A
-//! placed miss spends it once per the same key under the Manual arm (Re-arm)
-//! only, since 2026-09-09 — until then any trigger arm could.
-//!
-//! Since 2026-09-11 (POE-275 WI-2, owner) the sweep runs on a thread of its own
-//! over its own frame ([`SweepSlot`]), one at a time, and the loop goes on
-//! ticking at [`DETECT_INTERVAL`] while it searches. Until then it ran inside the
-//! tick and no tick ran for its whole duration: 5.3 s in the release container,
-//! ~30 s on the PC's debug build (app.log 2026-09-08/09). A placed recheck that
-//! anchors mid-sweep cancels it and its origin wins; a key change, a stand-down
-//! and the module stopping cancel it too. A sweep that FOUND the panel is read
-//! only after a later capture confirms its origin ([`confirm_swept`]), because
-//! the sheet can close during a multi-second search. Every sweep writes one
-//! [`sweep_line`] when it ends — the measurement the two numbers above are to be
-//! corrected from.
-//!
-//! # The exhaustive sweep is not reachable from here
-//!
-//! `anchor::anchor_with_hint`'s last resort is `anchor::full_sweep`, measured
-//! at 28.4 s in the container and 347.8 s on the laptop. Every anchoring call
-//! in this file goes through [`cold_sweep`] and [`anchor::anchor_for_loop`],
-//! whose pyramid sweep is the explicit fallback. The exhaustive one stays
-//! reachable from `super::commands::temple_debug_capture`, where a user pressed
-//! a button and is waiting for it.
-//!
-//! The two timings above were taken by [`anchor::detect_cheap`]'s own
-//! measurement, described in that function's note: `cargo test --release --lib`
-//! on the Linux container, over deterministic noise cut to each committed board
-//! fixture's dimensions. A **release** build — the ratio holds in debug but the
-//! absolute numbers do not.
+//! The platform difference arrives as an `Err` from `ocr::recognize_lines` and
+//! `ocr::engine_ready`, each of which already has a non-Windows arm, so the
+//! Linux container compiles and tests the code it is meant to protect.
 //!
 //! # Every OCR crop is bounded
 //!
-//! No path here hands a whole frame to [`crate::capture::preprocess_for_ocr`].
-//! That function upscales 2× unconditionally, so a 4K capture would become a
-//! 33 Mpx buffer per tick; `capture.rs` states the invariant this module has to
-//! keep ("the live capture paths crop from the primary monitor, so dimensions
-//! stay bounded"). All three ROIs — [`panel_rect`], [`remaining_rect`] and
-//! [`diamond_rect`] — are placed from the anchor's origin and scale, so each
-//! stays a fixed size in reference px whatever the monitor is, and each lands
-//! where the game drew the panel rather than where the capture happens to end.
-//! [`full_read`] prints all three, once per distinct value (`Temple: rois …`),
-//! which is what makes a fallback traceable to a rect from `app.log` alone.
-//!
-//! On top of those, `temple_rearm` bumps a counter the gate watches, which is
-//! the user's own escape when a read looks wrong.
+//! No path here hands a whole frame to [`crate::capture::preprocess_for_ocr`],
+//! which upscales 2× unconditionally. All three ROIs — [`panel_rect`],
+//! [`remaining_rect`] and [`diamond_rect`] — are placed from the anchor's origin
+//! and scale, so each stays a fixed size in reference px whatever the monitor
+//! is. [`read_press`] prints all three once per distinct value
+//! (`Temple: rois …`).
 //!
 //! # Read-only, always
 //!
 //! This module reads the screen. It never moves the cursor and never sends
 //! input — injecting input into the PoE client is against GGG's ToS.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use image::DynamicImage;
@@ -175,638 +65,33 @@ use crate::AppState;
 use super::anchor::{self, CheapHint};
 use super::lattice::{self, Lattice};
 use super::markers;
-use super::panel::{self, SystemOcr};
+use super::panel::{self, SystemOcr, TextRecognizer};
+use super::press::PressedFrame;
 use super::reader::{self, TempleLayout};
 use super::slice::{self, TempleSettings, TempleSlice, TempleStatus};
-use super::trigger;
 
-/// Loop quantum. Every wait is built out of these, so a stop signal is honoured
-/// within one of them whatever the cadence above it says.
-const TICK: Duration = Duration::from_millis(100);
-/// Presence-tick cadence: how often the loop looks for (or re-checks) the
-/// layout panel. One anchor match plus one beam-sampling pass, no OCR.
-///
-/// 650 ms, owner-decided (docs/TEMPLE-LIFECYCLE.md, "Owner decisions"): the
-/// sheet is on screen for as long as the player is reading it, and the tick is
-/// what both hides the sheet-bound overlays after it closes and notices it
-/// opening. A second of either is a second of the overlay disagreeing with the
-/// screen. It is affordable at this rate because it is *only* the cheap half —
-/// since POE-249 an anchored tick no longer implies OCR (see [`LoopState::board`]).
-const DETECT_INTERVAL: Duration = Duration::from_millis(650);
-/// A cheap detect tick slower than this is LOGGED — [`slow_tick_line`], at most
-/// one line per [`SLOW_TICK_LOG_EVERY`] — and nothing else.
-///
-/// It is [`DETECT_INTERVAL`] on purpose: a tick that takes longer than the
-/// cadence is the loop running below its nominal rate, which is the one fact
-/// about a tick worth a line. It is a MEASUREMENT, never a switch.
-///
-/// # There is no slow-machine backoff (owner decision, 2026-09-06)
-///
-/// Until 2026-09-06 a cheap tick over 1.5 s backed the cadence off to 3 s for
-/// the life of the thread. The one time it fired on the PC (app.log,
-/// `2026-09-06 21:57:12`, 1519 ms) it was a single screen-capture stall as a
-/// fight started, and it cost every later incursion of that session up to 3 s
-/// of detect latency — the sheet had to wait for a 3 s tick to be seen. The
-/// owner's rule replaces it: *"if the cheap probe is really cheap — we can just
-/// straight go to it"* (docs/TEMPLE-LIFECYCLE.md, "Owner decisions").
-///
-/// Nothing is lost for correctness. The loop is self-pacing, and it sleeps the
-/// interval AFTER the tick rather than around it — `last_detect` is stamped when
-/// `tick` returns — so a slow tick already delays the next one by its whole
-/// duration, and a machine that cannot hold 650 ms runs at tick + 650 ms per
-/// detect. What that costs is CPU while ARMED, which POE-242 bounds to Alva's
-/// window.
-const SLOW_TICK: Duration = DETECT_INTERVAL;
-/// At most one slow-tick line per this much wall time. A machine that is slow
-/// on EVERY tick would otherwise write one line per tick into `app_log`'s
-/// 50-entry buffer; the file log is append-only either way.
-const SLOW_TICK_LOG_EVERY: Duration = Duration::from_secs(10);
-/// At most one [`locked_sighting_line`] per this much wall time (POE-282). The
-/// same value as [`SLOW_TICK_LOG_EVERY`] for the same reason: `app_log` keeps
-/// 50 entries, and a changed sighting repeats on every tick while a tooltip or
-/// a drag lasts, so one line per tick would empty it in about half a minute.
-const LOCKED_SIGHTING_LOG_EVERY: Duration = Duration::from_secs(10);
-/// How long to idle between focus checks while the game is not focused.
+/// How often a waiting worker checks its stop signal, and the slice every
+/// other wait is built from.
+const CANCEL_POLL: Duration = Duration::from_millis(100);
+/// How long an `unavailable` module idles between stop checks.
 const UNFOCUSED_NAP: Duration = Duration::from_millis(1000);
-/// Distinct error messages logged before the loop stops repeating itself. The
-/// failure path re-runs on every tick and an error carrying a varying number is
-/// a different string every time, so without a cap one loop could fill the
-/// 50-entry LOGS buffer on its own.
+/// Distinct error messages logged before the worker stops repeating itself. An
+/// error carrying a varying number is a different string every time, so
+/// without a cap one session could fill the 50-entry LOGS buffer on its own.
 const MAX_DISTINCT_ERRORS: usize = 12;
-/// Consecutive failed anchors that retire a live panel.
-///
-/// **Two since 2026-09-11** (POE-275, owner) — the last section below; the
-/// sections before it are the history of one, left standing.
-///
-/// **One, since POE-249** (docs/TEMPLE-LIFECYCLE.md row 3: hide every
-/// sheet-bound overlay on the first miss). Two was the number when a retire
-/// re-armed the read gate — a panel briefly lost mid-fade cost a full 28-call
-/// re-read on the way back, so the second miss was worth waiting for. Neither
-/// half of that is true any more: [`miss`] already publishes
-/// [`TickOutcome::NoPanel`] on the FIRST clean miss, so the overlays came down
-/// then regardless, and a reopened sheet inside the same incursion re-shows
-/// what was read instead of reading again ([`LoopState::board`]).
-///
-/// So what two bought was not a delayed hide — it was [`LoopState::live`], the
-/// `layout panel gone` log line and the arm gate's view of the panel
-/// disagreeing with the status the user could see, for one tick. One makes them
-/// agree.
-///
-/// # What WI-1 added to it (2026-09-07)
-///
-/// The retire is now also what ENDS THE CYCLE once a board has been read
-/// ([`cycle_complete`]), so the constant decides how long a sheet may drop out
-/// of the anchor's sight before the loop concludes the player closed it — and
-/// the conclusion is no longer recoverable by looking again, because the loop
-/// stops looking.
-///
-/// The residual is one anchor miss over a sheet that is still open: the offer
-/// boxes hide (which [`miss`] already did on the first clean miss at two as
-/// well) and, unlike before, do not come back on the next tick. It is bounded
-/// by the same Re-arm the owner accepted the reopen cost against, and it is
-/// bounded on the read side too — the board itself is already published, so what
-/// is lost is the boxes rather than the advice or the room widget. Raising the
-/// constant would trade that for a stand-down the player waits an extra tick for
-/// after every sheet they really did close, which is the thing POE-249 measured
-/// and shortened.
-///
-/// # Two, since 2026-09-11 (POE-275, owner)
-///
-/// *"RETIRE_AFTER goes from 1 to 2 - one missed probe is easy to get (a
-/// misread, a tooltip over the plate) and must neither hide the sheet-bound
-/// overlays nor end the cycle; two consecutive misses do both."* It reverses the
-/// POE-249 rule and the WI-1 residual above.
-///
-/// The constant alone did not deliver it, because [`miss`] published
-/// [`TickOutcome::NoPanel`] on every clean miss. The first miss over a live
-/// panel is now [`DetectOutcome::HeldMiss`], which publishes nothing
-/// ([`miss_publish`]): the status the last sighting wrote stays on the slice,
-/// and [`LoopState::live`] — with it the arm gate — stays true. The second
-/// consecutive miss retires the panel, takes the sheet-bound overlays down and,
-/// over a board already read, completes the cycle. A sighting between the two
-/// resets the count; a failed grab does not touch it.
-///
-/// What the second miss costs: a sheet the player really did close hides its
-/// overlays and stands the capture down one [`DETECT_INTERVAL`] tick (650 ms)
-/// later than it did at one.
-const RETIRE_AFTER: u8 = 2;
-/// Consecutive clean misses on a null or unplaced screen slice that start the
-/// next cold sweep (POE-275 WI-2, owner 2026-09-11) — [`cold_sweep_reason`].
-///
-/// Three: about 2 s of recheck at [`DETECT_INTERVAL`]. The count restarts when a
-/// sweep STARTS and does not move while one is in flight, so the next sweep
-/// needs three misses after the last one ended rather than following it
-/// back-to-back (a 5.3 s sweep spans eight ticks). A held miss, a retire and a
-/// failed grab do not count; a sighting starts the count again.
-///
-/// A placed recheck that anchors on a screen with no ANCHORED origin — the seed
-/// was right — ENDS the key's null sweeps ([`SweepBudget::on_recheck`]): a sweep
-/// under that key could only find what the recheck found, and without the end
-/// the cadence would restart after every close in the same key.
-///
-/// Why not one, which was the rule until 2026-09-11: the first miss after
-/// Alva's start line is the sheet not being open yet, and on a null slice the
-/// sweep it spent was the key's only one — with no hint `anchor::detect_cheap`
-/// then answers `Nothing` for the rest of the key, and the player needed
-/// Re-arm or Recalibrate (the owner's friend hit exactly this on a first run).
-///
-/// Provisional, like [`NULL_SWEEP_CAP`]: both are to be corrected from the
-/// per-sweep [`sweep_line`] in `app.log`.
-const NULL_SWEEP_EVERY: u8 = 3;
-/// Null-slice cold sweeps one `(temple_epoch, temple_rearm)` key may start
-/// (POE-275 WI-2). A key change — Re-arm, a new epoch — resets it together with
-/// the [`NULL_SWEEP_EVERY`] count.
-///
-/// Ten bounds what an unplaceable screen costs one incursion: ten sweeps
-/// (53 s of one core in the release container) spread over at least
-/// 10 × 3 ticks of recheck between them. The cost of that bound: a sheet opened
-/// after the cap is spent — about 70 s after the start line on the release
-/// figure, about 5 min on the PC's debug build, while the portal wait is
-/// unbounded — is not found until Re-arm starts a fresh key
-/// (docs/TEMPLE-LIFECYCLE.md's residual). Provisional — see [`NULL_SWEEP_EVERY`].
-const NULL_SWEEP_CAP: u8 = 10;
 
-/// Spawn the capture loop. Called through `MODULES` — see `modules.rs`.
+/// Spawn the read worker. Called through `MODULES` — see `modules.rs`.
 pub fn spawn(app: AppHandle, cancel: watch::Receiver<bool>) -> ModuleJoin {
-    ModuleJoin::Thread(std::thread::spawn(move || run_loop(app, cancel)))
-}
-
-// ---------------------------------------------------------------------------
-// Pure pieces
-// ---------------------------------------------------------------------------
-
-/// The loop's panel state machine: when a panel that has stopped anchoring has
-/// been missing long enough to retire.
-///
-/// Separated from the loop so the rule — retire after [`RETIRE_AFTER`] misses —
-/// is testable without a screen or a clock. Same shape as
-/// `mercenary::run::LoopState`, deliberately: the two loops solve the same
-/// cadence problem and a second shape would be a second thing to reason about.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct LoopState {
-    /// A layout panel is on screen — the loop's LAST detect tick found one, or
-    /// (since 2026-09-11, POE-275) missed it once after a tick that did: a held
-    /// miss ([`DetectOutcome::HeldMiss`]) leaves this set, and only the retire
-    /// after [`RETIRE_AFTER`] consecutive clean misses clears it.
-    ///
-    /// Since WI-1 (2026-09-07) this is also the arm gate's whole view of the
-    /// screen ([`trigger::arm_source`]'s `panel_live`): a sheet the player is
-    /// holding open keeps the loop armed whatever Client.txt says, and the tick
-    /// that retires it is the one that takes the gate with it. The 120 s
-    /// `panel_seen_ms` clock POE-246 measured this with is retired — see the
-    /// module doc.
-    pub live: bool,
-    /// Consecutive failed anchors since the last successful one.
-    ///
-    /// A live count again since 2026-09-11 (POE-275): at [`RETIRE_AFTER`]
-    /// `= 2` a first clean miss over a live panel leaves it at `1`
-    /// ([`DetectOutcome::HeldMiss`]) and the second retires the panel and zeroes
-    /// it. A sighting zeroes it; a failed grab ([`Self::on_blind_tick`]) leaves
-    /// it alone. From POE-249 until then it was only ever `0`, the constant
-    /// being `1`.
-    pub misses: u8,
-    /// Whether the one detect a starting loop runs before it may stand down has
-    /// been spent (POE-246 — see `trigger`'s start-up probe note).
-    ///
-    /// Spelled as SPENT rather than pending so `Default` still derives to the
-    /// right answer: a loop that has run no tick owes one.
-    pub probe_spent: bool,
-    /// The board this loop has already read, and what it still owes it
-    /// (POE-249). `None` until the first completed read.
-    ///
-    /// The OCR gate's whole state. See [`BoardRead`] for the key and
-    /// [`Self::wants_read`] for the rule; the read's PAYLOAD is not here but on
-    /// `Session::kept`, because this struct is `Eq` and cheap and a
-    /// [`slice::KeptRead`] is neither.
-    pub board: Option<BoardRead>,
-}
-
-/// What the loop read for one board, and how much of a retry budget is left.
-///
-/// # The identity is `(epoch, rearm)` PLUS the pixel frame
-///
-/// `epoch` is `crate::temple::TempleState::epoch`, bumped when Alva speaks or the
-/// player changes zone — the two events that BRACKET an incursion cycle
-/// (POE-249 WI-1, docs/TEMPLE-LIFECYCLE.md row 4). Only an incursion adds a room
-/// or an upgrade, and `super::trigger::ends_epoch` bumps on the START line as
-/// well as the END one, so a completed incursion always has a bump on each side
-/// of it. A kill mid-incursion does not change the temple sheet during an Alva
-/// encounter (Operator, 2026-10-10), so the contents the read saw hold until
-/// the END line — see "what is left" below for the superseded kill residual.
-///
-/// `rearm` is `crate::temple::TempleState::rearm`, which the Re-arm button and
-/// every settings command bump. It is in the key because the user pressing it
-/// means "read that again" — a frame could not express that, and this is
-/// the accepted cost of an epoch that a MISSED Alva line would leave running
-/// (measured 1 orphan in 342 lines; the manual override is the answer).
-///
-/// # Why the key alone is not enough
-///
-/// The key is blind to everything that moves INSIDE one epoch, and three things
-/// do. The player walks to the next room, which moves `layout.current` — the
-/// Temple of Atzoatl run, where the sheet is the navigation aid and no
-/// `EnteredTemple` bumps anything. A corridor the beam could not see resolves,
-/// which moves `layout.doors`. The game window is dragged or the UI scale
-/// changes, which moves `origin`/`scale`. Before the lock, treating the key
-/// alone as retry identity would keep the previous read for partial-round
-/// planning. `slice::merge_reads` would then reject the moved frame and
-/// return that partial round alone, discarding the kept readings.
-///
-/// So the identity carries a [`slice::BoardFrame`] as well: what the sheet says
-/// (`current`, `doors`, `uncertain`, compared exactly) and where it says it
-/// (`origin`, `scale`, compared inside a BAND). It is pixels-only, so it costs
-/// the one anchor match this tick has already paid for. BEFORE the lock
-/// ([`Self::locked`]), a frame that moved is read without merging the old
-/// read. Changed content starts a whole [`RETRIES`] budget; a geometry-only
-/// move carries the remaining budget unchanged (`LoopState::note_read`).
-/// Once the read is done the board is locked (POE-282, owner 2026-10-09: the
-/// sheet does not change during the encounter): it keeps its read and its
-/// geometry until START, END, a zone change or Re-arm, and a walk, a hover, a
-/// drag or a rescale re-shows it. Inside a Temple of Atzoatl run that means
-/// the locked board re-shows in every later room, and Re-arm reads the new one.
-///
-/// It is not the OLD gate. That one hashed the panel TEXT too, so it needed the
-/// 28 OCR calls to compute what it was deciding whether to spend, and it was
-/// fooled in both directions: a re-drawn frame moved the hash and bought a
-/// re-read, and a kill that changed nothing the hash covered was invisible. The
-/// key answers the second; the frame answers only what pixels can see, and its
-/// band is what stops the first.
-///
-/// # The band, and what is left outside it
-///
-/// Inside [`slice::FRAME_ORIGIN_TOLERANCE`] px and
-/// [`slice::FRAME_SCALE_TOLERANCE_DENOM`]'s one per cent, the sheet has not
-/// moved — it has been re-found by a correlation over a frame the game is still
-/// drawing. Beyond it the window was dragged or the UI was rescaled, and every
-/// ROI this read placed is somewhere else. That difference matters only BEFORE
-/// the lock, where it decides whether a read is a retry or a new board (see
-/// [`LoopState::note_read`]). A locked board re-shows on both sides of the band
-/// and keeps its read and its geometry until START, END, a zone change or
-/// Re-arm — so after a drag its overlays stay where the read put them, and
-/// Re-arm is the fix.
-///
-/// One thing is left outside both halves: an origin that moves. The kill
-/// paragraph below is kept as history.
-///
-/// **Superseded 2026-10-10 by the Operator:** a kill mid-incursion does not
-/// change the temple sheet during an Alva encounter, so the locked read stays
-/// correct until the END line. The original paragraph follows.
-///
-/// **The kill, mid-incursion.** The architect dies between the START line and
-/// the END line, so it lands inside one epoch: a plate changes name or tier and
-/// both offers are replaced, and none of it is something the frame can see —
-/// `current`, `doors` and `uncertain` are untouched and the panel has not moved.
-/// A sheet reopened without walking anywhere therefore re-shows the PRE-kill
-/// board until the END line bumps the epoch. The answer is Re-arm, which is half
-/// the key and exists for exactly the cases neither half can see. This is the
-/// same shape as the missed-Alva-line orphan above and is bounded the same way:
-/// one incursion, ended by a line the loop is already watching for.
-///
-/// **An origin that moves.** Before the lock, a frame outside the origin or
-/// scale band is a new board position and is read from the newly resolved
-/// anchor. It receives the ordinary read/retry rules; there is no separate
-/// geometry-only cap. A locked board keeps its read and its geometry until
-/// START, END, a zone change or Re-arm.
-///
-/// A MAP-side reopen is not sighted, and that is the design rather than a
-/// defect: the cycle completed when the sheet closed and the loop stood down, so
-/// nothing is looking. Re-arm is the way back and it forces a READ — it is half
-/// the key — so it produces the `layout panel found` line and never the `back`
-/// one. See docs/TEMPLE-LIFECYCLE.md's residual, and OVERLAY-GUIDE.md's smoke
-/// item, which is written against the temple run for this reason.
-///
-/// [`slice::merge_reads`] tests the SAME frame with the SAME predicate, so a
-/// retry this gate lets through as one board is one the merge will fold rather
-/// than discard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BoardRead {
-    /// `(temple_epoch, temple_rearm)` when this read was taken.
-    pub key: (u64, u64),
-    /// The frame this read was taken at — the half of the identity the key
-    /// cannot see. See the type's note.
-    pub frame: slice::BoardFrame,
-    /// The status [`slice::project`] wrote — [`TempleStatus::Read`], or
-    /// [`TempleStatus::NoCurrentRoom`] for a sheet opened between rooms. It is
-    /// what [`TickOutcome::Reshown`] puts back on a reopen, so the badge a
-    /// reopened sheet shows is the one its own read produced rather than a
-    /// guess.
-    pub status: TempleStatus,
-    /// Whether some region of that read did not come out clean
-    /// ([`slice::unclean`]).
-    pub unclean: bool,
-    /// Reading rounds still owed to an unclean board.
-    ///
-    /// Spent by a RETRY — a read of the same board in the same place — and by
-    /// nothing else. A geometry-only move carries it across unchanged; see
-    /// [`LoopState::note_read`]. What a retry round actually OCRs is
-    /// [`slice::plan_read`]'s answer and is usually a fraction of a full read;
-    /// this budget bounds the ROUNDS, not the calls.
-    pub retries_left: u8,
-}
-
-impl BoardRead {
-    /// Whether this read is DONE — the POE-282 lock: it came out clean, or its
-    /// [`RETRIES`] budget is spent.
-    ///
-    /// A locked board is the board for the rest of its key (owner, 2026-10-09:
-    /// the sheet does not change during the encounter). [`LoopState::gate`]
-    /// re-shows it whatever the frame says, and only a new key — START, END,
-    /// a zone change, Re-arm or a settings change — releases it.
-    pub fn locked(&self) -> bool {
-        !self.unclean || self.retries_left == 0
-    }
-}
-
-/// Extra reading rounds an UNCLEAN board is worth, on top of the first.
-///
-/// Two, owner-decided — docs/TEMPLE-LIFECYCLE.md row 2, and restated
-/// 2026-09-07: *"We do up to 2 more rounds of temple reading, but only for the
-/// parts that was previously not clear, so we in fact do 3 reading rounds
-/// total."* The failures a retry recovers are the ones a redraw fixes — OCR
-/// over a half-drawn panel, a plate the game was still fading in — and those
-/// are gone by the second look. Past that the cause is the read itself (a plate
-/// name outside the vocabulary, a diamond the selection frame covers) and
-/// paying for it every 650 ms for the rest of the incursion buys nothing.
-///
-/// The second half of the quote is [`slice::plan_read`]: rounds 2 and 3 re-read
-/// only the unclean regions, so this budget costs three FULL reads only on a
-/// board where every region failed.
-pub const RETRIES: u8 = 2;
-
-/// What the OCR gate decided about one sighting — [`LoopState::gate`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GateAnswer {
-    /// Pay for the 28 OCR calls: a new key, or a board that is not locked yet
-    /// (unclean and still owed a round).
-    Read,
-    /// Re-show `status`: the board under this key is locked
-    /// ([`BoardRead::locked`]), so nothing seen on the sheet buys OCR. It keeps
-    /// its read and its geometry until START, END, a zone change or Re-arm.
-    Locked {
-        /// The status the locked read produced.
-        status: TempleStatus,
-        /// This sighting's frame does not match the locked read's frame
-        /// ([`slice::BoardFrame::matches`]) — a walk, a hover that flipped a
-        /// corridor, a drag or a rescale. Before the lock that would have been a
-        /// new board; now it only feeds [`locked_sighting_line`].
-        changed: bool,
-    },
-}
-
-/// What one pixel tick did to the panel state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DetectOutcome {
-    /// A panel was found where there was none.
-    Found,
-    /// A panel that was already live anchored again.
-    Held,
-    /// Nothing anchored, and nothing was live — the loop searching.
-    Missed,
-    /// Nothing anchored over a LIVE panel that has not yet missed
-    /// [`RETIRE_AFTER`] times in a row (POE-275, owner 2026-09-11). The panel
-    /// stays live and [`miss`] publishes nothing ([`miss_publish`]), so the
-    /// sheet-bound overlays and the arm gate hold, and [`cycle_complete`] does
-    /// not fire.
-    HeldMiss,
-    /// The live panel just retired after [`RETIRE_AFTER`] misses.
-    Retired,
-    /// The tick could not LOOK — the screen grab failed, so this tick is not
-    /// evidence about the panel either way ([`LoopState::on_blind_tick`]).
-    Blind,
-}
-
-impl LoopState {
-    /// Fold one anchor result into the state.
-    ///
-    /// `seen` is whether this tick found the layout panel. A bool again since
-    /// WI-1 (2026-09-07): it carried a `now_ms` stamp only to feed POE-246's
-    /// 120 s panel clock, and the gate now reads [`Self::live`] — "the last tick
-    /// saw it" — which this method already maintains.
-    ///
-    /// Called by every tick that LOOKED — the anchored path and a clean miss —
-    /// which is what makes it the place those ticks spend the start-up probe.
-    /// A tick whose grab failed goes through [`Self::on_blind_tick`] instead;
-    /// between the two, every tick spends the probe exactly once.
-    pub fn on_detect(&mut self, seen: bool) -> DetectOutcome {
-        self.probe_spent = true;
-        if seen {
-            self.misses = 0;
-            if self.live {
-                DetectOutcome::Held
-            } else {
-                self.live = true;
-                DetectOutcome::Found
-            }
-        } else if !self.live {
-            DetectOutcome::Missed
-        } else {
-            self.misses += 1;
-            if self.misses >= RETIRE_AFTER {
-                self.live = false;
-                self.misses = 0;
-                DetectOutcome::Retired
-            } else {
-                DetectOutcome::HeldMiss
-            }
-        }
-    }
-
-    /// A tick whose screen GRAB failed: spend the start-up probe, and touch
-    /// nothing else.
-    ///
-    /// The rule, stated once: **an errored tick says nothing about the sheet.**
-    /// [`Self::live`] and [`Self::misses`] are left exactly as the last tick
-    /// that could see the screen left them, so a transient capture failure
-    /// cannot retire a panel that is in front of the player. Since WI-1 `live`
-    /// is the whole panel branch of the arm gate
-    /// ([`trigger::arm_source`]), so folding this tick through
-    /// [`Self::on_detect`] with `seen = false` would count a failed grab toward
-    /// [`RETIRE_AFTER`]. At `1` (until 2026-09-11) that stood the capture down on
-    /// ONE failed grab whenever the panel is the only thing holding the gate (a
-    /// hideout read, a Re-arm whose grace has run out under an open sheet),
-    /// recoverable only by Re-arm; at `2` two failed grabs, or one beside a real
-    /// miss, would do the same.
-    ///
-    /// The probe IS spent, and that is the one thing this tick does prove: it
-    /// ran. A machine whose capture never succeeds must not hold the gate open
-    /// for the session (POE-246), so the debt a starting loop owes itself is
-    /// settled by a tick that failed as much as by one that looked.
-    ///
-    /// [`DetectOutcome::Blind`] rather than `Missed`: `Missed` is a claim about
-    /// the screen, and this tick did not see one. It is also what keeps
-    /// [`cycle_complete`] honest through the outcome alone — a blind tick can no
-    /// longer reach the `Retired` branch that rule keys on.
-    pub fn on_blind_tick(&mut self) -> DetectOutcome {
-        self.probe_spent = true;
-        DetectOutcome::Blind
-    }
-
-    /// Whether the loop still owes itself the one detect it runs before it may
-    /// stand down (POE-246). [`trigger::arm_source`]'s third input.
-    pub fn probe_pending(&self) -> bool {
-        !self.probe_spent
-    }
-
-    /// Whether this loop has a completed read of the board `key` names (WI-1).
-    ///
-    /// [`cycle_complete`]'s second input, and the KEY half of the identity
-    /// alone: the frame is deliberately not asked about. A sheet that closed is
-    /// not on screen to compare a frame against, and what the cycle rule needs
-    /// to know is whether this incursion has been read at all — the board the
-    /// player walked away from and the board they would see if they reopened are
-    /// the same board while the key holds.
-    ///
-    /// The key IS asked about, and that is what makes Re-arm work: pressing it
-    /// bumps `temple_rearm`, so the read in hand is a read of another key and
-    /// the loop probes for a new one instead of standing down on the old one.
-    /// An Alva line or a zone change moves the epoch the same way, though those
-    /// have already disarmed the gate by their own rule.
-    ///
-    /// What is NOT asked is whether that read came out UNCLEAN with rounds
-    /// still owed — the question [`Self::gate`] does ask — so a sheet closed
-    /// mid-budget completes its cycle and loses the rest of [`RETRIES`]. That
-    /// is an accepted residual with Re-arm as its answer; it is named in
-    /// `docs/TEMPLE-LIFECYCLE.md` with the rest of them.
-    pub fn has_read(&self, key: (u64, u64)) -> bool {
-        matches!(&self.board, Some(board) if board.key == key)
-    }
-
-    /// The OCR gate (POE-249): what this sighting of `(key, frame)` gets.
-    ///
-    /// The whole rule, in one place, because the two answers are two branches of
-    /// one question and a caller that asked them separately could see them
-    /// disagree. [`Self::reshow`] and [`Self::wants_read`] are views over it.
-    ///
-    /// The order (POE-282):
-    ///
-    /// 1. no board, or a different key, is a different BOARD — read. The key
-    ///    comes first because it is the only thing that releases the lock: an
-    ///    Alva START or END line or a zone change bumps the epoch, Re-arm and
-    ///    every settings change bump the rearm count;
-    /// 2. a board under this key that is not locked yet ([`BoardRead::locked`]:
-    ///    unclean, with a round owed) — read. Whether the frame moved decides
-    ///    only how [`Self::note_read`] treats that read: a moved frame is a new
-    ///    board only BEFORE the lock;
-    /// 3. a locked board re-shows, whatever the frame says — a walk, a hover, a
-    ///    drag or a rescale. It keeps its read and its geometry until START,
-    ///    END, a zone change or Re-arm. `changed` says whether the frame moved,
-    ///    for the log line and nothing else.
-    pub fn gate(&self, key: (u64, u64), frame: &slice::BoardFrame) -> GateAnswer {
-        let Some(board) = &self.board else {
-            return GateAnswer::Read;
-        };
-        if board.key != key {
-            return GateAnswer::Read;
-        }
-        if !board.locked() {
-            return GateAnswer::Read;
-        }
-        GateAnswer::Locked {
-            status: board.status,
-            changed: !board.frame.matches(frame),
-        }
-    }
-
-    /// Whether the board this loop last read is the one `(key, frame)`
-    /// describes, in the same place.
-    ///
-    /// The identity rule as a bool — see [`slice::BoardFrame`] for what each
-    /// third catches. Two callers ask it and they must not drift apart:
-    /// [`Self::note_read`] (is this a retry, or something else?) and
-    /// [`kept_for`] (may the kept reading be merged into, or must it be dropped
-    /// first?). [`Self::gate`] asks only the key and [`BoardRead::locked`]:
-    /// before the lock every sighting reads, and this rule then decides what
-    /// that read is.
-    ///
-    /// It is NOT the read decision: a moved frame is a new board only BEFORE
-    /// the lock. A locked board keeps its read and its geometry until START,
-    /// END, a zone change or Re-arm.
-    pub fn same_board(&self, key: (u64, u64), frame: &slice::BoardFrame) -> bool {
-        matches!(&self.board, Some(board) if board.key == key && board.frame.matches(frame))
-    }
-
-    /// The status a sighting of `(key, frame)` can be answered with, or `None`
-    /// when it has to pay for a read. [`Self::gate`]'s answer, narrowed.
-    ///
-    /// Spelled as "what can I answer with?" rather than as a bare bool so the
-    /// caller has no unreachable branch to write: the status a reopen re-shows
-    /// and the decision to re-show at all are one answer.
-    /// [`Self::wants_read`] is its negation, and is what the tests name.
-    pub fn reshow(&self, key: (u64, u64), frame: &slice::BoardFrame) -> Option<TempleStatus> {
-        match self.gate(key, frame) {
-            GateAnswer::Read => None,
-            GateAnswer::Locked { status, .. } => Some(status),
-        }
-    }
-
-    /// Whether a sighting of `(key, frame)` pays for a full read — the negation
-    /// of [`Self::reshow`].
-    ///
-    /// Both exist because the gate answers two questions at once and the tick
-    /// needs them together: it re-shows the status of the board it skipped. This
-    /// is the same rule stated as the bool the module doc and
-    /// docs/TEMPLE-LIFECYCLE.md row 2 describe, and it is what the tests name —
-    /// asserting on `Option<TempleStatus>` would tie every one of them to the
-    /// status a fixture happened to record.
-    #[allow(dead_code)] // The rule, named. The loop calls `gate`, which is wider.
-    pub fn wants_read(&self, key: (u64, u64), frame: &slice::BoardFrame) -> bool {
-        self.reshow(key, frame).is_none()
-    }
-
-    /// Record what a completed read of `(key, frame)` produced.
-    ///
-    /// # Three thirds, two kinds of change
-    ///
-    /// The identity has three parts and they do not all mean the same thing to a
-    /// retry BUDGET, which is a budget for OCR:
-    ///
-    /// - **the key or the content moved** — a different board is behind the
-    ///   sheet, so this is a first look at it and it gets the whole [`RETRIES`]
-    ///   budget;
-    /// - **only the geometry moved** — the same board was re-placed. The ROIs
-    ///   were stale, which is why it had to be read, but the OCR budget carries
-    ///   across unchanged;
-    /// - **nothing moved** — a retry, and the only thing that spends one.
-    ///
-    /// The decrement is keyed on [`slice::BoardFrame::matches`] rather than on a
-    /// flag the caller passes: a retry is by definition a second read of the
-    /// same board in the same place, so the two cannot drift apart.
-    pub fn note_read(
-        &mut self,
-        key: (u64, u64),
-        frame: &slice::BoardFrame,
-        status: TempleStatus,
-        unclean: bool,
-    ) {
-        let retries_left = match &self.board {
-            Some(board) if board.key == key && board.frame.same_content(frame) => {
-                if board.frame.matches(frame) {
-                    board.retries_left.saturating_sub(1)
-                } else {
-                    board.retries_left
-                }
-            }
-            _ => RETRIES,
-        };
-        self.board = Some(BoardRead {
-            key,
-            frame: *frame,
-            status,
-            unclean,
-            retries_left,
-        });
-    }
+    ModuleJoin::Thread(std::thread::spawn(move || run_worker(app, cancel)))
 }
 
 // ------------------------------------------------------ the measurements --
 
-/// What one detect tick spent, stage by stage, in wall time.
+/// What one press spent before the OCR, stage by stage, in wall time.
 ///
-/// Written by [`tick`] as each stage finishes (write-through, so a tick that
-/// returns early still leaves the stages it ran) and read twice: by
-/// [`slow_tick_line`] for a cheap tick that overran the cadence, and by
-/// [`read_timings_line`] for the read line, which carries the OCR half as well.
-/// `Duration::ZERO` is a stage this tick did not run.
+/// Written by [`read_press`] and read by [`read_timings_line`], which carries
+/// the OCR half as well. `capture` is the grab's own `call_ms`, measured by the
+/// read key's dispatcher. `Duration::ZERO` is a stage this press did not run.
 ///
 /// Every number here is a MEASUREMENT of the machine and the build that took it
 /// (the laptop's debug build grabbed the screen in 225 ms, the PC's release
@@ -816,22 +101,21 @@ impl LoopState {
 /// it is checked against a real session rather than assumed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TickStages {
-    /// `capture::capture_screen` — the monitor grab.
+    /// The read key's monitor grab.
     pub capture: Duration,
     /// `anchor::detect_cheap` — the presence probe.
     pub cheap: Duration,
-    /// Resolving the anchor into a `TempleLayout` (doors included), on the
-    /// ticks that did.
+    /// Locating the panel on a miss (when [`locate_on_miss`] allowed it) plus
+    /// resolving the anchor into a `TempleLayout` (doors included).
     pub anchor: Duration,
 }
 
 /// What the full read spent after the anchor, stage by stage.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReadStages {
-    /// The panel and budget-line OCR (`panel_text`).
+    /// The panel and budget-line OCR ([`read_board`]'s text regions).
     pub text_ocr: Duration,
-    /// The plate OCR calls (`panel::read_slots`): up to 26, two per PLANNED
-    /// plate, so 26 on a full round and two per still-unread plate on a retry.
+    /// The plate OCR calls (`panel::read_slots`): 26, two per plate.
     pub plate_ocr: Duration,
     /// The door markers (`read_markers`).
     pub markers: Duration,
@@ -864,118 +148,24 @@ fn ms(d: Duration) -> u128 {
     d.as_millis()
 }
 
-/// The line a cheap tick writes when it overran [`SLOW_TICK`], or `None`.
+/// The line every successful press read writes: each stage from the grab to
+/// the publish, the total, the read's own `last_read_at` stamp so the overlay's
+/// `[temple-overlay] board read at …` line can be matched to it, what the read
+/// covered, and whether it was clean.
 ///
-/// `said` is when this loop last wrote one; the line is rate-limited to one per
-/// [`SLOW_TICK_LOG_EVERY`] so a machine that is slow on every tick does not
-/// fill the log with the same fact. The stage breakdown is the point of the
-/// line: a stall in `capture` (the game saturating the GPU as a fight starts)
-/// and a slow `cheap detect` (a debug build, a huge screen) are different
-/// problems with the same total.
-///
-/// Cheap ticks only — a tick that resolved the anchor writes
-/// [`read_timings_line`] instead when it read, and its anchor cost is a price
-/// the loop chose to pay.
-pub fn slow_tick_line(
-    said: &mut Option<Instant>,
-    now: Instant,
-    took: Duration,
-    stages: &TickStages,
-) -> Option<String> {
-    if took <= SLOW_TICK {
-        return None;
-    }
-    if let Some(last) = *said {
-        if now.duration_since(last) < SLOW_TICK_LOG_EVERY {
-            return None;
-        }
-    }
-    *said = Some(now);
-    Some(format!(
-        "Temple: slow detect tick — {} ms (capture {} ms, cheap detect {} ms, anchor {} ms); the cadence is {} ms",
-        ms(took),
-        ms(stages.capture),
-        ms(stages.cheap),
-        ms(stages.anchor),
-        ms(DETECT_INTERVAL),
-    ))
-}
-
-/// The line a tick writes when a LOCKED board ignored a sighting whose frame
-/// changed ([`GateAnswer::Locked`] with `changed`), or `None` (POE-282).
-///
-/// It is what makes the hover case visible in the log: a tooltip that flips a
-/// corridor, a walk, a drag or a rescale would each have bought a read before
-/// the lock. `said` is when this loop last wrote one; the line is rate-limited
-/// to one per [`LOCKED_SIGHTING_LOG_EVERY`], so a hover of a few seconds writes
-/// one line and a persistent drag one per window. An unchanged sighting writes
-/// nothing and leaves `said` alone.
-pub fn locked_sighting_line(
-    said: &mut Option<Instant>,
-    now: Instant,
-    changed: bool,
-) -> Option<String> {
-    if !changed {
-        return None;
-    }
-    if let Some(last) = *said {
-        if now.duration_since(last) < LOCKED_SIGHTING_LOG_EVERY {
-            return None;
-        }
-    }
-    *said = Some(now);
-    Some(
-        "Temple: board locked — the sheet changed, no read (Re-arm reads it again)".to_string(),
-    )
-}
-
-/// The line every full read writes: each stage from the grab to the publish,
-/// the total, the read's own `last_read_at` stamp so the overlay's
-/// `[temple-overlay] board read at …` line can be matched to it, WHICH ROUND
-/// this was and what it re-read, and whether the read was clean or is buying
-/// another round.
-///
-/// # The valuation field (WI-3)
-///
-/// `valuation N ms (cached | computed)` sits where the single `advise` field
-/// used to, and `advise N ms` follows it: the pair was one number until
-/// POE-257 WI-3, and the owner's question — is the table cached? — could not be
-/// answered from a log that added them together. The WORD carries the half the
-/// milliseconds cannot: a hit and a fast machine's rebuild both round to a
-/// small number, and only `computed` on every read says the cache is missing.
-///
-/// # The round (WI-2)
-///
-/// `round N of {RETRIES + 1}: full | re-read 3 plates, panel` — what the round
-/// did, then what it found. It is the only place the partial-round cost is
-/// visible: with the stage timings beside it, `text ocr` and `plates` on a
-/// round that named neither are the measurement of what skipping them bought,
-/// which is why docs/TEMPLE-LIFECYCLE.md quotes no figure of its own.
-///
-/// `N` is derived from `retries_left` AFTER [`LoopState::note_read`] has spent
-/// this read's share, so it counts what actually happened rather than what the
-/// plan intended: a first look leaves the whole [`RETRIES`] budget and is round
-/// 1, and each retry spends one. A geometry-only re-read carries the budget
-/// rather than spending it and therefore repeats its round number — which is
-/// the honest answer, because `kept_for` dropped the kept reading and it read
-/// everything again.
+/// `valuation N ms (cached | computed)` sits beside `advise N ms` (POE-257
+/// WI-3): the WORD says whether the table was looked up or built, which the
+/// milliseconds alone cannot.
 pub fn read_timings_line(
     tick: &TickStages,
     read: &ReadStages,
     total: Duration,
     read_at: u64,
     unclean: bool,
-    retries_left: Option<u8>,
     plan: &slice::ReadPlan,
 ) -> String {
-    let verdict = match (unclean, retries_left) {
-        (false, _) => "clean".to_string(),
-        (true, Some(n)) => format!("unclean, {n} retries left"),
-        (true, None) => "unclean".to_string(),
-    };
-    let round = RETRIES + 1 - retries_left.unwrap_or(RETRIES).min(RETRIES);
     format!(
-        "Temple: read timings — capture {} ms, cheap detect {} ms, anchor {} ms, text ocr {} ms, plates {} ms, markers {} ms, valuation {} ms ({}), advise {} ms, publish {} ms — {} ms from grab to publish, read at {}; round {} of {}: {}; {}",
+        "Temple: read timings — capture {} ms, cheap detect {} ms, anchor {} ms, text ocr {} ms, plates {} ms, markers {} ms, valuation {} ms ({}), advise {} ms, publish {} ms — {} ms from grab to publish, read at {}; {}; {}",
         ms(tick.capture),
         ms(tick.cheap),
         ms(tick.anchor),
@@ -988,298 +178,27 @@ pub fn read_timings_line(
         ms(read.publish),
         ms(total),
         read_at,
-        round,
-        RETRIES + 1,
         plan.describe(),
-        verdict,
+        if unclean { "unclean" } else { "clean" },
     )
-}
-
-/// Whether this tick finished the incursion's cycle: the sheet was READ, and it
-/// has now gone (WI-1, owner 2026-09-07).
-///
-/// The rule the loop hands to [`trigger::ArmState::complete_cycle`], as a pure
-/// function of the three facts the tick has — what the panel state machine just
-/// answered, whether a read of the CURRENT board key is in hand
-/// ([`LoopState::has_read`]), and whether this tick could look at the screen at
-/// all. It lives here beside [`loop_step`] for the same reason: the loop's gates
-/// belong in the tested surface, not in an `if` inside a function that needs a
-/// screen.
-///
-/// [`DetectOutcome::Retired`] and not `Missed`: `Retired` is the transition —
-/// the sheet was live and has now missed [`RETIRE_AFTER`] ticks in a row — while
-/// `Missed` is the loop's resting state over an empty screen, and completing a
-/// cycle on that would stand the loop down on the very tick that armed it, before
-/// the player ever opened the sheet. Nor [`DetectOutcome::HeldMiss`]: one miss
-/// over a live sheet is not a close (owner, 2026-09-11, POE-275), and this rule
-/// needed no change for that beyond the constant.
-///
-/// `read_in_hand` is the guard the owner kept: a sheet closed BEFORE any read
-/// completed does not end anything, because the incursion this arm was bought
-/// for has not been read yet. That is the player who opened the sheet on a frame
-/// the anchor missed, or closed it again before the read landed, and the answer
-/// for them is that the loop keeps probing. A read that COMPLETED unclean is
-/// still a read here, so a sheet closed while retry rounds are owed ends the
-/// cycle and loses them — accepted, with Re-arm as the answer, and named as a
-/// residual in `docs/TEMPLE-LIFECYCLE.md`.
-///
-/// `looked` is `false` for a tick that FAILED rather than missed ([`miss`]'s
-/// `errored`): a screen grab that returned an error says nothing about whether
-/// the sheet is still there, and a stand-down on a transient capture failure
-/// would cost the rest of the incursion. It is a parameter rather than an `if`
-/// at the call site so the failing-grab case is decided in the same tested
-/// function as the other two — `miss` needs an `AppHandle` and is not reachable
-/// from a unit test.
-///
-/// Since the WI-1 fix round it is the SECOND of two guards over the same fact
-/// and no longer the only one: an errored tick folds through
-/// [`LoopState::on_blind_tick`], which answers [`DetectOutcome::Blind`] and
-/// cannot reach the `Retired` branch above. That change was made for `live`
-/// rather than for this rule — one failed grab used to retire a panel that was
-/// on screen — and this parameter is kept because the rule reads true on its
-/// own: a tick that could not look completes nothing, whatever outcome it is
-/// handed.
-///
-/// What is NOT decided here is whether the key this tick observed is still the
-/// current one. That guard belongs to the writer, because the answer can change
-/// between this call and the lock — see `trigger::complete_cycle`.
-pub fn cycle_complete(outcome: DetectOutcome, read_in_hand: bool, looked: bool) -> bool {
-    looked && matches!(outcome, DetectOutcome::Retired) && read_in_hand
-}
-
-/// What a CLEAN miss publishes, by what the panel state machine answered —
-/// `None` is "publish nothing" (POE-275, owner 2026-09-11).
-///
-/// [`TickOutcome::NoPanel`] for [`DetectOutcome::Missed`], the loop searching
-/// with nothing live, and for [`DetectOutcome::Retired`], the sheet gone —
-/// `panel_not_visible` is not in the webview's `OVERLAY_VISIBLE_STATUSES`, so
-/// that publish is what takes the sheet-bound overlays down. Nothing for
-/// [`DetectOutcome::HeldMiss`]: one miss over a live sheet must not hide them,
-/// so the status the last sighting wrote stays on the slice. A failed tick's
-/// `error` and its message stand through a held miss the same way, for that
-/// one tick; the sighting or the retire after it clears them.
-///
-/// The other three are not a clean miss's answer and publish nothing here: a
-/// sighting publishes through [`tick`]'s own path, and a failed grab
-/// ([`DetectOutcome::Blind`]) has already published through [`fail`].
-///
-/// A pure function for the reason [`cycle_complete`] is one: [`miss`] needs an
-/// `AppHandle` and is not reachable from a unit test.
-pub fn miss_publish(outcome: DetectOutcome) -> Option<TickOutcome> {
-    match outcome {
-        DetectOutcome::Missed | DetectOutcome::Retired => Some(TickOutcome::NoPanel),
-        DetectOutcome::HeldMiss
-        | DetectOutcome::Found
-        | DetectOutcome::Held
-        | DetectOutcome::Blind => None,
-    }
-}
-
-// ------------------------------------------------------ the loop's step --
-
-/// What one iteration of the loop does, decided before anything is captured.
-///
-/// The whole of the POE-242 gate is here, as a total function of three
-/// booleans, so "a disarmed loop never captures" is a property of the STEP
-/// rather than of a status the loop happens to publish. `capture_screen` is
-/// reached from exactly one arm of the loop's `match` — [`Self::Detect`] — and
-/// [`loop_step`] is the only thing that can return it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LoopStep {
-    /// The game is not the foreground window. The layout panel is not on
-    /// screen, so there is nothing to look at.
-    UnfocusedNap,
-    /// Nothing has armed the module ([`super::trigger`]): the player is in a
-    /// map, or a town, and Alva has not spoken.
-    DisarmedNap,
-    /// Armed, and the next detect tick is not due yet.
-    Quantum,
-    /// Armed and due: run [`tick`], which captures.
-    Detect,
-}
-
-impl LoopStep {
-    /// How long the loop waits after this step.
-    ///
-    /// The two nap steps take the SECOND, not the loop quantum: a disarmed loop
-    /// is the state a session spends nearly all its time in, and waking it ten
-    /// times a second to re-ask a question whose answer arrives on another
-    /// thread would spend most of what the gate just saved. Cancellation is
-    /// unaffected — [`nap`] polls the stop signal every [`TICK`] whatever it is
-    /// handed.
-    pub fn nap(self) -> Duration {
-        match self {
-            LoopStep::UnfocusedNap | LoopStep::DisarmedNap => UNFOCUSED_NAP,
-            LoopStep::Quantum | LoopStep::Detect => TICK,
-        }
-    }
-}
-
-/// The loop's gate, in one pure function. Focus first, the arm second, the
-/// cadence last.
-pub fn loop_step(focused: bool, armed: bool, detect_due: bool) -> LoopStep {
-    if !focused {
-        return LoopStep::UnfocusedNap;
-    }
-    if !armed {
-        return LoopStep::DisarmedNap;
-    }
-    if detect_due {
-        LoopStep::Detect
-    } else {
-        LoopStep::Quantum
-    }
-}
-
-/// The status to publish for a gate that just moved — or for one whose
-/// announcement something else wrote over — and `None` while neither happened.
-///
-/// `said` is the armed-ness the loop last announced (`None` before the first
-/// one) and `status` is what the slice holds right now. Publishing on the
-/// TRANSITION rather than every iteration is what keeps the gate from writing
-/// over a board that is on screen: an armed loop that has read a panel sits at
-/// [`TempleStatus::Read`], and re-announcing `Idle` under it once a second
-/// would mark the board stale ten times a temple.
-///
-/// # Why `status` is read at all
-///
-/// A transition-only gate is a WRITE-ONCE announcement, and POE-171 finding 15
-/// is the case that loses it: a retiring loop's `Stopping → Idle` publish can
-/// land after the new loop's `Waiting`, and a disarmed loop that already `said`
-/// `false` would never republish — the page would sit on `idle` ("about to
-/// read") for the rest of a session that is not looking at all. So the DISARMED
-/// half is re-asserted whenever applying it would still move the status: while
-/// the loop is not looking, it owns the status outright.
-///
-/// The ARMED half is not re-asserted, because `Reading` / `Read` over an
-/// `Idle` announcement is the loop's own work rather than a foreign write.
-///
-/// Re-assertion is keyed on [`next_status`] rather than on `status ==
-/// Waiting` so a status no tick result can leave ([`TempleStatus::Unavailable`])
-/// does not turn into one publish and one log line per tick.
-pub fn gate_announcement(
-    said: Option<bool>,
-    armed: bool,
-    status: TempleStatus,
-) -> Option<TickOutcome> {
-    let outcome = if armed {
-        TickOutcome::Armed
-    } else {
-        TickOutcome::Disarmed
-    };
-    if said != Some(armed) {
-        return Some(outcome);
-    }
-    if armed {
-        return None;
-    }
-    (next_status(status, TickOutcome::Disarmed).status != status).then_some(outcome)
-}
-
-/// The app-log line for a gate whose SOURCE has moved — one line per distinct
-/// source, `None` while it has not moved.
-///
-/// **The capture loop is the one owner of the arm/disarm app-log line.**
-/// `trigger::on_client_line` writes the arm STATE and says nothing: it fires on
-/// every Client.txt transition whether or not the module is running, so letting
-/// it log too put two lines in `app.log` for one event whenever the module was
-/// on. This one is the fact a smoke run is checking — the capture loop saying it
-/// has started (or stopped) looking — and it covers the three transitions no
-/// Client.txt line announces at all: [`crate::client_log::MANUAL_ARM_GRACE_MS`]
-/// running out, (POE-246) the layout panel going off screen, and (WI-1) the
-/// cycle completing.
-///
-/// # Why the source and not the publish
-///
-/// Keyed on [`trigger::ArmSource`] rather than on the publish
-/// [`gate_announcement`] asks for, which POE-246 changed for two reasons. A gate
-/// that stays open while the REASON changes hands says so — a Re-arm's grace
-/// expiring under a panel that is still on screen is that shape, and it is
-/// invisible in an armed-ness bit. And the re-assertion that corrects a foreign
-/// status write (POE-171 finding 15) stops putting a second `stood down` line in
-/// `app.log` for one stand-down: the publish is the correction, the line never
-/// was.
-///
-/// # The stand-down names its CAUSE (WI-1, 2026-09-07)
-///
-/// Four things shut the gate now, and they are four different things for a smoke
-/// run to check, so `stood_down` rides on the line. The vocabulary is
-/// [`trigger::StandDown`]'s, which is also what writes it — this only prints —
-/// and the resting case keeps POE-242's exact wording because that is the string
-/// `docs/OVERLAY-GUIDE.md` smoke item 12 tells the runner to look for.
-///
-/// It is read on the `None` arm only. An armed gate names its SOURCE, and what
-/// last shut the gate says nothing about why it is open.
-///
-/// `said` starts `None`, which is the same claim this line's `None` arm makes —
-/// a loop that has said nothing has not started looking — so the first source it
-/// does find is always announced.
-fn gate_line(
-    said: &mut Option<trigger::ArmSource>,
-    source: Option<trigger::ArmSource>,
-    stood_down: trigger::StandDown,
-) -> Option<String> {
-    if *said == source {
-        return None;
-    }
-    *said = source;
-    Some(match source {
-        Some(source) => format!(
-            "Temple: capture armed by {} — looking for the layout panel",
-            source.label()
-        ),
-        None => format!(
-            "Temple: capture stood down — {} (Re-arm forces a read)",
-            stood_down.label()
-        ),
-    })
 }
 
 // --------------------------------------------------- the status machine --
 
-/// What one loop event says about the module's state.
-///
-/// The cadence half of the loop is [`LoopState`]; this is the half the page
-/// sees. Both are separated from the thread for the same reason: the rules are
-/// worth testing without a screen or a clock.
+/// What one press (or the worker stopping) says about the module's state —
+/// the half the page sees, separated from the thread so the rules are testable
+/// without a screen or a clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickOutcome {
-    /// The tick failed before it could tell whether a panel is there — the
-    /// capture or the OCR engine returned an error.
+    /// The press failed before it could tell whether a panel is there — the
+    /// grab or the OCR engine returned an error.
     Failed,
-    /// The tick ran clean and nothing anchored.
+    /// The press read clean and no panel anchored.
     NoPanel,
-    /// The tick ran clean and a panel anchored. A full read follows, which
-    /// publishes its own status through [`slice::project`].
+    /// The press anchored a panel. The read follows, which publishes its own
+    /// status through [`slice::project`].
     Anchored,
-    /// The tick ran clean, a panel anchored, and it is a board this loop has
-    /// already read (POE-249, docs/TEMPLE-LIFECYCLE.md row 3).
-    ///
-    /// The sheet was closed and reopened inside one incursion, so the board
-    /// behind it cannot have changed. The payload is the status the read's own
-    /// projection wrote ([`BoardRead::status`]) and it is the ONLY thing this
-    /// puts back — the layout, the panel, the advice and the timestamps on the
-    /// slice are the ones that read published and are still current.
-    ///
-    /// The distinction from [`Self::Anchored`] is what it costs: `Anchored`
-    /// announces a read that is about to run and is overwritten by it a second
-    /// later, this one is the whole tick.
-    Reshown(TempleStatus),
-    /// The arm gate closed (POE-242): nothing in Client.txt puts an incursion
-    /// in scope, so the loop is not capturing. Not a tick — no tick ran.
-    Disarmed,
-    /// The arm gate opened. Also not a tick: it is the announcement that the
-    /// loop has started looking again, published BEFORE the first read.
-    ///
-    /// What it moves is the STATUS, not the board — [`apply_status`] writes
-    /// `status` and `last_error` and touches nothing else. The overlay is the
-    /// surface that reacts: `Idle` is not in the webview's
-    /// `OVERLAY_VISIBLE_STATUSES`, so the board stops floating over the game
-    /// while the loop looks for a new one. The Temple PAGE keeps drawing the
-    /// last board it was given, under a badge that now reads
-    /// `watching for the layout panel`.
-    Armed,
-    /// The loop is shutting down.
+    /// The worker is shutting down.
     Stopping,
 }
 
@@ -1292,22 +211,15 @@ pub struct StatusUpdate {
     /// `true` when the event means the module is no longer waiting for the
     /// temple sheet ([`slice::TempleSlice::waiting_for_panel`], POE-249).
     ///
-    /// Two different reasons, both ending in the same write. A sighting is the
-    /// wait being ANSWERED — the sheet is on screen — and BOTH sightings count:
-    /// [`TickOutcome::Anchored`] is one whose read publishes the board, and
-    /// [`TickOutcome::Reshown`] is one whose board was already published. What
-    /// takes the notice down is the sheet being there, not the reading of it.
-    /// A stand-down or a shutdown ([`TickOutcome::Disarmed`],
-    /// [`TickOutcome::Stopping`]) is the loop no longer looking at all, and a
-    /// notice that says "waiting for the temple panel" over a loop that is not
-    /// looking for one is a lie on screen.
+    /// Two different reasons, both ending in the same write.
+    /// [`TickOutcome::Anchored`] is the wait being ANSWERED — the sheet is on
+    /// screen. [`TickOutcome::Stopping`] is the worker no longer reading at
+    /// all, and a notice that says "waiting for the temple panel" over it is a
+    /// lie on screen.
     ///
-    /// The three that leave it alone are the ones where the wait is still the
-    /// truth: [`TickOutcome::NoPanel`] is a tick that looked and saw nothing,
-    /// [`TickOutcome::Failed`] is a tick that could not look this once, and
-    /// [`TickOutcome::Armed`] is the gate opening — which is what a START line
-    /// buys, and clearing there would take the notice down in the same second
-    /// it went up.
+    /// The two that leave it alone are the ones where the wait is still the
+    /// truth: [`TickOutcome::NoPanel`] is a press that looked and saw nothing,
+    /// and [`TickOutcome::Failed`] is a press that could not look this once.
     pub clear_waiting: bool,
 }
 
@@ -1315,7 +227,7 @@ pub struct StatusUpdate {
 ///
 /// # The rule this exists for
 ///
-/// A transient failure — one `capture_screen` error while the player is not on
+/// A transient failure — one grab error while the player is not on
 /// the temple screen — writes [`TempleStatus::Error`] plus a message. Every
 /// tick after it is a *clean miss*: the loop looked, there was no panel, and
 /// there is nothing wrong. Clearing `last_error` on that tick without moving
@@ -1348,31 +260,14 @@ pub fn next_status(prev: TempleStatus, outcome: TickOutcome) -> StatusUpdate {
         TickOutcome::Failed => (TempleStatus::Error, false),
         TickOutcome::NoPanel => (TempleStatus::PanelNotVisible, true),
         TickOutcome::Anchored => (TempleStatus::Reading, true),
-        // The status its own read wrote, put back unchanged. `Reading` would be
-        // a lie — nothing is being read — and re-deriving `Read` here would
-        // publish `read` over a board that was projected as `no_current_room`.
-        TickOutcome::Reshown(status) => (status, true),
-        // The two gate events clear for the same reason [`TickOutcome::Stopping`]
-        // does: a loop that is not looking is not reporting a live board, and
-        // the failure it had while it WAS looking is no longer something the
-        // user can act on. Leaving the message standing under a `waiting` badge
-        // is the drift this machine exists to prevent, one status further on.
-        TickOutcome::Disarmed => (TempleStatus::Waiting, true),
-        TickOutcome::Armed => (TempleStatus::Idle, true),
-        // A stopped loop is not reporting a live board, and the reason the last
+        // A stopped worker is not reporting a live board, and the reason the last
         // error happened is no longer something the user can act on.
         TickOutcome::Stopping => (TempleStatus::Idle, true),
     };
     StatusUpdate {
         status,
         clear_error,
-        clear_waiting: matches!(
-            outcome,
-            TickOutcome::Anchored
-                | TickOutcome::Reshown(_)
-                | TickOutcome::Disarmed
-                | TickOutcome::Stopping
-        ),
+        clear_waiting: matches!(outcome, TickOutcome::Anchored | TickOutcome::Stopping),
     }
 }
 
@@ -1390,33 +285,6 @@ pub fn apply_status(slice: &mut TempleSlice, outcome: TickOutcome) {
     if update.clear_waiting {
         slice::end_cycle(slice);
     }
-}
-
-/// Fold one ARM-GATE event into the slice.
-///
-/// **Nothing but the status, since POE-248** — and the function survives its
-/// own body for the same reason it was written: the loop's gate publish goes
-/// through one named seam, so what a gate event may touch is a question with a
-/// place to be answered rather than a line in a closure no test can reach.
-///
-/// # What it stopped doing, and why
-///
-/// POE-244 dropped the advice here, at the stand-down. It was already the
-/// second guess at where a move expires — [`miss`]'s retire was the first, and
-/// that note explains why it was wrong — and it is wrong for the same reason
-/// one step further out. Owner, 2026-09-04, on the first live session: the door
-/// diamond *"disappeared when the layout panel closed"*, and the log says why —
-/// `12:32:10 capture armed by the panel on screen` … `12:39:05 capture stood
-/// down`, with the player still in the room the widget was describing.
-///
-/// The rule now is that the kill callout lives with the PANEL and the room
-/// widget lives with the INCURSION. A gate is a statement about whether
-/// anything is LOOKING at the screen, and the incursion is not over because the
-/// module stopped looking. What ends the advice is a fact about the game:
-/// [`super::trigger::advice_end`]'s zone change or next Alva line, a read that
-/// replaces it, or the module being switched off ([`TempleSlice::force_off`]).
-pub fn apply_gate(slice: &mut TempleSlice, outcome: TickOutcome) {
-    apply_status(slice, outcome);
 }
 
 // ------------------------------------------------------------ text ROIs --
@@ -1751,7 +619,7 @@ pub const DIAMOND_H_REF: f32 = 200.0;
 /// module falls back to `doors − uncertain` with the incident corridors surfaced
 /// as unresolved — honest, and still permanent for as long as the window sits
 /// there. It is now a window half off the screen rather than a window merely not
-/// maximised, and [`full_read`]'s `Temple: rois` line prints the rect it used so
+/// maximised, and [`read_press`]'s `Temple: rois` line prints the rect it used so
 /// the difference is readable from `app.log`.
 pub fn diamond_rect(origin: (i32, i32), scale: f32) -> [i32; 4] {
     let cx = origin.0 as f32 + DIAMOND_DX_REF * scale;
@@ -1861,14 +729,14 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Sleep in [`TICK`] slices, stopping early on cancel. `false` = cancelled.
+/// Sleep in [`CANCEL_POLL`] slices, stopping early on cancel. `false` = cancelled.
 fn nap(cancel: &watch::Receiver<bool>, total: Duration) -> bool {
     let mut left = total;
     while left > Duration::ZERO {
         if *cancel.borrow() {
             return false;
         }
-        let step = left.min(TICK);
+        let step = left.min(CANCEL_POLL);
         std::thread::sleep(step);
         left = left.saturating_sub(step);
     }
@@ -2001,189 +869,19 @@ fn hint_from_slice(
     (hint, screen.map(|s| s.source), screen.is_some(), anchored)
 }
 
-/// Why one explicit cold fallback is allowed for a failed placed recheck.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ColdSweepReason {
-    /// No screen scale or anchored placement exists yet.
-    NullSlice,
-    /// Re-arm announced this board and its placed recheck fell below the floor.
-    PlacedMiss,
-}
-
-/// A cold sweep [`cold_sweep_reason`] has just started: why, and — for a null
-/// slice — which of the key's [`NULL_SWEEP_CAP`] attempts it is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SweepStart {
-    reason: ColdSweepReason,
-    /// `Some(k)`, 1-based, for [`ColdSweepReason::NullSlice`]; `None` for the
-    /// placed miss, whose budget is one per key and needs no count.
-    attempt: Option<u8>,
-}
-
-/// Every per-key cold-sweep budget the loop keeps (POE-269, POE-275 WI-2).
+/// Whether a press whose placed recheck missed searches the pressed frame with
+/// [`anchor::anchor_for_loop`] (POE-389, Coordinator ruling 2026-11-13).
 ///
-/// One `Copy` value so [`cold_sweep_reason`] can decide AND record a start in
-/// one call the tests reach without an `AppHandle`: a sweep is charged when it
-/// STARTS, whatever it later finds, so a start and its charge cannot drift
-/// apart.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct SweepBudget {
-    /// The board key for which the one placed-miss cold fallback was attempted.
-    fallback_sweep_key: Option<(u64, u64)>,
-    /// The key the two null-slice counters below belong to. A different key
-    /// resets both ([`Self::null_miss`]).
-    null_key: Option<(u64, u64)>,
-    /// Consecutive clean misses on a null slice since the last sweep started, a
-    /// sighting, or the key began — toward [`NULL_SWEEP_EVERY`].
-    null_misses: u8,
-    /// Null-slice sweeps started under `null_key` — toward [`NULL_SWEEP_CAP`].
-    null_started: u8,
-    /// The key whose null sweeps POE-269's withheld rule has ENDED
-    /// ([`null_sweep_key_after_publish`]): a second found-but-withheld sweep, or
-    /// one that filled the slice. Nothing but a key change reopens it.
-    null_ended: Option<(u64, u64)>,
-    /// The null-slice key that already spent its one withheld-anchor retry.
-    null_sweep_released: Option<(u64, u64)>,
-}
-
-impl SweepBudget {
-    /// One clean miss on a null or unplaced slice, with no sweep in flight:
-    /// `Some(k)` when it starts the key's `k`-th null sweep, `None` otherwise.
-    ///
-    /// The count restarts at the start it answers, so the next sweep needs
-    /// [`NULL_SWEEP_EVERY`] misses after this one — and since the caller asks
-    /// only while nothing is in flight, after this one ENDS.
-    fn null_miss(&mut self, key: (u64, u64)) -> Option<u8> {
-        if self.null_key != Some(key) {
-            self.null_key = Some(key);
-            self.null_misses = 0;
-            self.null_started = 0;
-        }
-        if self.null_ended == Some(key) || self.null_started >= NULL_SWEEP_CAP {
-            return None;
-        }
-        self.null_misses = self.null_misses.saturating_add(1);
-        if self.null_misses < NULL_SWEEP_EVERY {
-            return None;
-        }
-        self.null_misses = 0;
-        self.null_started += 1;
-        Some(self.null_started)
-    }
-
-    /// A tick that anchored: the misses are no longer consecutive.
-    fn on_sighting(&mut self) {
-        self.null_misses = 0;
-    }
-
-    /// A found null-slice sweep of `key` has been confirmed and gone to
-    /// [`publish_anchor_scale`], which answered `screen_filled` — POE-269's
-    /// withheld rule, [`null_sweep_key_after_publish`].
-    fn after_null_publish(&mut self, key: (u64, u64), screen_filled: bool) {
-        (self.null_ended, self.null_sweep_released) =
-            null_sweep_key_after_publish(key, self.null_sweep_released, screen_filled);
-    }
-
-    /// A placed recheck anchored under `key`. On a screen with no ANCHORED
-    /// origin (`anchored` false) that ends the key's null sweeps (POE-275 WI-2
-    /// fix round); on an anchored screen the null path is not in play and
-    /// nothing changes. The seed it rechecked is where
-    /// the sheet is, so a sweep under this key could only find what the recheck
-    /// found — the same reasoning as the filled-slice rule in
-    /// [`null_sweep_key_after_publish`]. Without it the cadence restarted after
-    /// every close in the same key: up to [`NULL_SWEEP_CAP`] sheet-less sweeps
-    /// across a Temple of Atzoatl run.
-    fn on_recheck(&mut self, key: (u64, u64), anchored: bool) {
-        if !anchored {
-            self.null_ended = Some(key);
-        }
-    }
-}
-
-/// Decide whether this tick's miss starts a cold sweep, and charge the budget
-/// for it when it does (POE-275 WI-2 — the start is what is charged, so a sweep
-/// that finds nothing costs the same as one that finds the panel).
+/// True only for a null slice or one with no ANCHORED Entrance origin: there is
+/// no placement to trust, so the frame is the only way to find the sheet. A
+/// placed miss is the sheet not being open, and is `NoPanel` with no search;
+/// Recalibrate is the manual fix for a placement that is wrong.
 ///
-/// Only on [`DetectOutcome::Missed`] — the loop searching with nothing live —
-/// and only while no sweep is in flight (`in_flight`): one sweep at a time.
-/// **No sweep starts over a live panel.** A [`DetectOutcome::HeldMiss`] is a
-/// tooltip or a misread over a sheet the recheck just verified, and the retire
-/// after it is the sheet closing; neither is a reason to search the screen, and
-/// neither counts toward [`NULL_SWEEP_EVERY`]. A failed grab
-/// ([`DetectOutcome::Blind`]) never reaches here and would be refused if it
-/// did.
-///
-/// A null or unplaced slice has no origin to verify, so any arm source may
-/// sweep it — the start-up probe included, whose one tick is a first miss and
-/// therefore buys none: a module switched on with the sheet already open stands
-/// down unswept when there is no screen slice, or a seed that misses the sheet,
-/// and Re-arm is the answer (docs/TEMPLE-LIFECYCLE.md's residual) — a right
-/// seed is rechecked on the probe tick and reads the sheet. It sweeps on every
-/// [`NULL_SWEEP_EVERY`]-th consecutive clean miss, up to [`NULL_SWEEP_CAP`] per
-/// key, unless POE-269's withheld rule has ended the key
-/// ([`SweepBudget::null_ended`]). Until 2026-09-11 it swept on the first miss,
-/// once per key.
-///
-/// A placed slice gets one fallback per key, only under the Manual arm (Re-arm).
-///
-/// # `placed_origin` is the ANCHORED origin, never the hint's (POE-278)
-///
-/// "Placed" here means a plate was FOUND at this origin — `anchors.temple_entrance`
-/// — and not merely that arithmetic proposed one. The two used to coincide by
-/// accident: the only way to reach this with a non-null slice was for a module
-/// to have measured the screen, and Recalibrate emptied the slot, so a press
-/// reliably produced the `NullSlice` arm.
-///
-/// Recalibrate now leaves a capture-derived slice standing, and
-/// `ssot::placements` answers `entrance_origin` with a SEED for any non-null
-/// slice. Feeding that seed in here would read "a screen exists" as "the
-/// placement has been verified" and drop the press straight into the
-/// `PlacedMiss` arm, which fires only under a Manual arm — so a player who
-/// pressed the button because their placement was wrong would get NO sweep on
-/// an `AlvaStart` or `TempleArea` arm, which is the one case the button exists
-/// to fix.
-///
-/// # Why AlvaStart and TempleArea buy no sweep (owner decision, 2026-09-09)
-///
-/// The first tick after Alva's start line runs before the player has opened
-/// the sheet, so its placed recheck misses. Until 2026-09-09 that miss spent
-/// the fallback: the pyramid sweep ran on a frame grabbed before the sheet
-/// opened, no tick ran while it did, and the sheet was read only after it
-/// returned. app.log 2026-09-09, debug build: armed 02:41:47, `sweep found no
-/// layout panel` 02:42:18, `layout panel found` 02:42:19 — three incursions
-/// that session, 30–34 s each. The placed origin is trusted instead: the game
-/// draws the sheet in one place, so a miss under an incursion arm means "not
-/// open yet", and the 650 ms recheck sees the sheet when it opens. Re-arm
-/// keeps the sweep as the explicit "look again" for a placement that is wrong.
-/// The rule stands now that the sweep no longer blocks the loop (owner,
-/// 2026-09-11: *"keep that, no placed-miss sweep under AlvaStart/TempleArea"*).
-fn cold_sweep_reason(
-    screen_present: bool,
-    placed_origin: Option<(i32, i32)>,
-    outcome: DetectOutcome,
-    in_flight: bool,
-    source: Option<trigger::ArmSource>,
-    key: (u64, u64),
-    budget: &mut SweepBudget,
-) -> Option<SweepStart> {
-    if outcome != DetectOutcome::Missed || in_flight {
-        return None;
-    }
-    if !screen_present || placed_origin.is_none() {
-        return budget.null_miss(key).map(|attempt| SweepStart {
-            reason: ColdSweepReason::NullSlice,
-            attempt: Some(attempt),
-        });
-    }
-    let manual = matches!(
-        source,
-        Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual))
-    );
-    if !manual || budget.fallback_sweep_key == Some(key) {
-        return None;
-    }
-    budget.fallback_sweep_key = Some(key);
-    Some(SweepStart { reason: ColdSweepReason::PlacedMiss, attempt: None })
+/// `anchored_origin` is the slice's anchored origin, never the hint's: the hint
+/// carries a seed for any non-null slice (POE-278), and reading that as a
+/// verified placement would never search a screen that merely exists.
+fn locate_on_miss(screen_present: bool, anchored_origin: Option<[i32; 2]>) -> bool {
+    !screen_present || anchored_origin.is_none()
 }
 
 /// The origin a successful fallback should remember, or `None` when the sweep
@@ -2221,35 +919,6 @@ fn placed_origin_contradiction_line(
     })
 }
 
-/// What a FOUND null-slice sweep of `key` leaves of that key's null sweeps, once
-/// its anchor has gone to [`publish_anchor_scale`]: `(ended, released)`, the
-/// new [`SweepBudget::null_ended`] and [`SweepBudget::null_sweep_released`].
-///
-/// POE-269's rule, kept by POE-275 WI-2 on top of the [`NULL_SWEEP_EVERY`]
-/// cadence. A found anchor whose proposed screen slice was withheld releases the
-/// key for one retry — `ended` stays `None` and the cadence goes on — and
-/// `released_key` records that the retry is used, so a second withheld result
-/// ENDS the key's null sweeps until the `(temple_epoch, temple_rearm)` key
-/// changes. A found anchor that filled the slice ends them too, as it always
-/// did: until 2026-09-11 every null sweep spent its key and only this release
-/// gave it back.
-///
-/// Asked only for a sweep that found the panel and was confirmed on a later
-/// capture ([`Sighting::Swept`]); a sweep that found nothing is the cadence's
-/// business alone. Until 2026-09-11 it was asked on every sighting with two
-/// flags saying whether this was one.
-fn null_sweep_key_after_publish(
-    key: (u64, u64),
-    released_key: Option<(u64, u64)>,
-    screen_filled: bool,
-) -> (Option<(u64, u64)>, Option<(u64, u64)>) {
-    if !screen_filled && released_key != Some(key) {
-        (None, Some(key))
-    } else {
-        (Some(key), released_key)
-    }
-}
-
 /// The single placeholder for the future geometry notice task.
 const GEOMETRY_NOTICE_LINE: &str =
     "Temple: geometry notice pending — placed origin contradicted by sweep (POE-271)";
@@ -2262,379 +931,6 @@ fn remember_fallback_anchor(
     if let Some((x, y)) = fallback_origin {
         remember([x, y]);
     }
-}
-
-// ------------------------------------------------ the sweep, off the loop --
-
-/// Why a running sweep was let go before its answer was used (POE-275 WI-2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SweepCancel {
-    /// A placed recheck anchored while it searched; the recheck's origin wins.
-    Recheck,
-    /// `(temple_epoch, temple_rearm)` moved: a sweep belongs to the key it
-    /// started under.
-    KeyChange,
-    /// The arm gate shut.
-    StandDown,
-    /// The module is stopping.
-    Stop,
-}
-
-impl SweepCancel {
-    /// The words [`sweep_line`] prints after `cancelled by`.
-    fn label(self) -> &'static str {
-        match self {
-            SweepCancel::Recheck => "recheck",
-            SweepCancel::KeyChange => "key change",
-            SweepCancel::StandDown => "stand-down",
-            SweepCancel::Stop => "stop",
-        }
-    }
-}
-
-/// What became of a sweep that FOUND the panel, judged on the capture after it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FoundFate {
-    /// A recheck at the swept origin and scale anchored on the current capture,
-    /// and the tick reads there.
-    Confirmed,
-    /// It did not — the sheet closed, or the capture changed size, while the
-    /// sweep searched. Discarded; the tick is a miss.
-    Unconfirmed,
-    /// The placed recheck anchored on the same tick. Its origin wins and this
-    /// result is discarded, as a late one would be.
-    Superseded,
-}
-
-impl FoundFate {
-    /// The words [`sweep_line`] prints after the swept origin.
-    fn label(self) -> &'static str {
-        match self {
-            FoundFate::Confirmed => "confirmed on the current frame",
-            FoundFate::Unconfirmed => "not on the current frame, discarded",
-            FoundFate::Superseded => "discarded, the placed recheck landed",
-        }
-    }
-}
-
-/// How one sweep ended — the outcome half of [`sweep_line`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum SweepEnd {
-    /// It found the panel at `origin` and `scale`, and `fate` is what the
-    /// capture after it made of that.
-    Found { origin: (i32, i32), scale: f32, fate: FoundFate },
-    /// It searched the whole capture and found no layout panel.
-    NoPanel,
-    /// The loop let it go before using its answer.
-    Cancelled(SweepCancel),
-    /// Its thread ended without sending a result, which only a panic does.
-    Lost,
-}
-
-/// Everything [`sweep_line`] prints about one sweep.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct SweepReport {
-    start: SweepStart,
-    /// The size of the frame it searched.
-    capture: (u32, u32),
-    /// Measured on the sweep's own thread for a sweep that answered; from its
-    /// launch to the moment the loop let it go for one that had not.
-    took: Duration,
-    end: SweepEnd,
-}
-
-/// What the sweep thread hands back: its anchor, if any, whether its stop
-/// check had fired when the search returned, and how long the search took on
-/// that thread.
-struct SweepResult {
-    found: Option<anchor::Anchor>,
-    /// The search's own stop check, read after it returned.
-    /// [`anchor::anchor_for_loop`] answers a stopped search with the same error
-    /// as a miss, so without this a module stop would be logged as `found no
-    /// layout panel`. [`SweepSlot::settle`] reports it as
-    /// [`SweepCancel::Stop`], found or not.
-    stopped: bool,
-    took: Duration,
-}
-
-/// The one sweep in flight.
-struct SweepFlight {
-    start: SweepStart,
-    /// The `(temple_epoch, temple_rearm)` key it started under.
-    key: (u64, u64),
-    /// The size of the frame it searches — the only capture size its origin
-    /// means anything on ([`confirm_swept`]).
-    capture: (u32, u32),
-    launched: Instant,
-    /// Set by the loop to cancel it. The search's stop closure reads it,
-    /// together with the module's own `cancel`, between the pyramid's coarse
-    /// correlations.
-    stop: Arc<AtomicBool>,
-    done: mpsc::Receiver<SweepResult>,
-}
-
-impl SweepFlight {
-    fn report(&self, took: Duration, end: SweepEnd) -> SweepReport {
-        SweepReport { start: self.start, capture: self.capture, took, end }
-    }
-
-    /// Set the stop flag and report the cancel, measured to now.
-    fn cancelled(self, by: SweepCancel) -> SweepReport {
-        self.stop.store(true, Ordering::SeqCst);
-        // Its own duration when it had already answered: the answer is
-        // discarded either way, and the measurement is still the sweep's.
-        let took = match self.done.try_recv() {
-            Ok(result) => result.took,
-            Err(_) => self.launched.elapsed(),
-        };
-        self.report(took, SweepEnd::Cancelled(by))
-    }
-}
-
-/// What this tick's placed recheck and the sweep slot, together, say it saw.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Sighting {
-    /// The placed recheck anchored.
-    Recheck(anchor::Anchor),
-    /// A sweep found the panel and a recheck at its origin anchored on THIS
-    /// tick's capture. The anchor is that recheck's, not the sweep's.
-    Swept { anchor: anchor::Anchor, reason: ColdSweepReason },
-    /// Neither: the tick is a miss.
-    Nothing,
-}
-
-/// The cold sweep's one slot (POE-275 WI-2, owner 2026-09-11): at most one
-/// sweep in flight, on a thread of its own, while the loop goes on ticking.
-///
-/// # Why the sweep may leave the loop's thread
-///
-/// The loop is a thread rather than a task because screen capture and
-/// `Windows.Media.Ocr` are apartment-threaded (module doc).
-/// [`anchor::anchor_for_loop`] is neither: it is image work over the frame it
-/// is handed — a grayscale pyramid, template correlations, and the template
-/// decoded once behind a `OnceLock` — with no capture, OCR or COM/WinRT call on
-/// its path. So the sweep thread takes the frame by value and needs no
-/// apartment.
-///
-/// # The loop never waits on it
-///
-/// Every method here returns at once. The loop polls the result once a tick
-/// ([`Self::settle`]) and never joins the thread — not on a cancel and not on
-/// module stop: a cancelled sweep stops at its next stop check, and any result
-/// it still sends goes to a receiver that has been dropped. The checks are the
-/// pyramid's, between its coarse correlations (see [`anchor::anchor_for_loop`]);
-/// the stages before the pyramid — building the scene, the hint-scale search
-/// and the three-scale table search — check nothing and run to completion, so a
-/// cancel lands after them.
-#[derive(Default)]
-struct SweepSlot {
-    flight: Option<SweepFlight>,
-}
-
-impl SweepSlot {
-    fn in_flight(&self) -> bool {
-        self.flight.is_some()
-    }
-
-    /// Run `search` on a thread of its own, handing it the per-sweep stop check.
-    ///
-    /// `search` is the whole sweep, injected so the tests control when it
-    /// blocks and what it answers; the loop's is [`cold_sweep`]'s, which adds
-    /// the module's `cancel` to the check. It answers `(found, stopped)`:
-    /// `stopped` is its stop check read after it returned — see
-    /// [`SweepResult::stopped`]. One flight at a time: the caller asks
-    /// [`cold_sweep_reason`], which refuses while [`Self::in_flight`].
-    fn launch<F>(
-        &mut self,
-        start: SweepStart,
-        key: (u64, u64),
-        capture: (u32, u32),
-        search: F,
-    ) -> std::io::Result<()>
-    where
-        F: FnOnce(&dyn Fn() -> bool) -> (Option<anchor::Anchor>, bool) + Send + 'static,
-    {
-        debug_assert!(self.flight.is_none(), "one sweep in flight at most");
-        let stop = Arc::new(AtomicBool::new(false));
-        let flag = Arc::clone(&stop);
-        let (sent, done) = mpsc::channel();
-        std::thread::Builder::new().name("temple-sweep".to_string()).spawn(move || {
-            let searching = Instant::now();
-            let (found, stopped) = search(&|| flag.load(Ordering::SeqCst));
-            // A failed send is a sweep the loop has let go of — the discard, not
-            // an error.
-            let _ = sent.send(SweepResult { found, stopped, took: searching.elapsed() });
-        })?;
-        self.flight = Some(SweepFlight {
-            start,
-            key,
-            capture,
-            launched: Instant::now(),
-            stop,
-            done,
-        });
-        Ok(())
-    }
-
-    /// Cancel the sweep in flight, if there is one, and report it.
-    fn cancel(&mut self, by: SweepCancel) -> Option<SweepReport> {
-        self.flight.take().map(|flight| flight.cancelled(by))
-    }
-
-    /// Cancel the sweep in flight when `key` is no longer the key it started
-    /// under — its answer would be about a board the loop is no longer reading.
-    fn keep_only(&mut self, key: (u64, u64)) -> Option<SweepReport> {
-        match &self.flight {
-            Some(flight) if flight.key != key => self.cancel(SweepCancel::KeyChange),
-            _ => None,
-        }
-    }
-
-    /// Fold this tick's placed recheck together with what the sweep in flight
-    /// has produced, and report the sweep if this is where it ends.
-    ///
-    /// The recheck wins everything it takes part in: a sweep still searching is
-    /// cancelled, and one that answered on this very tick is discarded. A sweep
-    /// that FOUND the panel with no recheck beside it is handed to `confirm`
-    /// with the capture size it searched, and only what `confirm` finds on THIS
-    /// tick's frame is ever read — the loop passes [`confirm_swept`]. A sweep
-    /// still searching with no recheck leaves the tick a miss and stays in
-    /// flight.
-    fn settle(
-        &mut self,
-        cheap: &anchor::CheapDetect,
-        confirm: impl FnOnce(&anchor::Anchor, (u32, u32)) -> Option<anchor::Anchor>,
-    ) -> (Sighting, Option<SweepReport>) {
-        let recheck = match cheap {
-            anchor::CheapDetect::Anchored(found) => Some(*found),
-            anchor::CheapDetect::Nothing { .. } => None,
-        };
-        let seen = recheck.map_or(Sighting::Nothing, Sighting::Recheck);
-        let Some(flight) = self.flight.take() else {
-            return (seen, None);
-        };
-        let result = match flight.done.try_recv() {
-            Ok(result) => result,
-            Err(mpsc::TryRecvError::Empty) => {
-                if recheck.is_some() {
-                    return (seen, Some(flight.cancelled(SweepCancel::Recheck)));
-                }
-                self.flight = Some(flight);
-                return (seen, None);
-            }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                let took = flight.launched.elapsed();
-                return (seen, Some(flight.report(took, SweepEnd::Lost)));
-            }
-        };
-        // A search whose stop fired is a stopped search whatever it returned: a
-        // miss from it is not evidence of an empty screen, and a find is not
-        // used.
-        if result.stopped {
-            let end = SweepEnd::Cancelled(SweepCancel::Stop);
-            return (seen, Some(flight.report(result.took, end)));
-        }
-        let Some(swept) = result.found else {
-            return (seen, Some(flight.report(result.took, SweepEnd::NoPanel)));
-        };
-        let (sighting, fate) = match recheck {
-            Some(found) => (Sighting::Recheck(found), FoundFate::Superseded),
-            None => match confirm(&swept, flight.capture) {
-                Some(anchor) => (
-                    Sighting::Swept { anchor, reason: flight.start.reason },
-                    FoundFate::Confirmed,
-                ),
-                None => (Sighting::Nothing, FoundFate::Unconfirmed),
-            },
-        };
-        let end = SweepEnd::Found { origin: swept.origin, scale: swept.scale, fate };
-        (sighting, Some(flight.report(result.took, end)))
-    }
-}
-
-/// Re-find a swept anchor on a LATER capture: one windowed recheck at the swept
-/// origin and scale, which is the cheap tick's own presence test
-/// ([`anchor::detect_cheap`]). `None` when the sheet is no longer there.
-///
-/// The sweep searched a frame grabbed up to a whole sweep ago, and the sheet
-/// can close in that time, so nothing is read at its origin until this frame
-/// agrees (POE-275 WI-2). `capture` is the size of the frame the sweep
-/// searched: a capture of another size is another screen, where the swept
-/// origin means nothing, and `detect_cheap` refuses a hint whose size differs
-/// from the image. The anchor returned is this frame's, re-centred inside the
-/// recheck window, so the read is placed from the pixels it will crop.
-fn confirm_swept(
-    img: &DynamicImage,
-    swept: &anchor::Anchor,
-    capture: (u32, u32),
-) -> Option<anchor::Anchor> {
-    let hint = CheapHint {
-        calibration: anchor::AnchorCalibration {
-            screen_w: capture.0,
-            screen_h: capture.1,
-            scale: swept.scale,
-        },
-        origin: swept.origin,
-    };
-    match anchor::detect_cheap(img, Some(&hint)) {
-        anchor::CheapDetect::Anchored(found) => Some(found),
-        anchor::CheapDetect::Nothing { .. } => None,
-    }
-}
-
-/// The build word [`sweep_line`] carries, from the caller's
-/// `cfg!(debug_assertions)`: the same sweep is 5.3 s on a release build and
-/// ~30 s on the PC's debug one, so a duration without it cannot be compared.
-fn build_profile(debug_assertions: bool) -> &'static str {
-    if debug_assertions {
-        "debug"
-    } else {
-        "release"
-    }
-}
-
-/// The one `app.log` line every cold sweep writes when it ends (POE-275 WI-2):
-/// why it ran, which null-slice attempt of [`NULL_SWEEP_CAP`] it was, the
-/// capture it searched, how long it took, how it ended, and the build.
-///
-/// A MEASUREMENT, never a switch — it is what [`NULL_SWEEP_EVERY`] and
-/// [`NULL_SWEEP_CAP`] are to be corrected from, and the release-build duration
-/// on the PC has never been recorded. It replaces the
-/// `Temple: sweep found no layout panel at WxH — waiting for the panel` line,
-/// whose case is the `found no layout panel` outcome here.
-///
-/// Not routed through [`ErrorLog`]: a sweep that finds nothing is not an error —
-/// a screen with no layout panel on it is the state the loop lives in — and
-/// [`cold_sweep_reason`]'s budget already bounds the lines: [`NULL_SWEEP_CAP`]
-/// null sweeps plus one placed sweep per key.
-fn sweep_line(report: &SweepReport, profile: &str) -> String {
-    let attempt = match report.start.attempt {
-        Some(k) => format!(", attempt {k} of {NULL_SWEEP_CAP}"),
-        None => String::new(),
-    };
-    let end = match report.end {
-        SweepEnd::Found { origin, scale, fate } => format!(
-            "found at ({},{}) scale {scale:.3} — {}",
-            origin.0,
-            origin.1,
-            fate.label()
-        ),
-        SweepEnd::NoPanel => "found no layout panel".to_string(),
-        SweepEnd::Cancelled(by) => format!("cancelled by {}", by.label()),
-        SweepEnd::Lost => "ended without a result".to_string(),
-    };
-    format!(
-        "Temple: cold sweep ({:?}{attempt}) at {}x{} — {} ms, {end}; {profile} build",
-        report.start.reason,
-        report.capture.0,
-        report.capture.1,
-        ms(report.took),
-    )
-}
-
-/// Write [`sweep_line`] for a sweep that just ended.
-fn log_sweep(app: &AppHandle, report: &SweepReport) {
-    crate::app_log(app, sweep_line(report, build_profile(cfg!(debug_assertions))));
 }
 
 /// The line to log when the loop takes its hint from a scale ANOTHER module
@@ -2897,41 +1193,6 @@ pub fn anchored_screen(
     }
 }
 
-fn game_focused(app: &AppHandle) -> bool {
-    let state = app.state::<AppState>();
-    let focused = *state.game_focused.lock().unwrap_or_else(|e| e.into_inner());
-    focused
-}
-
-fn rearm_counter(app: &AppHandle) -> u64 {
-    let state = app.state::<AppState>();
-    let counter = state.temple_state.rearm.load(std::sync::atomic::Ordering::SeqCst);
-    counter
-}
-
-/// The board key as of NOW — `(temple_epoch, temple_rearm)`, in that order.
-///
-/// One place the pair is built, so the two readers cannot disagree about which
-/// counter is which half: [`tick`] takes it once at the top for the whole
-/// iteration, and `super::trigger::complete_cycle` takes it again when the
-/// stand-down actually lands, to check that the tick's key is still the current
-/// one. See [`BoardRead`] for what the pair means.
-pub(super) fn board_key(app: &AppHandle) -> (u64, u64) {
-    (temple_epoch(app), rearm_counter(app))
-}
-
-/// The incursion cycle this tick belongs to (POE-249 WI-1).
-///
-/// Bumped by `trigger::on_client_line` on an Alva line or a non-temple area
-/// line — the two events that end a cycle. Read alongside [`rearm_counter`] to
-/// form the board key: see [`BoardRead`] for why those two together are what
-/// "is this a board I have already read?" means.
-fn temple_epoch(app: &AppHandle) -> u64 {
-    let state = app.state::<AppState>();
-    let epoch = state.temple_state.epoch.load(std::sync::atomic::Ordering::SeqCst);
-    epoch
-}
-
 /// The loop's "have I already logged this?" filter.
 ///
 /// A failure path re-runs on every tick and an error carrying a varying number
@@ -2971,74 +1232,36 @@ impl ErrorLog {
     }
 }
 
-/// Everything the loop carries between ticks.
+
+/// What the worker remembers between presses: only the say-once memories of
+/// its log lines. No board, no retry budget and no sweep survive a press.
+#[derive(Default)]
 struct Session {
-    state: LoopState,
-    /// What the current tick has spent so far — see [`TickStages`].
-    tick_stages: TickStages,
-    /// When [`slow_tick_line`] last wrote, for its rate limit.
-    slow_tick_said: Option<Instant>,
-    /// When [`locked_sighting_line`] last wrote, for its rate limit.
-    locked_said: Option<Instant>,
-    gate: slice::RearmGate,
     errors: ErrorLog,
-    /// The last completed read of the board [`LoopState::board`] is keeping, so
-    /// a retry can be merged into it rather than replacing it (POE-249).
-    ///
-    /// Here rather than on [`LoopState`] because [`LoopState`] is `Eq` cheap
-    /// bookkeeping and this is three OCR results and a door set. Dropped by
-    /// [`kept_for`] the moment the board moves — two reads of two different
-    /// boards must never reach [`slice::merge_reads`].
-    kept: Option<slice::KeptRead>,
-    /// What each board key may still spend on cold sweeps — the placed-miss
-    /// fallback, the null-slice cadence and cap, and POE-269's withheld rule.
-    /// See [`SweepBudget`]; [`cold_sweep_reason`] charges it.
-    sweep_budget: SweepBudget,
-    /// The one sweep in flight, off this thread (POE-275 WI-2) — [`SweepSlot`].
-    sweeps: SweepSlot,
-    /// Whether the first successful placed-origin recheck has been measured and
-    /// logged.
-    placed_recheck_said: bool,
-    /// The armed-ness the loop last announced, `None` before the first one.
-    /// See [`gate_announcement`] — it is what makes `Waiting` one publish
-    /// rather than one per nap. Not the only input: the slice's own status is
-    /// read alongside it, so an announcement another thread wrote over comes
-    /// back.
-    gate_said: Option<bool>,
-    /// The arm SOURCE the loop last put in `app.log`, `None` for "stood down"
-    /// and for a loop that has not looked yet — one claim, not two. The publish
-    /// above is keyed on armed-ness and this on the source, because the two
-    /// answer different questions; [`gate_line`] owns the rule.
-    source_said: Option<trigger::ArmSource>,
-    /// The slice-derived hint the loop last ANNOUNCED, so the line saying it is
-    /// running on another module's measurement is one line per value rather
-    /// than one per tick. See [`hint_line`], which owns the rule.
+    /// The slice-derived hint last announced — see [`hint_line`].
     hint_said: Option<anchor::AnchorCalibration>,
-    /// The last `k` disagreement announced, for the same reason: the condition
-    /// holds for as long as the panel is on screen at that scale, and
-    /// [`publish_anchor_scale`] is reached on every anchored tick.
+    /// The last `k` disagreement announced by [`publish_anchor_scale`].
     k_said: Option<String>,
-    /// The last [`rois_line`] announced, for the same reason: `app_log` keeps
-    /// 50 entries and the rects are a function of `(origin, scale)` alone, so a
-    /// line per READ would repeat one value up to [`RETRIES`] + 1 times per
-    /// board and once more for every incursion of every map, while saying
-    /// nothing a reader did not already have.
+    /// The last [`rois_line`] announced.
     rois_said: Option<String>,
-    /// The outside-set [`clipped_roi_announcement`] last announced, `None`
-    /// before the loop has looked. Its own memory rather than a message in
-    /// [`ErrorLog`] — see that function for why a rect-keyed, session-capped
-    /// seam is the wrong shape for a condition a mouse drag re-states every
-    /// tick.
+    /// The outside-set [`clipped_roi_announcement`] last announced.
     clipped_said: Option<Vec<&'static str>>,
+    /// Whether the first anchored placed-origin recheck has been logged.
+    placed_recheck_said: bool,
 }
 
-fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
-    crate::app_log(&app, "Temple: capture loop started".to_string());
+/// Install (or clear) the worker's inbox in `TempleState.press`.
+fn set_press_sender(app: &AppHandle, tx: Option<mpsc::Sender<PressedFrame>>) {
+    let state = app.state::<AppState>();
+    *state.temple_state.press.lock().unwrap_or_else(|e| e.into_inner()) = tx;
+}
+
+fn run_worker(app: AppHandle, cancel: watch::Receiver<bool>) {
+    crate::app_log(&app, "Temple: read worker started".to_string());
     crate::report_ocr_engine(&app);
 
     // The user's settings belong on the slice from the first frame — the page
-    // and the overlay render their own controls from them, and a derive-default
-    // flag would read as a setting the user chose rather than "not loaded yet".
+    // and the overlay render their own controls from them.
     let settings = settings_snapshot(&app);
     publish(&app, |slice| {
         slice.status = TempleStatus::Idle;
@@ -3051,156 +1274,39 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         return unavailable(&app, &cancel, e);
     }
 
-    let mut session = Session {
-        state: LoopState::default(),
-        tick_stages: TickStages::default(),
-        slow_tick_said: None,
-        locked_said: None,
-        gate: slice::RearmGate::default(),
-        errors: ErrorLog::default(),
-        kept: None,
-        sweep_budget: SweepBudget::default(),
-        sweeps: SweepSlot::default(),
-        placed_recheck_said: false,
-        gate_said: None,
-        source_said: None,
-        hint_said: None,
-        k_said: None,
-        rois_said: None,
-        clipped_said: None,
-    };
-    // Backdated so the first iteration ticks immediately rather than after a
-    // full cadence of doing nothing.
-    let mut last_detect = Instant::now() - DETECT_INTERVAL;
+    let (tx, rx) = mpsc::channel();
+    set_press_sender(&app, Some(tx));
+    let mut session = Session::default();
+    worker_loop(&rx, &|| *cancel.borrow(), &mut |pressed| {
+        read_press(&app, &mut session, &cancel, pressed)
+    });
+    set_press_sender(&app, None);
 
-    loop {
-        if *cancel.borrow() {
-            break;
-        }
-
-        // No capture while alt-tabbed: the layout panel is not on screen, and a
-        // full-screen anchor match every 650 ms would be pure heat. The arm
-        // gate (POE-242, POE-246) is asked only behind it, for two reasons: the
-        // loop publishes nothing at all while the game is not in front (see
-        // `TempleStatus::Idle`), and an unfocused iteration does the same thing
-        // either way. There is no panel clock for the wait to outlast since WI-1
-        // (2026-09-07): `LoopState::live` is a bool the ticks write, so an
-        // alt-tab of any length — a second or an hour — leaves the gate open for
-        // `RETIRE_AFTER` ticks on the way back (two since 2026-09-11, POE-275),
-        // and the last of them is the one that retires the sheet.
-        let focused = game_focused(&app);
-        // One read of the arm for both answers: the SOURCE that keeps the gate
-        // open, and the word for it if it is shut. Two reads could disagree —
-        // the watcher writes this lock from another thread — and the line would
-        // then name a cause the gate did not close for.
-        let (source, stood_down) = if focused {
-            let arm = trigger::arm_state(&app);
-            (
-                trigger::arm_source(
-                    arm,
-                    session.state.live,
-                    session.state.probe_pending(),
-                    now_ms(),
-                ),
-                arm.stood_down,
-            )
-        } else {
-            (None, trigger::StandDown::default())
-        };
-        let armed = source.is_some();
-        if focused {
-            // Decided UNDER the slice lock, against the status the slice
-            // actually holds, so a foreign write (POE-171 finding 15) is
-            // corrected on the next iteration rather than standing forever —
-            // see `gate_announcement`.
-            let said = session.gate_said;
-            let mut announced = None;
-            publish(&app, |slice| {
-                if let Some(outcome) = gate_announcement(said, armed, slice.status) {
-                    apply_gate(slice, outcome);
-                    announced = Some(outcome);
-                }
-            });
-            if announced.is_some() {
-                session.gate_said = Some(armed);
-            }
-            // Separately from the publish: the source can change hands while the
-            // gate stays open, and that transition is the one a smoke run reads.
-            if let Some(line) = gate_line(&mut session.source_said, source, stood_down) {
-                crate::app_log(&app, line);
-            }
-            // A shut gate cancels a sweep still searching (POE-275 WI-2): the
-            // loop stops looking, so nothing would read its answer. AFTER the
-            // stand-down line, so `app.log` names the cause first. Focused only:
-            // an alt-tab is not a stand-down, and a sweep that finishes while the
-            // game is behind is confirmed on the first capture after it.
-            if !armed {
-                if let Some(report) = session.sweeps.cancel(SweepCancel::StandDown) {
-                    log_sweep(&app, &report);
-                }
-            }
-        }
-
-        let step = loop_step(
-            focused,
-            armed,
-            last_detect.elapsed() >= DETECT_INTERVAL,
-        );
-        // A `match` and not an `if`, so a fifth [`LoopStep`] cannot be added
-        // without deciding here whether it captures.
-        match step {
-            LoopStep::Detect => {
-                let started = Instant::now();
-                let promoted = tick(&app, &mut session, &cancel, source);
-                last_detect = Instant::now();
-                // Measured, never acted on — see `SLOW_TICK`. A promoted tick
-                // that read wrote its own `read_timings_line` inside `tick`.
-                if !promoted {
-                    if let Some(line) = slow_tick_line(
-                        &mut session.slow_tick_said,
-                        last_detect,
-                        started.elapsed(),
-                        &session.tick_stages,
-                    ) {
-                        crate::app_log(&app, line);
-                    }
-                }
-            }
-            // Nothing to do but wait: `step.nap()` below is the whole of it.
-            LoopStep::UnfocusedNap | LoopStep::DisarmedNap | LoopStep::Quantum => {}
-        }
-
-        if !nap(&cancel, step.nap()) {
-            break;
-        }
-    }
-
-    // A sweep still searching is let go, never joined (POE-275 WI-2): its stop
-    // check reads the module's `cancel` as well as its own flag, so its thread
-    // ends at its next stop check whatever this loop does — after the
-    // hint/table stage, then between the pyramid's coarse correlations.
-    if let Some(report) = session.sweeps.cancel(SweepCancel::Stop) {
-        log_sweep(&app, &report);
-    }
-
-    // A retired panel must not be left claiming a board is on screen.
     // Best-effort by contract: on app exit the process is gone before this
     // runs, which is why `status` — forced to `Off` by the SSOT composer once
     // the module is disabled — is what the page trusts.
-    //
-    // NOTE (deferred, POE-171 finding 15): a module switched off and straight
-    // back on can have the retiring thread's publish land after the new
-    // thread's first one, overwriting it. Inherited from `mercenary::run`,
-    // which has the same shape; the shared fix is a slice generation counter
-    // both loops stamp, not a change here.
-    //
-    // The ARM GATE is no longer exposed to it (POE-242): a disarmed loop
-    // publishes `Waiting` once and then never again, so this `Idle` landing on
-    // top of it would have stuck for the session. `gate_announcement` reads the
-    // slice's own status and re-asserts the disarmed half, so the next
-    // iteration puts `Waiting` back.
     publish(&app, |slice| apply_status(slice, TickOutcome::Stopping));
     crate::app_log(&app, "Module temple: stopped".to_string());
+}
+
+/// The worker's receive path: one `read` per received frame, in order, until
+/// `stop` answers true or every sender is gone. It owns no grab function, so it
+/// cannot capture anything a press did not.
+pub fn worker_loop(
+    rx: &mpsc::Receiver<PressedFrame>,
+    stop: &dyn Fn() -> bool,
+    read: &mut dyn FnMut(PressedFrame),
+) {
+    loop {
+        if stop() {
+            return;
+        }
+        match rx.recv_timeout(CANCEL_POLL) {
+            Ok(pressed) => read(pressed),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+    }
 }
 
 /// Park the module as `unavailable` and idle until the stop signal.
@@ -3238,437 +1344,6 @@ fn fail(app: &AppHandle, session: &mut Session, msg: String) {
     });
 }
 
-/// One detect tick: grab the screen, ask [`anchor::detect_cheap`] whether
-/// anything is there, resolve the anchor when it says so, and read the board
-/// when that board has not been read yet (POE-249's two gates — see the module
-/// note and docs/TEMPLE-LIFECYCLE.md rows 2-3).
-///
-/// Returns whether this tick paid to resolve the anchor — the caller writes
-/// [`slow_tick_line`] only for the ticks that did not, because a promoted tick
-/// is not evidence about what the cheap half costs, and a promoted tick that
-/// READ writes [`read_timings_line`] of its own. A tick that resolved an anchor
-/// and then re-showed an already-read board is a promoted tick by that measure:
-/// it paid for the placed-origin check, or for confirming a swept origin, either
-/// way. A cold sweep is not part of any tick since 2026-09-11 (POE-275 WI-2):
-/// it runs on its own thread ([`SweepSlot`]), and a tick only starts one,
-/// polls it, or confirms what it found.
-fn tick(
-    app: &AppHandle,
-    session: &mut Session,
-    cancel: &watch::Receiver<bool>,
-    source: Option<trigger::ArmSource>,
-) -> bool {
-    // The measurements start at the grab (`TickStages`); every stage below
-    // writes through to the session as it finishes.
-    let grabbed_at = Instant::now();
-    session.tick_stages = TickStages::default();
-    // The board key (POE-249). Read once, at the top, so all THREE consumers see
-    // the same reading of the same two counters: the anchor gate's `rearm`, the
-    // OCR gate's key, and — since WI-1 — the cycle rule in `miss`, which is
-    // reached from the failing-grab arm below and so cannot wait for the cheap
-    // half. A bump seen by one and not another would force a read the next gate
-    // then skipped, or stand the loop down on a board the user had just asked to
-    // be re-read.
-    //
-    // What ONE reading cannot do is stay current: a START line or a Re-arm that
-    // lands while this tick runs arms a fresh cycle. Since 2026-09-11 (POE-275
-    // WI-2) the cold sweep that made a tick last 5.3 s — ~30 s on the PC's debug
-    // build — runs off this thread, but a tick still spans its grab and its
-    // detect before it reaches `miss`: the grab measured 225 ms on the laptop's
-    // debug build and the detect 1042 ms on the PC's (docs/TEMPLE-LIFECYCLE.md,
-    // "Cadences and budgets"). `trigger::complete_cycle` therefore re-reads the pair and
-    // refuses a stand-down whose key has moved on — see `miss`.
-    let key = board_key(app);
-    let rearm = key.1;
-    // A sweep belongs to the key it started under (POE-275 WI-2): after a Re-arm
-    // or a new epoch its answer is about a board the loop is no longer reading.
-    if let Some(report) = session.sweeps.keep_only(key) {
-        log_sweep(app, &report);
-    }
-    let grab = match crate::capture::capture_screen(app) {
-        Ok(grab) => grab,
-        Err(e) => {
-            // The failing grab is what the tick SPENT, and a slow-tick line that
-            // attributes 0 ms to `capture` after a 650 ms stall points the reader
-            // at the wrong stage.
-            session.tick_stages.capture = grabbed_at.elapsed();
-            fail(app, session, format!("Temple: screen capture failed — {e}"));
-            // Through `miss`, which spends the start-up probe like any other
-            // tick (POE-246): a machine whose capture never succeeds must not
-            // hold the gate open for the session.
-            miss(app, session, true, key);
-            return false;
-        }
-    };
-    session.tick_stages.capture = grabbed_at.elapsed();
-    let monitor_id = grab.monitor_id;
-    let origin = grab.origin;
-    let client = grab.client;
-    let img = grab.image;
-    let capture = (img.width(), img.height());
-    // Before ANY remembered geometry is read (POE-227): a screen scale measured
-    // on another monitor or at another resolution is dropped from the shared
-    // slice on the first capture that disagrees with it. The placed hint below is
-    // derived only after this prune.
-    crate::ssot::drop_if_mismatched(app, capture, origin, client);
-
-    let settings = settings_snapshot(app);
-    // The screen slice is the sole source for both halves of the cheap hint:
-    // placements owns the Entrance origin and the scale crosses units through
-    // anchor::scale_for_ui_scale. The value is local to this tick; no prior
-    // read can supply an origin.
-    let (cheap_hint, hint_source, screen_present, anchored_origin) =
-        hint_from_slice(app, capture, origin, client);
-    let hint = cheap_hint.map(|hint| hint.calibration);
-    if let Some(line) = hint_line(&mut session.hint_said, hint, hint_source) {
-        crate::app_log(app, line);
-    }
-
-    // One full-resolution windowed NCC at the placed origin is both the panel
-    // presence test and the steady-state detect path.
-    let probing = Instant::now();
-    let cheap = anchor::detect_cheap(&img, cheap_hint.as_ref());
-    session.tick_stages.cheap = probing.elapsed();
-    if !session.placed_recheck_said
-        && matches!(cheap, anchor::CheapDetect::Anchored(_))
-    {
-        session.placed_recheck_said = true;
-        crate::app_log(
-            app,
-            format!(
-                "Temple: placed-origin recheck — NCC {:.3}, {} ms",
-                cheap.ncc(),
-                ms(session.tick_stages.cheap)
-            ),
-        );
-    }
-
-    // The recheck and the sweep in flight, folded (POE-275 WI-2): a recheck
-    // that anchored wins and cancels the sweep; a sweep that FOUND the panel is
-    // used only as re-found on THIS frame (`confirm_swept`), which is always a
-    // later capture than the one it searched.
-    //
-    // The confirmation is a windowed NCC of its own, so its cost is booked to
-    // the `anchor` stage — the stage a slow-tick line reads it from.
-    let mut confirming = Duration::ZERO;
-    let (sighting, ended) = session.sweeps.settle(&cheap, |swept, searched| {
-        let started = Instant::now();
-        let confirmed = confirm_swept(&img, swept, searched);
-        confirming = started.elapsed();
-        confirmed
-    });
-    session.tick_stages.anchor = confirming;
-    if let Some(report) = ended {
-        log_sweep(app, &report);
-    }
-
-    let (found, swept_by) = match sighting {
-        Sighting::Recheck(found) => {
-            // The seed was right: a screen with no anchored origin whose placed
-            // recheck anchored has nothing left for a null sweep to find in this
-            // key (`SweepBudget::on_recheck`).
-            session.sweep_budget.on_recheck(key, anchored_origin.is_some());
-            (found, None)
-        }
-        Sighting::Swept { anchor, reason } => (anchor, Some(reason)),
-        Sighting::Nothing => {
-            let outcome = miss(app, session, false, key);
-            // A miss may START a sweep, never wait for one: the loop keeps
-            // ticking while it searches. A null/unplaced slice sweeps every
-            // `NULL_SWEEP_EVERY` misses up to `NULL_SWEEP_CAP` per key; a placed
-            // miss once per key under the Manual arm only — see
-            // `cold_sweep_reason`.
-            //
-            // The ANCHORED origin, not the hint's: the hint carries a seed on any
-            // non-null slice, and passing that would read every screen that
-            // merely EXISTS as one whose placement has been verified (POE-278).
-            let start = cold_sweep_reason(
-                screen_present,
-                anchored_origin.map(|[x, y]| (x, y)),
-                outcome,
-                session.sweeps.in_flight(),
-                source,
-                key,
-                &mut session.sweep_budget,
-            );
-            if let Some(start) = start {
-                cold_sweep(app, &mut session.sweeps, img, hint, cancel, start, key);
-            }
-            return false;
-        }
-    };
-
-    let placed_origin = cheap_hint.as_ref().map(|hint| hint.origin);
-    let fallback_origin = swept_by.and_then(|_| {
-        let fallback_origin = placed_origin_contradiction(placed_origin, found.origin)?;
-        if let Some(line) = placed_origin_contradiction_line(placed_origin, found.origin) {
-            crate::app_log(app, line);
-            crate::app_log(app, GEOMETRY_NOTICE_LINE.to_string());
-        }
-        Some(fallback_origin)
-    });
-
-    let anchoring = Instant::now();
-    let layout = reader::read_layout_at(&img, found);
-    session.tick_stages.anchor += anchoring.elapsed();
-
-    // The sighting the arm gate reads (POE-246, WI-1): every anchored tick sets
-    // `live`, so the gate stays open for as long as the sheet is in front of the
-    // player and shuts on the tick that retires it (`RETIRE_AFTER` misses).
-    //
-    // BEFORE the OCR gate below, and that order is load-bearing (POE-249): a
-    // sighting that re-shows an already-read board is still a sighting, and it
-    // is what keeps the loop armed while the player reads the sheet. Gating this
-    // on the read would stand the module down after the READ rather than after
-    // the sheet closed.
-    let detected = session.state.on_detect(true);
-    session.sweep_budget.on_sighting();
-    // The temple's WRITE of the shared slice (POE-234 WI-2). Here rather than in
-    // `full_read`, so all three anchor paths — the cheap tick's verified hint,
-    // the cold sweep, and the promoted read — publish, including the ticks whose
-    // board looked unchanged and bought no read. `ssot::accepts` is what makes
-    // that affordable on a 650 ms loop.
-    let screen_filled =
-        publish_anchor_scale(app, session, &layout, hint, capture, monitor_id, origin, client);
-    if swept_by == Some(ColdSweepReason::NullSlice) {
-        session.sweep_budget.after_null_publish(key, screen_filled);
-    }
-
-    // The OCR gate (POE-249, docs/TEMPLE-LIFECYCLE.md rows 2-3). Everything
-    // above this line runs on every sighting; the OCR below it runs once per
-    // board as the full 28 calls, plus at most `RETRIES` further rounds while
-    // some region is unclean — and those re-read only the unclean regions
-    // (`slice::plan_read`), not the 28.
-    //
-    // Once the read is done — clean, or the budget spent — the board is LOCKED
-    // under its key (POE-282, `BoardRead::locked`): nothing seen on the sheet
-    // buys OCR until START, END, a zone change or Re-arm, and the locked board
-    // keeps its read and its geometry. The frame costs nothing here: it is read
-    // off the layout the anchor above already resolved. Before the lock it
-    // decides whether a read is a retry or a new board (`note_read`); after it,
-    // only whether the ignore line below is written.
-    let frame = slice::BoardFrame::of(&layout);
-    let rearmed = session.gate.rearm_pending(rearm);
-    let answer = session.state.gate(key, &frame);
-    if let GateAnswer::Locked { changed, .. } = answer {
-        if let Some(line) = locked_sighting_line(&mut session.locked_said, Instant::now(), changed)
-        {
-            crate::app_log(app, line);
-        }
-    }
-    if matches!(answer, GateAnswer::Read) && rearmed {
-        session.gate.note_rearm(rearm);
-    }
-    let reshown = match answer {
-        GateAnswer::Read => None,
-        GateAnswer::Locked { status, .. } => Some(status),
-    };
-
-    // ONE line per reopen, and it says which way the gate went (POE-249).
-    // `Found` and not `Held`: `Held` is the steady state of a player reading the
-    // sheet, and one line per 650 ms would empty `app_log`'s 50-entry buffer in
-    // half a minute. Both branches were logged before, so every reopen that
-    // re-showed said "found …" and "back …" one after the other and the pair
-    // read as two events.
-    if detected == DetectOutcome::Found {
-        crate::app_log(
-            app,
-            match reshown {
-                Some(_) => "Temple: layout panel back — same board, no read".to_string(),
-                None => format!(
-                    "Temple: layout panel found (scale {:.3}, NCC {:.3})",
-                    layout.scale, layout.ncc
-                ),
-            },
-        );
-    }
-
-    let Some(status) = reshown else {
-        full_read(
-            app,
-            session,
-            cancel,
-            &img,
-            layout,
-            &settings,
-            key,
-            frame,
-            grabbed_at,
-            fallback_origin,
-        );
-        return true;
-    };
-
-    // Nothing to read: under the same key, a locked board keeps its read payload
-    // and its geometry on the slice (POE-282) — whatever the frame now says, a
-    // moved frame is a new board only before the lock. Only the STATUS is put
-    // back — a retired panel published `panel_not_visible` and the sheet-bound
-    // overlays went with it.
-    publish(app, |slice| apply_status(slice, TickOutcome::Reshown(status)));
-    true
-}
-
-/// Start one cold sweep of this capture on a thread of its own, and return at
-/// once — [`SweepSlot::launch`] over [`anchor::anchor_for_loop`].
-///
-/// `start` is what [`cold_sweep_reason`] has already charged: a null or
-/// unplaced slice gets this path every [`NULL_SWEEP_EVERY`] consecutive clean
-/// misses, up to [`NULL_SWEEP_CAP`] per `(temple_epoch, temple_rearm)` key; a
-/// placed miss once per key under the Manual arm only. Nothing is logged here:
-/// the sweep's one line is written when it ends, found or not ([`sweep_line`]).
-/// A thread that cannot be spawned says so and leaves the slot empty; the start
-/// is charged already, so a failing spawn cannot be retried on every tick.
-///
-/// # Off the loop (POE-275 WI-2, owner 2026-09-11)
-///
-/// The sweep is 5.3 s on a 1920x1080 capture in the Linux container (release)
-/// and ~30 s on the PC's debug build (app.log 2026-09-08/09). Until 2026-09-11
-/// this was the loop's longest single call, the tick waited for it, and no
-/// placed recheck ran while it searched. It now takes the frame by VALUE — the
-/// tick that starts it is a miss and has no further use for it — and the loop
-/// goes on ticking at [`DETECT_INTERVAL`]. The search's stop check reads the
-/// slot's per-sweep flag and the module's `cancel` together. It is polled only
-/// inside the pyramid — building the scene, the hint-scale search and the
-/// three-scale table search run to completion first — so a cancel of either
-/// kind lands after that stage, then between the pyramid's coarse correlations
-/// (see [`anchor::anchor_for_loop`]).
-fn cold_sweep(
-    app: &AppHandle,
-    sweeps: &mut SweepSlot,
-    img: DynamicImage,
-    hint: Option<anchor::AnchorCalibration>,
-    cancel: &watch::Receiver<bool>,
-    start: SweepStart,
-    key: (u64, u64),
-) {
-    let capture = (img.width(), img.height());
-    let module_stop = cancel.clone();
-    // The placed recheck searched a small window. This explicit fallback searches
-    // the whole capture with the pyramid path, trying the placed scale first.
-    let launched = sweeps.launch(start, key, capture, move |stop| {
-        let halt = || stop() || *module_stop.borrow();
-        let found = anchor::anchor_for_loop(&img, hint.as_ref(), &halt).ok();
-        (found, halt())
-    });
-    if let Err(e) = launched {
-        crate::app_log(
-            app,
-            format!("Temple: cold sweep ({:?}) could not start — {e}", start.reason),
-        );
-    }
-}
-
-/// A tick that produced no layout — nothing on screen, or the grab failed.
-///
-/// The two reach the page the same way — no board this tick — and they are
-/// DIFFERENT events to the panel state machine, which is the whole reason this
-/// function branches on `errored` at all. A clean miss is the loop looking and
-/// finding the sheet gone: it runs the rules below. A failed grab is the loop
-/// not looking at all, and since the WI-1 fix round it does one thing and
-/// returns — [`LoopState::on_blind_tick`], which spends the start-up probe and
-/// leaves [`LoopState::live`] where the last tick that could see the screen left
-/// it. [`fail`] has already put the status and the message on the page by then,
-/// so there is nothing here to publish.
-///
-/// The residual that buys, named in docs/TEMPLE-LIFECYCLE.md: while `live` is
-/// held by a capture that keeps failing, the panel branch of
-/// [`trigger::arm_source`] is ORed ABOVE Client.txt, so no Alva line and no zone
-/// change shuts the gate — the first grab that SUCCEEDS does, by finding no
-/// panel. Accepted against what it replaced, which was one TRANSIENT failure
-/// standing the capture down under a sheet the player was reading.
-///
-/// `errored` is what keeps [`fail`]'s message on the page: a clean miss — the
-/// loop looked and there was no panel — means the last error is over, and
-/// clearing it there is what stops a one-off capture failure sitting on the
-/// page for the rest of the session. [`next_status`] moves the status in the
-/// same publish, because clearing the message while leaving `error` standing
-/// leaves the page red with nothing under it.
-///
-/// # A retire ends NOTHING but `live` (POE-244, POE-248, POE-249)
-///
-/// It used to drop `advice` and `mode`, on the reasoning that a recommendation
-/// is a move the player could still act on while the board is only a record.
-/// That reasoning had the case backwards: the panel closes the moment the
-/// player steps through the door, so a retire is what the whole INCURSION looks
-/// like, and dropping the advice there left POE-244's door widget with no
-/// purple seal, no `open <edge>` line and no architect name at exactly the point
-/// those are the only things still on screen.
-///
-/// What ends the advice is not here and was never here: `trigger::advice_end`
-/// decides — an Alva line stamped after the read, or a zone change away from the
-/// temple — and `slice::clear_advice` / `TempleSlice::force_off` write. Since POE-248
-/// the STAND-DOWN does not end it either ([`apply_gate`] is the status alone),
-/// because the live session that reported the bug stood the loop down
-/// mid-incursion with the player still in the room the widget described.
-///
-/// What this function does end is [`LoopState::live`], on the retire after
-/// [`RETIRE_AFTER`] consecutive clean misses — the second since 2026-09-11
-/// (POE-275, owner), the first from POE-249 until then. The sheet-bound overlays
-/// come down on that same miss: [`miss_publish`] answers
-/// [`TickOutcome::NoPanel`] for the retire and for a miss with nothing live, and
-/// nothing for the held miss before a retire, so the status the last sighting
-/// wrote stays on the slice through one miss. Until 2026-09-11 every clean miss
-/// published `NoPanel`, which is why the constant alone did not move the hide.
-/// It does NOT invalidate the board:
-/// a sheet reopened inside the same incursion re-shows it ([`LoopState::board`],
-/// docs/TEMPLE-LIFECYCLE.md row 3) — while the loop is still armed to see the
-/// reopen, which is what the paragraph below changed.
-///
-/// # And, since WI-1, the CYCLE (2026-09-07)
-///
-/// A retire over a board this loop has already read is the sheet closing on a
-/// finished cycle, so it stands the capture down for good: [`cycle_complete`]
-/// decides and `trigger::complete_cycle` writes, and the loop's next iteration
-/// finds the gate shut and says so. The clean/errored split is one guard — a
-/// tick that could not LOOK has learned nothing about the sheet, and since the
-/// fix round it cannot even reach `Retired` — the read-in-hand half of the rule
-/// is the second, so a sheet closed before its read landed leaves the loop
-/// probing, and [`trigger::ArmState::complete_cycle`] holds the third: a Temple
-/// of Atzoatl run is not ended by one of its rooms' sheets closing.
-///
-/// The `key` is passed on to `trigger::complete_cycle` and is the fourth guard.
-/// This tick's key was read at the top of [`tick`], before its grab and its
-/// detect — over a second on a debug build (1042 ms of cheap detect measured on
-/// the PC's) — so a START line or a Re-arm in between may already have armed a
-/// FRESH cycle by the time this runs, and disarming that on the strength of the
-/// old key would leave the next board unread until Re-arm. Until 2026-09-11 the
-/// gap also held the cold sweep, 5.3 s in the release container; the sweep runs
-/// off the loop since then (POE-275 WI-2), and the guard stays for the gap
-/// that is left.
-///
-/// The stand-down is not logged here. [`gate_line`] owns that line and prints it
-/// on the next iteration, which is what keeps it one line per stand-down however
-/// the gate came to be shut.
-///
-/// Returns what the panel state machine answered, which [`tick`] hands to
-/// [`cold_sweep_reason`]: only a [`DetectOutcome::Missed`] may start a sweep.
-fn miss(app: &AppHandle, session: &mut Session, errored: bool, key: (u64, u64)) -> DetectOutcome {
-    if errored {
-        // A tick that could not LOOK, and the whole of what it does: spend the
-        // start-up probe and leave the panel state where the last tick that
-        // COULD look left it ([`LoopState::on_blind_tick`], whose residual is
-        // named in docs/TEMPLE-LIFECYCLE.md). It retires nothing, so it says
-        // nothing about the sheet, completes no cycle and takes no overlay
-        // down; and [`fail`] has already published both the status and the
-        // message, so publishing here would say the same thing twice.
-        return session.state.on_blind_tick();
-    }
-    let outcome = session.state.on_detect(false);
-    if outcome == DetectOutcome::Retired {
-        crate::app_log(app, "Temple: layout panel gone".to_string());
-    }
-    // AFTER the `layout panel gone` line and before the publish, so `app.log`
-    // reads in the order the events happened: the sheet went, then the gate
-    // shut.
-    if cycle_complete(outcome, session.state.has_read(key), !errored) {
-        trigger::complete_cycle(app, key);
-    }
-    if let Some(status) = miss_publish(outcome) {
-        publish(app, |slice| apply_status(slice, status));
-    }
-    outcome
-}
-
 /// The text crops this module OCRs, named, in the order they are read.
 ///
 /// **The one list.** [`panel_text`] reads it, [`clipped_text_rois`] checks it,
@@ -3695,52 +1370,6 @@ pub fn text_regions(layout: &TempleLayout) -> [(&'static str, [i32; 4]); 2] {
     ]
 }
 
-/// The panel's text: two bounded crops, as lines carrying their boxes in
-/// CAPTURE px.
-///
-/// Never the whole frame — see the module note. The side panel's region is read
-/// first and the budget line second, the order they are drawn in; since POE-243
-/// that order is a convenience rather than a contract, because each line knows
-/// where it was read and [`panel::read_panel`] sorts by that.
-///
-/// A crop that lands outside the capture contributes nothing rather than
-/// failing the read: the two regions are independent, and losing the budget
-/// line costs a warning, not the board.
-///
-/// `wanted` is the region names this round is reading — [`slice::ReadPlan`]'s
-/// `text`, which for round 1 is both of them and for a retry round is only the
-/// ones the kept panel still owes (WI-2). A region left out is not cropped and
-/// not OCR'd, so it contributes no lines and [`panel::read_panel`] answers
-/// `Unknown`/empty/`None` for it — which is exactly what
-/// [`slice::merge_reads`] falls back to the kept panel on. An EMPTY `wanted`
-/// therefore returns `Some(vec![])` rather than `None`: a round that reads no
-/// text is a round, not a failure.
-fn panel_text(
-    app: &AppHandle,
-    session: &mut Session,
-    img: &DynamicImage,
-    layout: &TempleLayout,
-    wanted: &[&'static str],
-) -> Option<Vec<crate::ocr::OcrLineBox>> {
-    let mut lines = Vec::new();
-    for (name, rect) in text_regions(layout) {
-        if !wanted.contains(&name) {
-            continue;
-        }
-        let Some((crop, origin)) = crop_clipped(img, rect) else {
-            continue;
-        };
-        match panel::crop_lines(&crop, origin) {
-            Ok(read) => lines.extend(read),
-            Err(e) => {
-                fail(app, session, format!("Temple: OCR failed — {e}"));
-                return None;
-            }
-        }
-    }
-    Some(lines)
-}
-
 /// The three ROIs this read is about to use, as one line for `app.log`.
 ///
 /// POE-230's measurement instrument. The rects are placed from `(origin, scale)`
@@ -3752,8 +1381,7 @@ fn panel_text(
 ///
 /// `None` when the same line has already been said. `(origin, scale)` is stable
 /// while the player stands still and the game window does not move, while
-/// [`full_read`] runs once per board plus its retries and 1–3 times per map on
-/// top of that — so an unconditional line here repeats one value into a 50-entry
+/// [`read_press`] runs on every press — so an unconditional line here repeats one value into a 50-entry
 /// buffer and pushes other diagnostics out of it, which is the opposite of what
 /// a diagnostic is for.
 ///
@@ -3805,9 +1433,8 @@ fn clipped_text_rois(
 /// One sentence, used verbatim in `app.log` AND on the Temple page
 /// ([`slice::TempleSlice::read_notice`]), so a screenshot and a pasted log say
 /// the same thing. The wording names the one cause that produces this on a
-/// working install: the capture is the whole monitor
-/// (`capture::capture_screen`), so a read region outside it means the game is
-/// not filling the monitor the module is grabbing.
+/// working install: the read key grabs the whole monitor, so a read region
+/// outside it means the game is not filling the monitor being grabbed.
 fn clipped_roi_line(name: &str, rect: [i32; 4]) -> String {
     format!("Temple: {name} ROI {rect:?} is outside the capture — windowed client?")
 }
@@ -3917,59 +1544,6 @@ fn unit_ratio_line(scale: f32, capture_width: u32, capture_height: u32) -> Optio
 /// there is nothing to report.
 const K_TOLERANCE: f32 = 0.01;
 
-/// The kept reading a fresh read of `(key, frame)` may be merged into, or
-/// `None` when there is nothing it may legally touch.
-///
-/// [`slice::merge_reads`] may only ever be handed two readings of the SAME
-/// board: it folds region by region, so two boards would file the old room's
-/// corridors under the new room's name and fill a plate the player has already
-/// walked past into one they are looking at. Its own precondition catches a
-/// FRAME that moved; it cannot catch a board that changed behind an unmoved
-/// frame, which is exactly what the epoch sees and it does not.
-///
-/// Through [`LoopState::same_board`], the same predicate the gate upstream used
-/// to send this tick here — the drop and the gate cannot disagree about what
-/// "the same board" is, and the retry the gate let through is the one case a
-/// kept reading survives into.
-///
-/// A function rather than an `if` inside [`full_read`] so the rule has a seam:
-/// [`full_read`] needs an `AppHandle`, a capture and an OCR engine, and this
-/// needs none of them. It was an `if` in there, and deleting it passed every
-/// test.
-///
-/// # Why it is generic over the reading (WI-2)
-///
-/// [`full_read`] asks this TWICE and must get the same answer both times: once
-/// on a BORROW before any OCR, to plan which regions this round re-reads
-/// ([`slice::plan_read`]), and once on the OWNED reading at the merge. The
-/// predicate is the ownership rule, not the ownership: making the reading the
-/// type parameter is what keeps both calls on the one rule instead of leaving
-/// the planning half to a hand-written copy of it. A board this loop has not
-/// read still reaches neither the plan nor [`slice::merge_reads`].
-fn kept_for<T>(
-    kept: Option<T>,
-    state: &LoopState,
-    key: (u64, u64),
-    frame: &slice::BoardFrame,
-) -> Option<T> {
-    kept.filter(|_| state.same_board(key, frame))
-}
-
-/// Whether the read the gate just let through is a RETRY ROUND (POE-276, owner
-/// 2026-09-11): a re-read of the board this loop already read and published,
-/// in the same place, under the same key.
-///
-/// [`LoopState::same_board`], the rule [`kept_for`] and [`LoopState::note_read`]
-/// already share, asked once more. [`full_read`] is entered only on a
-/// [`GateAnswer::Read`], and the gate answers `Read` for the SAME board only
-/// while it is unclean and owed a round — so on that path this is true exactly
-/// for a retry. A first read, a Re-arm or a settings change (the rearm count
-/// moved), an Alva line or a zone change (the epoch moved) and a walked or
-/// dragged sheet (the frame moved) are all false.
-pub fn read_is_retry(state: &LoopState, key: (u64, u64), frame: &slice::BoardFrame) -> bool {
-    state.same_board(key, frame)
-}
-
 /// The `Anchored` publish: `reading`, carrying whether the read is a retry
 /// round ([`TempleSlice::read_retry`], POE-276).
 ///
@@ -3981,142 +1555,230 @@ pub fn apply_anchored(slice: &mut TempleSlice, retry: bool) {
     slice.read_retry = retry && slice.status == TempleStatus::Reading;
 }
 
-/// The expensive half of one tick: the side panel, the 13 plates, the door
-/// diamond, the advisor, and one publish.
+/// One pressed frame read once (POE-389): the per-frame prefix the loop's tick
+/// ran, then the first-read body, on THIS frame only.
 ///
-/// # Three rounds per board at most: one full, then at most [`RETRIES`] partial
-///
-/// The caller has already decided this board is worth reading —
-/// [`LoopState::reshow`] answered `None`, which is the form the loop calls
-/// ([`LoopState::wants_read`] is the same rule stated as the bool the tests
-/// name). What happens here is the read itself and the bookkeeping that bounds
-/// it: the fresh reading is MERGED into whatever this loop kept for the same
-/// board ([`slice::merge_reads`]), the merged read is what the advisor ranks and
-/// [`slice::project`] publishes, and [`LoopState::note_read`] records whether it
-/// is still unclean and spends one round.
-///
-/// `key` and `frame` are the caller's — the same pair the gate decided on,
-/// passed down rather than recomputed, so the read is recorded under the
-/// identity it was let through as.
-///
-/// # What this round OCRs, decided before it OCRs anything (WI-2)
-///
-/// [`slice::plan_read`] is asked FIRST, from the kept reading
-/// [`kept_for`] allows and the clipped-region list this capture produced: a
-/// board with nothing kept is read whole, and a retry round reads only the
-/// plates still unnamed, the text regions the kept panel still owes, and the
-/// diamond if it failed. Every OCR call below is behind that plan.
-///
-/// The ORDER is the point. The kept reading is only borrowed for the plan;
-/// `session.kept` is still `take`n at the merge, so a round that bails out
-/// between the two — a cancelled thread, a dead OCR engine — leaves it standing
-/// and the next round plans from it again rather than reading the board whole.
-///
-/// The merge is what makes a retry safe. Two reads of one board are two OCR
-/// passes over two frames, so the second can be WORSE than the first — a plate
-/// that read on the first attempt and not on the second, a panel caught
-/// mid-redraw. Replacing the kept read wholesale would let that regress a board
-/// the player is looking at; merging region by region cannot. That same merge is
-/// what a SKIPPED region rides out on: it arrives as the placeholder an unread
-/// region produces, and the kept value wins — see [`slice::merge_reads`]'s note
-/// on the region nobody looked at, and the diamond arm it names.
-///
-/// A read that bails out (a cancelled thread, a failed OCR engine) records
-/// nothing, so the next tick reads the same board from scratch.
-///
-/// `fallback_origin` is populated only when the explicit cold fallback found a
-/// panel away from the placed origin. It is remembered after this read has
-/// published successfully, so a failed or cancelled read cannot change the
-/// next tick's placement.
-fn full_read(
+/// A grab error is reported through [`fail`] and nothing else. A placed recheck
+/// that misses searches the frame only when [`locate_on_miss`] says so;
+/// otherwise, or when the search finds nothing, the press publishes
+/// [`TickOutcome::NoPanel`]. A located anchor that fills or contradicts the
+/// placement is remembered only after the read has published (ADR-025 cl. 4),
+/// through [`finish`].
+fn read_press(
     app: &AppHandle,
     session: &mut Session,
     cancel: &watch::Receiver<bool>,
-    img: &DynamicImage,
-    layout: TempleLayout,
-    settings: &TempleSettings,
-    key: (u64, u64),
-    frame: slice::BoardFrame,
-    since_grab: Instant,
-    fallback_origin: Option<(i32, i32)>,
+    pressed: PressedFrame,
 ) {
-    let mut stages = ReadStages::default();
-    // BEFORE `note_read` below, and that order is the flag: `note_read` records
-    // this read as the board, after which `same_board` is true for every read.
-    // Not covered by a test — the only seam that would cover it needs an
-    // `AppHandle`.
-    let retry = read_is_retry(&session.state, key, &frame);
-    publish(app, |slice| apply_anchored(slice, retry));
-    // Before any crop, so a read that fails halfway still leaves the geometry it
-    // was working from in the log.
+    let started = Instant::now();
+    let reason = pressed.reason.label();
+    let said = |outcome: &str| {
+        crate::app_log(app, format!("Temple: read on press ({reason}) — {outcome}"));
+    };
+    let grab = match pressed.frame {
+        Ok(grab) => grab,
+        Err(e) => {
+            fail(app, session, format!("Temple: screen capture failed — {e}"));
+            return said("capture failed");
+        }
+    };
+    let mut tick_stages = TickStages {
+        capture: Duration::from_millis(u64::from(grab.timing.call_ms)),
+        ..TickStages::default()
+    };
+    let img = &grab.image;
+    let capture = (img.width(), img.height());
+    let (monitor_id, origin, client) = (grab.monitor_id, grab.origin, grab.client);
+    // Before ANY remembered geometry is read (POE-227).
+    crate::ssot::drop_if_mismatched(app, capture, origin, client);
+
+    let settings = settings_snapshot(app);
+    let (cheap_hint, hint_source, screen_present, anchored_origin) =
+        hint_from_slice(app, capture, origin, client);
+    let hint = cheap_hint.map(|hint| hint.calibration);
+    if let Some(line) = hint_line(&mut session.hint_said, hint, hint_source) {
+        crate::app_log(app, line);
+    }
+
+    let probing = Instant::now();
+    let cheap = anchor::detect_cheap(img, cheap_hint.as_ref());
+    tick_stages.cheap = probing.elapsed();
+    if !session.placed_recheck_said && matches!(cheap, anchor::CheapDetect::Anchored(_)) {
+        session.placed_recheck_said = true;
+        crate::app_log(
+            app,
+            format!(
+                "Temple: placed-origin recheck — NCC {:.3}, {} ms",
+                cheap.ncc(),
+                ms(tick_stages.cheap)
+            ),
+        );
+    }
+    let stop = || *cancel.borrow();
+    let (found, located) = match cheap {
+        anchor::CheapDetect::Anchored(found) => (found, false),
+        anchor::CheapDetect::Nothing { .. } => {
+            let searched = locate_on_miss(screen_present, anchored_origin).then(|| {
+                let locating = Instant::now();
+                let found = anchor::anchor_for_loop(img, hint.as_ref(), &stop);
+                tick_stages.anchor = locating.elapsed();
+                found
+            });
+            match searched {
+                Some(Ok(found)) => (found, true),
+                _ => {
+                    publish(app, |slice| apply_status(slice, TickOutcome::NoPanel));
+                    return said("no panel");
+                }
+            }
+        }
+    };
+
+    // Only a LOCATED anchor may replace the placement (ADR-025 cl. 4), and only
+    // after the read below has published — `finish` owns that.
+    let placed_origin = cheap_hint.as_ref().map(|hint| hint.origin);
+    let fallback_origin = located
+        .then(|| {
+            if let Some(line) = placed_origin_contradiction_line(placed_origin, found.origin) {
+                crate::app_log(app, line);
+                crate::app_log(app, GEOMETRY_NOTICE_LINE.to_string());
+            }
+            placed_origin_contradiction(placed_origin, found.origin)
+        })
+        .flatten();
+
+    let anchoring = Instant::now();
+    let layout = reader::read_layout_at(img, found);
+    tick_stages.anchor += anchoring.elapsed();
+    publish_anchor_scale(app, session, &layout, hint, capture, monitor_id, origin, client);
+    crate::app_log(
+        app,
+        format!("Temple: layout panel found (scale {:.3}, NCC {:.3})", layout.scale, layout.ncc),
+    );
+    publish(app, |slice| apply_anchored(slice, false));
+
+    // Before any crop, so a read that fails halfway still leaves its geometry.
     if let Some(line) = rois_line(&mut session.rois_said, layout.origin, layout.scale) {
         crate::app_log(app, line);
     }
-    // …and the honesty half of the same measurement. `panel_text` steps over a
-    // crop with no pixels in the frame, which is the right thing to do with the
-    // budget line and the wrong thing to do SILENTLY: an empty panel crop
-    // produces an empty offer list that reads exactly like a panel with no
-    // architects on it. The LOG is said once per outside-set (see
-    // `clipped_roi_announcement`); the SLICE carries the notice on every read it
-    // is true of, because the page shows a state and not a history.
     let clipped = clipped_text_rois(&text_regions(&layout), img.width(), img.height());
     if let Some(lines) = clipped_roi_announcement(&mut session.clipped_said, &clipped) {
         for line in lines {
             crate::app_log(app, line);
         }
     }
-    let read_notice = (!clipped.is_empty()).then(|| {
-        clipped
-            .iter()
-            .map(|(name, rect)| clipped_roi_line(name, *rect))
-            .collect::<Vec<_>>()
-            .join("; ")
-    });
-
-    // WHAT THIS ROUND READS, decided before a single OCR call (WI-2). The kept
-    // reading is only BORROWED here — `kept_for` owns which reading this round
-    // may look at, and `full_read` still `take`s it at the merge, so a round
-    // that bails out below leaves it standing for the next one.
-    //
-    // The names, not the rects: `slice::plan_read` asks only WHICH regions fell
-    // off the capture, because a region that is not on screen cannot read
-    // better on a retry — it must neither buy a round nor be re-read by one.
     let clipped_names: Vec<&'static str> = clipped.iter().map(|(name, _)| *name).collect();
-    let plan = slice::plan_read(
-        kept_for(session.kept.as_ref(), &session.state, key, &frame),
-        &clipped_names,
+
+    let mut stages = ReadStages::default();
+    let mut unclean = false;
+    let result = read_board(img, layout, &SystemOcr, &clipped_names, &stop, &mut stages).map(|read| {
+        if let Some((title, plate)) = slice::current_identity(
+            read.layout.current,
+            &slice::identities(&read.rooms),
+            &read.panel,
+        )
+        .disagreement
+        {
+            crate::app_log(
+                app,
+                format!(
+                    "Temple: side panel says {title:?} but the current plate says {plate:?}; using the plate"
+                ),
+            );
+        }
+        // THIS press's settings snapshot, so the table, the ranking and the
+        // echoed settings are one preset's (POE-257 WI-3).
+        let valuing = Instant::now();
+        let (valuation, market, valuation_source) =
+            crate::temple::valuation::temple_valuation_now(app, &settings);
+        stages.valuation = valuing.elapsed();
+        stages.valuation_source = valuation_source;
+        let advising = Instant::now();
+        let projected = verdict(&read, &clipped, &settings, &valuation, &market, now_ms());
+        stages.advise = advising.elapsed();
+        unclean = slice::unclean(&read, &clipped_names);
+        projected
+    });
+    let cancelled = result.is_err() && stop();
+    let done = finish(result, fallback_origin);
+    let read_at = match done.publish {
+        Ok(projected) => {
+            let read_at = projected.last_read_at;
+            let publishing = Instant::now();
+            publish(app, |slice| *slice = projected);
+            stages.publish = publishing.elapsed();
+            read_at
+        }
+        Err(_) if cancelled => return said("cancelled"),
+        Err(msg) => {
+            fail(app, session, msg);
+            return said("OCR failed");
+        }
+    };
+    if let Some(origin) = done.remember {
+        crate::ssot::remember_anchor(app, crate::ssot::AnchorModule::TempleEntrance, origin);
+    }
+    crate::app_log(
+        app,
+        read_timings_line(
+            &tick_stages,
+            &stages,
+            started.elapsed(),
+            read_at.unwrap_or(0),
+            unclean,
+            &slice::plan_read(None, &clipped_names),
+        ),
     );
+    said(if unclean { "read, unclean" } else { "read" });
+}
+
+/// The OCR body of one press: the whole board, no merge (POE-389 D4).
+///
+/// The two text regions are read first and the plates after, through
+/// `recognizer`. An OCR error is `Err("Temple: OCR failed — …")` and buys no
+/// plate calls; a `stop` that turns true is `Err("cancelled")`.
+pub fn read_board(
+    img: &DynamicImage,
+    layout: TempleLayout,
+    recognizer: &dyn TextRecognizer,
+    clipped_names: &[&'static str],
+    stop: &dyn Fn() -> bool,
+    stages: &mut ReadStages,
+) -> Result<slice::KeptRead, String> {
+    let plan = slice::plan_read(None, clipped_names);
 
     let reading_text = Instant::now();
-    let panel = match panel_text(app, session, img, &layout, &plan.text) {
-        Some(lines) => panel::read_panel(&lines),
-        None => return,
-    };
+    let mut lines = Vec::new();
+    for (name, rect) in text_regions(&layout) {
+        if !plan.text.contains(&name) {
+            continue;
+        }
+        // A crop outside the capture contributes nothing rather than failing
+        // the read: losing the budget line costs a warning, not the board.
+        let Some((crop, origin)) = crop_clipped(img, rect) else {
+            continue;
+        };
+        let read = panel::crop_lines(recognizer, &crop, origin)
+            .map_err(|e| format!("Temple: OCR failed — {e}"))?;
+        lines.extend(read);
+    }
+    let panel_reading = panel::read_panel(&lines);
     stages.text_ocr = reading_text.elapsed();
 
-    // Up to 26 more OCR calls follow — two per PLANNED plate, so 26 on round 1
-    // and two per still-unread plate on a retry. A stop that arrived during the
-    // text OCR must not buy them: this is the loop's longest blocking stretch
-    // and a detached thread cannot be aborted out of it. The check is passed
-    // INTO `read_slots` as well, so a stop lands between two plate crops rather
-    // than after all 26. Bailing records no board, so the next start reads this
-    // one from scratch.
-    if *cancel.borrow() {
-        return;
+    // Up to 26 more OCR calls follow; a stop must not buy them, and lands
+    // between two plate crops inside `read_slots`.
+    if stop() {
+        return Err("cancelled".to_string());
     }
     let lattice = Lattice::new(layout.origin, layout.scale);
-    let stop = || *cancel.borrow();
     let reading_plates = Instant::now();
-    let rooms = panel::read_slots(&SystemOcr, img, &lattice, &plan.plates, &stop);
+    let rooms = panel::read_slots(recognizer, img, &lattice, &plan.plates, stop);
     stages.plate_ocr = reading_plates.elapsed();
-    if *cancel.borrow() {
-        return;
+    if stop() {
+        return Err("cancelled".to_string());
     }
 
     let reading_markers = Instant::now();
-    // A round that did not plan the diamond leaves BOTH halves empty, which is
-    // `slice::merge_reads`' "not read" state and merges to the kept door set.
-    // It is not `Ok(empty set)` — that would publish a room with no corridors.
     let (settled, marker_error) = match plan.markers {
         false => (None, None),
         true => match read_markers(img, &layout) {
@@ -4125,93 +1787,37 @@ fn full_read(
         },
     };
     stages.markers = reading_markers.elapsed();
+    Ok(slice::KeptRead { layout, rooms, panel: panel_reading, settled, marker_error })
+}
 
-    // The merge (POE-249). `kept_for` owns the drop — see it for why a board
-    // this loop has not read must not reach `slice::merge_reads` at all.
-    let fresh = slice::KeptRead {
-        layout,
-        rooms,
-        panel,
-        settled,
-        marker_error,
-    };
-    let read = match kept_for(session.kept.take(), &session.state, key, &frame) {
-        Some(kept) => slice::merge_reads(&kept, fresh),
-        None => fresh,
-    };
-
-    // Both name-sources for the room the player is standing in read, and they
-    // disagree: the advice carries a warning for the overlay, and this puts the
-    // same fact in the app log, which is what a user can send back. `log::` is
-    // not that — it goes nowhere under `windows_subsystem = "windows"`.
-    //
-    // Decided on the MERGED read, and it has to be (WI-2): since a retry round
-    // OCRs only what is still unclean, this round's own `rooms`/`panel` can each
-    // be the placeholder an unread region produces, so a round that re-read only
-    // the side panel would compare a fresh title against thirteen `Unknown`
-    // plates and never fire. `advisor/state.rs` raises the overlay warning from
-    // the merged read, so reading anything else here would put a DIFFERENT fact
-    // in the log than the one on screen — which is the opposite of what this
-    // block is for. `slice::merge_reads`' own tests pin the seam (a kept plate
-    // under a freshly read title disagrees only after the merge); the ordering
-    // of these two statements is not itself covered, because the only seam that
-    // would cover it needs an `AppHandle`.
-    if let Some((title, plate)) = slice::current_identity(
-        read.layout.current,
-        &slice::identities(&read.rooms),
-        &read.panel,
-    )
-    .disagreement
-    {
-        crate::app_log(
-            app,
-            format!(
-                "Temple: side panel says {title:?} but the current plate says {plate:?}; using the plate"
-            ),
-        );
-    }
-    // ONE valuation for this read, handed to the ranking AND to the offer
-    // boxes below (POE-257 D6). Two calls would let the number on screen come
-    // from a market read the recommendation never saw.
-    //
-    // LOOKED UP, not built (POE-257 WI-3): `valuation::temple_valuation_now` hands
-    // back the table already computed for the preset, the Custom rates and this
-    // market read, and only builds one when one of those has moved — the
-    // owner's "computed on update, and the module uses already computed
-    // weightings each time". It is the same call `commands::temple_value_table`
-    // makes for the preset in force, so the page and this board are one object.
-    //
-    // The market arrives as STATE, never as a fetch: `temple::market` polls it
-    // every `market::TEMPLE_MARKET_POLL` and this reads what it stored, because
-    // `docs/TEMPLE-LIFECYCLE.md` forbids network work on this tick. It comes
-    // back FROM the accessor rather than being read again here, so the table
-    // and the `market_view` under the offer boxes can never be about two
-    // different reads. The staleness judgement is made against THIS clock
-    // (POE-258 D2) — before the first poll answers, and whenever the last read
-    // has aged out, it is `MarketInput::none()` in effect and every room falls
-    // back to its grade ladder value rather than to zero, which is epic lock
-    // L4.
-    let valuing = Instant::now();
-    // THIS TICK'S settings snapshot, not the live ones: the table has to be
-    // about the same preset and Custom table the projection echoes below and
-    // `advise_read` ranks with, or a setter landing mid-read would publish one
-    // preset's numbers under the other preset's name for a tick.
-    let (valuation, market, valuation_source) = crate::temple::valuation::temple_valuation_now(app, settings);
-    stages.valuation = valuing.elapsed();
-    stages.valuation_source = valuation_source;
-    let advising = Instant::now();
+/// The slice one read publishes: the advisor's ranking and the projection,
+/// exactly as the loop's first read passed them.
+pub fn verdict(
+    read: &slice::KeptRead,
+    clipped: &[(&'static str, [i32; 4])],
+    settings: &TempleSettings,
+    valuation: &crate::temple::valuation::Valued,
+    market: &crate::temple::market::MarketInput,
+    read_at: u64,
+) -> TempleSlice {
+    // The page shows a state, not a history: the notice is on every read it is
+    // true of, while the log line is said once per outside-set.
+    let read_notice = (!clipped.is_empty()).then(|| {
+        clipped
+            .iter()
+            .map(|(name, rect)| clipped_roi_line(name, *rect))
+            .collect::<Vec<_>>()
+            .join("; ")
+    });
     let advice = slice::advise_read(
         &read.layout,
         &read.rooms,
         &read.panel,
         read.settled.as_ref(),
         settings,
-        &valuation,
+        valuation,
     );
-    stages.advise = advising.elapsed();
-    let read_at = now_ms();
-
-    let projected = slice::project(
+    slice::project(
         &slice::ReadResult {
             layout: &read.layout,
             rooms: &read.rooms,
@@ -4220,71 +1826,37 @@ fn full_read(
             marker_error: read.marker_error.clone(),
             read_notice,
             advice: advice.as_ref(),
-            // The settings THIS tick started with. A setter that lands
-            // mid-read echoes its new value onto the slice and then loses it
-            // again for one tick when this projection overwrites it — the
-            // setters' own `rearm` forces the next read, which restores it.
-            //
-            // The VALUATION above is from this same snapshot (POE-257 WI-3
-            // fix round, 2026-09-07): `valuation::temple_valuation_now` is handed
-            // `settings` rather than re-reading the live mutex, so the numbers
-            // and the echo beside them are always the same preset's.
             config: settings.config.clone(),
             profile: settings.profile.clone(),
             preset: settings.preset,
             custom: settings.custom.clone(),
-            valuation: &valuation,
-            // The SAME read the valuation above was computed from, so the
-            // price-age line and the numbers on the offer boxes can never be
-            // about different markets.
-            market: slice::market_view(&market),
+            valuation,
+            market: slice::market_view(market),
             read_at,
         },
-        // The calibration THIS capture measured, which is what the page's
-        // "anchor calibration" row means: the scale the board in front of the
-        // user was actually read at, not a remembered one. Since POE-234 WI-2
-        // there is no remembered one to confuse it with — the module's only
-        // store is the shared screen slice, and this is the read's own answer.
-        //
-        // From the MERGED read, whose layout is always the fresh anchor: every
-        // ROI the slice publishes is placed from it, so it has to describe the
-        // frame the player is looking at.
+        // The calibration THIS capture measured: the scale the board in front
+        // of the user was read at.
         Some(read.layout.calibration),
-    );
-    // The same `clipped_names` the plan above was built from — `slice::unclean`
-    // and `slice::plan_read` are one function asked twice, and asking them with
-    // two different exemption lists inside one read would let a round be bought
-    // for a region the next round then refuses to look at.
-    let unclean = slice::unclean(&read, &clipped_names);
-    session.state.note_read(key, &frame, projected.status, unclean);
-    session.kept = Some(read);
-    let publishing = Instant::now();
-    publish(app, |slice| *slice = projected);
-    stages.publish = publishing.elapsed();
-    remember_fallback_anchor(fallback_origin, |origin| {
-        crate::ssot::remember_anchor(
-            app,
-            crate::ssot::AnchorModule::TempleEntrance,
-            origin,
-        );
-    });
-    // One line per read, always: reads are once per board plus at most
-    // `RETRIES`, and this line is how the owner's ~1 s panel-open → verdict
-    // budget is checked against a real session (docs/TEMPLE-LIFECYCLE.md,
-    // "Cadences and budgets"). The overlay writes the other half —
-    // `[temple-overlay] board read at <read_at> …` — against the same stamp.
-    crate::app_log(
-        app,
-        read_timings_line(
-            &session.tick_stages,
-            &stages,
-            since_grab.elapsed(),
-            read_at,
-            unclean,
-            session.state.board.as_ref().map(|board| board.retries_left),
-            &plan,
-        ),
-    );
+    )
+}
+
+/// What a finished read publishes, and the located origin it may remember.
+#[derive(Debug)]
+pub struct PressFinish {
+    pub publish: Result<TempleSlice, String>,
+    /// `Some` only for a successful read whose anchor was located away from
+    /// (or without) a placement.
+    pub remember: Option<[i32; 2]>,
+}
+
+/// Pair a read's result with what it may remember: a failed or cancelled read
+/// never changes the next press's placement.
+pub fn finish(result: Result<TempleSlice, String>, fallback_origin: Option<(i32, i32)>) -> PressFinish {
+    let mut remember = None;
+    if result.is_ok() {
+        remember_fallback_anchor(fallback_origin, |origin| remember = Some(origin));
+    }
+    PressFinish { publish: result, remember }
 }
 
 #[cfg(test)]
@@ -4292,13 +1864,13 @@ mod tests {
     use super::*;
     use crate::modules::MODULE_THREAD_POLL_CEILING;
 
-    /// The loop's stop discipline, as a number rather than as a comment: a
-    /// detached thread can outlive its stop by at most one [`TICK`]. Fails if
-    /// the quantum is raised past the registry's ceiling.
+    /// The worker's stop discipline, as a number rather than as a comment: a
+    /// detached thread can outlive its stop by at most one [`CANCEL_POLL`].
+    /// Fails if the quantum is raised past the registry's ceiling.
     #[test]
     fn the_poll_quantum_stays_inside_the_registry_ceiling() {
         assert!(
-            TICK <= MODULE_THREAD_POLL_CEILING,
+            CANCEL_POLL <= MODULE_THREAD_POLL_CEILING,
             "a thread module must poll cancel at least every {MODULE_THREAD_POLL_CEILING:?}",
         );
     }
@@ -4369,1113 +1941,7 @@ mod tests {
         );
     }
 
-    // --------------------------------------------- the panel state machine --
 
-    /// A moment in the shape [`now_ms`] returns (2025-09-02 08:00 UTC), for the
-    /// arm-gate tests that need a clock. Nothing reads its value — the
-    /// assertions are all on differences from it.
-    const SEEN: u64 = 1_756_800_000_000;
-
-    /// One missed anchor over a live panel is a HELD miss, and the panel stays
-    /// live (owner, 2026-09-11, POE-275: *"one missed probe is easy to get (a
-    /// misread, a tooltip over the plate)"*).
-    ///
-    /// Fails if `RETIRE_AFTER` is put back to one: the first miss would answer
-    /// `Retired` and clear `live`.
-    #[test]
-    fn a_live_panel_holds_through_its_first_missed_anchor() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-
-        assert_eq!(state.on_detect(false), DetectOutcome::HeldMiss);
-        assert!(state.live, "a held miss leaves the panel live");
-    }
-
-    /// The SECOND consecutive missed anchor retires it — the outcome
-    /// `cycle_complete` keys on and the `layout panel gone` line.
-    ///
-    /// Fails if `RETIRE_AFTER` is raised past two, or if the count is not
-    /// carried from the first miss to the second: either way the second miss
-    /// answers `HeldMiss` and a closed sheet never retires.
-    #[test]
-    fn a_live_panel_retires_on_its_second_consecutive_missed_anchor() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-        assert_eq!(state.on_detect(false), DetectOutcome::HeldMiss, "precondition");
-
-        assert_eq!(state.on_detect(false), DetectOutcome::Retired);
-    }
-
-    /// Two misses count only when they are CONSECUTIVE: a sighting between them
-    /// starts the count again, so the next miss is held rather than retiring.
-    ///
-    /// Fails if a sighting does not zero `misses` — a sheet that flickers once
-    /// per incursion would then retire on its second flicker, however far apart
-    /// the two were.
-    #[test]
-    fn a_sighting_between_two_misses_starts_the_count_again() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-        assert_eq!(state.on_detect(false), DetectOutcome::HeldMiss, "precondition");
-        assert_eq!(state.on_detect(true), DetectOutcome::Held, "precondition");
-
-        assert_eq!(state.on_detect(false), DetectOutcome::HeldMiss);
-    }
-
-    /// A sighting after a retire is `Found` again, which is the `layout panel
-    /// found` log line and, on a board already read, the `layout panel back`
-    /// one. Fails if a retire leaves `live` set — the reopen would report `Held`
-    /// and neither line would ever be said twice in a session.
-    #[test]
-    fn a_sighting_after_a_retire_is_found_again() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-        state.on_detect(false);
-        assert_eq!(state.on_detect(false), DetectOutcome::Retired, "precondition");
-
-        assert_eq!(state.on_detect(true), DetectOutcome::Found);
-    }
-
-    // ----------------------------------------------- what a miss publishes --
-
-    /// The held miss publishes nothing, so the status the last sighting wrote
-    /// stays on the slice and the sheet-bound overlays with it (POE-275).
-    ///
-    /// Composed over the state machine, as `miss` composes it. Fails if the
-    /// held miss is answered with `NoPanel` — `panel_not_visible` is not an
-    /// overlay-visible status, so the offer boxes would come down on one
-    /// misread — or if `RETIRE_AFTER` is put back to one.
-    #[test]
-    fn a_held_miss_publishes_nothing() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-
-        assert_eq!(miss_publish(state.on_detect(false)), None);
-    }
-
-    /// The retiring miss publishes `NoPanel`, which is what takes the
-    /// sheet-bound overlays down on the second consecutive miss.
-    ///
-    /// Fails if the retire publishes nothing: a closed sheet's offer boxes
-    /// would stand over the game until the next sighting or stand-down.
-    #[test]
-    fn the_retiring_miss_publishes_no_panel() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-        state.on_detect(false);
-
-        assert_eq!(miss_publish(state.on_detect(false)), Some(TickOutcome::NoPanel));
-    }
-
-    /// A miss with nothing live is the loop searching, and it still says so:
-    /// `panel_not_visible`, with a stale error cleared (`next_status`).
-    ///
-    /// Fails if the held-miss rule is widened to every miss that retires
-    /// nothing — a one-off capture error would then sit on the page, with its
-    /// `error` status, for as long as the sheet stays shut.
-    #[test]
-    fn a_miss_with_nothing_live_publishes_no_panel() {
-        let mut state = LoopState::default();
-
-        assert_eq!(miss_publish(state.on_detect(false)), Some(TickOutcome::NoPanel));
-    }
-
-    // ------------------------------------------------------- the OCR gate --
-
-    /// Two board keys, differing in the epoch — an Alva line or a zone change
-    /// between them.
-    const BOARD: (u64, u64) = (4, 0);
-    const NEXT_BOARD: (u64, u64) = (5, 0);
-    /// The pixel half of the identity: the frame a sheet was read at. Built
-    /// through `slice::BoardFrame::of` from the shared fixture layout, so what
-    /// these tests pin is what the GATE does with two real frames rather than
-    /// what it does with a hand-written struct.
-    fn frame(
-        current: Option<lattice::Slot>,
-        doors: &[(lattice::Slot, lattice::Slot)],
-    ) -> slice::BoardFrame {
-        slice::BoardFrame::of(&slice::fixture_layout(current, doors, &[]))
-    }
-
-    /// The fixture frame: standing in B0, one corridor open.
-    fn same_frame() -> slice::BoardFrame {
-        frame(Some(lattice::Slot::B0), &[(lattice::Slot::B0, lattice::Slot::C1)])
-    }
-
-    /// …and the same sheet after the player walked to the next room, which is
-    /// the change inside one epoch the key cannot see.
-    fn walked_frame() -> slice::BoardFrame {
-        frame(Some(lattice::Slot::C1), &[(lattice::Slot::B0, lattice::Slot::C1)])
-    }
-
-    /// [`same_frame`] shifted `dx` px and rescaled `milli` thousandths — the two
-    /// BANDED fields, moved on purpose.
-    fn nudged(dx: i32, milli: i32) -> slice::BoardFrame {
-        let base = same_frame();
-        slice::BoardFrame {
-            origin: (base.origin.0 + dx, base.origin.1),
-            scale_milli: (base.scale_milli as i32 + milli) as u32,
-            ..base
-        }
-    }
-
-    /// A loop that has read nothing reads the first board it sees. Fails if
-    /// `wants_read` treats a missing board as "already read", which would mean
-    /// the module never OCRs anything.
-    #[test]
-    fn a_loop_that_has_read_no_board_reads_the_first_one_it_sees() {
-        assert!(LoopState::default().wants_read(BOARD, &same_frame()));
-    }
-
-    /// The gate's whole purpose (docs/TEMPLE-LIFECYCLE.md row 3): a sheet closed
-    /// and reopened inside one incursion, onto a board whose pixels have not
-    /// moved, is the same board — and re-showing it costs no OCR. Fails if the
-    /// identity is ignored — the loop would pay 28 OCR calls every 650 ms for as
-    /// long as the player kept the sheet open.
-    #[test]
-    fn a_board_already_read_clean_is_not_read_again() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert!(!state.wants_read(BOARD, &same_frame()));
-    }
-
-    /// An Alva line or a zone change moves the epoch, which is the one way the
-    /// board's CONTENTS can change. Fails if the key is not compared —
-    /// the next incursion would be advised off the last one's board.
-    #[test]
-    fn a_board_read_under_another_key_is_read_again() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert!(state.wants_read(NEXT_BOARD, &same_frame()));
-    }
-
-    /// The POE-282 lock (owner, 2026-10-09): once a board read clean, a sighting
-    /// whose sheet changed — a walk, or a tooltip flipping a corridor — under
-    /// the same key re-shows the locked read and buys no OCR.
-    ///
-    /// Fails if `gate` still sends a changed frame to `Read` after the lock: a
-    /// hover over the corridors would buy a fresh 28-call read with the
-    /// tooltip on screen, and another when it left.
-    #[test]
-    fn a_locked_board_whose_sheet_changed_is_re_shown_not_read() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert_eq!(state.reshow(BOARD, &walked_frame()), Some(TempleStatus::Read));
-    }
-
-    /// The band does not release the lock: a clean board dragged one px past
-    /// `slice::FRAME_ORIGIN_TOLERANCE` keeps its read.
-    ///
-    /// Fails if `gate` asks `BoardFrame::matches` before `BoardRead::locked` —
-    /// a window drag would buy a read the owner ruled out.
-    #[test]
-    fn a_locked_board_moved_past_the_origin_band_is_not_read() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert!(!state.wants_read(BOARD, &nudged(slice::FRAME_ORIGIN_TOLERANCE + 1, 0)));
-    }
-
-    /// …nor does a UI rescale two per cent past the scale band.
-    ///
-    /// Fails if `gate` reads a locked board whose scale left
-    /// `slice::FRAME_SCALE_TOLERANCE_DENOM`'s band.
-    #[test]
-    fn a_locked_board_rescaled_past_the_scale_band_is_not_read() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert!(!state.wants_read(BOARD, &nudged(0, 20)));
-    }
-
-    /// Before the lock nothing changes: an unclean board with a round owed is
-    /// read on a walked sheet.
-    ///
-    /// Fails if `BoardRead::locked` ignores `retries_left` (treats every board
-    /// as locked once read) — an unclean first read would stand for the whole
-    /// encounter with no retry.
-    #[test]
-    fn an_unclean_board_with_retries_left_is_read_after_a_walk() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-
-        assert!(state.wants_read(BOARD, &walked_frame()));
-    }
-
-    /// …and on a sheet dragged past the origin band.
-    ///
-    /// Fails if `BoardRead::locked` ignores `unclean`, or if `gate` re-shows a
-    /// moved frame before the lock.
-    #[test]
-    fn an_unclean_board_with_retries_left_is_read_after_a_move_past_the_band() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-
-        assert!(state.wants_read(BOARD, &nudged(slice::FRAME_ORIGIN_TOLERANCE + 1, 0)));
-    }
-
-    /// A locked sighting reports whether its frame changed, which is what the
-    /// ignore line in `tick` is written from.
-    ///
-    /// Fails if `changed` is hard-wired `false` or computed with `matches`
-    /// un-negated — the hover case would never reach `app.log`.
-    #[test]
-    fn a_locked_board_reports_a_changed_sighting_as_changed() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert_eq!(
-            state.gate(BOARD, &walked_frame()),
-            GateAnswer::Locked { status: TempleStatus::Read, changed: true },
-        );
-    }
-
-    /// …and a sighting inside the band as unchanged: the same sheet re-found
-    /// `slice::FRAME_ORIGIN_TOLERANCE` px away is not a change worth a line.
-    ///
-    /// Fails if `changed` is hard-wired `true` or compares origins exactly —
-    /// every steady tick of an open sheet would count toward the ignore line.
-    #[test]
-    fn a_locked_board_reports_a_sighting_inside_the_band_as_unchanged() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert_eq!(
-            state.gate(BOARD, &nudged(slice::FRAME_ORIGIN_TOLERANCE, 0)),
-            GateAnswer::Locked { status: TempleStatus::Read, changed: false },
-        );
-    }
-
-    /// The Re-arm button is the third part of the identity, so pressing it
-    /// forces a re-read of the board it was pressed over. Fails if only the
-    /// epoch is compared — the button would cost an anchor attempt and change
-    /// nothing on screen, which is the whole complaint it exists to answer.
-    #[test]
-    fn a_rearm_bump_forces_the_same_board_to_be_read_again() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert!(state.wants_read((BOARD.0, BOARD.1 + 1), &same_frame()));
-    }
-
-    /// An unclean board is re-read, and exactly `RETRIES` more times.
-    ///
-    /// Fails at both ends: no retry at all leaves a half-read board standing for
-    /// the incursion, and an unbounded one pays the full read on every tick for
-    /// a region that is never going to resolve (a plate outside the vocabulary,
-    /// a diamond under the selection frame).
-    #[test]
-    fn an_unclean_board_is_re_read_exactly_twice_more() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-
-        let mut reads = 0;
-        while state.wants_read(BOARD, &same_frame()) {
-            reads += 1;
-            assert!(reads <= 10, "the retry budget never ran out");
-            state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        }
-
-        assert_eq!(reads, usize::from(RETRIES));
-    }
-
-    /// A retry that came back clean stops the budget early — there is nothing
-    /// left to improve. Fails if `unclean` is not consulted on each read, which
-    /// would spend the whole budget on every board.
-    #[test]
-    fn a_retry_that_reads_clean_stops_the_budget() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        assert!(state.wants_read(BOARD, &same_frame()), "precondition: one retry is owed");
-
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert!(!state.wants_read(BOARD, &same_frame()));
-    }
-
-    /// A NEW board gets a fresh budget, however much of the last one was spent.
-    /// Fails if `note_read` decrements unconditionally: the second incursion of
-    /// a map would get fewer retries than the first, and the fourth none.
-    #[test]
-    fn a_new_board_starts_with_a_whole_retry_budget() {
-        let mut state = LoopState::default();
-        for _ in 0..=RETRIES {
-            state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        }
-        assert!(!state.wants_read(BOARD, &same_frame()), "precondition: the budget is spent");
-
-        state.note_read(NEXT_BOARD, &same_frame(), TempleStatus::Read, true);
-
-        assert_eq!(
-            state.board.expect("a board was just recorded").retries_left,
-            RETRIES,
-        );
-    }
-
-    /// A spent budget locks the board too (POE-282): an unclean board that has
-    /// used every round is done, and a walk under the same key re-shows it.
-    ///
-    /// Fails if `BoardRead::locked` checks `unclean` alone — a board that never
-    /// reads clean would be re-read in full on every changed sighting for the
-    /// rest of the encounter.
-    #[test]
-    fn a_board_locked_by_a_spent_budget_is_not_read_after_a_walk() {
-        let mut state = LoopState::default();
-        for _ in 0..=RETRIES {
-            state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        }
-
-        assert!(!state.wants_read(BOARD, &walked_frame()));
-    }
-
-    /// Before the lock, the board the player WALKED into under an unchanged key
-    /// is a first look, not the next attempt at the room behind it — the rule
-    /// reached through the frame's exact third.
-    ///
-    /// Fails if `note_read`'s restore is keyed on the key alone: the moved
-    /// board would inherit the previous board's part-spent budget and lock one
-    /// round early.
-    #[test]
-    fn a_walk_before_the_lock_restores_the_retry_budget() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        assert!(state.wants_read(BOARD, &walked_frame()), "precondition: not locked yet");
-
-        state.note_read(BOARD, &walked_frame(), TempleStatus::Read, true);
-
-        assert_eq!(
-            state.board.expect("a board was just recorded").retries_left,
-            RETRIES,
-        );
-    }
-
-    /// A new epoch — START, END or a zone change — releases a lock, including
-    /// one a spent budget set.
-    ///
-    /// Fails if `gate` asks `BoardRead::locked` before it compares the key: the
-    /// next incursion would re-show this one's board.
-    #[test]
-    fn a_new_epoch_releases_a_board_locked_by_a_spent_budget() {
-        let mut state = LoopState::default();
-        for _ in 0..=RETRIES {
-            state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        }
-
-        assert!(state.wants_read(NEXT_BOARD, &same_frame()));
-    }
-
-    /// …and so does Re-arm, the manual half of the key.
-    ///
-    /// Fails if `gate` compares only the epoch half of the key, or asks the
-    /// lock first: the button would change nothing on a locked board.
-    #[test]
-    fn a_rearm_releases_a_board_locked_by_a_spent_budget() {
-        let mut state = LoopState::default();
-        for _ in 0..=RETRIES {
-            state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        }
-
-        assert!(state.wants_read((BOARD.0, BOARD.1 + 1), &same_frame()));
-    }
-
-    /// `full_read` drops its kept reading on exactly this predicate before
-    /// `slice::merge_reads` is handed anything, so the retry — the one case a
-    /// kept reading must survive into — is the one case it answers `true`.
-    ///
-    /// Fails if `same_board` stops being the shared rule: a drop keyed on
-    /// something looser than the gate would merge two readings of two boards,
-    /// which files the old room's corridors under the new room's name.
-    #[test]
-    fn a_retry_of_the_recorded_board_is_the_same_board() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-
-        assert!(state.same_board(BOARD, &same_frame()));
-    }
-
-    // ------------------------------------------------------- the frame band --
-
-    /// The band's upper edge: an anchor origin that landed
-    /// `slice::FRAME_ORIGIN_TOLERANCE` px away is the SAME sheet, re-found by a
-    /// correlation over a frame the game was still drawing.
-    ///
-    /// Fails if the origins are compared exactly — which is what the first cut
-    /// of this gate did, and it is the unbounded case: a new board restores the
-    /// retry budget, so a per-frame jitter would have re-read an unclean board
-    /// at the full 650 ms cadence for as long as the sheet was open.
-    #[test]
-    fn an_origin_inside_the_tolerance_is_the_same_board() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert!(state.same_board(BOARD, &nudged(slice::FRAME_ORIGIN_TOLERANCE, 0)));
-    }
-
-    /// …and one px past it is not. The window was dragged, and every ROI the
-    /// kept read placed is somewhere else.
-    ///
-    /// Fails if the band is applied with `<` instead of `>` on the wrong side,
-    /// or widened: before the lock, a read of the dragged panel would count as
-    /// a retry and be merged into the read taken at the old coordinates.
-    #[test]
-    fn an_origin_past_the_tolerance_is_a_new_board() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert!(!state.same_board(BOARD, &nudged(slice::FRAME_ORIGIN_TOLERANCE + 1, 0)));
-    }
-
-    /// Half a per cent of scale drift is inside the band — it is finer than the
-    /// step `anchor::SCALE_STEP` searches at, so it is not a scale the anchor
-    /// could have chosen between.
-    ///
-    /// Fails if the scale is compared exactly.
-    #[test]
-    fn a_scale_inside_the_tolerance_is_the_same_board() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert!(state.same_board(BOARD, &nudged(0, 5)));
-    }
-
-    /// Two per cent of scale drift is outside the band. Fails if the scale band
-    /// is widened past one per cent: before the lock, a rescaled sheet would
-    /// count as a retry and could reuse readings taken at the old scale.
-    #[test]
-    fn a_scale_past_the_tolerance_is_a_new_board() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert!(!state.same_board(BOARD, &nudged(0, 20)));
-    }
-
-    /// The exact third of the frame, and the trigger POE-249 restored: the key
-    /// cannot see the player walk to the next room, and that happens INSIDE one
-    /// epoch on every Temple of Atzoatl run. This is the old `layout_wants_read`
-    /// gate, kept as `BoardFrame::semantic`.
-    ///
-    /// Fails if `current` is dropped from `slice::layout_signature`, or if the
-    /// semantic third is banded like the other two: before the lock, a read of
-    /// the next room's sheet would count as a retry and be merged into the
-    /// previous room's read across the moved sheet.
-    #[test]
-    fn a_new_current_room_is_a_new_board() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert!(!state.same_board(BOARD, &walked_frame()));
-    }
-
-    /// A changed corridor set is a different frame too. Fails if `doors` is
-    /// dropped from `slice::layout_signature`: before the lock, a changed sheet
-    /// could count as a retry and reuse readings from the previous frame.
-    #[test]
-    fn an_opened_corridor_is_a_new_board() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        let opened = frame(
-            Some(lattice::Slot::B0),
-            &[
-                (lattice::Slot::B0, lattice::Slot::C1),
-                (lattice::Slot::B0, lattice::Slot::C0),
-            ],
-        );
-
-        assert!(!state.same_board(BOARD, &opened));
-    }
-
-    // ------------------------------------------------------ the kept read --
-
-    /// The retry, which is the ONE case a kept reading survives into: the fresh
-    /// read is about to be folded into it region by region.
-    ///
-    /// Fails if `kept_for` ignores the predicate in the permissive direction's
-    /// mirror — returning `None` unconditionally would make every retry a
-    /// wholesale replacement, which is what `slice::merge_reads` exists to stop.
-    #[test]
-    fn a_retry_of_the_recorded_board_keeps_its_reading() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        let kept = slice::fixture_read(slice::fixture_layout(Some(lattice::Slot::B0), &[], &[]));
-
-        assert_eq!(
-            kept_for(Some(kept.clone()), &state, BOARD, &same_frame()),
-            Some(kept),
-        );
-    }
-
-    /// A board read under another KEY drops it. Fails if `kept_for` ignores the
-    /// predicate: `slice::merge_reads` would be handed the last incursion's
-    /// reading and would fill this board's unread plates from it.
-    #[test]
-    fn a_read_under_another_key_drops_the_kept_reading() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        let kept = slice::fixture_read(slice::fixture_layout(Some(lattice::Slot::B0), &[], &[]));
-
-        assert_eq!(kept_for(Some(kept), &state, NEXT_BOARD, &same_frame()), None);
-    }
-
-    /// …and so does a board whose FRAME moved past the band, which is the half
-    /// the key cannot see. Fails for the same reason, on the path a Temple of
-    /// Atzoatl run actually takes: the player walks and the epoch does not move.
-    #[test]
-    fn a_read_under_a_moved_frame_drops_the_kept_reading() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        let kept = slice::fixture_read(slice::fixture_layout(Some(lattice::Slot::B0), &[], &[]));
-
-        assert_eq!(kept_for(Some(kept), &state, BOARD, &walked_frame()), None);
-    }
-
-    // ------------------------------------------------ the retry flag (POE-276) --
-
-    /// What the `Anchored` publish at the top of `full_read` leaves on a slice
-    /// that was showing `before`, for a read of `(key, frame)` the gate let
-    /// through — the two pure halves of that one line, composed as it composes
-    /// them.
-    fn anchored(
-        state: &LoopState,
-        key: (u64, u64),
-        frame: &slice::BoardFrame,
-        before: TempleStatus,
-    ) -> TempleSlice {
-        let mut slice = TempleSlice { status: before, ..TempleSlice::default() };
-        apply_anchored(&mut slice, read_is_retry(state, key, frame));
-        slice
-    }
-
-    /// A retry round of an unclean board publishes `reading` AS a retry, which
-    /// is what keeps the room widget's `reading…` line down under the verdict
-    /// the round is refining (owner, 2026-09-11). Fails if the flag is never
-    /// set, which brings the line back ~650 ms after every unclean verdict.
-    #[test]
-    fn a_retry_round_publishes_reading_as_a_retry() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        assert!(state.wants_read(BOARD, &same_frame()), "precondition: a round is owed");
-
-        let slice = anchored(&state, BOARD, &same_frame(), TempleStatus::Read);
-
-        assert_eq!(slice.status, TempleStatus::Reading);
-        assert!(slice.read_retry);
-    }
-
-    /// The first read of a loop is not a retry — there is no verdict on screen
-    /// for it to refine, and its line is the whole point of POE-276. Fails if
-    /// every `Anchored` is flagged.
-    #[test]
-    fn a_first_read_publishes_reading_without_the_retry_flag() {
-        let slice = anchored(&LoopState::default(), BOARD, &same_frame(), TempleStatus::Idle);
-
-        assert!(!slice.read_retry);
-    }
-
-    /// A read under a new EPOCH — an Alva line or a zone change, including a
-    /// START heard with the sheet still open — is a new board, even over the
-    /// same pixels and straight after the last verdict. Fails if the flag is
-    /// keyed on the frame alone.
-    #[test]
-    fn a_read_under_a_new_epoch_is_not_a_retry() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-
-        let slice = anchored(&state, NEXT_BOARD, &same_frame(), TempleStatus::Read);
-
-        assert!(!slice.read_retry);
-    }
-
-    /// A Re-arm (or a settings change, which bumps the same count) forces a
-    /// read the player asked for, and it shows its line (owner, 2026-09-11).
-    /// Fails if the rearm half of the key is ignored.
-    #[test]
-    fn a_rearm_forced_read_is_not_a_retry() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-
-        let slice = anchored(&state, (BOARD.0, BOARD.1 + 1), &same_frame(), TempleStatus::Read);
-
-        assert!(!slice.read_retry);
-    }
-
-    /// The sheet the player walked to the next room with is a new board under
-    /// the same key. Fails if the flag is keyed on the key alone.
-    #[test]
-    fn a_read_of_a_walked_sheet_is_not_a_retry() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-
-        let slice = anchored(&state, BOARD, &walked_frame(), TempleStatus::Read);
-
-        assert!(!slice.read_retry);
-    }
-
-    /// Every loop event ends a retry in flight — the round failed, the sheet
-    /// went, the loop stood down or stopped, or the next `Anchored` arrived and
-    /// will say for itself. Fails if `apply_status` leaves a standing `true`
-    /// for the next first read to inherit.
-    #[test]
-    fn every_status_outcome_ends_a_retry_in_flight() {
-        for outcome in [
-            TickOutcome::Failed,
-            TickOutcome::NoPanel,
-            TickOutcome::Anchored,
-            TickOutcome::Reshown(TempleStatus::Read),
-            TickOutcome::Disarmed,
-            TickOutcome::Armed,
-            TickOutcome::Stopping,
-        ] {
-            let mut slice = TempleSlice {
-                status: TempleStatus::Reading,
-                read_retry: true,
-                ..TempleSlice::default()
-            };
-
-            apply_status(&mut slice, outcome);
-
-            assert!(!slice.read_retry, "{outcome:?}");
-        }
-    }
-
-    /// The flag describes a `reading` status and nothing else. Fails if
-    /// `apply_anchored` sets it over a slice no tick can move — an
-    /// `Unavailable` one would then carry a retry it is not running.
-    #[test]
-    fn an_unavailable_slice_never_carries_the_retry_flag() {
-        let mut slice = TempleSlice { status: TempleStatus::Unavailable, ..TempleSlice::default() };
-
-        apply_anchored(&mut slice, true);
-
-        assert!(!slice.read_retry);
-    }
-
-    /// The status a reopen re-shows is the one that board's own projection
-    /// wrote. Fails if `note_read` records a constant, or if `reshow` derives
-    /// the status instead of returning it: a sheet opened between rooms
-    /// published `no_current_room`, and coming back as `read` would put the
-    /// sheet-bound overlays over a board with no advice.
-    #[test]
-    fn a_reshown_board_carries_the_status_its_own_read_published() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::NoCurrentRoom, false);
-
-        assert_eq!(state.reshow(BOARD, &same_frame()), Some(TempleStatus::NoCurrentRoom));
-    }
-
-    // --------------------------------------------------- reshown, on screen --
-
-    /// A reopened sheet puts its own board's status back, whichever of the two
-    /// a read can produce. Fails if `Reshown` maps to a fixed status —
-    /// `Reading` would claim a read that is not running, and `Read` would claim
-    /// advice a `no_current_room` board does not have.
-    #[test]
-    fn a_reshown_board_publishes_the_status_it_carries() {
-        for status in [TempleStatus::Read, TempleStatus::NoCurrentRoom] {
-            let update = next_status(TempleStatus::PanelNotVisible, TickOutcome::Reshown(status));
-
-            assert_eq!(update.status, status);
-        }
-    }
-
-    /// …and it is a sighting, so it clears the waiting notice and the last
-    /// error like the read it is standing in for. Fails if `Reshown` is left out
-    /// of either clear: the notice would sit over a sheet that is on screen.
-    #[test]
-    fn a_reshown_board_is_a_sighting_for_the_notice_and_the_error() {
-        let update = next_status(
-            TempleStatus::PanelNotVisible,
-            TickOutcome::Reshown(TempleStatus::Read),
-        );
-
-        assert!(update.clear_waiting);
-        assert!(update.clear_error);
-    }
-
-    /// The first anchor after nothing is `Found`, which is the log line.
-    #[test]
-    fn the_first_anchor_reports_found_and_later_ones_do_not() {
-        let mut state = LoopState::default();
-
-        assert_eq!(state.on_detect(true), DetectOutcome::Found);
-        assert_eq!(state.on_detect(true), DetectOutcome::Held);
-    }
-
-    /// The write POE-246's stand-down rule rests on, in the form WI-1 left it:
-    /// a tick that anchors leaves the panel LIVE, which is the arm gate's whole
-    /// view of the screen.
-    ///
-    /// Fails if `live` is set only on the `Found` transition — a `Held` tick
-    /// would then clear it and the loop would stand down under a sheet the
-    /// player is reading, which is the 14:37:00 bug.
-    #[test]
-    fn every_anchored_tick_leaves_the_panel_live() {
-        let mut state = LoopState::default();
-
-        state.on_detect(true);
-        state.on_detect(true);
-
-        assert!(state.live);
-    }
-
-    /// Two consecutive clean misses over a live panel are the sheet closing, and
-    /// `live` goes with them on the second ([`RETIRE_AFTER`] = 2 since
-    /// 2026-09-11).
-    ///
-    /// Fails if the retire leaves `live` set: the gate would then stay open on a
-    /// panel that is gone for the rest of the session, which is the
-    /// free-running capture POE-242 removed.
-    #[test]
-    fn the_second_tick_that_found_nothing_takes_the_live_panel_with_it() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-
-        state.on_detect(false);
-        state.on_detect(false);
-
-        assert!(!state.live);
-    }
-
-    /// The held miss keeps the panel holding the arm gate: with nothing in
-    /// Client.txt, the gate is still open on `PanelOnScreen` after one miss
-    /// (POE-275 — one miss must not end anything).
-    ///
-    /// Fails if the held miss clears `live`: a hideout read, or a Re-arm whose
-    /// grace has run out under an open sheet, would stand the capture down on
-    /// one misread.
-    #[test]
-    fn a_held_miss_keeps_the_panel_holding_the_arm_gate() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-
-        state.on_detect(false);
-
-        assert_eq!(
-            trigger::arm_source(
-                trigger::ArmState::default(),
-                state.live,
-                state.probe_pending(),
-                SEEN,
-            ),
-            Some(trigger::ArmSource::PanelOnScreen),
-        );
-    }
-
-    /// The start-up probe is a debt one tick settles, whatever that tick found.
-    ///
-    /// Fails if the probe is spent only on a sighting: a loop started over an
-    /// empty screen would then hold the gate open for the rest of the session,
-    /// which is the free-running capture POE-242 removed.
-    #[test]
-    fn the_first_tick_spends_the_start_up_probe_even_when_it_finds_nothing() {
-        let mut state = LoopState::default();
-        assert!(state.probe_pending(), "a loop that has not looked owes one look");
-
-        state.on_detect(false);
-
-        assert!(!state.probe_pending());
-    }
-
-    /// And a tick whose screen GRAB failed settles it too, because it also ran.
-    ///
-    /// Fails if [`LoopState::on_blind_tick`] leaves the debt standing: a machine
-    /// whose capture never succeeds would hold the gate open for the whole
-    /// session, which is POE-242's free-running capture with an error message on
-    /// top of it.
-    #[test]
-    fn a_failed_grab_still_spends_the_start_up_probe() {
-        let mut state = LoopState::default();
-        assert!(state.probe_pending(), "a loop that has not looked owes one look");
-
-        state.on_blind_tick();
-
-        assert!(!state.probe_pending());
-    }
-
-    /// The fix round's rule: an errored tick says nothing about the sheet, so it
-    /// leaves the panel exactly where the last tick that could SEE the screen
-    /// left it — and with it the arm gate, whose whole view of the screen is
-    /// [`LoopState::live`] since WI-1.
-    ///
-    /// The arm here is `default` — nothing in Client.txt — which is the case the
-    /// panel is the only thing holding the gate: a hideout read, or a Re-arm
-    /// whose sixty seconds have run out under an open sheet.
-    ///
-    /// Fails if the errored tick is folded through `on_detect(false)` like a
-    /// clean miss: the outcome is then not `Blind`. At [`RETIRE_AFTER`] `= 1`
-    /// (until 2026-09-11) that fold retired on the spot, so ONE transient capture
-    /// failure stood the capture down with the sheet in front of the player,
-    /// recoverable only by Re-arm; at `2` it counts toward the retire, which the
-    /// next test pins.
-    #[test]
-    fn a_failed_grab_does_not_stand_the_capture_down() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-
-        let outcome = state.on_blind_tick();
-
-        assert_eq!(outcome, DetectOutcome::Blind);
-        assert!(state.live, "the last tick that looked saw the sheet");
-        assert_eq!(
-            trigger::arm_source(
-                trigger::ArmState::default(),
-                state.live,
-                state.probe_pending(),
-                SEEN,
-            ),
-            Some(trigger::ArmSource::PanelOnScreen),
-        );
-    }
-
-    /// A failed grab between two clean misses is invisible to the count: the
-    /// second miss retires exactly as if the failed tick had not run (POE-275,
-    /// the count `RETIRE_AFTER` = 2 made live).
-    ///
-    /// Fails if `on_blind_tick` zeroes `misses` (the second miss would be held
-    /// again, and a capture failing every other tick would keep a closed sheet
-    /// live), and fails if it counts as a miss (the failed tick would retire the
-    /// panel itself and the second clean miss would answer `Missed`).
-    #[test]
-    fn a_failed_grab_between_two_misses_leaves_the_count_where_it_was() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-        assert_eq!(state.on_detect(false), DetectOutcome::HeldMiss, "precondition");
-
-        state.on_blind_tick();
-
-        assert_eq!(state.on_detect(false), DetectOutcome::Retired);
-    }
-
-    /// The 17:28:31 case end to end, over the two pure pieces the loop composes:
-    /// a module switched on with the panel already open and Alva silent gets its
-    /// probe tick, the tick anchors, and the panel itself holds the gate open
-    /// from there.
-    ///
-    /// Fails if the probe does not reach the gate, or if the sighting it takes
-    /// does not — either way the loop stands down in the second it started and
-    /// the advice blinks and disappears.
-    #[test]
-    fn a_probe_tick_that_anchors_hands_the_gate_over_to_the_panel() {
-        let mut state = LoopState::default();
-        let arm = trigger::ArmState::default();
-        assert_eq!(
-            trigger::arm_source(arm, state.live, state.probe_pending(), SEEN),
-            Some(trigger::ArmSource::StartupProbe),
-            "the probe tick is allowed to run",
-        );
-
-        state.on_detect(true);
-
-        assert_eq!(
-            trigger::arm_source(arm, state.live, state.probe_pending(), SEEN + 1_000),
-            Some(trigger::ArmSource::PanelOnScreen),
-        );
-    }
-
-    /// The other half: a probe that finds nothing stands the loop down on the
-    /// next iteration, which is POE-242's behaviour for a screen with no panel
-    /// on it. Fails if the probe survives its own tick.
-    #[test]
-    fn a_probe_tick_that_finds_nothing_stands_the_loop_down() {
-        let mut state = LoopState::default();
-
-        state.on_detect(false);
-
-        assert_eq!(
-            trigger::arm_source(
-                trigger::ArmState::default(),
-                state.live,
-                state.probe_pending(),
-                SEEN,
-            ),
-            None,
-        );
-    }
-
-    // ------------------------------------------------ the completed cycle --
-
-    /// WI-1's rule (owner, 2026-09-07): the sheet was READ and it has now gone,
-    /// so this incursion's cycle is over and the loop stops capturing.
-    ///
-    /// Fails if the retire is not consulted at all — the loop would then stand
-    /// down on the tick after the read rather than on the retire after the sheet
-    /// closed, taking the offer boxes off a sheet still in front of the player.
-    #[test]
-    fn a_retire_over_a_board_already_read_completes_the_cycle() {
-        assert!(cycle_complete(DetectOutcome::Retired, true, true));
-    }
-
-    /// The guard the owner kept: a sheet that closed before any read landed ends
-    /// nothing, because the incursion this arm was bought for has not been read.
-    ///
-    /// Fails if the read half is dropped — the first miss of an armed incursion
-    /// is the state the loop lives in while it waits for the player to open the
-    /// sheet, so the module would stand down seconds after every START line and
-    /// never read anything again without Re-arm.
-    #[test]
-    fn a_retire_with_no_read_in_hand_completes_nothing() {
-        assert!(!cycle_complete(DetectOutcome::Retired, false, true));
-    }
-
-    /// A tick whose screen grab FAILED learned nothing about the sheet, so it
-    /// completes nothing either — however much the panel state machine, fed the
-    /// same failure, reports a retire.
-    ///
-    /// Fails if the failing-grab case is dropped: one transient capture error
-    /// over a read board would stand the module down for the rest of the
-    /// incursion, and the recovery is a button the player has no reason to press
-    /// because nothing on screen changed.
-    #[test]
-    fn a_tick_that_could_not_look_completes_nothing() {
-        assert!(!cycle_complete(DetectOutcome::Retired, true, false));
-    }
-
-    /// Only the RETIRE completes it: the other four outcomes are not a sheet
-    /// leaving the screen.
-    ///
-    /// `Missed` is the one that matters — it is what every tick over an empty
-    /// screen answers, so a rule that took it would end the cycle on the tick
-    /// after a read no matter what the sheet was doing. `Blind` is the fix
-    /// round's: a failed grab reaches this rule through the same call and must
-    /// not end anything. `HeldMiss` is POE-275's: one miss over a live sheet
-    /// must not end the cycle (owner, 2026-09-11). Fails if the match is widened
-    /// to "anything that is not a sighting".
-    #[test]
-    fn no_other_detect_outcome_completes_the_cycle() {
-        for outcome in [
-            DetectOutcome::Found,
-            DetectOutcome::Held,
-            DetectOutcome::Missed,
-            DetectOutcome::HeldMiss,
-            DetectOutcome::Blind,
-        ] {
-            assert!(!cycle_complete(outcome, true, true), "{outcome:?}");
-        }
-    }
-
-    /// The cycle of a board already read ends on the SECOND consecutive miss
-    /// after it, composed over the state machine as `miss` composes it
-    /// (POE-275: two consecutive misses end the cycle, one does not).
-    ///
-    /// Fails if `RETIRE_AFTER` is put back to one (the first miss completes it)
-    /// or raised past two (the second does not).
-    #[test]
-    fn a_read_board_completes_its_cycle_on_the_second_consecutive_miss() {
-        let mut state = LoopState { live: true, ..LoopState::default() };
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        let first = state.on_detect(false);
-        assert!(!cycle_complete(first, state.has_read(BOARD), true), "one miss: {first:?}");
-
-        let second = state.on_detect(false);
-        assert!(cycle_complete(second, state.has_read(BOARD), true), "two misses: {second:?}");
-    }
-
-    /// The read half is keyed on the CURRENT key, which is what makes Re-arm the
-    /// way back: pressing it bumps `temple_rearm`, so the read in hand is a read
-    /// of another key and the cycle is not complete.
-    ///
-    /// Fails if `has_read` answers "any read at all" — Re-arm would then arm the
-    /// loop and the very next miss would stand it straight back down, which is
-    /// the button doing nothing.
-    #[test]
-    fn a_read_of_another_key_is_not_a_read_of_this_one() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        assert!(state.has_read(BOARD));
-        assert!(!state.has_read(NEXT_BOARD));
-    }
-
-    /// And a loop that has read nothing at all has no read for any key. Fails if
-    /// the `None` board answers `true`, which would stand a fresh loop down on
-    /// its first miss.
-    #[test]
-    fn a_loop_that_has_read_nothing_has_no_read_for_this_key() {
-        assert!(!LoopState::default().has_read(BOARD));
-    }
-
-    /// The slow-tick line is a measurement with a rate limit, not a switch:
-    /// nothing at or inside the cadence, one line per `SLOW_TICK_LOG_EVERY`
-    /// past it, and the stage breakdown on the line. Fails if a tick inside
-    /// the cadence is reported, if two slow ticks inside one window both
-    /// write, or if the line drops the stages that say WHERE the time went.
-    #[test]
-    fn a_slow_tick_is_logged_once_per_window_with_its_stages() {
-        let mut said = None;
-        let t0 = Instant::now();
-        let stages = TickStages {
-            capture: Duration::from_millis(1200),
-            cheap: Duration::from_millis(300),
-            anchor: Duration::ZERO,
-        };
-
-        assert_eq!(
-            slow_tick_line(&mut said, t0, SLOW_TICK, &stages),
-            None,
-            "a tick at the cadence is not slow",
-        );
-
-        let line = slow_tick_line(&mut said, t0, Duration::from_millis(1519), &stages)
-            .expect("a tick past the cadence writes");
-        assert!(line.contains("1519 ms"), "{line}");
-        assert!(line.contains("capture 1200 ms"), "{line}");
-        assert!(line.contains("cheap detect 300 ms"), "{line}");
-
-        assert_eq!(
-            slow_tick_line(
-                &mut said,
-                t0 + SLOW_TICK_LOG_EVERY / 2,
-                Duration::from_millis(1600),
-                &stages
-            ),
-            None,
-            "inside the window the fact is already on the log",
-        );
-        assert!(
-            slow_tick_line(
-                &mut said,
-                t0 + SLOW_TICK_LOG_EVERY,
-                Duration::from_millis(1600),
-                &stages
-            )
-            .is_some(),
-            "the window has passed",
-        );
-    }
-
-    /// The POE-282 ignore line is rate-limited like the slow-tick line: one per
-    /// `LOCKED_SIGHTING_LOG_EVERY` while a locked board keeps seeing a changed
-    /// sheet. Fails if the first changed sighting writes nothing, if two inside
-    /// one window both write (a hover would fill `app_log`'s 50 entries), or if
-    /// the window never reopens.
-    #[test]
-    fn a_changed_sighting_on_a_locked_board_is_logged_once_per_window() {
-        let mut said = None;
-        let t0 = Instant::now();
-
-        let line = locked_sighting_line(&mut said, t0, true)
-            .expect("the first changed sighting writes");
-        assert!(line.contains("board locked"), "{line}");
-
-        assert_eq!(
-            locked_sighting_line(&mut said, t0 + LOCKED_SIGHTING_LOG_EVERY / 2, true),
-            None,
-            "inside the window the fact is already on the log",
-        );
-        assert!(
-            locked_sighting_line(&mut said, t0 + LOCKED_SIGHTING_LOG_EVERY, true).is_some(),
-            "the window has passed",
-        );
-    }
-
-    /// An unchanged sighting — the player just reading a locked sheet — writes
-    /// nothing and does not start a window. Fails if `changed` is ignored:
-    /// every open sheet would log the ignore line every 10 s.
-    #[test]
-    fn an_unchanged_sighting_on_a_locked_board_is_not_logged() {
-        let mut said = None;
-
-        assert_eq!(locked_sighting_line(&mut said, Instant::now(), false), None);
-        assert_eq!(said, None);
-    }
-
-    /// The stage timings a read line is built from, distinct per stage so a
-    /// line that printed one under another's label is visible.
     fn read_stages() -> (TickStages, ReadStages) {
         (
             TickStages {
@@ -5500,16 +1966,11 @@ mod tests {
         )
     }
 
-    /// The first look at a board is round 1 of 3 and reads everything — and the
-    /// line still carries every stage measurement, which is what the owner's
-    /// ~1 s budget is checked against.
-    ///
-    /// `retries_left` is what `note_read` leaves after a first look: the whole
-    /// `RETRIES` budget. Fails on the mutation `round = RETRIES + 1 -
-    /// retries_left` becoming a constant `1`, which the next test catches from
-    /// the other side, and on `plan.describe()` being dropped from the line.
+    /// A press read covers the whole board and the line says so — and it still
+    /// carries every stage measurement, which is what the owner's ~1 s budget
+    /// is checked against. Fails if `plan.describe()` is dropped from the line.
     #[test]
-    fn the_read_line_names_a_first_look_as_round_one_of_three_full() {
+    fn the_read_line_names_a_full_read_and_every_stage() {
         let (tick, read) = read_stages();
 
         let line = read_timings_line(
@@ -5518,11 +1979,10 @@ mod tests {
             Duration::from_millis(666),
             1788567663863,
             false,
-            Some(RETRIES),
             &slice::ReadPlan::full(),
         );
 
-        assert!(line.contains("round 1 of 3: full;"), "{line}");
+        assert!(line.contains("read at 1788567663863; full; clean"), "{line}");
         assert!(line.contains("text ocr 165 ms, plates 102 ms, markers 6 ms"), "{line}");
         assert!(line.contains("666 ms from grab to publish"), "{line}");
         assert!(line.ends_with("clean"), "{line}");
@@ -5550,7 +2010,6 @@ mod tests {
             Duration::from_millis(666),
             1788567663863,
             false,
-            Some(RETRIES),
             &slice::ReadPlan::full(),
         );
 
@@ -5581,833 +2040,11 @@ mod tests {
             Duration::from_millis(666),
             1788567663863,
             false,
-            Some(RETRIES),
             &slice::ReadPlan::full(),
         );
 
         assert!(line.contains("valuation 180 ms (computed),"), "{line}");
         assert!(!line.contains("(cached)"), "{line}");
-    }
-
-    /// A retry round names its number AND the regions it re-read, which is the
-    /// only place the partial round's cost is visible: `plates 12 ms` beside
-    /// `re-read 2 plates` is the measurement of what skipping the other eleven
-    /// bought.
-    ///
-    /// The round is derived from the retry budget AFTER `note_read` spent this
-    /// read's share, so one retry left is round 2. Fails on a constant round
-    /// number, on the arithmetic being inverted (`RETRIES + 1 - 1` would print
-    /// round 2 for the first look as well), and on the plan's regions being
-    /// left off the line.
-    #[test]
-    fn the_read_line_names_a_retry_round_and_the_regions_it_re_read() {
-        let (tick, read) = read_stages();
-        let plan = slice::ReadPlan {
-            plates: vec![lattice::Slot::C1, lattice::Slot::D2],
-            text: vec![slice::PANEL_REGION],
-            markers: false,
-        };
-
-        let line = read_timings_line(
-            &tick,
-            &read,
-            Duration::from_millis(210),
-            1788567664551,
-            true,
-            Some(1),
-            &plan,
-        );
-
-        assert!(line.contains("round 2 of 3: re-read 2 plates, panel;"), "{line}");
-        assert!(line.ends_with("unclean, 1 retries left"), "{line}");
-    }
-
-    /// The last round the budget allows says so, and a plan of the diamond
-    /// alone names the diamond. Fails if `describe` prints a region the plan
-    /// did not carry, or if the round stops counting at 2.
-    #[test]
-    fn the_read_line_names_the_last_round_and_a_markers_only_plan() {
-        let (tick, read) = read_stages();
-        let plan = slice::ReadPlan {
-            plates: Vec::new(),
-            text: Vec::new(),
-            markers: true,
-        };
-
-        let line = read_timings_line(
-            &tick,
-            &read,
-            Duration::from_millis(120),
-            1788567665204,
-            true,
-            Some(0),
-            &plan,
-        );
-
-        assert!(line.contains("round 3 of 3: re-read markers;"), "{line}");
-    }
-
-    /// One plate is `re-read 1 plate`, not `1 plates` — the literal
-    /// docs/OVERLAY-GUIDE.md's smoke check reads off `app.log` for the round a
-    /// single covered plate buys, so the singular is part of the check and not
-    /// a nicety.
-    ///
-    /// Fails on the mutation dropping `slice::ReadPlan::describe`'s `1 =>` arm:
-    /// the count would fall through to the plural `{n} plates`.
-    #[test]
-    fn the_read_line_puts_a_single_re_read_plate_in_the_singular() {
-        let (tick, read) = read_stages();
-        let plan = slice::ReadPlan {
-            plates: vec![lattice::Slot::C1],
-            text: Vec::new(),
-            markers: false,
-        };
-
-        let line = read_timings_line(
-            &tick,
-            &read,
-            Duration::from_millis(180),
-            1788567664551,
-            true,
-            Some(1),
-            &plan,
-        );
-
-        assert!(line.contains("round 2 of 3: re-read 1 plate;"), "{line}");
-    }
-
-    /// A round bought by a region whose crop then fell off the capture plans
-    /// nothing, and the line says `nothing left to re-read` — the other literal
-    /// the smoke check names, and the one that tells a reader the round cost an
-    /// anchor resolve and no OCR rather than that the line lost its regions.
-    ///
-    /// Fails on the mutation dropping `slice::ReadPlan::describe`'s
-    /// `is_empty()` arm: the empty plan would fall through to the join and
-    /// print a bare `re-read `.
-    #[test]
-    fn the_read_line_names_a_round_with_nothing_left_to_re_read() {
-        let (tick, read) = read_stages();
-        let plan = slice::ReadPlan {
-            plates: Vec::new(),
-            text: Vec::new(),
-            markers: false,
-        };
-
-        let line = read_timings_line(
-            &tick,
-            &read,
-            Duration::from_millis(101),
-            1788567665204,
-            false,
-            Some(1),
-            &plan,
-        );
-
-        assert!(line.contains("round 2 of 3: nothing left to re-read;"), "{line}");
-    }
-
-    // ------------------------------------------------ the cheap detect gate --
-
-    /// A cheap outcome that saw nothing, for the gate tests.
-    fn saw_nothing() -> anchor::CheapDetect {
-        anchor::CheapDetect::Nothing { best_ncc: 0.2 }
-    }
-
-    /// Every source the arm gate can name, for the tests that must hold under
-    /// all of them.
-    const ALL_SOURCES: [Option<trigger::ArmSource>; 6] = [
-        Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaStart)),
-        Some(trigger::ArmSource::Trigger(trigger::ArmReason::TempleArea)),
-        Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual)),
-        Some(trigger::ArmSource::PanelOnScreen),
-        Some(trigger::ArmSource::StartupProbe),
-        None,
-    ];
-    const ALVA: Option<trigger::ArmSource> =
-        Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaStart));
-    const MANUAL: Option<trigger::ArmSource> =
-        Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual));
-
-    /// One clean miss with nothing live on a NULL slice, under `key`, with
-    /// nothing in flight — the only tick that counts toward a null sweep.
-    fn null_miss(budget: &mut SweepBudget, key: (u64, u64)) -> Option<SweepStart> {
-        cold_sweep_reason(false, None, DetectOutcome::Missed, false, ALVA, key, budget)
-    }
-
-    /// The null-slice start the cadence answers for the `k`-th sweep of a key.
-    fn null_start(k: u8) -> Option<SweepStart> {
-        Some(SweepStart { reason: ColdSweepReason::NullSlice, attempt: Some(k) })
-    }
-
-    /// Three misses: the ticks that start one null sweep from a count of zero.
-    fn spend_one_null_sweep(budget: &mut SweepBudget, key: (u64, u64)) -> Option<SweepStart> {
-        null_miss(budget, key);
-        null_miss(budget, key);
-        null_miss(budget, key)
-    }
-
-    /// The placed path, unchanged by POE-275 (owner: *"keep that"*): Re-arm
-    /// buys one sweep per key, and no other source buys one. It runs off the
-    /// loop like any sweep, and like any sweep it starts only on a miss with
-    /// nothing live and nothing in flight.
-    ///
-    /// Fails if an incursion arm buys the sweep again (the 2026-09-09 30–34 s
-    /// wait), if Re-arm's budget is not per key, or if a held miss or a sweep
-    /// already in flight is let through.
-    #[test]
-    fn a_below_floor_placed_miss_spends_one_fallback_under_re_arm_only() {
-        let placed = Some((960, 713));
-        let placed_miss = Some(SweepStart { reason: ColdSweepReason::PlacedMiss, attempt: None });
-        let mut budget = SweepBudget::default();
-        let missed = DetectOutcome::Missed;
-
-        assert_eq!(
-            cold_sweep_reason(true, placed, missed, false, MANUAL, BOARD, &mut budget),
-            placed_miss,
-            "Re-arm qualifies a placed miss",
-        );
-        assert_eq!(
-            cold_sweep_reason(true, placed, missed, false, MANUAL, BOARD, &mut budget),
-            None,
-            "Re-arm spends only once per key",
-        );
-        assert_eq!(
-            cold_sweep_reason(true, placed, missed, false, MANUAL, NEXT_BOARD, &mut budget),
-            placed_miss,
-            "a new key has its own fallback",
-        );
-
-        // An incursion arm's first miss is the sheet not being open yet
-        // (2026-09-09), and the rest are not Re-arm's "look again".
-        for source in ALL_SOURCES.into_iter().filter(|source| *source != MANUAL) {
-            let mut budget = SweepBudget::default();
-            assert_eq!(
-                cold_sweep_reason(true, placed, missed, false, source, BOARD, &mut budget),
-                None,
-                "{source:?} does not qualify a placed fallback",
-            );
-        }
-
-        let mut budget = SweepBudget::default();
-        assert_eq!(
-            cold_sweep_reason(
-                true,
-                placed,
-                DetectOutcome::HeldMiss,
-                false,
-                MANUAL,
-                BOARD,
-                &mut budget,
-            ),
-            None,
-            "a held miss is a live panel, not a wrong placement",
-        );
-        assert_eq!(
-            cold_sweep_reason(true, placed, missed, true, MANUAL, BOARD, &mut budget),
-            None,
-            "one sweep in flight at most",
-        );
-        assert_eq!(
-            cold_sweep_reason(true, placed, missed, false, MANUAL, BOARD, &mut budget),
-            placed_miss,
-            "neither refusal spent Re-arm's one sweep",
-        );
-    }
-
-    /// The fix (owner, 2026-09-11): on a null slice the first miss after an arm
-    /// is the sheet not being open yet, so misses one and two start nothing and
-    /// the third starts exactly one sweep — under every arm source, the
-    /// start-up probe's single tick included.
-    ///
-    /// Fails if the sweep is spent on the first miss again (the friend's first
-    /// run), if `NULL_SWEEP_EVERY` moves, or if the null path is gated on the arm.
-    #[test]
-    fn a_null_slice_starts_its_first_sweep_on_the_third_consecutive_miss_under_every_arm() {
-        for source in ALL_SOURCES {
-            let mut budget = SweepBudget::default();
-            let missed = DetectOutcome::Missed;
-            let mut miss =
-                || cold_sweep_reason(false, None, missed, false, source, BOARD, &mut budget);
-
-            assert_eq!(miss(), None, "{source:?}: miss 1");
-            assert_eq!(miss(), None, "{source:?}: miss 2");
-            assert_eq!(miss(), null_start(1), "{source:?}: miss 3");
-        }
-    }
-
-    /// A screen with a seeded but never-ANCHORED origin is a null slice for this
-    /// rule too (POE-278: a seed is not a placement), and it waits the same
-    /// three misses.
-    ///
-    /// Fails if `screen_present` alone is read as placed — the miss would go to
-    /// the placed arm, which buys nothing under AlvaStart.
-    #[test]
-    fn an_unanchored_screen_waits_the_same_three_misses() {
-        let mut budget = SweepBudget::default();
-        let mut miss = || {
-            cold_sweep_reason(true, None, DetectOutcome::Missed, false, ALVA, BOARD, &mut budget)
-        };
-
-        assert_eq!((miss(), miss(), miss()), (None, None, null_start(1)));
-    }
-
-    /// The next null sweep needs `NULL_SWEEP_EVERY` misses after the previous
-    /// one ENDED: the count restarts when a sweep starts, and misses that land
-    /// while it is still in flight do not advance it.
-    ///
-    /// Fails if the count is not reset at the start (the first miss after the
-    /// sweep would start the next one) or if in-flight misses count (a 5.3 s
-    /// sweep spans eight ticks, so the loop would sweep back-to-back).
-    #[test]
-    fn the_next_null_sweep_needs_three_misses_after_the_last_one_ended() {
-        let mut budget = SweepBudget::default();
-        assert_eq!(spend_one_null_sweep(&mut budget, BOARD), null_start(1), "precondition");
-        let missed = DetectOutcome::Missed;
-        for _ in 0..8 {
-            assert_eq!(
-                cold_sweep_reason(false, None, missed, true, ALVA, BOARD, &mut budget),
-                None,
-                "a miss during the sweep",
-            );
-        }
-
-        assert_eq!(null_miss(&mut budget, BOARD), None, "miss 1 after it ended");
-        assert_eq!(null_miss(&mut budget, BOARD), None, "miss 2 after it ended");
-        assert_eq!(null_miss(&mut budget, BOARD), null_start(2), "miss 3 after it ended");
-    }
-
-    /// `NULL_SWEEP_CAP` sweeps per key, and not one more however long the loop
-    /// goes on missing.
-    ///
-    /// Fails if the cap is dropped (an unplaceable screen sweeps for the whole
-    /// portal wait, which has been measured at 22 min) or is off by one either
-    /// way — the tenth must start.
-    #[test]
-    fn no_null_sweep_starts_past_the_cap() {
-        let mut budget = SweepBudget::default();
-        for k in 1..=NULL_SWEEP_CAP {
-            assert_eq!(spend_one_null_sweep(&mut budget, BOARD), null_start(k), "sweep {k}");
-        }
-
-        for miss in 0..3 * u32::from(NULL_SWEEP_EVERY) {
-            assert_eq!(null_miss(&mut budget, BOARD), None, "miss {miss} past the cap");
-        }
-    }
-
-    /// A key change — Re-arm, a new epoch — gives the new key a whole count and
-    /// a whole cap.
-    ///
-    /// Fails if either is carried across: two misses left over under the old
-    /// key would start the new key's sweep on its FIRST miss, and a spent cap
-    /// would leave the new key unable to sweep at all, which is the bug the
-    /// owner's friend hit, one key later.
-    #[test]
-    fn a_key_change_resets_the_null_count_and_cap() {
-        let mut budget = SweepBudget::default();
-        for _ in 0..NULL_SWEEP_CAP {
-            spend_one_null_sweep(&mut budget, BOARD);
-        }
-        null_miss(&mut budget, BOARD);
-        null_miss(&mut budget, BOARD);
-
-        assert_eq!(null_miss(&mut budget, NEXT_BOARD), None, "miss 1 under the new key");
-        assert_eq!(null_miss(&mut budget, NEXT_BOARD), None, "miss 2 under the new key");
-        assert_eq!(null_miss(&mut budget, NEXT_BOARD), null_start(1), "miss 3 under the new key");
-    }
-
-    /// Only the loop searching with nothing live counts. A held miss is a live
-    /// panel (a tooltip, a misread), a retire is the sheet closing, a sighting is
-    /// the sheet, and a blind tick saw nothing at all: none starts a sweep and
-    /// none advances the count.
-    ///
-    /// Arranged two misses in, so an outcome that advanced the count would start
-    /// the sweep itself. Fails if the start is widened to "any tick that did not
-    /// anchor", or if the count is advanced before the outcome is checked.
-    #[test]
-    fn only_a_miss_with_nothing_live_counts_toward_a_null_sweep() {
-        for outcome in [
-            DetectOutcome::HeldMiss,
-            DetectOutcome::Retired,
-            DetectOutcome::Blind,
-            DetectOutcome::Found,
-            DetectOutcome::Held,
-        ] {
-            let mut budget = SweepBudget::default();
-            null_miss(&mut budget, BOARD);
-            null_miss(&mut budget, BOARD);
-
-            assert_eq!(
-                cold_sweep_reason(false, None, outcome, false, ALVA, BOARD, &mut budget),
-                None,
-                "{outcome:?} starts nothing",
-            );
-            assert_eq!(
-                null_miss(&mut budget, BOARD),
-                null_start(1),
-                "{outcome:?} left the count at two",
-            );
-        }
-    }
-
-    /// The misses have to be CONSECUTIVE: a sighting between them starts the
-    /// count again.
-    ///
-    /// Fails if `on_sighting` leaves the count standing — two misses either side
-    /// of a sheet the loop was reading would start a sweep on the first miss
-    /// after it.
-    #[test]
-    fn a_sighting_starts_the_null_count_again() {
-        let mut budget = SweepBudget::default();
-        null_miss(&mut budget, BOARD);
-        null_miss(&mut budget, BOARD);
-
-        budget.on_sighting();
-
-        assert_eq!(null_miss(&mut budget, BOARD), None, "miss 1 after the sighting");
-        assert_eq!(null_miss(&mut budget, BOARD), None, "miss 2 after the sighting");
-        assert_eq!(null_miss(&mut budget, BOARD), null_start(1), "miss 3 after the sighting");
-    }
-
-    // ------------------------------------------- the sweep, off the loop --
-
-    /// How long a test waits on a sweep thread before failing, so a broken
-    /// cancel fails the test rather than hanging it.
-    const PATIENCE: Duration = Duration::from_secs(5);
-
-    fn placed_start() -> SweepStart {
-        SweepStart { reason: ColdSweepReason::PlacedMiss, attempt: None }
-    }
-
-    /// An anchor at `origin`, as a sweep or a recheck reports one.
-    fn anchor_at(origin: (i32, i32)) -> anchor::Anchor {
-        anchor::Anchor { origin, scale: 1.0, ncc: 0.95 }
-    }
-
-    /// Launch a sweep that searches until its stop check fires — the pyramid
-    /// polls it between coarse correlations — says whether it saw the stop,
-    /// then waits for the test's word and answers `late`.
-    ///
-    /// Returns the receiver that hears whether the stop fired, and the sender
-    /// that lets the sweep answer; dropping the sender lets the thread end.
-    fn searching_sweep(
-        slot: &mut SweepSlot,
-        key: (u64, u64),
-        late: Option<anchor::Anchor>,
-    ) -> (mpsc::Receiver<bool>, mpsc::Sender<()>) {
-        let (saw_stop, heard) = mpsc::channel();
-        let (answer, answered) = mpsc::channel::<()>();
-        slot.launch(placed_start(), key, (1920, 1080), move |stop| {
-            let give_up = Instant::now() + PATIENCE;
-            while !stop() && Instant::now() < give_up {
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            let _ = saw_stop.send(stop());
-            let _ = answered.recv_timeout(PATIENCE);
-            (late, stop())
-        })
-        .expect("the sweep thread starts");
-        (heard, answer)
-    }
-
-    /// Settle ticks with no recheck until the sweep in flight has answered.
-    fn settle_when_answered(
-        slot: &mut SweepSlot,
-        confirm: impl Fn(&anchor::Anchor, (u32, u32)) -> Option<anchor::Anchor>,
-    ) -> (Sighting, Option<SweepReport>) {
-        let give_up = Instant::now() + PATIENCE;
-        loop {
-            let settled = slot.settle(&saw_nothing(), &confirm);
-            if settled.1.is_some() || Instant::now() >= give_up {
-                return settled;
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-
-    /// Requirement 4c (POE-275): a placed recheck that anchors while a sweep
-    /// is searching cancels it, and the tick uses the RECHECK's origin.
-    ///
-    /// A real thread whose search blocks until its stop check fires, so what is
-    /// pinned is the contract across the thread: the flag the loop sets is the
-    /// one the search reads. Fails if the recheck does not win, if the sweep is
-    /// not reported cancelled by it, or if the stop never reaches the search —
-    /// the sweep would then run its full 5.3 s (~30 s debug) for nothing.
-    #[test]
-    fn a_recheck_landing_mid_sweep_wins_and_cancels_the_sweep() {
-        let mut slot = SweepSlot::default();
-        let (heard, _answer) = searching_sweep(&mut slot, BOARD, Some(anchor_at((745, 561))));
-        let recheck = anchor_at((960, 713));
-
-        let (sighting, ended) = slot.settle(&anchor::CheapDetect::Anchored(recheck), |_, _| {
-            panic!("a landed recheck confirms no sweep")
-        });
-
-        assert_eq!(sighting, Sighting::Recheck(recheck));
-        assert_eq!(ended.map(|report| report.end), Some(SweepEnd::Cancelled(SweepCancel::Recheck)));
-        assert_eq!(heard.recv_timeout(PATIENCE), Ok(true), "the search saw its stop check fire");
-    }
-
-    /// …and the sweep's LATE answer, sent after the recheck landed, is never
-    /// used: the tick after it is a plain miss with nothing to report.
-    ///
-    /// Fails if a cancelled flight is kept in the slot — the late origin would
-    /// be confirmed and read over the recheck's.
-    #[test]
-    fn a_sweep_answer_arriving_after_the_recheck_landed_is_discarded() {
-        let mut slot = SweepSlot::default();
-        let (heard, answer) = searching_sweep(&mut slot, BOARD, Some(anchor_at((745, 561))));
-        slot.settle(&anchor::CheapDetect::Anchored(anchor_at((960, 713))), |_, _| None);
-        heard.recv_timeout(PATIENCE).expect("precondition: the search saw its stop");
-        answer.send(()).expect("precondition: the sweep is still there to answer");
-        // Time for the late answer to be sent where a kept flight would read it.
-        std::thread::sleep(Duration::from_millis(100));
-
-        let (sighting, ended) = slot.settle(&saw_nothing(), |swept, _| Some(*swept));
-
-        assert_eq!((sighting, ended), (Sighting::Nothing, None));
-    }
-
-    /// A sweep still searching leaves the tick a miss and stays in flight: the
-    /// loop goes on ticking, and the recheck goes on running, while it
-    /// searches.
-    ///
-    /// Fails if a tick with no recheck cancels the sweep or waits for it.
-    #[test]
-    fn a_sweep_still_searching_leaves_the_tick_a_miss_and_stays_in_flight() {
-        let mut slot = SweepSlot::default();
-        let (_heard, _answer) = searching_sweep(&mut slot, BOARD, None);
-
-        let (sighting, ended) = slot.settle(&saw_nothing(), |_, _| None);
-
-        assert_eq!((sighting, ended), (Sighting::Nothing, None));
-        assert!(slot.in_flight());
-    }
-
-    /// A sweep belongs to the key it started under: a Re-arm or a new epoch
-    /// cancels it, and the stop reaches the search.
-    ///
-    /// Fails if the key is not compared (a sweep of the last board would be
-    /// read into the next) or compared the wrong way round (every tick would
-    /// cancel the sweep it started).
-    #[test]
-    fn a_key_change_cancels_a_running_sweep() {
-        let mut slot = SweepSlot::default();
-        let (heard, _answer) = searching_sweep(&mut slot, BOARD, None);
-        assert_eq!(slot.keep_only(BOARD), None, "precondition: its own key keeps it");
-
-        let ended = slot.keep_only(NEXT_BOARD);
-
-        assert_eq!(
-            ended.map(|report| report.end),
-            Some(SweepEnd::Cancelled(SweepCancel::KeyChange)),
-        );
-        assert_eq!(heard.recv_timeout(PATIENCE), Ok(true), "the search saw its stop check fire");
-    }
-
-    /// A stand-down cancels the sweep: nothing is looking any more, so nothing
-    /// would read its answer. Fails if the cancel does not reach the search.
-    #[test]
-    fn a_stand_down_cancels_a_running_sweep() {
-        let mut slot = SweepSlot::default();
-        let (heard, _answer) = searching_sweep(&mut slot, BOARD, None);
-
-        let ended = slot.cancel(SweepCancel::StandDown);
-
-        assert_eq!(
-            ended.map(|report| report.end),
-            Some(SweepEnd::Cancelled(SweepCancel::StandDown)),
-        );
-        assert_eq!(heard.recv_timeout(PATIENCE), Ok(true), "the search saw its stop check fire");
-    }
-
-    /// A sweep that FOUND the panel is not read when the capture after it does
-    /// not confirm the origin — the sheet closed while it searched. The tick is
-    /// a miss, and the line says the find was discarded.
-    ///
-    /// Fails if the swept origin is read without asking the current frame.
-    #[test]
-    fn a_found_sweep_the_current_frame_does_not_confirm_is_not_read() {
-        let mut slot = SweepSlot::default();
-        let swept = anchor_at((745, 561));
-        slot.launch(placed_start(), BOARD, (1920, 1080), move |_| (Some(swept), false))
-            .expect("the sweep thread starts");
-
-        let (sighting, ended) = settle_when_answered(&mut slot, |_, _| None);
-
-        assert_eq!(sighting, Sighting::Nothing);
-        assert_eq!(
-            ended.map(|report| report.end),
-            Some(SweepEnd::Found { origin: (745, 561), scale: 1.0, fate: FoundFate::Unconfirmed }),
-        );
-    }
-
-    /// A confirmed sweep is read at the origin the CURRENT frame re-found, and
-    /// the confirmation was asked about the capture size the sweep searched.
-    ///
-    /// Fails if the tick reads the sweep's own origin (a frame a whole sweep
-    /// old) rather than the confirmation's, or asks about the wrong capture.
-    #[test]
-    fn a_confirmed_sweep_is_read_at_the_origin_the_current_frame_confirms() {
-        let mut slot = SweepSlot::default();
-        let swept = anchor_at((745, 561));
-        slot.launch(placed_start(), BOARD, (2560, 1440), move |_| (Some(swept), false))
-            .expect("the sweep thread starts");
-        let asked = std::cell::Cell::new(None);
-        let refound = anchor_at((746, 563));
-
-        let (sighting, _) = settle_when_answered(&mut slot, |origin, capture| {
-            asked.set(Some((origin.origin, capture)));
-            Some(refound)
-        });
-
-        assert_eq!(
-            sighting,
-            Sighting::Swept { anchor: refound, reason: ColdSweepReason::PlacedMiss },
-        );
-        assert_eq!(asked.get(), Some(((745, 561), (2560, 1440))));
-    }
-
-    /// A search that returns because its stop fired — the module stopping,
-    /// which the slot's own flag does not see — is reported as stopped, not as
-    /// a screen with no panel on it. `anchor_for_loop` answers both with the
-    /// same error; `stopped` is what tells them apart.
-    ///
-    /// Fails if `settle` reads a stopped search's `None` as `found no layout
-    /// panel`.
-    #[test]
-    fn a_search_that_returns_after_its_stop_fired_is_reported_as_stopped() {
-        let mut slot = SweepSlot::default();
-        slot.launch(placed_start(), BOARD, (1920, 1080), |_| (None, true))
-            .expect("the sweep thread starts");
-
-        let (sighting, ended) = settle_when_answered(&mut slot, |_, _| None);
-
-        assert_eq!(
-            (sighting, ended.map(|report| report.end)),
-            (Sighting::Nothing, Some(SweepEnd::Cancelled(SweepCancel::Stop))),
-        );
-    }
-
-    /// An anchored recheck with nothing in flight is the tick's sighting and
-    /// buys no sweep: nothing is reported and nothing starts searching.
-    ///
-    /// Fails if a recheck sighting is folded as anything but itself.
-    #[test]
-    fn an_anchored_recheck_buys_no_sweep() {
-        let mut slot = SweepSlot::default();
-        let found = anchor_at((960, 713));
-
-        let settled = slot.settle(&anchor::CheapDetect::Anchored(found), |_, _| {
-            panic!("nothing is in flight to confirm")
-        });
-
-        assert_eq!(settled, (Sighting::Recheck(found), None));
-        assert!(!slot.in_flight());
-    }
-
-    /// A sweep that searched the whole capture and found no layout panel ends
-    /// its flight with the no-panel line, so the slot is free for the next
-    /// sweep the cadence starts.
-    ///
-    /// Fails if the flight is put back after a no-panel answer — the slot would
-    /// stay full and no sweep could ever start again in the session.
-    #[test]
-    fn a_sweep_that_found_nothing_ends_the_flight() {
-        let mut slot = SweepSlot::default();
-        slot.launch(placed_start(), BOARD, (1920, 1080), |_| (None, false))
-            .expect("the sweep thread starts");
-
-        let (_, ended) = settle_when_answered(&mut slot, |_, _| None);
-
-        assert_eq!(ended.map(|report| report.end), Some(SweepEnd::NoPanel));
-        assert!(!slot.in_flight());
-    }
-
-    /// A sweep that answered FOUND on the very tick the placed recheck landed
-    /// loses to the recheck: the tick reads the recheck's origin and the line
-    /// says the find was superseded.
-    ///
-    /// Fails if a confirmed sweep beats the recheck it arrived beside.
-    #[test]
-    fn a_found_answer_on_the_recheck_tick_is_superseded() {
-        let mut slot = SweepSlot::default();
-        let swept = anchor_at((745, 561));
-        let (returning, returned) = mpsc::channel();
-        slot.launch(placed_start(), BOARD, (1920, 1080), move |_| {
-            let _ = returning.send(());
-            (Some(swept), false)
-        })
-        .expect("the sweep thread starts");
-        returned.recv_timeout(PATIENCE).expect("precondition: the sweep is answering");
-        // Time for the answer to land in the channel the tick polls.
-        std::thread::sleep(Duration::from_millis(100));
-        let recheck = anchor_at((960, 713));
-
-        let (sighting, ended) =
-            slot.settle(&anchor::CheapDetect::Anchored(recheck), |swept, _| Some(*swept));
-
-        assert_eq!(sighting, Sighting::Recheck(recheck));
-        assert_eq!(
-            ended.map(|report| report.end),
-            Some(SweepEnd::Found { origin: (745, 561), scale: 1.0, fate: FoundFate::Superseded }),
-        );
-    }
-
-    /// A sweep thread that dies without answering ends the flight and says so,
-    /// rather than holding the one slot for the rest of the key.
-    ///
-    /// Fails if a disconnected channel is read as "still searching".
-    #[test]
-    fn a_sweep_thread_that_dies_ends_the_flight_and_says_so() {
-        let mut slot = SweepSlot::default();
-        slot.launch(placed_start(), BOARD, (1920, 1080), |_| panic!("the sweep thread dies"))
-            .expect("the sweep thread starts");
-
-        let (sighting, ended) = settle_when_answered(&mut slot, |_, _| None);
-
-        assert_eq!(
-            (sighting, ended.map(|report| report.end)),
-            (Sighting::Nothing, Some(SweepEnd::Lost)),
-        );
-        assert!(!slot.in_flight());
-    }
-
-    /// The confirmation on real pixels: the committed 1920x1080 frame still
-    /// shows the sheet at the recorded anchor, so a sweep that found it there is
-    /// confirmed, at an origin inside the recheck window.
-    ///
-    /// Fails if the confirmation asks anything but the one windowed recheck at
-    /// the swept origin and scale.
-    #[test]
-    fn a_swept_origin_is_confirmed_on_a_frame_that_still_shows_the_sheet() {
-        let img = live_capture();
-        let swept =
-            anchor::Anchor { origin: LIVE_CAPTURE_ORIGIN, scale: LIVE_CAPTURE_SCALE, ncc: 0.99 };
-
-        let confirmed =
-            confirm_swept(&img, &swept, (1920, 1080)).expect("the sheet is on this frame");
-
-        assert!(
-            confirmed.origin.0.abs_diff(LIVE_CAPTURE_ORIGIN.0) <= 3
-                && confirmed.origin.1.abs_diff(LIVE_CAPTURE_ORIGIN.1) <= 3,
-            "confirmed at {:?}",
-            confirmed.origin,
-        );
-        assert!(confirmed.ncc >= anchor::NCC_FLOOR);
-    }
-
-    /// A frame where the swept origin shows no Entrance plate — the sheet
-    /// closed, or never was where the sweep saw it — confirms nothing.
-    ///
-    /// Fails if the confirmation trusts the swept anchor instead of the frame.
-    #[test]
-    fn a_swept_origin_is_not_confirmed_where_the_frame_shows_no_sheet() {
-        let img = live_capture();
-        let swept = anchor::Anchor { origin: (300, 300), scale: LIVE_CAPTURE_SCALE, ncc: 0.99 };
-
-        assert_eq!(confirm_swept(&img, &swept, (1920, 1080)), None);
-    }
-
-    /// A swept origin from a capture of another size is another screen's
-    /// origin, and is not confirmed even where this frame does show the sheet.
-    ///
-    /// Fails if the confirmation takes the size from the current frame instead
-    /// of from the capture the sweep searched.
-    #[test]
-    fn a_swept_origin_from_another_capture_size_is_not_confirmed() {
-        let img = live_capture();
-        let swept =
-            anchor::Anchor { origin: LIVE_CAPTURE_ORIGIN, scale: LIVE_CAPTURE_SCALE, ncc: 0.99 };
-
-        assert_eq!(confirm_swept(&img, &swept, (2560, 1440)), None);
-    }
-
-    // --------------------------------------------- the one line per sweep --
-
-    /// The line carries every field the measurement needs, in one fixed shape:
-    /// the reason, the attempt of the cap, the capture, the duration, the
-    /// outcome and the build.
-    ///
-    /// Fails if a field is dropped or crossed with another — each is a number a
-    /// reader of `app.log` corrects `NULL_SWEEP_EVERY` or `NULL_SWEEP_CAP` from.
-    #[test]
-    fn the_sweep_line_carries_reason_attempt_capture_duration_outcome_and_build() {
-        let report = SweepReport {
-            start: null_start(3).expect("a null start"),
-            capture: (1920, 1080),
-            took: Duration::from_millis(5312),
-            end: SweepEnd::Found { origin: (960, 713), scale: 1.0, fate: FoundFate::Confirmed },
-        };
-
-        assert_eq!(
-            sweep_line(&report, "release"),
-            "Temple: cold sweep (NullSlice, attempt 3 of 10) at 1920x1080 — 5312 ms, found at \
-             (960,713) scale 1.000 — confirmed on the current frame; release build",
-        );
-    }
-
-    /// The placed sweep has no cap to count against, so its line names no
-    /// attempt; and a sweep that found nothing says so in the words the retired
-    /// `sweep found no layout panel` line used.
-    ///
-    /// Fails if the placed line invents an attempt, or the no-panel outcome is
-    /// worded as a find.
-    #[test]
-    fn a_placed_sweep_that_found_nothing_names_no_attempt() {
-        let report = SweepReport {
-            start: placed_start(),
-            capture: (2560, 1440),
-            took: Duration::from_millis(30_112),
-            end: SweepEnd::NoPanel,
-        };
-
-        assert_eq!(
-            sweep_line(&report, "debug"),
-            "Temple: cold sweep (PlacedMiss) at 2560x1440 — 30112 ms, found no layout panel; \
-             debug build",
-        );
-    }
-
-    /// Every way a sweep ends that is not a confirmed find is named apart, so a
-    /// log can tell a recheck that won from a sheet that closed.
-    ///
-    /// Fails if two endings share words.
-    #[test]
-    fn the_sweep_line_names_every_other_ending_apart() {
-        let endings = [
-            (SweepEnd::Cancelled(SweepCancel::Recheck), "cancelled by recheck;"),
-            (SweepEnd::Cancelled(SweepCancel::KeyChange), "cancelled by key change;"),
-            (SweepEnd::Cancelled(SweepCancel::StandDown), "cancelled by stand-down;"),
-            (SweepEnd::Cancelled(SweepCancel::Stop), "cancelled by stop;"),
-            (SweepEnd::Lost, "ended without a result;"),
-            (
-                SweepEnd::Found { origin: (1, 2), scale: 1.0, fate: FoundFate::Unconfirmed },
-                "not on the current frame, discarded;",
-            ),
-            (
-                SweepEnd::Found { origin: (1, 2), scale: 1.0, fate: FoundFate::Superseded },
-                "discarded, the placed recheck landed;",
-            ),
-        ];
-
-        for (end, words) in endings {
-            let report = SweepReport {
-                start: placed_start(),
-                capture: (1920, 1080),
-                took: Duration::from_millis(1),
-                end,
-            };
-            let line = sweep_line(&report, "release");
-            assert!(line.contains(words), "{end:?}: {line}");
-        }
-    }
-
-    /// The build word is `debug` exactly when debug assertions are on — which
-    /// is what `log_sweep` hands it — because the same sweep is 5.3 s on one
-    /// and ~30 s on the other. Fails if the two words are swapped.
-    #[test]
-    fn the_build_word_follows_debug_assertions() {
-        assert_eq!((build_profile(true), build_profile(false)), ("debug", "release"));
     }
 
     #[test]
@@ -6459,206 +2096,6 @@ mod tests {
             placed_origin_contradiction_line(Some(placed), (placed.0 + 1, placed.1)),
             None,
         );
-    }
-
-    /// POE-269's withheld rule, kept on top of the cadence (POE-275 WI-2): a
-    /// found null sweep whose slice was withheld leaves the key's null sweeps
-    /// going once; a second one ENDS them — for that key only.
-    ///
-    /// Fails if a withheld result ends the key at once (the one retry is gone),
-    /// if the second one does not end it (an anchor the screen never
-    /// corroborates is swept for up to the whole cap), or if the release is
-    /// remembered across keys (the next key's first withheld result would end
-    /// it).
-    #[test]
-    fn a_second_withheld_null_sweep_ends_that_keys_null_sweeps() {
-        let withheld = screen_from_anchor(
-            1.25,
-            None,
-            (1920, 1080),
-            7,
-            (745, 561),
-            [0, 0, 1920, 1080],
-            1_700_000_000_002,
-        );
-        assert!(withheld.is_err(), "the height check withholds this anchor");
-        let mut budget = SweepBudget::default();
-        spend_one_null_sweep(&mut budget, BOARD);
-
-        budget.after_null_publish(BOARD, false);
-        assert_eq!(
-            spend_one_null_sweep(&mut budget, BOARD),
-            null_start(2),
-            "the first withheld result leaves the cadence going",
-        );
-
-        budget.after_null_publish(BOARD, false);
-        for miss in 0..3 * u32::from(NULL_SWEEP_EVERY) {
-            assert_eq!(null_miss(&mut budget, BOARD), None, "miss {miss} after the second");
-        }
-
-        spend_one_null_sweep(&mut budget, NEXT_BOARD);
-        budget.after_null_publish(NEXT_BOARD, false);
-        assert_eq!(
-            spend_one_null_sweep(&mut budget, NEXT_BOARD),
-            null_start(2),
-            "a new key has its own one withheld retry",
-        );
-    }
-
-    /// A found null sweep that FILLED the slice ends the key's null sweeps, as
-    /// every null sweep did until 2026-09-11: the slice is no longer null, and
-    /// the successful read remembers the origin that makes it placed.
-    ///
-    /// Fails if `screen_filled` is ignored — the filled key would be released
-    /// like a withheld one and go on sweeping on the cadence.
-    #[test]
-    fn a_null_sweep_that_filled_the_slice_ends_that_keys_null_sweeps() {
-        let mut budget = SweepBudget::default();
-        spend_one_null_sweep(&mut budget, BOARD);
-
-        budget.after_null_publish(BOARD, true);
-
-        for miss in 0..3 * u32::from(NULL_SWEEP_EVERY) {
-            assert_eq!(null_miss(&mut budget, BOARD), None, "miss {miss} after the fill");
-        }
-    }
-
-    /// A placed recheck that anchored on a screen with no anchored origin ends
-    /// the key's null sweeps (fix round): the seed was right, so a sweep under
-    /// this key could only find what the recheck found. A new key sweeps again.
-    ///
-    /// Fails if the end is dropped or does not reach the cadence — after the
-    /// sheet closes under a TempleArea arm the cadence would restart in the same
-    /// key, up to the whole cap of sheet-less sweeps across the run — or if the
-    /// end outlives its key.
-    #[test]
-    fn a_recheck_sighting_on_an_unanchored_screen_ends_that_keys_null_sweeps() {
-        let mut budget = SweepBudget::default();
-
-        budget.on_recheck(BOARD, false);
-
-        for miss in 0..3 * u32::from(NULL_SWEEP_EVERY) {
-            assert_eq!(null_miss(&mut budget, BOARD), None, "miss {miss} after the recheck");
-        }
-        assert_eq!(spend_one_null_sweep(&mut budget, NEXT_BOARD), null_start(1), "a new key");
-    }
-
-    /// On a screen whose origin IS anchored the recheck is the ordinary placed
-    /// path and ends nothing — the flag is what the rule keys on.
-    ///
-    /// Fails if `on_recheck` ignores `anchored`.
-    #[test]
-    fn a_recheck_sighting_on_an_anchored_screen_ends_nothing() {
-        let mut budget = SweepBudget::default();
-
-        budget.on_recheck(BOARD, true);
-
-        assert_eq!(spend_one_null_sweep(&mut budget, BOARD), null_start(1));
-    }
-
-    /// Recalibrate re-arms the key the null-slice budget belongs to, so the next
-    /// Temple tick sweeps and can publish a fresh corroborated measurement.
-    /// **Amended 2026-09-11 (POE-275 WI-2):** not the next tick — the third
-    /// consecutive clean miss after the press starts the sweep, on the cadence. This
-    /// restores the deleted end-to-end decision seam without reintroducing the
-    /// retired cadence gate.
-    ///
-    /// The state it builds is the one the command actually LEAVES since POE-278:
-    /// a capture-derived slice standing, `screen_present == true`, a seeded
-    /// Entrance origin in the hint — and NO anchor. Before POE-278 this test
-    /// built `cheap_hint_from_screen(None, ..)` and passed `screen_present =
-    /// false`, which the command can no longer produce; it stayed green while
-    /// the press had stopped granting the sweep at all.
-    #[test]
-    fn recalibrate_leaves_the_temple_sweeping_and_republishing() {
-        let capture = (1920, 1080);
-        let client = [0, 0, capture.0 as i32, capture.1 as i32];
-        let measured = crate::ssot::screen_from_geometry(
-            capture.0,
-            capture.1,
-            7,
-            LIVE_CAPTURE_ORIGIN,
-            client,
-            1_700_000_000_001,
-        );
-        assert_eq!(measured.anchors, None, "the press leaves no anchor to verify");
-        let hint = cheap_hint_from_screen(Some(&measured), capture, LIVE_CAPTURE_ORIGIN, client);
-        assert!(
-            hint.is_some(),
-            "the press leaves a SEEDED hint standing — the state that used to be null",
-        );
-
-        // What `cold_sweep_reason` is handed: the ANCHORED origin, which the
-        // press left empty. Handing it the hint's seeded origin instead is the
-        // POE-278 regression, and flips every assertion below to `None`.
-        let placed_origin = measured
-            .anchors
-            .and_then(|anchors| anchors.temple_entrance)
-            .map(|[x, y]| (x, y));
-        assert_eq!(placed_origin, None);
-
-        // Since POE-275 WI-2 the null slice sweeps on the cadence, up to the cap
-        // per key, rather than once per key on the first miss.
-        let mut budget = SweepBudget::default();
-        let mut miss = |key| {
-            let missed = DetectOutcome::Missed;
-            cold_sweep_reason(true, placed_origin, missed, false, None, key, &mut budget)
-        };
-        let before = (4, 0);
-        assert_eq!(
-            (miss(before), miss(before), miss(before)),
-            (None, None, null_start(1)),
-            "the null-slice cadence permits the cold-start sweep",
-        );
-        for _ in 0..3 * u32::from(NULL_SWEEP_EVERY) * u32::from(NULL_SWEEP_CAP) {
-            miss(before);
-        }
-        assert_eq!(miss(before), None, "the key's null-slice cap is spent");
-        let after_recalibrate = (4, 1);
-        assert_eq!(
-            (miss(after_recalibrate), miss(after_recalibrate), miss(after_recalibrate)),
-            (None, None, null_start(1)),
-            "Recalibrate's rearm creates a fresh key with a whole cap",
-        );
-
-        // The sweep runs against the slice the press LEFT, not an empty one, and
-        // its anchor converts to the same 0.90 the height implies at 1080p —
-        // i.e. inside `OCR_DRIFT_BAND`. It must still be published: a cue that
-        // read the art has to be able to overwrite the derivation, or pressing
-        // Recalibrate would make `temple-anchor` unreachable on this machine.
-        let swept = screen_from_anchor(
-            LIVE_CAPTURE_SCALE,
-            // The hint the tick derives FROM the standing slice — which since
-            // POE-278 exists after a press, so the anchor is corroborated
-            // against `hint_disagreement_line` rather than the capture height.
-            hint.as_ref().map(|hint| hint.calibration),
-            capture,
-            7,
-            LIVE_CAPTURE_ORIGIN,
-            client,
-            1_700_000_000_002,
-        )
-        .expect("the corroborated anchor fits the standing slice's capture geometry");
-        assert!(
-            (swept.ui_scale - measured.ui_scale).abs() <= 0.01,
-            "the anchor agrees with the derived value to within the drift band, which is \
-             what makes the publish below a real test of the override",
-        );
-        let mut slot = Some(measured);
-        let record = crate::ssot::record_screen(&mut slot, swept);
-        assert!(record.accepted && record.changed, "the corroborated sweep is published");
-        let published = slot.expect("the published sweep replaces the derived slice");
-        assert_eq!(
-            published.source,
-            crate::ssot::ScreenScaleSource::TempleAnchor,
-            "the verifying cue takes the slice back from the derivation",
-        );
-        assert!(published.verified_this_session);
-        assert_eq!((published.width, published.height), capture);
-        assert_eq!(published.ui_scale, swept.ui_scale);
-        assert_eq!(published.source, swept.source);
-        assert_eq!(published.origin, swept.origin);
     }
 
     /// The rect reproduces the diamond centre measured on BOTH captures whose
@@ -6802,264 +2239,13 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------- the arm gate --
-
-    /// The POE-242 bug, as an invariant over the whole input space: the only
-    /// iteration that captures is a focused, armed one whose cadence is due.
-    ///
-    /// Fails if the arm gate is dropped, or placed AFTER the cadence check, or
-    /// read as "armed or due" — each of which puts `capture_screen` back on a
-    /// map, which is the owner report this work item answers.
-    #[test]
-    fn only_a_focused_armed_iteration_on_cadence_reaches_the_capture_step() {
-        for focused in [false, true] {
-            for armed in [false, true] {
-                for due in [false, true] {
-                    assert_eq!(
-                        loop_step(focused, armed, due) == LoopStep::Detect,
-                        focused && armed && due,
-                        "focused={focused} armed={armed} due={due}",
-                    );
-                }
-            }
-        }
-    }
-
-    /// A disarmed loop naps like an alt-tabbed one, not like a loop between
-    /// ticks. Fails if the disarmed step takes the cadence quantum — the loop
-    /// would then wake ten times a second for the whole of a session it is
-    /// meant to be asleep for.
-    #[test]
-    fn a_disarmed_loop_naps_the_full_second_rather_than_the_cadence_quantum() {
-        assert_eq!(loop_step(true, false, true).nap(), UNFOCUSED_NAP);
-    }
-
-    /// An armed loop that is not due yet still waits on the quantum, so the
-    /// next tick lands on the cadence rather than a second late. Fails if
-    /// `Quantum` and `DisarmedNap` are collapsed into one step — which is one
-    /// wrong change, so the step and the wait it buys are one outcome here.
-    #[test]
-    fn an_armed_loop_between_ticks_waits_one_quantum() {
-        assert_eq!(loop_step(true, true, false), LoopStep::Quantum);
-        assert_eq!(LoopStep::Quantum.nap(), TICK);
-    }
-
-    /// `Waiting` is published on the way into the disarmed state and NOT on
-    /// every nap after it. Fails if the announcement is unconditional: the loop
-    /// would then take the slice mutex and clone the slice once a second for
-    /// the whole of a session that has no incursion in it.
-    #[test]
-    fn a_disarmed_loop_announces_waiting_exactly_once() {
-        assert_eq!(
-            gate_announcement(None, false, TempleStatus::Idle),
-            Some(TickOutcome::Disarmed),
-        );
-
-        assert_eq!(
-            gate_announcement(Some(false), false, TempleStatus::Waiting),
-            None,
-            "and not again",
-        );
-    }
-
-    /// POE-171 finding 15, as it reaches this gate: a retiring loop's
-    /// `Stopping → Idle` lands after the new loop's `Waiting`. A disarmed loop
-    /// publishes nothing more, so a transition-only gate would leave the page
-    /// reading `idle` ("about to read") for the rest of a session that is not
-    /// looking at all.
-    ///
-    /// Fails if the announcement is keyed on `said` alone — which is what it
-    /// was before this test existed.
-    #[test]
-    fn a_foreign_idle_over_a_disarmed_loop_is_corrected_on_the_next_iteration() {
-        assert_eq!(
-            gate_announcement(Some(false), false, TempleStatus::Idle),
-            Some(TickOutcome::Disarmed),
-        );
-    }
-
-    /// The re-assertion must not turn a status no tick result can leave into a
-    /// publish and a log line on every tick. `Unavailable` is that status: it
-    /// means capture or OCR is missing for the life of the process, and
-    /// [`next_status`] holds it against every outcome.
-    ///
-    /// Fails if the re-assertion is keyed on `status == Waiting` rather than on
-    /// whether applying `Disarmed` would move the status.
-    #[test]
-    fn a_disarmed_loop_does_not_re_announce_over_an_unavailable_module() {
-        assert_eq!(
-            gate_announcement(Some(false), false, TempleStatus::Unavailable),
-            None,
-        );
-    }
-
-    /// The gate opening is announced too — otherwise the page would sit on
-    /// `waiting` until the first read landed. Fails if only the disarm is
-    /// announced.
-    #[test]
-    fn a_gate_that_opens_announces_itself() {
-        assert_eq!(
-            gate_announcement(Some(false), true, TempleStatus::Waiting),
-            Some(TickOutcome::Armed),
-        );
-    }
-
-    /// An armed loop that has read a board must not have `Idle` written over it
-    /// every iteration. Fails if the armed half is re-asserted the way the
-    /// disarmed half is — the page's board would be marked stale once a second
-    /// for the length of a temple.
-    #[test]
-    fn an_armed_loop_does_not_re_announce_over_a_board_it_has_read() {
-        assert_eq!(gate_announcement(Some(true), true, TempleStatus::Read), None);
-    }
-
-    /// The two lines `docs/OVERLAY-GUIDE.md` smoke item 12 tells the runner to
-    /// look for. Fails if the arms are swapped — the log would then say the
-    /// capture armed at the moment it stood down, which is the one thing that
-    /// item is measuring.
-    #[test]
-    fn the_gate_line_says_which_way_the_gate_moved() {
-        let mut said = None;
-
-        assert_eq!(
-            gate_line(
-                &mut said,
-                Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaStart)),
-                trigger::StandDown::Waiting,
-            ),
-            Some(
-                "Temple: capture armed by Alva's start line — looking for the layout panel"
-                    .to_string()
-            ),
-        );
-        assert_eq!(
-            gate_line(&mut said, None, trigger::StandDown::Waiting),
-            Some("Temple: capture stood down — waiting for Alva (Re-arm forces a read)".to_string()),
-        );
-    }
-
-    /// WI-1's line: the stand-down says WHY, so a smoke run can tell the cycle
-    /// completing from Alva ending it, from the player walking out, from a
-    /// Re-arm nobody used.
-    ///
-    /// Fails if the cause is dropped and the line goes back to one string — the
-    /// four stand-downs are four different checks, and `app.log` would not
-    /// separate them.
-    #[test]
-    fn the_stand_down_line_names_the_cause() {
-        for (cause, expected) in [
-            (
-                trigger::StandDown::CycleComplete,
-                "Temple: capture stood down — the sheet was read and closed (Re-arm forces a read)",
-            ),
-            (
-                trigger::StandDown::AlvaLine,
-                "Temple: capture stood down — Alva's line (Re-arm forces a read)",
-            ),
-            (
-                trigger::StandDown::LeftArea,
-                "Temple: capture stood down — the zone changed (Re-arm forces a read)",
-            ),
-            (
-                trigger::StandDown::GraceOver,
-                "Temple: capture stood down — Re-arm's grace is over (Re-arm forces a read)",
-            ),
-        ] {
-            let mut said = Some(trigger::ArmSource::PanelOnScreen);
-
-            assert_eq!(
-                gate_line(&mut said, None, cause),
-                Some(expected.to_string()),
-                "{cause:?}",
-            );
-        }
-    }
-
-    /// And an ARMED gate names its source, never the cause it last shut for.
-    /// Fails if the two are folded into one line — `capture armed by the sheet
-    /// was read and closed` is not a sentence, and the smoke item reads the
-    /// source.
-    #[test]
-    fn an_armed_gate_ignores_the_stand_down_cause() {
-        let mut said = None;
-
-        assert_eq!(
-            gate_line(
-                &mut said,
-                Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual)),
-                trigger::StandDown::CycleComplete,
-            ),
-            Some("Temple: capture armed by Re-arm — looking for the layout panel".to_string()),
-        );
-    }
-
-    /// POE-246's own line: the gate stays open while the reason changes hands,
-    /// and the log says which one is holding it. Fails if the source vocabulary
-    /// stops at `ArmReason` — a smoke run then cannot tell a loop kept alive by
-    /// the panel on screen from one Client.txt is still arming.
-    #[test]
-    fn the_gate_line_names_the_panel_that_is_holding_the_gate_open() {
-        let mut said = Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual));
-
-        assert_eq!(
-            gate_line(
-                &mut said,
-                Some(trigger::ArmSource::PanelOnScreen),
-                trigger::StandDown::GraceOver,
-            ),
-            Some(
-                "Temple: capture armed by the panel on screen — looking for the layout panel"
-                    .to_string()
-            ),
-        );
-    }
-
-    /// One line per source, not one per iteration. Fails if the rule is dropped:
-    /// the loop reaches this once a second for as long as it is armed, and an
-    /// unconditional line would evict every other diagnostic from the 50-entry
-    /// buffer within a minute.
-    #[test]
-    fn the_gate_line_is_said_once_per_source() {
-        let mut said = None;
-        let source = Some(trigger::ArmSource::PanelOnScreen);
-
-        assert!(gate_line(&mut said, source, trigger::StandDown::Waiting).is_some());
-
-        assert_eq!(
-            gate_line(&mut said, source, trigger::StandDown::Waiting),
-            None,
-            "and not again",
-        );
-    }
-
-    /// The status the arm gate publishes, and the one the plan names: "on,
-    /// waiting for Alva". Fails if the disarmed loop keeps publishing `idle`,
-    /// which reads as "running and about to read" — the exact wrong answer to
-    /// "why is nothing happening?".
-    #[test]
-    fn a_disarmed_gate_publishes_waiting() {
-        let mut slice = TempleSlice::default();
-
-        apply_status(&mut slice, TickOutcome::Disarmed);
-
-        assert_eq!(slice.status, TempleStatus::Waiting);
-    }
-
     /// POE-244's core fix. The panel leaving the screen is what an INCURSION
     /// looks like — the player stepped through the door and the layout panel
-    /// closed behind them — and `PanelNotVisible` is reached only through
-    /// `miss`'s retire. Dropping the advice there left the door widget with no
+    /// closed behind them — and `PanelNotVisible` is what a press that finds no
+    /// panel publishes. Dropping the advice there left the door widget with no
     /// purple seal, no `open <edge>` line and no architect name at exactly the
-    /// point they are the only things still on screen.
-    ///
-    /// **What this pins is [`apply_status`], not [`miss`]'s publish closure.**
-    /// That closure takes an `AppHandle` and the slice mutex, so it has no unit
-    /// seam here; what it does now is call this function and nothing else, and
-    /// this is the assertion that the function it calls leaves the advice
-    /// alone. A future edit that put a `slice.advice = None` back inside the
-    /// closure would pass this test — the guard against that is the reviewed
-    /// diff and the incursion smoke item in `docs/OVERLAY-GUIDE.md`, which is
-    /// where the original defect was found.
+    /// point they are the only things still on screen. Fails if `NoPanel`
+    /// clears the advice.
     #[test]
     fn a_panel_that_left_the_screen_keeps_the_advice_it_was_read_with() {
         let mut slice = TempleSlice {
@@ -7085,92 +2271,16 @@ mod tests {
         assert_eq!(slice.mode.as_deref(), Some("chase"));
     }
 
-    /// …and the stand-down does not end it either, since POE-248.
+    /// The two events that end the wait for the temple sheet (POE-249).
     ///
-    /// The measured failure: `12:32:10 capture armed by the panel on screen` …
-    /// `12:39:05 capture stood down`, and the door diamond went with it while
-    /// the player was still in the room it described. A gate says whether
-    /// anything is LOOKING; the incursion is not over because the module
-    /// stopped looking. Fails if the POE-244 drop is put back.
-    ///
-    /// The two lines that DO end it are `trigger::advice_end`'s, tested there.
-    #[test]
-    fn standing_the_loop_down_leaves_the_room_widget_its_advice() {
-        let mut slice = TempleSlice {
-            status: TempleStatus::PanelNotVisible,
-            advice: Some(slice::AdviceView {
-                recommendations: Vec::new(),
-                gambles: Vec::new(),
-                secondary_door: None,
-                convenience: None,
-                recommended_exit: None,
-                map_action: "continue".to_string(),
-                warnings: Vec::new(),
-                forced_kill: false,
-            }),
-            mode: Some("chase".to_string()),
-            ..TempleSlice::default()
-        };
-
-        apply_gate(&mut slice, TickOutcome::Disarmed);
-
-        assert_eq!(slice.status, TempleStatus::Waiting);
-        assert!(
-            slice.advice.is_some(),
-            "the room widget lives with the incursion, not with the capture",
-        );
-        assert_eq!(slice.mode.as_deref(), Some("chase"));
-    }
-
-    /// Arming does NOT clear it: the next read replaces the whole slice, and
-    /// blanking here would empty the page for the seconds between Alva's line
-    /// and the first anchor.
-    #[test]
-    fn arming_leaves_the_standing_advice_for_the_next_read_to_replace() {
-        let mut slice = TempleSlice {
-            status: TempleStatus::Waiting,
-            // The advice itself, not just the mode label beside it: a fixture
-            // that left this `None` would assert nothing about the field the
-            // test is named for, and would pass against a version that cleared
-            // it (review, POE-244).
-            advice: Some(slice::AdviceView {
-                recommendations: Vec::new(),
-                gambles: Vec::new(),
-                secondary_door: None,
-                convenience: None,
-                recommended_exit: None,
-                map_action: "continue".to_string(),
-                warnings: Vec::new(),
-                forced_kill: false,
-            }),
-            mode: Some("chase".to_string()),
-            ..TempleSlice::default()
-        };
-
-        apply_gate(&mut slice, TickOutcome::Armed);
-
-        assert_eq!(slice.status, TempleStatus::Idle);
-        assert!(slice.advice.is_some(), "arming must not blank the standing board");
-        assert_eq!(slice.mode.as_deref(), Some("chase"));
-    }
-
-    /// The four loop events that end the wait for the temple sheet (POE-249).
-    ///
-    /// Two different reasons, one write. `Anchored` and `Reshown` are the wait
-    /// ANSWERED — the sheet is on screen, and which of the two it is only says
-    /// whether the board had to be read again — and `Disarmed`/`Stopping` are
-    /// the loop no longer looking, over which a notice saying "waiting for the
-    /// temple panel" is a lie. Fails if the clear is keyed on the resulting
-    /// STATUS rather than on the outcome: these four land on four different
-    /// statuses.
+    /// `Anchored` is the wait ANSWERED — the sheet is on screen — and
+    /// `Stopping` is the worker no longer reading, over which a notice saying
+    /// "waiting for the temple panel" is a lie. Fails if the clear is keyed on
+    /// the resulting STATUS rather than on the outcome: these two land on two
+    /// different statuses.
     #[test]
     fn the_outcomes_that_end_the_wait_for_the_panel_clear_it() {
-        for outcome in [
-            TickOutcome::Anchored,
-            TickOutcome::Reshown(TempleStatus::Read),
-            TickOutcome::Disarmed,
-            TickOutcome::Stopping,
-        ] {
+        for outcome in [TickOutcome::Anchored, TickOutcome::Stopping] {
             let mut slice = TempleSlice {
                 waiting_for_panel: true,
                 ..TempleSlice::default()
@@ -7182,18 +2292,12 @@ mod tests {
         }
     }
 
-    /// And the three that leave it standing, because the wait is still the
-    /// truth: a tick that looked and saw nothing, a tick that could not look
-    /// this once, and the gate OPENING — which is what Alva's start line buys,
-    /// so clearing there would take the notice down in the same second it went
-    /// up.
+    /// And the two that leave it standing, because the wait is still the
+    /// truth: a press that looked and saw nothing, and a press that could not
+    /// look this once.
     #[test]
     fn the_outcomes_that_are_still_a_wait_leave_it_standing() {
-        for outcome in [
-            TickOutcome::NoPanel,
-            TickOutcome::Failed,
-            TickOutcome::Armed,
-        ] {
+        for outcome in [TickOutcome::NoPanel, TickOutcome::Failed] {
             let mut slice = TempleSlice {
                 waiting_for_panel: true,
                 ..TempleSlice::default()
@@ -7203,22 +2307,6 @@ mod tests {
 
             assert!(slice.waiting_for_panel, "{outcome:?}");
         }
-    }
-
-    /// Arming returns the module to `Idle` BEFORE the first read, so a board
-    /// read during the previous incursion is not still presented as current
-    /// while the loop looks for a new one. Fails if `Armed` leaves `Waiting`
-    /// standing, or lands on `Reading` (which would claim a read in flight).
-    #[test]
-    fn arming_returns_the_module_to_idle_before_the_first_read() {
-        let mut slice = TempleSlice {
-            status: TempleStatus::Waiting,
-            ..TempleSlice::default()
-        };
-
-        apply_status(&mut slice, TickOutcome::Armed);
-
-        assert_eq!(slice.status, TempleStatus::Idle);
     }
 
     // ---------------------------------------------------- status machine --
@@ -7288,9 +2376,6 @@ mod tests {
             TickOutcome::Failed,
             TickOutcome::NoPanel,
             TickOutcome::Anchored,
-            TickOutcome::Reshown(TempleStatus::Read),
-            TickOutcome::Disarmed,
-            TickOutcome::Armed,
             TickOutcome::Stopping,
         ] {
             let mut slice = TempleSlice {
@@ -7911,7 +2996,7 @@ mod tests {
 
     /// One line per distinct geometry, not one per read.
     ///
-    /// `app_log` keeps 50 entries and `full_read` runs on every board of every
+    /// `app_log` keeps 50 entries and `read_press` runs on every board of every
     /// incursion, so a line said unconditionally here evicts other diagnostics
     /// from the buffer while repeating one value — the failure this rule
     /// exists to prevent. The third call is what stops the rule from being
@@ -8480,7 +3565,7 @@ mod tests {
         struct Call {
             label: String,
             crop: DynamicImage,
-            response: Vec<OcrLineBox>,
+            response: Result<Vec<OcrLineBox>, String>,
         }
 
         /// An ordered response script. Each `recognize` pops the next call and
@@ -8506,7 +3591,7 @@ mod tests {
                     "{}: the crop handed to OCR is not the one production cuts for it",
                     call.label,
                 );
-                Ok(call.response)
+                call.response
             }
         }
 
@@ -8574,7 +3659,7 @@ mod tests {
                     slice::PANEL_REGION => PANEL_LINES.iter().map(|(r, t)| line_at(t, *r, origin)).collect(),
                     _ => vec![line_at(REMAINING_LINE.1, REMAINING_LINE.0, origin)],
                 };
-                calls.push_back(Call { label: format!("text region {name}"), crop, response });
+                calls.push_back(Call { label: format!("text region {name}"), crop, response: Ok(response) });
             }
             let lattice = Lattice::new(layout.origin, layout.scale);
             for (i, (slot, (name, numeral))) in Slot::ALL.into_iter().zip(PLATES).enumerate() {
@@ -8585,7 +3670,7 @@ mod tests {
                 calls.push_back(Call {
                     label: format!("plate {i} name"),
                     crop: crop(img, panel::name_strip(&lattice, slot)),
-                    response: name_lines,
+                    response: Ok(name_lines),
                 });
                 let numeral_lines = match numeral.is_empty() {
                     true => Vec::new(),
@@ -8594,7 +3679,7 @@ mod tests {
                 calls.push_back(Call {
                     label: format!("plate {i} numeral"),
                     crop: crop(img, panel::numeral_box(&lattice, slot)),
-                    response: numeral_lines,
+                    response: Ok(numeral_lines),
                 });
             }
             ScriptedOcr { calls: RefCell::new(calls), made: RefCell::new(0) }
@@ -8615,69 +3700,31 @@ mod tests {
             unclean: bool,
         }
 
-        /// HEAD's `full_read` on its no-kept path, composed from the same
-        /// functions without an `AppHandle`: the valuation is the Default
-        /// preset with no market, and `read_at` is 0.
-        fn first_read(ocr: &ScriptedOcr) -> Verdict {
+        /// One press's read through the production pieces — [`read_board`] →
+        /// [`verdict`] → [`finish`] — without an `AppHandle`: the valuation is
+        /// the Default preset with no market, `read_at` is 0, and no anchor was
+        /// located.
+        fn press_read(ocr: &ScriptedOcr, stop: &dyn Fn() -> bool) -> (Result<slice::KeptRead, String>, PressFinish) {
             let img = live_capture();
             let layout = live_layout(&img);
             let settings = TempleSettings::default();
-
             let clipped = clipped_text_rois(&text_regions(&layout), img.width(), img.height());
             let clipped_names: Vec<&'static str> = clipped.iter().map(|(name, _)| *name).collect();
-            let plan = slice::plan_read(None, &clipped_names);
 
-            let mut lines = Vec::new();
-            for (name, rect) in text_regions(&layout) {
-                if !plan.text.contains(&name) {
-                    continue;
-                }
-                let Some((crop, origin)) = crop_clipped(&img, rect) else { continue };
-                let read = panel::TextRecognizer::recognize(ocr, &crop).expect("scripted");
-                lines.extend(read.into_iter().map(|line| panel::translated(line, origin)));
-            }
-            let panel_reading = panel::read_panel(&lines);
-
-            let lattice = Lattice::new(layout.origin, layout.scale);
-            let rooms = panel::read_slots(ocr, &img, &lattice, &plan.plates, &|| false);
-            let (settled, marker_error) = match plan.markers {
-                false => (None, None),
-                true => match read_markers(&img, &layout) {
-                    Ok(set) => (Some(set), None),
-                    Err(e) => (None, Some(e)),
-                },
-            };
-            let read = slice::KeptRead { layout, rooms, panel: panel_reading, settled, marker_error };
-
+            let read = read_board(&img, layout, ocr, &clipped_names, stop, &mut ReadStages::default());
             let valuation = preset::value_table(Preset::Default, &TempleCustomSettings::default(), &MarketInput::none());
-            let advice = slice::advise_read(
-                &read.layout,
-                &read.rooms,
-                &read.panel,
-                read.settled.as_ref(),
-                &settings,
-                &valuation,
-            );
-            let projected = slice::project(
-                &slice::ReadResult {
-                    layout: &read.layout,
-                    rooms: &read.rooms,
-                    panel: &read.panel,
-                    settled: read.settled.as_ref(),
-                    marker_error: read.marker_error.clone(),
-                    read_notice: None,
-                    advice: advice.as_ref(),
-                    config: settings.config.clone(),
-                    profile: settings.profile.clone(),
-                    preset: settings.preset,
-                    custom: settings.custom.clone(),
-                    valuation: &valuation,
-                    market: slice::market_view(&MarketInput::none()),
-                    read_at: 0,
-                },
-                Some(read.layout.calibration),
-            );
-            let unclean = slice::unclean(&read, &clipped_names);
+            let projected = read
+                .as_ref()
+                .map(|read| verdict(read, &clipped, &settings, &valuation, &MarketInput::none(), 0))
+                .map_err(Clone::clone);
+            (read, finish(projected, None))
+        }
+
+        fn first_read(ocr: &ScriptedOcr) -> Verdict {
+            let (read, done) = press_read(ocr, &|| false);
+            let read = read.expect("a scripted read succeeds");
+            let projected = done.publish.expect("a successful read publishes its slice");
+            let unclean = slice::unclean(&read, &[]);
 
             let view = projected.advice.as_ref();
             let top = view.and_then(|v| v.recommendations.first());
@@ -8748,5 +3795,91 @@ mod tests {
                 Verdict { unread: 2, recommended_exit: None, unclean: true, ..recorded_full_read() },
             );
         }
+
+        /// The panel's OCR fails: the read fails with HEAD's message, buys no
+        /// plate call, and remembers nothing.
+        #[test]
+        fn a_failed_panel_ocr_fails_the_read_before_any_plate() {
+            let img = live_capture();
+            let ocr = script(&img, &live_layout(&img), &[]);
+            ocr.calls.borrow_mut()[0].response = Err("engine down".to_string());
+
+            let (_, done) = press_read(&ocr, &|| false);
+
+            assert_eq!(*ocr.made.borrow(), 1, "no call after the failed one");
+            assert_eq!(done.publish.unwrap_err(), "Temple: OCR failed — engine down");
+            assert_eq!(done.remember, None);
+        }
+
+        /// A stop raised before the plates ends the read with no plate call
+        /// and nothing published or remembered.
+        #[test]
+        fn a_stopped_read_is_cancelled_after_the_text_regions() {
+            let img = live_capture();
+            let ocr = script(&img, &live_layout(&img), &[]);
+
+            let (_, done) = press_read(&ocr, &|| true);
+
+            assert_eq!(*ocr.made.borrow(), 2, "the two text regions, no plate");
+            assert_eq!(done.publish.unwrap_err(), "cancelled");
+            assert_eq!(done.remember, None);
+        }
+    }
+
+    // ------------------------------------------------- what a press may persist --
+
+    fn a_read_slice() -> TempleSlice {
+        TempleSlice { status: TempleStatus::Read, ..TempleSlice::default() }
+    }
+
+    #[test]
+    fn a_successful_read_remembers_its_located_origin() {
+        assert_eq!(finish(Ok(a_read_slice()), Some((745, 561))).remember, Some([745, 561]));
+    }
+
+    #[test]
+    fn a_failed_read_remembers_nothing() {
+        let done = finish(Err("Temple: OCR failed — engine down".to_string()), Some((745, 561)));
+        assert_eq!(done.remember, None);
+    }
+
+    /// A recheck hit, or a located anchor inside the tolerance band, has no
+    /// fallback origin to remember.
+    #[test]
+    fn a_successful_read_with_no_located_origin_remembers_nothing() {
+        assert_eq!(finish(Ok(a_read_slice()), None).remember, None);
+    }
+
+    // -------------------------------------------------- the locate on a miss --
+
+    #[test]
+    fn a_null_slice_is_located_on_the_pressed_frame() {
+        assert!(locate_on_miss(false, None));
+    }
+
+    /// A slice with a seeded but never ANCHORED origin is unplaced (POE-278).
+    #[test]
+    fn an_unanchored_slice_is_located_on_the_pressed_frame() {
+        assert!(locate_on_miss(true, None));
+    }
+
+    /// A placed miss is the sheet not being open: no locate, `NoPanel`.
+    #[test]
+    fn a_placed_miss_is_not_located() {
+        assert!(!locate_on_miss(true, Some([960, 713])));
+    }
+
+    /// The live frame with no placement: the locate that a null slice buys
+    /// finds the sheet at the live origin, on that same frame.
+    #[test]
+    fn the_locate_finds_the_panel_on_the_live_frame() {
+        let img = live_capture();
+        let found = anchor::anchor_for_loop(&img, None, &|| false).expect("the live sheet is found");
+        let tol = slice::FRAME_ORIGIN_TOLERANCE;
+        assert!(
+            (found.origin.0 - 960).abs() <= tol && (found.origin.1 - 713).abs() <= tol,
+            "found {:?}",
+            found.origin,
+        );
     }
 }
