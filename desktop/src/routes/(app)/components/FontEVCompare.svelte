@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, DEDICATION_POOL_LABELS, type DedicationPool, VARIANTS, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
+	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, DEDICATION_POOL_LABELS, type DedicationPool, VARIANTS, type FontEVResponse, type FontLensCraft, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
 	import { baseGemTradeUrl, cheapestCorruptedTradeUrl, buyBaseUrl, baseGemNoQualityUrl } from '$lib/trade-utils';
 	import { formatPrice, formatPriceSigned, type PriceUnit } from '$lib/price.svelte';
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
@@ -262,9 +262,54 @@
 	});
 </script>
 
+{#snippet recipes(craft: FontLensCraft | null | undefined)}
+	<button class="pool-toggle" aria-expanded={showRecipes} onclick={() => { showRecipes = !showRecipes; }}>
+		{showRecipes ? '▼' : '▶'} Recipes
+	</button>
+
+	{#if showRecipes}
+		{@const exceptional = exceptionalView(exceptionalPrices, nowMs, (c) => formatPrice(c))}
+		{@const lens = lensView(craft, nowMs, (c) => formatPrice(c), (c) => formatPriceSigned(c))}
+		{#snippet supportBuy()}
+			{#if lens.tradeUrl}
+				<Tooltip text="Buy the cheapest Exceptional Support Gem lv 3+"><a
+					class="buy-btn buy-blue"
+					href={lens.tradeUrl}
+					target="_blank"
+				>BUY</a></Tooltip>
+			{:else}
+				<span class="buy-btn buy-blue buy-disabled" aria-disabled="true" title={'Trade link unavailable — the server sent no support search'}>BUY</span>
+			{/if}
+		{/snippet}
+		<div class="recipe-grid">
+			<RecipeCard
+				title="Exceptional support"
+				option="Exchange a Support Gem for a random Empower, Enlighten, or Enhance Support"
+				givesLabel="Gives one at random"
+				gives={exceptional.rows}
+				source={exceptional.footer}
+				age={exceptional.age}
+			/>
+			<RecipeCard
+				title={'Facetor’s Lens · 60%'}
+				option={'Sacrifice a Gem to gain 60% of its experience as a Facetor’s Lens'}
+				givesLabel="Gives"
+				gives={[{ name: 'Facetor’s Lens', sub: 'stored experience ≥ 999,627,000', cell: lens.lens }]}
+				costs={[{ name: 'Exceptional Support Gem lv 3+', cell: lens.support, action: supportBuy }]}
+				ev={lens.ev}
+				source={'trade · median of the 3 lowest'}
+				age={lens.age}
+			/>
+		</div>
+	{/if}
+{/snippet}
+
 <section class="section">
 	{#if loading}
 		<span class="loading">Loading...</span>
+		{#if !isDedication}
+			<div>{@render recipes(undefined)}</div>
+		{/if}
 	{:else if loadError}
 		<span class="loading">Failed to load data — check connection and refresh.</span>
 	{:else if isDedication && hasDedicationData}
@@ -513,46 +558,7 @@
 			</tbody>
 		</table>
 
-		<button class="pool-toggle" aria-expanded={showRecipes} onclick={() => { showRecipes = !showRecipes; }}>
-			{showRecipes ? '\u25BC' : '\u25B6'} Recipes
-		</button>
-
-		{#if showRecipes}
-			{@const exceptional = exceptionalView(exceptionalPrices, nowMs, (c) => formatPrice(c))}
-			{@const lens = lensView(data[VARIANTS[0]]?.lens, nowMs, (c) => formatPrice(c), (c) => formatPriceSigned(c))}
-			{#snippet supportBuy()}
-				{#if lens.tradeUrl}
-					<Tooltip text="Buy the cheapest Exceptional Support Gem lv 3+"><a
-						class="buy-btn buy-blue"
-						href={lens.tradeUrl}
-						target="_blank"
-					>BUY</a></Tooltip>
-				{:else}
-					<span class="buy-btn buy-blue buy-disabled" aria-disabled="true" title="Trade link unavailable \u2014 the server sent no support search">BUY</span>
-				{/if}
-			{/snippet}
-			<div class="recipe-grid">
-				<RecipeCard
-					title="Exceptional support"
-					option="Exchange a Support Gem for a random Empower, Enlighten, or Enhance Support"
-					givesLabel="Gives one at random"
-					gives={exceptional.rows}
-					source={exceptional.footer}
-					age={exceptional.age}
-				/>
-				<RecipeCard
-					title={'Facetor\u2019s Lens \u00B7 60%'}
-					option={'Sacrifice a Gem to gain 60% of its experience as a Facetor\u2019s Lens'}
-					givesLabel="Gives"
-					gives={[{ name: 'Facetor\u2019s Lens', sub: 'stored experience \u2265 999,627,000', cell: lens.lens }]}
-					costs={[{ name: 'Exceptional Support Gem lv 3+', cell: lens.support, action: supportBuy }]}
-					ev={lens.ev}
-					source={'trade \u00B7 median of the 3 lowest'}
-					age={lens.age}
-				/>
-			</div>
-		{/if}
-
+		{@render recipes(data[VARIANTS[0]]?.lens)}
 		<button class="pool-toggle" onclick={() => { showPool = !showPool; }}>
 			{showPool ? '\u25BC' : '\u25B6'} Pool Overview
 		</button>
