@@ -234,7 +234,8 @@ pub enum Mode {
     Chase,
     /// Both target lines exist, so tiers stop mattering — the Incursion Scarab
     /// of Timelines re-rolls them in the itemised copy. Complete every entrance
-    /// and farm the itemised re-rolls.
+    /// and farm the itemised re-rolls. Held inactive in 3.30 by
+    /// [`SCARAB_OF_TIMELINES_ACTIVE`]: the advisor never enters this mode.
     Scarab,
 }
 
@@ -647,6 +648,15 @@ fn highest_tier_per_line(rooms: &[(Line, Tier)]) -> BTreeMap<Line, Tier> {
 /// partial `temple_config` object then fills the missing key from
 /// [`TempleConfig::default`] instead of failing the WHOLE `Settings` parse,
 /// which would silently reset every unrelated preference.
+/// Whether the Incursion Scarab of Timelines exists in the current league.
+/// 3.30 removed it ("Scarabs have been removed from the game"), so both its
+/// halves are held inactive: the advisor never enters [`Mode::Scarab`] and the
+/// persisted [`TempleConfig::scarab_of_timelines`] flag no longer takes R5
+/// away. The mode may return via Incursion Threads; flip this to re-enable
+/// (POE-377). The selector, the flag and the wire stay, so re-enabling needs no
+/// migration.
+pub(crate) const SCARAB_OF_TIMELINES_ACTIVE: bool = false;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TempleConfig {
@@ -658,7 +668,9 @@ pub struct TempleConfig {
     pub artefacts_of_the_vaal: bool,
     /// The Incursion Scarab of Timelines drops an itemised copy of the temple
     /// when the **final** architect in the area is slain, which means every
-    /// incursion in the map must be completed — so R5 cannot apply.
+    /// incursion in the map must be completed — so R5 cannot apply. Kept and
+    /// persisted, but ignored in 3.30 while [`SCARAB_OF_TIMELINES_ACTIVE`] is
+    /// false.
     pub scarab_of_timelines: bool,
 }
 
@@ -686,13 +698,14 @@ impl TempleConfig {
 
     /// Whether R5 (leave the map once the target room has been used) is
     /// available. Running the scarab requires finishing every entrance, so it
-    /// takes the choice away.
+    /// takes the choice away — only while [`SCARAB_OF_TIMELINES_ACTIVE`]; in
+    /// 3.30 the flag is ignored and R5 stays available.
     ///
     /// This is only the *config* half of the rule. The composition POE-170 is
     /// expected to apply is `mode == Mode::Chase && config.r5_applies()` — R5
     /// is a chase behaviour, and Scarab mode already completes every entrance.
     pub fn r5_applies(&self) -> bool {
-        !self.scarab_of_timelines
+        !(SCARAB_OF_TIMELINES_ACTIVE && self.scarab_of_timelines)
     }
 }
 
@@ -1145,11 +1158,11 @@ mod tests {
     }
 
     #[test]
-    fn the_timelines_scarab_disables_r5() {
+    fn a_persisted_timelines_scarab_leaves_r5_available() {
         let config = TempleConfig {
             scarab_of_timelines: true,
             ..TempleConfig::default()
         };
-        assert!(!config.r5_applies());
+        assert!(config.r5_applies());
     }
 }

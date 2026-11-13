@@ -26,7 +26,10 @@
 //!   line acquisition on exactly the slots rollouts land on most.
 
 use crate::temple::lattice::Slot;
-use crate::temple::strategy::{Line, Mode, ModeRule, StrategyProfile, TempleConfig, Tier, DOUBLE_TIER_CHANCE};
+use crate::temple::strategy::{
+    Line, Mode, ModeRule, StrategyProfile, TempleConfig, Tier, DOUBLE_TIER_CHANCE,
+    SCARAB_OF_TIMELINES_ACTIVE,
+};
 
 use super::state::{
     bits, component, hop_distances, closed_door_distances, mask_holds, mask_of, neighbour_masks,
@@ -684,9 +687,15 @@ pub fn evaluate(
     }
 }
 
-/// The board's [`Mode`], from the profile's own selector.
+/// The board's effective [`Mode`], from the profile's own selector — always
+/// [`Mode::Chase`] while [`SCARAB_OF_TIMELINES_ACTIVE`] is false, because the
+/// Scarab mode recommends running an item 3.30 removed (POE-377).
 pub fn mode_of(board: &BoardState, profile: &StrategyProfile) -> Mode {
-    profile.select_mode(&board.connected_rooms())
+    if SCARAB_OF_TIMELINES_ACTIVE {
+        profile.select_mode(&board.connected_rooms())
+    } else {
+        Mode::Chase
+    }
 }
 
 /// The slot mask of one slot — re-exported so the rules layer does not have to

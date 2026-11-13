@@ -91,6 +91,7 @@
 //!   3.30: the altar returns multiple uniques proportional to the one
 //!   sacrificed.
 //! - `atlas_of_worlds` tier 3 — "Temple Architects drop 1 additional Scarabs".
+//!   3.30: Scarabs are removed, so this has no item to drop.
 //! - `sadists_den`, all tiers — "Area is haunted by 5 additional Tormented
 //!   Spirits".
 //!

@@ -182,7 +182,7 @@ impl TempleCustomSettings {
         if self.both_target_lines_priced_at_zero() {
             warnings.push(
                 "temple custom: \"corruption\" and \"gem\" are both priced 0 at tier 3 — \
-                 RV and the scarab-mode rule still protect those two lines, so zeroing them \
+                 RV still protects those two lines, so zeroing them \
                  stops them scoring but does not stop the advisor chasing them"
                     .to_string(),
             );
@@ -931,7 +931,7 @@ mod tests {
         assert_eq!(overrides.len(), 2, "both entries are honoured");
         assert_eq!(warnings.len(), 1, "got {warnings:?}");
         assert!(
-            warnings[0].contains("RV") && warnings[0].contains("scarab-mode"),
+            warnings[0].contains("RV") && !warnings[0].to_lowercase().contains("scarab"),
             "the warning names what still reads the two lines: {warnings:?}",
         );
     }

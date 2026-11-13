@@ -59,8 +59,9 @@ pub const DEBUG_DIR: &str = "temple-debug";
 ///
 /// Both change the *rules*, not the reading: `artefacts_of_the_vaal` changes
 /// how many incursions share one map and `scarab_of_timelines` takes R5
-/// (leave the map) away. So the current board's advice is stale the moment
-/// either moves, and this re-arms.
+/// (leave the map) away — except that in 3.30 it takes nothing away while
+/// `strategy::SCARAB_OF_TIMELINES_ACTIVE` is false (POE-377). So the current
+/// board's advice is stale the moment either moves, and this re-arms.
 #[tauri::command]
 pub fn temple_set_config(config: TempleConfig, app: AppHandle) -> Result<(), String> {
     {

@@ -21,7 +21,8 @@
 //! tier-3 total, drivers included — epic lock L2. That is deliberately not
 //! "their own rarity bonus": what a tier-1 room is worth at *building* time is
 //! the line being present at all, because the 50 % double-tier node and the
-//! Timelines scarab act on the line, not on the tier.
+//! Timelines scarab act on the line, not on the tier (the scarab is inactive in
+//! 3.30, POE-377; the double-tier node alone still does).
 //!
 //! # Two terms have no price, and say so rather than reading zero
 //!
@@ -143,7 +144,7 @@ use crate::AppState;
 pub struct Knobs {
     /// What a tier-1 or tier-2 room is worth as a fraction of its line's tier-3
     /// total. Epic lock L2's 80 %: line presence is what the double-tier node
-    /// and the Timelines scarab act on. Clamped to `0.0..=1.0` — a tier-1 room
+    /// and the Timelines scarab (inactive in 3.30, POE-377) act on. Clamped to `0.0..=1.0` — a tier-1 room
     /// worth more than its own tier-3 would invert the upgrade advice — and a
     /// non-finite or negative value falls back to this default rather than to
     /// zero (see [`tier_fraction`]).

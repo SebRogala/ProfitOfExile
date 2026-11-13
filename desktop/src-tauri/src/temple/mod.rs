@@ -10,8 +10,9 @@
 //!
 //! - [`strategy`] (POE-167) — the pure objective function: the room-line
 //!   vocabulary, the per-strategy [`strategy::StrategyProfile`], the
-//!   Chase/Scarab [`strategy::Mode`] selector, and the two user-facing config
-//!   flags. No Tauri, no state, no Windows code, no board graph.
+//!   Chase/Scarab [`strategy::Mode`] selector, and the config flags — Artefacts
+//!   of the Vaal is user-facing; the Scarab of Timelines flag is kept in
+//!   settings but hidden and inactive in 3.30 (POE-377). No Tauri, no state, no Windows code, no board graph.
 //! - [`lattice`], [`anchor`], [`doors`], [`reader`] (POE-168) — the layout
 //!   reader: a screenshot of the temple's layout panel in, a
 //!   [`reader::TempleLayout`] out. Also pure, and equally free of Tauri and

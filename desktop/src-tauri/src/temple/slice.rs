@@ -176,7 +176,8 @@ impl TempleProfileSettings {
     ///
     /// It stays [`ModeRule::LinesConnected`](super::strategy::ModeRule)
     /// `[Corruption, Gem]` whatever the player prices those two lines at. The
-    /// rule decides when the build flips from chasing to scarab-farming, and
+    /// rule decides when the build flips from chasing to scarab-farming (a flip
+    /// held inactive in 3.30, POE-377), and
     /// RV — the hard constraint that refuses to bank an unreachable target —
     /// reads the same two lines. A Custom table that prices both of them at
     /// zero therefore does NOT stop the advisor protecting them; it only stops
@@ -1078,8 +1079,9 @@ pub struct TempleSlice {
     /// `None` whenever there is no decision to make — no board, or no current
     /// room.
     pub advice: Option<AdviceView>,
-    /// Chase or Scarab, from the profile's own selector. `None` with no
-    /// advice.
+    /// The effective mode: Chase or Scarab from the profile's own selector,
+    /// always Chase while `SCARAB_OF_TIMELINES_ACTIVE` is false (3.30,
+    /// POE-377). `None` with no advice.
     pub mode: Option<String>,
     /// The two config flags in force, echoed so the overlay does not need a
     /// second command to render its own controls — the page renders the

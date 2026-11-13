@@ -201,7 +201,9 @@ impl Warning {
 /// Everything one decision needs.
 #[derive(Debug, Clone)]
 pub struct Advice {
-    /// Chase or Scarab, from the profile's own selector. It sits **above** the
+    /// The effective mode: Chase or Scarab from the profile's own selector, but
+    /// always Chase while `strategy::SCARAB_OF_TIMELINES_ACTIVE` is false
+    /// (3.30, POE-377). It sits **above** the
     /// per-decision ranking: it decides which *map* the budget is spent in,
     /// while the ranking decides which door.
     pub mode: Mode,
@@ -865,9 +867,10 @@ fn opening_for(
 /// Three conditions, all necessary:
 ///
 /// - [`Mode::Chase`]: in Scarab mode tiers stop mattering, because the itemised
-///   copy re-rolls them, and the scarab needs every entrance completed anyway;
+///   copy re-rolls them, and the scarab needs every entrance completed anyway
+///   (Scarab mode is held inactive in 3.30, so this always holds);
 /// - [`TempleConfig::r5_applies`]: the Incursion Scarab of Timelines takes the
-///   choice away;
+///   choice away (ignored in 3.30, POE-377);
 /// - the recommended kill advanced a still-missing target line to **below tier
 ///   3**. At tier 3 the room has left the drop pool on its own and R5 has
 ///   nothing left to protect.
@@ -897,8 +900,9 @@ fn map_action(
     if architect.built_tier == Tier::T3 {
         return MapAction::Continue;
     }
-    // Chase mode already told us at least one target line is missing; leaving
-    // only makes sense while this one is what the map still owes.
+    // Chase is the effective mode, forced while the scarab is inactive, so it
+    // no longer implies a missing target line; leaving only makes sense while
+    // this one is what the map still owes.
     let connected = board.connected_rooms();
     let already_banked = connected
         .iter()
@@ -1448,12 +1452,13 @@ mod tests {
         )));
     }
 
-    // Both lines are built and connected, so the itemised copy's tier re-roll
-    // makes tiers stop mattering.
+    // Both lines are built and connected, which would select Scarab mode; the
+    // Incursion Scarab of Timelines is gone in 3.30, so the advisor stays in
+    // Chase (POE-377).
     #[test]
-    fn case_three_switches_to_scarab_mode_with_both_lines_connected() {
+    fn case_three_stays_in_chase_mode_while_the_scarab_is_inactive() {
         let advice = advise_case(&cases::case_3_chasm_late());
-        assert_eq!(advice.mode, Mode::Scarab);
+        assert_eq!(advice.mode, Mode::Chase);
     }
 
     // Pointless doors: the other two corridors from Chasm join rooms already in
@@ -2905,10 +2910,10 @@ mod tests {
         assert_eq!(advice.map_action, MapAction::LeaveMap);
     }
 
-    // The scarab requires completing every entrance, so it takes R5 away. Same
-    // board, one config flag.
+    // A persisted Scarab of Timelines flag no longer takes R5 away: the scarab
+    // is gone in 3.30 (POE-377). Same board as above, flag set.
     #[test]
-    fn the_timelines_scarab_keeps_the_player_in_the_map_r5_would_leave() {
+    fn a_persisted_timelines_scarab_does_not_take_r5_away() {
         let state = board(&[(D1, JUNK, 1)], &[(D1, E1), (E1, E2)], D1, 8);
         let offers = vec![offer("Paquate", Change, "Corruption Chamber")];
         let config = TempleConfig {
@@ -2916,7 +2921,7 @@ mod tests {
             scarab_of_timelines: true,
         };
         let advice = advise(&state, &offers, 0, &rush(), &config, N, SEED);
-        assert_eq!(advice.map_action, MapAction::Continue);
+        assert_eq!(advice.map_action, MapAction::LeaveMap);
     }
 
     // R5 stops once the room is at tier 3 — it has left the drop pool anyway.
@@ -2936,41 +2941,36 @@ mod tests {
         assert_eq!(advice.map_action, MapAction::Continue);
     }
 
-    // The mode switch: one line connected is Chase, both is Scarab, and the
-    // second board must not still be telling the player to leave.
+    // Both target lines connected would select Scarab mode, but the scarab is
+    // gone in 3.30 (POE-377): the advisor stays in Chase and R5 still leaves.
     #[test]
-    fn one_connected_target_line_is_chase_and_both_is_scarab() {
+    fn both_connected_target_lines_stay_chase_while_the_scarab_is_inactive() {
         let offers = vec![offer("Paquate", Change, "Corruption Chamber")];
-        let chasing = board(
-            &[(D1, JUNK, 1), (E0, "gem", 1)],
-            &[(D1, E1), (E0, E1)],
-            D1,
-            8,
-        );
-        let both = board(
+        let both = both_lines_board();
+        let advice = advise(&both, &offers, 0, &rush(), &TempleConfig::default(), N, SEED);
+        assert_eq!(advice.mode, Mode::Chase);
+        assert_eq!(advice.map_action, MapAction::LeaveMap);
+    }
+
+    // A persisted Scarab of Timelines flag does not switch the mode either.
+    #[test]
+    fn a_persisted_timelines_scarab_on_a_both_lines_board_stays_chase() {
+        let offers = vec![offer("Paquate", Change, "Corruption Chamber")];
+        let config = TempleConfig {
+            artefacts_of_the_vaal: true,
+            scarab_of_timelines: true,
+        };
+        let advice = advise(&both_lines_board(), &offers, 0, &rush(), &config, N, SEED);
+        assert_eq!(advice.mode, Mode::Chase);
+    }
+
+    fn both_lines_board() -> BoardState {
+        board(
             &[(D1, JUNK, 1), (E0, "gem", 1), (E2, "corruption", 1)],
             &[(D1, E1), (E0, E1), (E1, E2)],
             D1,
             8,
-        );
-        let chase = advise(
-            &chasing,
-            &offers,
-            0,
-            &rush(),
-            &TempleConfig::default(),
-            N,
-            SEED,
-        );
-        let scarab = advise(&both, &offers, 0, &rush(), &TempleConfig::default(), N, SEED);
-        assert_eq!(chase.mode, Mode::Chase);
-        assert_eq!(chase.map_action, MapAction::LeaveMap);
-        assert_eq!(scarab.mode, Mode::Scarab);
-        assert_eq!(
-            scarab.map_action,
-            MapAction::Continue,
-            "in Scarab mode every entrance is completed"
-        );
+        )
     }
 
     // A built-but-unconnected target line is treated as absent by v1.
@@ -2982,16 +2982,7 @@ mod tests {
             D1,
             8,
         );
-        let advice = advise(
-            &state,
-            &junk_offers(),
-            0,
-            &rush(),
-            &TempleConfig::default(),
-            N,
-            SEED,
-        );
-        assert_eq!(advice.mode, Mode::Chase);
+        assert_eq!(rush().select_mode(&state.connected_rooms()), Mode::Chase);
     }
 
     // The mode rule is profile data, so a third required line changes it.
@@ -3009,16 +3000,7 @@ mod tests {
             Line::Gem,
             Line::named("factory"),
         ]);
-        let advice = advise(
-            &state,
-            &junk_offers(),
-            0,
-            &profile,
-            &TempleConfig::default(),
-            N,
-            SEED,
-        );
-        assert_eq!(advice.mode, Mode::Chase);
+        assert_eq!(profile.select_mode(&state.connected_rooms()), Mode::Chase);
     }
 
     // =================================================================== RK
