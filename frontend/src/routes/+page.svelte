@@ -16,12 +16,12 @@
 	const features = [
 		{
 			title: 'Client.txt Triggers',
-			desc: 'Path of Exile logs zone changes and NPC lines to a plain-text file. The app reads it to know when a panel is worth looking at — and looks only then.',
+			desc: 'Path of Exile logs zone changes and NPC lines to a plain-text file. The app reads it to know which panel to expect; the screen is read only when you press the read key.',
 			icon: ICON_DOC,
 		},
 		{
 			title: 'Screen Reading',
-			desc: "On a trigger, the app captures the panel's region and reads it with Windows' built-in OCR. Read-only: no game memory, no input, and no screenshot leaves your machine.",
+			desc: "On a read-key press, the app captures the panel's region and reads it with Windows' built-in OCR; Divine Font gems are matched by icon. Read-only: no game memory, no input, and no screenshot leaves your machine.",
 			icon: ICON_EYE,
 		},
 		{
@@ -378,6 +378,8 @@
 					<p><strong>Important privacy detail:</strong> no screenshot or screen capture ever leaves your machine.
 						The captured image is processed entirely locally by Windows' built-in OCR engine, then immediately
 						discarded.</p>
+					<p>Divine Font gems are identified by comparing their icons with reference gem icons locally; OCR reads
+						only the tooltip of the gem you hover.</p>
 					<p>What the app does send to our server, and why, is listed in one place:
 						<a href="/privacy">Data &amp; privacy</a>.</p>
 				</div>

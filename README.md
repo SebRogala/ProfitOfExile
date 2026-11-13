@@ -1,8 +1,9 @@
 # ProfitOfExile
 
 Free, open-source Windows companion app for Path of Exile 1. It reads
-`Client.txt` to know when a game panel is relevant, reads that panel with
-Windows OCR, checks the market, and shows the verdict in click-through in-game
+`Client.txt` to know which game panel to expect, reads the screen once per
+press of a read key (Windows OCR, plus icon matching for Divine Font gems),
+checks the market, and shows the verdict in click-through in-game
 overlays.
 
 [Website](https://profitofexile.top/) ·
@@ -42,8 +43,10 @@ Beta modules are enabled per device. Ask in
 ## How It Works
 
 1. Events in Path of Exile's `Client.txt` arm the relevant module.
-2. When needed, the app captures only the configured panel region and reads it
-   with Windows' built-in OCR.
+2. Only when you press the read key, the app captures one frame of the
+   configured panel region and reads it with Windows' built-in OCR. Divine
+   Font gems are identified by comparing their icons locally; OCR reads only
+   the tooltip you hover.
 3. Server-side analysis and market data price or rank the available choices.
 4. Click-through overlays place the result over the game without blocking it.
 
