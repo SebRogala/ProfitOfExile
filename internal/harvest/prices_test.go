@@ -154,21 +154,6 @@ func TestComputePrices_unknownItemIsPresentAndUnpriced(t *testing.T) {
 	assertNil(t, "lastSeenChaos", ip.LastSeenChaos)
 }
 
-func TestComputePrices_divineChaosRate(t *testing.T) {
-	rows := []exchange.StoredRow{
-		row(hoursBefore(0), exchange.DivineID, exchange.ChaosID, 2, 700),
-	}
-	got := ComputePrices(rows, newest, 6, nil)
-	if got.DivineChaosRate != 350 {
-		t.Fatalf("DivineChaosRate = %v, want 350", got.DivineChaosRate)
-	}
-
-	none := ComputePrices(nil, newest, 6, nil)
-	if none.DivineChaosRate != 0 {
-		t.Fatalf("DivineChaosRate with no rows = %v, want 0", none.DivineChaosRate)
-	}
-}
-
 func TestComputePrices_lifeforcePerDivineAndChaos(t *testing.T) {
 	rows := []exchange.StoredRow{
 		row(hoursBefore(0), LifeforceWild, exchange.ChaosID, 1000, 31),

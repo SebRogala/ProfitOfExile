@@ -30,10 +30,9 @@ const harvestFamilyCount = 7
 // and whose fossil family has one tier entry.
 func harvestSnapshot(h exchange.Horizon, chaos float64) harvest.Snapshot {
 	return harvest.Snapshot{
-		League:          "Mirage",
-		Horizon:         h,
-		PriceHour:       harvestHour,
-		DivineChaosRate: 200,
+		League:    "Mirage",
+		Horizon:   h,
+		PriceHour: harvestHour,
 		Items: map[string]harvest.ItemPrice{
 			harvestFossilID: {Chaos: &chaos},
 		},
@@ -92,11 +91,11 @@ type harvestTiersBody struct {
 }
 
 // getHarvest serves one request through a chi router, the way the server mounts
-// the handler, and returns the recorder.
-func getHarvest(t *testing.T, cache *harvest.Cache, target string) *httptest.ResponseRecorder {
+// the handler, and returns the recorder. A nil divineRate is no app-wide rate.
+func getHarvest(t *testing.T, cache *harvest.Cache, divineRate *exchange.DivineRateReader, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	router := chi.NewRouter()
-	router.Get("/api/harvest", Harvest(cache))
+	router.Get("/api/harvest", Harvest(cache, divineRate))
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
@@ -132,7 +131,7 @@ func TestHarvest_coldCache_answersWarmFalseWithEveryFamilyAndNullTiers(t *testin
 	// A nil cache (server started without the pillar) and a fresh one (no recompute
 	// has found a feed hour yet) are the same answer: 200, not ready, and every
 	// family still listed so the page can render its static data.
-	w := getHarvest(t, nil, "/api/harvest?horizon=day")
+	w := getHarvest(t, nil, nil, "/api/harvest?horizon=day")
 	body := decodeHarvest(t, w)
 
 	if body.Prices.Warm {
@@ -156,7 +155,7 @@ func TestHarvest_coldCache_answersWarmFalseWithEveryFamilyAndNullTiers(t *testin
 
 func TestHarvest_coldCache_encodesEmptyPricesAsAnObjectNotNull(t *testing.T) {
 	// A client reads prices.prices as a map; null would read as "no map at all".
-	w := getHarvest(t, nil, "/api/harvest")
+	w := getHarvest(t, nil, nil, "/api/harvest")
 
 	var raw struct {
 		Prices struct {
@@ -182,7 +181,7 @@ func TestHarvest_horizonOutsideRecentAndDay_isRejectedEvenWhenWarm(t *testing.T)
 		exchange.HorizonRecent: 10,
 		exchange.HorizonDay:    20,
 	})
-	w := getHarvest(t, cache, "/api/harvest?horizon=week")
+	w := getHarvest(t, cache, nil, "/api/harvest?horizon=week")
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusBadRequest, w.Body.String())
@@ -196,7 +195,7 @@ func TestHarvest_noHorizonParam_servesTheDayHorizon(t *testing.T) {
 	// Only day is warm. A default of recent would answer cold, so this fails if
 	// the empty parameter resolves to the wrong horizon.
 	cache := harvestCache(t, map[exchange.Horizon]float64{exchange.HorizonDay: 20})
-	body := decodeHarvest(t, getHarvest(t, cache, "/api/harvest"))
+	body := decodeHarvest(t, getHarvest(t, cache, nil, "/api/harvest"))
 
 	if body.Prices.Horizon != "day" {
 		t.Errorf("prices.horizon = %q, want %q", body.Prices.Horizon, "day")
@@ -222,7 +221,7 @@ func TestHarvest_horizonParam_servesThatHorizonsSnapshot(t *testing.T) {
 		{horizon: "recent", want: 10},
 		{horizon: "day", want: 20},
 	} {
-		body := decodeHarvest(t, getHarvest(t, cache, "/api/harvest?horizon="+tc.horizon))
+		body := decodeHarvest(t, getHarvest(t, cache, nil, "/api/harvest?horizon="+tc.horizon))
 		if body.Prices.Horizon != tc.horizon {
 			t.Errorf("horizon %s: prices.horizon = %q", tc.horizon, body.Prices.Horizon)
 		}
@@ -235,7 +234,7 @@ func TestHarvest_horizonParam_servesThatHorizonsSnapshot(t *testing.T) {
 
 func TestHarvest_tiersCarryThePricesHour(t *testing.T) {
 	cache := harvestCache(t, map[exchange.Horizon]float64{exchange.HorizonDay: 20})
-	body := decodeHarvest(t, getHarvest(t, cache, "/api/harvest?horizon=day"))
+	body := decodeHarvest(t, getHarvest(t, cache, nil, "/api/harvest?horizon=day"))
 
 	want := "2026-10-12T18:00:00Z"
 	if body.Prices.PriceHour == nil || *body.Prices.PriceHour != want {
@@ -252,7 +251,7 @@ func TestHarvest_tiersCarryThePricesHour(t *testing.T) {
 
 func TestHarvest_responseIsNeverCached(t *testing.T) {
 	cache := harvestCache(t, map[exchange.Horizon]float64{exchange.HorizonDay: 20})
-	w := getHarvest(t, cache, "/api/harvest?horizon=day")
+	w := getHarvest(t, cache, nil, "/api/harvest?horizon=day")
 
 	if got := w.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
@@ -261,7 +260,7 @@ func TestHarvest_responseIsNeverCached(t *testing.T) {
 
 func TestHarvest_familyWireShape_carriesStaticDataAndTiersByFamily(t *testing.T) {
 	cache := harvestCache(t, map[exchange.Horizon]float64{exchange.HorizonDay: 20})
-	w := getHarvest(t, cache, "/api/harvest?horizon=day")
+	w := getHarvest(t, cache, nil, "/api/harvest?horizon=day")
 
 	var raw struct {
 		Families struct {
@@ -323,10 +322,9 @@ func TestHarvest_warmPricesWireValues(t *testing.T) {
 	const itemY = "Metadata/Items/Currency/ItemY"
 	cache := harvest.NewCache()
 	cache.Set(exchange.HorizonDay, harvest.Snapshot{
-		League:          "Mirage",
-		Horizon:         exchange.HorizonDay,
-		PriceHour:       harvestHour,
-		DivineChaosRate: 360.07,
+		League:    "Mirage",
+		Horizon:   exchange.HorizonDay,
+		PriceHour: harvestHour,
 		Items: map[string]harvest.ItemPrice{
 			itemX: {Chaos: harvestF(12.5), Divine: harvestF(0.04)},
 			itemY: {LastSeenChaos: harvestF(300)},
@@ -344,7 +342,7 @@ func TestHarvest_warmPricesWireValues(t *testing.T) {
 		},
 	})
 
-	w := getHarvest(t, cache, "/api/harvest?horizon=day")
+	w := getHarvest(t, cache, readerWithDivineRate(360.07), "/api/harvest?horizon=day")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
 	}
@@ -404,6 +402,21 @@ func TestHarvest_warmPricesWireValues(t *testing.T) {
 	}
 }
 
+func TestHarvest_warmWithoutAnAppWideRateServesZero(t *testing.T) {
+	// The divine rate is the app-wide one only: a warm Harvest snapshot carries
+	// no rate of its own to serve when the reader has none.
+	cache := harvestCache(t, map[exchange.Horizon]float64{exchange.HorizonDay: 5})
+
+	body := decodeHarvest(t, getHarvest(t, cache, nil, "/api/harvest?horizon=day"))
+
+	if !body.Prices.Warm {
+		t.Fatal("prices.warm = false, want true")
+	}
+	if body.Prices.DivineChaosRate != 0 {
+		t.Errorf("prices.divineChaosRate = %v, want 0 with no app-wide rate", body.Prices.DivineChaosRate)
+	}
+}
+
 func TestHarvest_nilTierCollections_encodeAsEmptyObjectAndArrays(t *testing.T) {
 	// A family whose tiers were built without ByItem, BoundariesChaos or Names
 	// must still serialize them as {} and [] — never null — for the client.
@@ -417,7 +430,7 @@ func TestHarvest_nilTierCollections_encodeAsEmptyObjectAndArrays(t *testing.T) {
 		Tiers:     map[string]harvest.FamilyTiers{"fossil": {}},
 	})
 
-	w := getHarvest(t, cache, "/api/harvest?horizon=day")
+	w := getHarvest(t, cache, nil, "/api/harvest?horizon=day")
 	var top map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &top); err != nil {
 		t.Fatalf("decode body %q: %v", w.Body.String(), err)

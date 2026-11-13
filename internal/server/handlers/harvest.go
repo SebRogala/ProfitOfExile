@@ -21,7 +21,9 @@ type harvestResponse struct {
 // the same feed hour (the newest stored hour), as RFC3339 UTC strings, and are
 // pointers so a cold cache renders them as null rather than as the zero time.
 // Warm distinguishes COLD (no recompute has found a feed hour) from a warm
-// snapshot; a cold body carries League "" and empty maps.
+// snapshot; a cold body carries League "" and empty maps. DivineChaosRate is
+// the app-wide divine rate (POE-339), the same on both horizons; 0 when there
+// is none.
 type harvestPricesResponse struct {
 	League          string                            `json:"league"`
 	Horizon         exchange.Horizon                  `json:"horizon"`
@@ -75,7 +77,7 @@ type harvestTiersResponse struct {
 //
 // Responses are Cache-Control: no-store, because the body changes whenever a
 // feed hour lands.
-func Harvest(cache *harvest.Cache) http.HandlerFunc {
+func Harvest(cache *harvest.Cache, divineRate *exchange.DivineRateReader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		horizon := exchange.Horizon(r.URL.Query().Get("horizon"))
 		if horizon == "" {
@@ -92,7 +94,7 @@ func Harvest(cache *harvest.Cache) http.HandlerFunc {
 		snap, warm := cache.Snapshot(horizon)
 
 		body := harvestResponse{
-			Prices:   buildHarvestPrices(horizon, snap, warm),
+			Prices:   buildHarvestPrices(horizon, snap, warm, divineRate.Current().Chaos),
 			Families: buildHarvestFamilies(snap, warm),
 		}
 
@@ -102,7 +104,7 @@ func Harvest(cache *harvest.Cache) http.HandlerFunc {
 	}
 }
 
-func buildHarvestPrices(horizon exchange.Horizon, snap harvest.Snapshot, warm bool) harvestPricesResponse {
+func buildHarvestPrices(horizon exchange.Horizon, snap harvest.Snapshot, warm bool, rate float64) harvestPricesResponse {
 	out := harvestPricesResponse{
 		Horizon:   horizon,
 		Warm:      warm,
@@ -116,7 +118,7 @@ func buildHarvestPrices(horizon exchange.Horizon, snap harvest.Snapshot, warm bo
 	out.League = snap.League
 	out.LastUpdated = &hour
 	out.PriceHour = &hour
-	out.DivineChaosRate = snap.DivineChaosRate
+	out.DivineChaosRate = rate
 	for id, price := range snap.Items {
 		out.Prices[id] = price
 	}

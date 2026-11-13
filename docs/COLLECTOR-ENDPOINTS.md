@@ -123,7 +123,8 @@ otherwise. `GET /api/harvest?horizon=recent|day`
 `{prices, families}` per horizon, recomputed by `harvest.Service` at boot and
 on every `poe/collector/currency-exchange` event. Prices are pooled VWAP over
 the horizon's clock hours ending at the newest stored hour (chaos and divine
-markets separately; `lastSeenChaos` from the newest earlier hour within 72
+markets pooled separately; the served `divineChaosRate` is the app-wide
+divine rate above, the same on both horizons; `lastSeenChaos` from the newest earlier hour within 72
 hours when the window has none); tiers come from `internal/price/tier` with no
 cutoff and no depth, stamped with the same `priceHour`. After both Harvest
 horizon snapshots are stored, a separate 2 s debounced `poe/harvest/updated`

@@ -33,8 +33,6 @@ type LifeforcePrice struct {
 
 // Prices is the pooled-VWAP read over one window.
 type Prices struct {
-	// DivineChaosRate is chaos per divine, or 0 when no divine/chaos row exists.
-	DivineChaosRate float64
 	// Items holds every requested id, even one with no rows at all.
 	Items map[string]ItemPrice
 	// Lifeforce is keyed "Primal", "Vivid" or "Wild".
@@ -68,9 +66,6 @@ func ComputePrices(rows []exchange.StoredRow, newest time.Time, windowHours int,
 	out := Prices{
 		Items:     make(map[string]ItemPrice, len(itemIDs)),
 		Lifeforce: make(map[string]LifeforcePrice, len(lifeforceSeeds)),
-	}
-	if rate, ok := vwap(rows, exchange.DivineID, exchange.ChaosID, inWindow); ok {
-		out.DivineChaosRate = rate
 	}
 
 	for _, id := range itemIDs {

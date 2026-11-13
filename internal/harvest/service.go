@@ -33,12 +33,11 @@ var horizons = []struct {
 // from the same rows, stamped with the feed hour they describe. Serving both
 // from one Snapshot is what keeps prices and tiers from straddling a recompute.
 type Snapshot struct {
-	League          string
-	Horizon         exchange.Horizon
-	PriceHour       time.Time
-	DivineChaosRate float64
-	Items           map[string]ItemPrice
-	Lifeforce       map[string]LifeforcePrice
+	League    string
+	Horizon   exchange.Horizon
+	PriceHour time.Time
+	Items     map[string]ItemPrice
+	Lifeforce map[string]LifeforcePrice
 	// Tiers is keyed by family id.
 	Tiers map[string]FamilyTiers
 }
@@ -163,13 +162,12 @@ func (s *Service) Recompute(ctx context.Context) error {
 		prices := ComputePrices(rows, newest, hz.hours, itemIDs)
 		tiers := ClassifyFamilies(tierInput(prices))
 		s.cache.Set(hz.horizon, Snapshot{
-			League:          s.scope.ID(),
-			Horizon:         hz.horizon,
-			PriceHour:       newest.UTC(),
-			DivineChaosRate: prices.DivineChaosRate,
-			Items:           prices.Items,
-			Lifeforce:       prices.Lifeforce,
-			Tiers:           tiers,
+			League:    s.scope.ID(),
+			Horizon:   hz.horizon,
+			PriceHour: newest.UTC(),
+			Items:     prices.Items,
+			Lifeforce: prices.Lifeforce,
+			Tiers:     tiers,
 		})
 
 		priced := 0

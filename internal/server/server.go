@@ -233,7 +233,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	}
 	r.Get("/api/currency-exchange/plays", handlers.CurrencyExchangePlaysPaged(cfg.ExchangeCache, exchangePager))
 	r.Get("/api/currency-exchange/divine-rate", handlers.CurrencyExchangeDivineRate(cfg.DivineRate))
-	r.Get("/api/harvest", handlers.Harvest(cfg.HarvestCache))
+	r.Get("/api/harvest", handlers.Harvest(cfg.HarvestCache, cfg.DivineRate))
 
 	// Entitlements come from the device record the middleware attached, so this
 	// route needs no repository and is registered UNCONDITIONALLY — outside the
