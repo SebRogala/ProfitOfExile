@@ -69,6 +69,8 @@ and the documentation index before acting on them.
 - When a code comment cross-references another function or file, name the symbol (`mirrors
   BuildCompareResults in collective.go`), not a line (`collective.go:311` rots on the next edit).
   Keep the why and its evidence, including a past behaviour that explains a current constraint.
+- User-visible text (labels, tooltips, notes, empty states) shows data and when it was updated,
+  nothing else: no explanatory sentences. A tooltip is at most 3 short lines.
 
 ## Modeling rules
 
