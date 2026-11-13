@@ -1411,7 +1411,8 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 
 	.footer-links {
 		display: flex;
-		gap: 24px;
+		flex-wrap: wrap;
+		gap: 12px 24px;
 		justify-content: center;
 		margin-bottom: 20px;
 	}
