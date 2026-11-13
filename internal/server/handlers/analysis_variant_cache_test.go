@@ -15,7 +15,7 @@ import (
 // ambiguity: these two handlers derived cache warmth from the size of the
 // *filtered* result, so a variant the warm cache holds no rows for read as a
 // cold cache and queried the database on every request. variant is an
-// unvalidated query parameter (normalizeVariant only strips a "/0" suffix), so
+// unvalidated query parameter (resolve.NormalizeVariant only strips a "/0" suffix), so
 // any value at all reaches this path.
 //
 // The seam is the same one the rest of this package uses: a nil repository
