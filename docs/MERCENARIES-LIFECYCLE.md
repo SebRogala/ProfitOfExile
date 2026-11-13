@@ -99,3 +99,5 @@ follow the [Overlay Guide](OVERLAY-GUIDE.md).
 - `desktop/src/lib/mercenaries/verdict.ts`: pure triage result tree.
 - `desktop/src/lib/pages/MercenariesPage.svelte`: main page projection.
 - `desktop/src-tauri/src/mercenary/sources.rs`: persisted guide selection.
+
+Server-side `merc_icon_templates` pool rows lose their device link after the period in [Device data retention](DATA-RETENTION.md).

@@ -98,6 +98,8 @@ The server validates positive quantities within the counted set and returns
 item's denominator from runs whose stored counted set includes that item.
 The server does not validate loot pools. Shipped: `a5594665`.
 
+`boss_loot_runs` rows lose their device link after the period in [Device data retention](DATA-RETENTION.md).
+
 ## Seed import and release order
 
 `cmd/boss-loot-import` reads the fixed `CatarinaRuns` workbook table; explicit
