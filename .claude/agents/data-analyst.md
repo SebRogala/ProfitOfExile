@@ -11,7 +11,8 @@ migrations and repository queries before assuming schema.
 Primary raw tables are `gem_snapshots`, `currency_snapshots`, and
 `fragment_snapshots`; their schemas differ. Computed tables include
 `market_context`, `gem_features`, `gem_signals`, `transfigure_results`,
-`font_snapshots`, `quality_results`, and `trend_results`.
+`font_snapshots`, and `quality_results`. Market tables keep only the last
+21-28 days (ADR-034); older history exists only in rollover dumps.
 
 - State the hypothesis and comparison baseline first.
 - Use read-only, time-bounded SQL; never dump an entire hypertable.

@@ -7,7 +7,7 @@
 Code: `internal/retention/purge.go`; schema: `internal/db/migrations/20261113140000_device_retention.up.sql`.
 
 This job anonymises rows; it is not a league-data retention policy. League-scoped
-hypertables follow [ADR-010](adr/010-archived-league-history-is-retained-indefinitely.md)
+hypertables follow [ADR-034](adr/034-market-data-is-retained-for-21-days.md)
 and [ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-as-a-dump.md).
 
 ## Period

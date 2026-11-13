@@ -330,7 +330,7 @@ Rollover requires a **server restart**, which constructs a fresh
 the stop, archive, activate, wipe and restart order lives in the
 [league runbook](LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md#phase-b--activate-wipe-and-restart-at-league-start).
 [ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-as-a-dump.md)
-defines the wipe set and its retained aggregate and boss-observation exceptions.
+defines the wipe set and its boss-observation exception.
 
 The practical consequence for time-series fields: on a fresh post-rollover
 process `gem_snapshots` is empty, so sparklines are empty or short for the first

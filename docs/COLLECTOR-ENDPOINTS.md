@@ -11,7 +11,12 @@ project's integration pattern, not its schema blindly.
 1. Define the source identity and storage schema. Create a new timestamped
    migration pair with `make migration name=descriptive_name`; never edit a
    migration that may have been deployed. Follow the nearest current hypertable
-   for keys, indexes, compression, and retention, then justify any differences.
+   for keys, indexes and compression, then justify any differences. A new
+   league-scoped market hypertable gets
+   `add_retention_policy('<table>', INTERVAL '21 days')` in the same migration
+   ([ADR-034](adr/034-market-data-is-retained-for-21-days.md));
+   `TestScopedHypertablesCarryTheMarketRetentionPolicy`
+   (`internal/league/tables_integration_test.go`) fails without it.
 2. Add the typed snapshot model in `internal/collector/fetcher.go`.
 3. Extend `FetchResult` in `internal/collector/endpoint.go` with the new typed
    slice and update `Validate` so only one data variant can be populated.

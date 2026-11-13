@@ -77,9 +77,11 @@ run the rehearsal against the live database.
    Each table must retain its count, and every table must have zero null
    `league` values. Confirm that compression and continuous-aggregate refresh
    policies match the pre-migration capture, that every scoped table now has a
-   foreign key to `leagues(id)`, and that no retention policy remains
-   (see [ADR-010](adr/010-archived-league-history-is-retained-indefinitely.md)). Record the disk
-   usage that indefinite retention will now grow.
+   foreign key to `leagues(id)`, and that each scoped hypertable carries
+   exactly the one 21-day retention policy of
+   [ADR-034](adr/034-market-data-is-retained-for-21-days.md). Record disk usage.
+   Steps 6 and 7 and the aggregate captures in step 2 are POE-119-era: the
+   aggregates were dropped by ADR-034, so skip them on a schema that includes it.
 6. Refresh a controlled, completed source window in dependency order: hourly
    aggregate first, then daily. Do not refresh daily before hourly.
 
@@ -129,7 +131,6 @@ table is excluded from the rollover wipe by decision, not by oversight — see t
 | `font_snapshots` |  |  |  |
 | `transfigure_results` |  |  |  |
 | `quality_results` |  |  |  |
-| `trend_results` |  |  |  |
 | `gem_features` |  |  |  |
 | `gem_signals` |  |  |  |
 | `dedication_snapshots` |  |  |  |
@@ -207,7 +208,7 @@ steps in order; each line is one action or one check.
    any mismatch; investigate and repeat the final backup before retrying.
 6. On the production database (old schema, pre-migration), truncate the sixteen
    league-scoped tables in one statement:
-   `TRUNCATE gem_snapshots, currency_snapshots, fragment_snapshots, font_snapshots, transfigure_results, quality_results, trend_results, gem_features, gem_signals, dedication_snapshots, trade_lookups, market_context, currency_exchange_markets, currency_exchange_cursor, double_corrupt_snapshots, item_snapshots;`
+   `TRUNCATE gem_snapshots, currency_snapshots, fragment_snapshots, font_snapshots, transfigure_results, quality_results, gem_features, gem_signals, dedication_snapshots, trade_lookups, market_context, currency_exchange_markets, currency_exchange_cursor, double_corrupt_snapshots, item_snapshots;`
    (Plain `TRUNCATE` works directly on the compressed hypertables — no decompress
    step; ~3.5 s for 27M rows in rehearsal. `currency_exchange_markets` and
    `currency_exchange_cursor` exist only from the POE-173 migration onward, and
@@ -464,13 +465,9 @@ this SQL cannot restore the outgoing data: recover from the preserved dump.**
 
 ### Continuous-aggregate data retained
 
-The wipe leaves old-league buckets in `gem_snapshots_hourly` and
-`gem_snapshots_daily`. They remain league-keyed and do not mix with the new
-league. Disk and dump costs remain: the hourly aggregate measured 2.1 GB /
-20.5 M rows in July 2026 (POE-127 D10); ADR-011's backup-shrink expectation
-therefore applies only to the raw tables. Removing these buckets is deferred
-until a per-league aggregate DELETE is measured on a restored dump; it is not
-part of this procedure.
+None since POE-399: both continuous aggregates were dropped and market
+hypertables keep 21 days; see
+[ADR-034](adr/034-market-data-is-retained-for-21-days.md).
 
 ## Evidence to retain
 
@@ -488,7 +485,8 @@ repository.
   listener; `cmd/collector/main.go` deliberately does not migrate.
 - `internal/db/migrations/20260723160017_league_scope_gem_snapshots.up.sql`
   recreates the hourly aggregate before the daily aggregate and their indexes
-  and policies.
+  and policies; `20261113150000_market_data_retention.up.sql` drops both and
+  adds the 21-day retention policies (ADR-034).
 - `.github/workflows/deploy.yml` can deploy server and collector separately;
   this runbook's same-revision gate prevents a mixed writer/schema deployment.
 

@@ -48,7 +48,7 @@ CREATE TABLE gem_snapshots (
 
 The collector (POE-18) writes one row per gem per snapshot interval. Base and transfigured gems are stored as separate rows. ROI queries that need to compare base and transfigured prices use a self-join on the base gem name (derived by stripping the transfigured suffix).
 
-Continuous aggregates (`gem_snapshots_hourly`, `gem_snapshots_daily`) aggregate per row, and the `gem_color` column enables grouping by color without joining the `gem_colors` lookup table.
+Continuous aggregates (`gem_snapshots_hourly`, `gem_snapshots_daily`) aggregate per row, and the `gem_color` column enables grouping by color without joining the `gem_colors` lookup table. (Both aggregates were dropped in 2026-11 by [ADR-034](034-market-data-is-retained-for-21-days.md).)
 
 ## Consequences
 

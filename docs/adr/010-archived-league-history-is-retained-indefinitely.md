@@ -11,6 +11,11 @@ Accepted, then **superseded in part by
 the age-based retention removal below stands, but the intent that archived leagues
 stay live and queryable is replaced by wipe-at-rollover + preserved dump.
 
+**Retention superseded 2026-11-13 by
+[ADR-034](034-market-data-is-retained-for-21-days.md) (POE-399):** league-scoped
+market hypertables now keep 21 days. The no-retention decision below and the
+POE-173 / POE-125 amendments that bind new hypertables to it are history.
+
 **Amended 2026-08-19 (POE-173):** the no-retention rule binds new league-scoped
 hypertables at creation, not just the eleven that carried a policy. The
 league-scoped set is now fourteen tables — `currency_exchange_markets` and

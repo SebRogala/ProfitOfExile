@@ -32,8 +32,8 @@ specifications currently describe planned behavior:
 - `POE-88` — LabCompass fidelity restoration and overlay SSOT.
 
 `POE-117` is delivered: league ownership and admission are recorded in
-[ADR-009](adr/009-league-scoped-repository-convention.md), retention history in
-[ADR-010](adr/010-archived-league-history-is-retained-indefinitely.md), and
+[ADR-009](adr/009-league-scoped-repository-convention.md), market-data retention in
+[ADR-034](adr/034-market-data-is-retained-for-21-days.md), and
 rollover in [ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-as-a-dump.md).
 `POE-118` depends on that delivered league boundary and on `POE-88`.
 
@@ -47,7 +47,7 @@ rollover in [ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-a
 - [ADR-007: Unified analysis pipeline](adr/007-v3-hybrid-analysis-unified-pipeline-with-trade-enriched-features.md)
 - [ADR-008: Current Go package architecture](adr/008-current-go-package-architecture.md)
 - [ADR-009: League-scoped repository convention](adr/009-league-scoped-repository-convention.md)
-- [ADR-010: Archived league history is retained indefinitely](adr/010-archived-league-history-is-retained-indefinitely.md)
+- [ADR-010: Archived league history is retained indefinitely](adr/010-archived-league-history-is-retained-indefinitely.md) — retention superseded by ADR-034
 - [ADR-011: Wipe the outgoing league at rollover; preserve it as a dump](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-as-a-dump.md)
 - [ADR-012: Icons are pre-seeded from an allowed IP and content-addressed](adr/012-icons-are-pre-seeded-from-an-allowed-ip-and-cached-by-content-address.md)
 - [ADR-013: UI picks persist in a schema-less prefs map](adr/013-ui-picks-persist-in-a-schema-less-prefs-map.md)
@@ -70,6 +70,7 @@ rollover in [ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-a
 - [ADR-030: Paginated lists page, sort and filter in the backend](adr/030-paginated-lists-page-sort-and-filter-in-the-backend.md)
 - [ADR-031: Proxy: one setting for every transport, and it fails closed](adr/031-proxy-one-setting-every-transport-fails-closed.md)
 - [ADR-033: One versioned privacy notice gates every server request](adr/033-one-versioned-privacy-notice-gates-every-server-request.md)
+- [ADR-034: Market data is retained for 21 days](adr/034-market-data-is-retained-for-21-days.md) — supersedes the retention parts of ADR-010 and ADR-011
 
 Superseded:
 

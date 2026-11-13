@@ -10,6 +10,12 @@ Accepted. Supersedes the retain-history-**live** intent of
 [ADR-010](010-archived-league-history-is-retained-indefinitely.md); ADR-010's
 removal of age-based retention policies stands.
 
+**Retention superseded 2026-11-13 by
+[ADR-034](034-market-data-is-retained-for-21-days.md) (POE-399):** market
+hypertables keep 21 days, `gem_snapshots_hourly` / `gem_snapshots_daily` are
+dropped (the POE-324 amendment below is history) and `trend_results` left the
+wipe set. The rollover wipe and dump below stand.
+
 **Amended 2026-08-19 (POE-173):** the wipe set is now fourteen tables — the
 original twelve plus `currency_exchange_markets` and `currency_exchange_cursor`.
 Every table added to the league-scoped schema joins this set at creation.
