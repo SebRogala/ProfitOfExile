@@ -433,5 +433,9 @@
       "alt": true
     },
     "delayMs": 150
+  },
+  "readPrompt": {
+    "mechanic": "divineFont",
+    "seq": 3
   }
 }

@@ -25,6 +25,7 @@ mod ocr;
 mod overlay_hook;
 mod privacy;
 mod read_hotkey;
+mod read_prompt;
 mod settings;
 mod ssot;
 mod temple;
@@ -369,6 +370,8 @@ pub struct AppState {
     pub loot: loot_capture::LootState,
     /// The "Read screen" shortcut and press-to-grab delay. Taken alone.
     pub read_hotkey: Mutex<read_hotkey::ReadHotkeySettings>,
+    /// The "press <key> to read" prompt (POE-388). Taken alone.
+    pub read_prompt: Mutex<read_prompt::ReadPromptState>,
     /// Hardware-based device fingerprint — computed once at startup, immutable.
     /// String is Sync so no Mutex needed.
     pub device_id: String,
@@ -1764,6 +1767,7 @@ fn spawn_log_watcher(app: AppHandle) {
                         let state = app.state::<AppState>();
                         state.loot.boss.lock().unwrap_or_else(|e| e.into_inner()).observe_area(&change);
                         lab::on_area_change(&app, &change);
+                        read_prompt::area_changed(&app);
                     }
                 }
             }
@@ -1825,6 +1829,7 @@ pub fn run() {
     let app_state = AppState {
         loot: loot_capture::LootState::new(),
         read_hotkey: Mutex::new(read_hotkey::ReadHotkeySettings::default()),
+        read_prompt: Mutex::new(read_prompt::ReadPromptState::default()),
         device_id: device_id.clone(),
         pair_code: Mutex::new(pair_code),
         client_txt_path: Mutex::new(String::from(

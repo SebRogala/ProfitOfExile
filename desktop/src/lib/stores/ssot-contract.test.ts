@@ -15,6 +15,7 @@ import type {
 	BossLootSlice,
 	Placements,
 	ReadHotkeySettings,
+	ReadPromptSnapshot,
 	ScreenSlice,
 	ServerSlice,
 	SsotSnapshot
@@ -36,12 +37,18 @@ const snapshotKeys: Record<keyof SsotSnapshot, true> = {
 	screen: true,
 	placements: true,
 	server: true,
-	readHotkey: true
+	readHotkey: true,
+	readPrompt: true
 };
 
 const readHotkeyKeys: Record<keyof ReadHotkeySettings, true> = {
 	shortcut: true,
 	delayMs: true
+};
+
+const readPromptKeys: Record<keyof ReadPromptSnapshot, true> = {
+	mechanic: true,
+	seq: true
 };
 
 const serverKeys: Record<keyof ServerSlice, true> = {
@@ -146,9 +153,19 @@ describe('ssot-snapshot.json golden matches SsotSnapshot', () => {
 		['screen', screenKeys],
 		['placements', placementsKeys],
 		['server', serverKeys],
-		['readHotkey', readHotkeyKeys]
+		['readHotkey', readHotkeyKeys],
+		['readPrompt', readPromptKeys]
 	] as const)('carries exactly the %s slice keys', (slice, table) => {
 		expect(keysOf(wire[slice])).toEqual(Object.keys(table).sort());
+	});
+
+	it('carries exactly the readPrompt keys in the unmeasured golden too', () => {
+		const unmeasured = unmeasuredGolden as Record<string, unknown>;
+		expect(keysOf(unmeasured.readPrompt)).toEqual(Object.keys(readPromptKeys).sort());
+	});
+
+	it('names the prompt mechanic in the camelCase spelling the view keys on', () => {
+		expect((wire.readPrompt as ReadPromptSnapshot).mechanic).toBe('divineFont');
 	});
 
 	it('carries exactly the screen.anchors keys', () => {

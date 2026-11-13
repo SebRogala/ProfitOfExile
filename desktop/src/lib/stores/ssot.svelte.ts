@@ -273,6 +273,16 @@ export interface ReadHotkeySettings {
 	delayMs: number;
 }
 
+/** A mechanic the read key reads; `read_prompt::Mechanic` on the Rust side. */
+export type ReadPromptMechanic = 'divineFont' | 'incursion' | 'mercenary';
+
+/** `AppSsotSnapshot.readPrompt` (POE-388): the mechanic the "press <key> to
+ *  read" prompt names, `null` when none is armed; `seq` changes on every arm. */
+export interface ReadPromptSnapshot {
+	mechanic: ReadPromptMechanic | null;
+	seq: number;
+}
+
 export interface SsotSnapshot {
 	league: { name: string | null; generation?: number };
 	/** A league resolve is in flight (bounded-retry fetch task running). */
@@ -319,6 +329,8 @@ export interface SsotSnapshot {
 	server?: ServerSlice;
 	/** The "Read screen" shortcut and press-to-grab delay, Rust-owned. */
 	readHotkey?: ReadHotkeySettings;
+	/** The read prompt, Rust-owned by `read_prompt.rs`. */
+	readPrompt?: ReadPromptSnapshot;
 }
 
 /**
@@ -382,6 +394,8 @@ export const ssot = $state({
 	placements: null as Placements | null,
 	/** Unknown until Rust answers; the default lives in `read_hotkey.rs`. */
 	readHotkey: null as ReadHotkeySettings | null,
+	/** No prompt until Rust answers. */
+	readPrompt: { mechanic: null, seq: 0 } as ReadPromptSnapshot,
 });
 
 /** The three market fields, which share the write-through + poll-guard machinery. */
@@ -701,6 +715,7 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	applyModules(snap.modules, dispatchedAtSeq);
 	if (snap.bossLoot !== undefined) ssot.bossLoot = snap.bossLoot;
 	if (snap.readHotkey !== undefined) ssot.readHotkey = snap.readHotkey;
+	if (snap.readPrompt !== undefined) ssot.readPrompt = snap.readPrompt;
 	applyMercenary(snap.mercenary);
 	applyTemple(snap.temple);
 	applyServerSlice(snap.server);

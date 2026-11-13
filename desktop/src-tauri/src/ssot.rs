@@ -563,6 +563,9 @@ pub struct AppSsotSnapshot {
     /// The "Read screen" shortcut and delay (POE-387), read from the owner
     /// `AppState.read_hotkey` at snapshot time — not stored in `AppState.ssot`.
     pub read_hotkey: crate::read_hotkey::ReadHotkeySettings,
+    /// The "press <key> to read" prompt (POE-388), read from the owner
+    /// `AppState.read_prompt` at snapshot time — not stored in `AppState.ssot`.
+    pub read_prompt: crate::read_prompt::ReadPromptSnapshot,
     // future slices (e.g. account, config) added here as later tasks land.
 }
 
@@ -688,6 +691,7 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         default_url: crate::settings::DEFAULT_SERVER_URL.to_string(),
     };
     let read_hotkey = state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let read_prompt = state.read_prompt.lock().unwrap_or_else(|e| e.into_inner()).snapshot();
     let mut snapshot = compose_snapshot(
         base,
         normal_variant,
@@ -704,6 +708,7 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     );
     snapshot.server = server;
     snapshot.read_hotkey = read_hotkey;
+    snapshot.read_prompt = read_prompt;
     snapshot
 }
 
@@ -3721,6 +3726,10 @@ mod tests {
         snapshot.read_hotkey = crate::read_hotkey::ReadHotkeySettings {
             shortcut: crate::read_hotkey::Shortcut { key: 82, shift: false, ctrl: true, alt: true },
             delay_ms: 150,
+        };
+        snapshot.read_prompt = crate::read_prompt::ReadPromptSnapshot {
+            mechanic: Some(crate::read_prompt::Mechanic::DivineFont),
+            seq: 3,
         };
         snapshot
     }

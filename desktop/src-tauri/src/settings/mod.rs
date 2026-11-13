@@ -1938,6 +1938,7 @@ pub(crate) mod tests {
         crate::AppState {
             loot: crate::loot_capture::LootState::new(),
             read_hotkey: Mutex::new(crate::read_hotkey::ReadHotkeySettings::default()),
+            read_prompt: Mutex::new(crate::read_prompt::ReadPromptState::default()),
             device_id: String::new(),
             game_monitor: Mutex::new(None),
             pair_code: Mutex::new(String::new()),

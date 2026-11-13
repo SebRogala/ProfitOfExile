@@ -767,14 +767,16 @@ pub fn on_client_line(app: &AppHandle, line: &str) {
     }
     let now = super::run::now_ms();
     let event = classify(line, now);
-    {
+    let armed_after = {
         let state = app.state::<AppState>();
         let mut arm = state.temple_state.arm.lock().unwrap_or_else(|e| e.into_inner());
         // Classified a second time inside, which is two string searches on the
         // handful of lines a map produces: one entry point for the arm beats a
         // second one that only the glue could reach.
         apply_line(&mut arm, line, now);
-    }
+        arm.arm.is_armed(now)
+    };
+    crate::read_prompt::apply(app, crate::read_prompt::temple_change(event, armed_after));
     // A stale Alva line is the remaining `None`: it says nothing about the
     // screen now, so it moves neither the cycle nor the epoch nor the advice.
     let Some(event) = event else {
