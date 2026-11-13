@@ -1224,7 +1224,8 @@ touching the named path.
      with no cold-sweep line is a pass there, and that landed recheck ends the
      key's null sweeps.
   2. **A remembered scale is used, and said once.** Restart with the panel closed,
-     then open it. `app.log` must carry ONE
+     then, under Client.txt temple context (after Alva's start line, or inside
+     the temple), open it and press the read key. `app.log` must carry ONE
      `Temple: anchoring on the remembered screen scale (…, ui_scale …) — temple
      scale …, no search` line, not one per second — and none at all when the
      remembered value is the temple's OWN (the line names the cue, and the temple
@@ -1232,8 +1233,9 @@ touching the named path.
   3. **A monitor change re-measures exactly once.** Move the game to another
      display. `app.log` must carry ONE
      `screen is now W×H at X,Y — dropping the remembered scale (was …)` and
-     then one fresh anchor — not a line per tick, which is what an un-keyed drop
-     produces.
+     then, on the next read-key press under Client.txt temple context with the
+     panel open, one fresh anchor — not a line per press, which is what an
+     un-keyed drop produces.
   4. **The card names the temple as the cue.** On a machine whose merc recruit
      window has never been opened, read a temple board and then open Settings →
      Screen geometry. The source row must read `temple Entrance plate` and the
@@ -1734,8 +1736,9 @@ touching the named path.
   which is not xcap's GDI path and means the read is polluted regardless;
   widget missing from screenshots — the clear half is failing, look at the
   guard's `Drop`.
-- **The room widget says `reading…` while a read runs** (POE-276): open a
-  sheet — the door widget must show a muted `reading…` with a beating dot,
+- **The room widget says `reading…` while a read runs** (POE-276): under
+  Client.txt temple context (after Alva's start line, or inside the temple),
+  open a sheet and press the read key — while that pressed read runs the door widget must show a muted `reading…` with a beating dot,
   then the room. Historical (superseded 2026-11-13, POE-389) from here to the
   end of this item: Once the board is locked (a clean read or all retry rounds
   finished), walk to the next room and open the sheet: the locked board
