@@ -32,15 +32,21 @@
 //! persistence and the `modules` SSOT slice. A module with more than a
 //! background task also edits each of these sites, named by symbol:
 //!
-//! 4. Page route in `desktop/src/lib/stores/navigation.svelte.ts` and the
-//!    Sidebar label/help in `Sidebar.svelte`.
+//! 4. Page: its `View` and `VIEW_PATHS` entry in
+//!    `desktop/src/lib/stores/navigation.svelte.ts`; the page import and its
+//!    `visibleView` block in `desktop/src/routes/(app)/+layout.svelte`; its
+//!    Sidebar navigation buttons (`nav.go(...)`, collapsed and expanded) and
+//!    its `MODULE_TITLES` help in `desktop/src/lib/components/Sidebar.svelte`.
 //! 5. State: a state struct in the module's own module (precedent
 //!    `mercenary::MercState`, `temple::TempleState`, `loot_capture::LootState`),
 //!    embedded by value in `AppState` (never behind one `Mutex`) and built by
 //!    its `new()` in both `run()` and `settings::tests::test_app_state`.
 //! 6. SSOT slice: a field on `ssot::AppSsotSnapshot`, filled in
 //!    `ssot::build_snapshot` and `compose_snapshot`; a new slice type joins the
-//!    ssot allowlist in `scripts/rust-size-gate.sh`.
+//!    ssot allowlist in `scripts/rust-size-gate.sh`. Frontend side, in
+//!    `desktop/src/lib/stores/ssot.svelte.ts`: the field on `SsotSnapshot`,
+//!    its field and default on the `ssot` store, and its assignment in
+//!    `applySnapshot` (no generic projection exists).
 //! 7. Settings: fields on `settings::Settings`, its `Default`, and the
 //!    `settings::from_state` / `settings::apply_to_state` bridges.
 //! 8. Commands: a module-owned file (precedent `temple/commands.rs`,
@@ -50,7 +56,12 @@
 //!    call and the area-change call (precedent `lab::catch_up`,
 //!    `lab::on_trial_line`, `lab::on_client_line`, `lab::on_area_change`;
 //!    `temple::trigger::on_client_line`; `mercenary::trigger::on_client_line`).
-//! 10. Overlay: its window label in `focus::spawn_focus_poller`'s overlay list.
+//! 10. Overlay: its row in `createModuleWindows([...])` in
+//!     `desktop/src/routes/(app)/+layout.svelte`; its page under
+//!     `desktop/src/routes/overlay/<label>/` (loaded by
+//!     `desktop/src/lib/overlay/widget-window.ts` as `/overlay/${label}`); its
+//!     label in `windows` of `desktop/src-tauri/capabilities/default.json`; and
+//!     its label in `focus::spawn_focus_poller`'s overlay list.
 //! 11. For an overlay that must stay out of screen grabs: its label in
 //!     `capture::platform::EXCLUDED_WHILE_GRABBING` (Windows only).
 //!
