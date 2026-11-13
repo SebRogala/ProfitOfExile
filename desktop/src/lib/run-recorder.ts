@@ -23,6 +23,7 @@ import {
 	type NavState,
 } from '$lib/compass/navigation';
 import { fetchLabLayout } from '$lib/compass/layout-loader';
+import { getServerUrl } from '$lib/stores/server-base.svelte';
 
 interface RoomLogEntry {
 	room_name: string;
@@ -91,9 +92,9 @@ async function submitRun() {
 	const snapshotStartedAt = runStartTimestamp;
 	if (snapshotKillTime <= 0 || snapshotRooms.length === 0) return;
 	try {
-		const status = await invoke<any>('get_status');
-		const serverUrl = status?.server_url;
+		const serverUrl = getServerUrl();
 		if (!serverUrl) { logToApp('[recorder] no server_url, cannot submit run'); return; }
+		const status = await invoke<any>('get_status');
 
 		const settings = await invoke<any>('get_compass_settings').catch(() => null);
 		const visitedRoomNames = new Set(snapshotRooms.map(r => r.room_name.toLowerCase()));

@@ -29,3 +29,21 @@ describe('the desktop server base', () => {
 		expect(offenders).toEqual([]);
 	});
 });
+
+describe('the saved server_url', () => {
+	it('only the settings, status and top-bar files read server_url', () => {
+		// Server calls build on getServerUrl() (stores/server-base.svelte.ts). The
+		// status store keeps the AppStatus field; Settings and TopBar show/edit it.
+		const allowed = [
+			'/src/lib/stores/status.svelte.ts',
+			'/src/lib/pages/SettingsPage.svelte',
+			'/src/lib/components/TopBar.svelte'
+		];
+		const readers = Object.entries(sources)
+			.filter(([, src]) => /\.server_url\b|\bserver_url\s*:/.test(code(src)))
+			.map(([path]) => path)
+			.sort();
+
+		expect(readers).toEqual([...allowed].sort());
+	});
+});

@@ -7,6 +7,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
 	import { ssot, startSsotStore } from '$lib/stores/ssot.svelte';
+	import { getServerUrl } from '$lib/stores/server-base.svelte';
 	import { currentDivineRate, initDivineRateStore } from '$lib/stores/divine-rate.svelte';
 	import { startMercureStore } from '$lib/stores/mercure.svelte';
 	import { initNumberFormatStore } from '$lib/stores/number-format.svelte';
@@ -288,8 +289,7 @@
 	// Check if lab layout is available for the sidebar's nodata indicator.
 	async function checkPathstripData(): Promise<boolean> {
 		try {
-			const status = await invoke<any>('get_status');
-			const serverUrl = status?.server_url;
+			const serverUrl = getServerUrl();
 			if (!serverUrl) return false;
 			for (const diff of ['Uber', 'Merciless', 'Cruel', 'Normal']) {
 				const r = await fetch(`${serverUrl}/api/lab/layout/${diff}`);

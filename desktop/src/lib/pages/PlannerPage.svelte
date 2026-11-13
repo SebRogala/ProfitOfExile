@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import { store } from '$lib/stores/status.svelte';
+	import { getServerUrl } from '$lib/stores/server-base.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import RoomEditor from '$lib/compass/RoomEditor.svelte';
 	import {
@@ -103,18 +103,12 @@
 	});
 
 	// --- Lifecycle ---
+	// Follows the saved server (reacts to the top-bar toggle).
 	$effect(() => {
-		// Keep serverUrl in sync with store (reacts to debug toggle)
-		if (store.status?.server_url) {
-			serverUrl = store.status.server_url;
-		}
-		invoke<any>('get_status')
-			.then((status) => {
-				if (status?.server_url) {
-					serverUrl = status.server_url;
-				}
-			})
-			.catch((e) => console.error('[planner] get_status failed:', e));
+		serverUrl = getServerUrl() ?? '';
+	});
+
+	$effect(() => {
 		// Load saved preferences
 		invoke<any>('get_compass_settings')
 			.then((s) => {
@@ -216,9 +210,7 @@
 		try {
 			const text = await file.text();
 			const json = JSON.parse(text);
-			// Re-read server URL (may have changed via debug toggle)
-			const status = await invoke<any>('get_status');
-			const uploadUrl = status?.server_url || serverUrl;
+			const uploadUrl = getServerUrl() || serverUrl;
 			// POST to server
 			const res = await fetch(`${uploadUrl}/api/lab/layout/${difficulty}`, {
 				method: 'POST',

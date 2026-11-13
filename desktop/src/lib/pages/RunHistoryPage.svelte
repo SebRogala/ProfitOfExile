@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
 	import { store } from '$lib/stores/status.svelte';
+	import { getServerUrl } from '$lib/stores/server-base.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { persisted } from '$lib/prefs.svelte';
 
@@ -31,7 +32,7 @@
 	}
 
 	async function fetchRuns() {
-		const serverUrl = store.status?.server_url;
+		const serverUrl = getServerUrl();
 		const deviceId = store.status?.device_id;
 		if (!serverUrl || !deviceId) {
 			error = 'Waiting for server connection...';
@@ -65,7 +66,7 @@
 	// Fetch on mount and when filter changes
 	$effect(() => {
 		const _ = difficulty.value;
-		const url = store.status?.server_url;
+		const url = getServerUrl();
 		if (url) fetchRuns();
 	});
 </script>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { store } from '$lib/stores/status.svelte';
+	import { getServerUrl } from '$lib/stores/server-base.svelte';
 	import { markRegistered, refreshEntitlements, registration } from '$lib/stores/entitlements.svelte';
 	import { getVersion } from '@tauri-apps/api/app';
 
@@ -44,7 +45,7 @@
 		success = '';
 
 		try {
-			const serverUrl = store.status?.server_url || '';
+			const serverUrl = getServerUrl();
 			if (!serverUrl) {
 				error = 'No server URL configured';
 				return;

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { getServerUrl } from '$lib/stores/server-base.svelte';
 import type { LabLayout } from './navigation';
 
 /**
@@ -8,11 +8,11 @@ import type { LabLayout } from './navigation';
  */
 export const DEFAULT_DIFFICULTY_ORDER = ['Uber', 'Merciless', 'Cruel', 'Normal'];
 
-/** Gap between `get_status` polls while `server_url` is still empty. */
+/** Gap between `getServerUrl()` checks while the server url is still unknown. */
 export const STATUS_RETRY_MS = 2000;
 
 /**
- * `get_status` polls one load attempt makes before giving up: the immediate one
+ * `getServerUrl()` checks one load attempt makes before giving up: the immediate one
  * plus 15 retries, so roughly 30 seconds — long enough to cover a slow server
  * start.
  *
@@ -40,14 +40,13 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Poll `get_status` until it reports a server URL, or the attempt budget runs
+ * Check `getServerUrl()` until the SSOT snapshot has carried a server URL, or the attempt budget runs
  * out. Returns null on exhaustion — the caller renders nothing, so the give-up
  * has to be logged where a release build can still read it.
  */
 async function waitForServerUrl(log: (msg: string) => void): Promise<string | null> {
 	for (let attempt = 1; attempt <= MAX_STATUS_ATTEMPTS; attempt++) {
-		const status = await invoke<any>('get_status');
-		const serverUrl = status?.server_url;
+		const serverUrl = getServerUrl();
 		if (serverUrl) return serverUrl;
 		if (attempt === MAX_STATUS_ATTEMPTS) break;
 		// Announced once, not once per poll. Three overlay windows run this
