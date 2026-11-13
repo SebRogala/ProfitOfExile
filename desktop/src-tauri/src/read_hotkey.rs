@@ -161,13 +161,17 @@ pub fn arm_all<C>(
     ArmedPress { delay, pendings }
 }
 
-/// The fixed delay, then exactly one grab, handed to every armed read.
+/// The fixed delay, then exactly one grab, handed to every armed read; a press
+/// no reader armed for takes no grab.
 pub fn run_armed<C>(
     armed: ArmedPress<C>,
     ctx: &C,
     sleep: &mut dyn FnMut(std::time::Duration),
     grab: &mut dyn FnMut() -> Result<crate::capture::Capture, String>,
 ) {
+    if armed.pendings.is_empty() {
+        return;
+    }
     sleep(armed.delay);
     let frame = grab().map(std::sync::Arc::new);
     if let Err(e) = &frame {
@@ -477,10 +481,10 @@ mod dispatch_tests {
         assert_eq!(dispatcher.join().unwrap(), 2);
     }
     #[test]
-    fn presses_grab_one_frame_each_with_no_reader_registered() {
+    fn presses_grab_no_frame_with_no_reader_registered() {
         let world = Arc::new(World::default());
         let grabs = run_pipeline(&world, &[], vec![sample(PRESSED, true), sample(&[], true), sample(PRESSED, true)]);
-        assert_eq!(grabs, 2);
+        assert_eq!(grabs, 0);
     }
     #[test]
     fn no_press_grabs_no_frame_with_no_reader_registered() {
@@ -489,10 +493,10 @@ mod dispatch_tests {
         assert_eq!(grabs, 0);
     }
     #[test]
-    fn presses_grab_one_frame_each_when_every_reader_declines() {
+    fn presses_grab_no_frame_when_every_reader_declines() {
         let world = Arc::new(World::default());
         let grabs = run_pipeline(&world, &[&IDLE, &IDLE], vec![sample(PRESSED, true), sample(&[], true), sample(PRESSED, true)]);
-        assert_eq!(grabs, 2);
+        assert_eq!(grabs, 0);
         assert!(world.consumed.lock().unwrap().is_empty());
     }
     #[test]
