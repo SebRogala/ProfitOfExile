@@ -202,3 +202,88 @@ func TestBook_failedSeedKeepsThePreviousSnapshot(t *testing.T) {
 		t.Errorf("Get(Ballista) = %v ok=%v, want 50 from the previous snapshot", got.Chaos, ok)
 	}
 }
+
+func TestBook_mutatingAReturnedReasonLeavesTheBookUnchanged(t *testing.T) {
+	f := seeded(t, s3())
+	first, _ := f.book.Get(ballista)
+
+	first.Reasons[0] = resolve.ReasonNeverChecked
+
+	got, _ := f.book.Get(ballista)
+	if want := []resolve.Reason{resolve.ReasonDisagreement}; !reflect.DeepEqual(got.Reasons, want) {
+		t.Errorf("Reasons after mutating an earlier Get result = %v, want %v", got.Reasons, want)
+	}
+}
+
+func TestBook_seedOwnsThePortsPrices(t *testing.T) {
+	prices := s3()
+	f := seeded(t, prices)
+
+	prices[0].Amount, prices[1].Amount, prices[2].Amount = 70, 70, 70
+	f.book.SetRate(resolve.Rate{Chaos: 200})
+
+	if got, _ := f.book.Get(ballista); got.Chaos != 50 {
+		t.Errorf("Chaos after the port's slice changed to 70s = %v, want 50", got.Chaos)
+	}
+}
+
+// thinNinjaBook seeds trade S3 (50) against ninja 125 at the given sample
+// pointer: ratio 2.5 is a disagreement only while the sample is thin (k 2).
+func thinNinjaBook(t *testing.T, sample *int) *Book {
+	t.Helper()
+	tr := &fakeTrade{obs: []resolve.Observation{tradeObs(ballista, t0.Add(-time.Hour), s3())}}
+	ninja := resolve.Observation{Key: ballista, Source: resolve.SourceNinja, At: t0.Add(-2 * time.Hour),
+		Prices: chaos(125), SampleCount: sample}
+	b := New(league.Historical(leagueID), gemPolicy, tr, &fakeNinja{obs: []resolve.Observation{ninja}},
+		func() resolve.Rate { return resolve.Rate{Chaos: 200} })
+	if err := b.Seed(context.Background(), t0); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	return b
+}
+
+func TestBook_seedOwnsThePortsSampleCount(t *testing.T) {
+	sample := intPtr(2)
+	b := thinNinjaBook(t, sample)
+
+	*sample = 50
+	b.SetRate(resolve.Rate{Chaos: 200})
+
+	got, _ := b.Get(ballista)
+	if want := []resolve.Reason{resolve.ReasonDisagreement}; !reflect.DeepEqual(got.Reasons, want) {
+		t.Errorf("Reasons after the port's sample changed to 50 = %v, want %v (seeded sample 2 is thin)", got.Reasons, want)
+	}
+}
+
+func TestBook_observeOwnsTheCallersPrices(t *testing.T) {
+	f := seeded(t, s3())
+	prices := chaos(70, 70, 70)
+	if err := f.book.Observe(tradeObs(ballista, t0.Add(time.Hour), prices)); err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+
+	prices[0].Amount, prices[1].Amount, prices[2].Amount = 10, 10, 10
+	f.book.SetRate(resolve.Rate{Chaos: 200})
+
+	if got, _ := f.book.Get(ballista); got.Chaos != 70 {
+		t.Errorf("Chaos after the caller's slice changed to 10s = %v, want 70", got.Chaos)
+	}
+}
+
+func TestBook_observeOwnsTheCallersSampleCount(t *testing.T) {
+	f := seeded(t, s3())
+	sample := intPtr(2)
+	obs := resolve.Observation{Key: ballista, Source: resolve.SourceNinja, At: t0.Add(time.Hour),
+		Prices: chaos(125), SampleCount: sample}
+	if err := f.book.Observe(obs); err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+
+	*sample = 50
+	f.book.SetRate(resolve.Rate{Chaos: 200})
+
+	got, _ := f.book.Get(ballista)
+	if want := []resolve.Reason{resolve.ReasonDisagreement}; !reflect.DeepEqual(got.Reasons, want) {
+		t.Errorf("Reasons after the caller's sample changed to 50 = %v, want %v (observed sample 2 is thin: 125 vs 50)", got.Reasons, want)
+	}
+}

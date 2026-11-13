@@ -27,7 +27,7 @@ func (s *Snapshot) Get(key resolve.Key) (resolve.Resolved, bool) {
 		return resolve.Resolved{}, false
 	}
 	r, ok := s.resolved[key]
-	return r, ok
+	return detached(r, ok)
 }
 
 // Book is bound to one league scope and one policy.
@@ -64,7 +64,7 @@ func (b *Book) Seed(ctx context.Context, now time.Time) error {
 			if o.Key.League != b.scope.ID() {
 				continue
 			}
-			obs[o.Key] = append(obs[o.Key], o)
+			obs[o.Key] = append(obs[o.Key], owned(o))
 		}
 	}
 	rate := b.rate()
@@ -112,7 +112,7 @@ func (b *Book) Observe(o resolve.Observation) error {
 	held := next.obs[o.Key]
 	keyObs := make([]resolve.Observation, len(held), len(held)+1)
 	copy(keyObs, held)
-	next.obs[o.Key] = append(keyObs, o)
+	next.obs[o.Key] = append(keyObs, owned(o))
 	if r, ok := resolve.Resolve(next.obs[o.Key], next.at, next.rate, b.policy); ok {
 		next.resolved[o.Key] = r
 	} else {
@@ -149,4 +149,21 @@ func (b *Book) build(obs map[resolve.Key][]resolve.Observation, rate resolve.Rat
 		}
 	}
 	return s
+}
+
+// owned copies the observation's slices and pointers so the book never shares
+// memory with a port or caller.
+func owned(o resolve.Observation) resolve.Observation {
+	o.Prices = append([]resolve.Money(nil), o.Prices...)
+	if o.SampleCount != nil {
+		n := *o.SampleCount
+		o.SampleCount = &n
+	}
+	return o
+}
+
+// detached returns r with its own Reasons backing array.
+func detached(r resolve.Resolved, ok bool) (resolve.Resolved, bool) {
+	r.Reasons = append([]resolve.Reason(nil), r.Reasons...)
+	return r, ok
 }
