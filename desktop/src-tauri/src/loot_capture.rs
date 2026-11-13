@@ -67,19 +67,13 @@ pub struct LootSettings {
     pub preview_shortcut: Shortcut,
 }
 /// Saved before 3.30, the Allflame Ember of Kulemak was a not-counted extra;
-/// it is now a guaranteed-group item, so the stale key is dropped on load
+/// it is now a guaranteed-group item, so that one stale key is dropped on load
 /// rather than failing validation and resetting every boss-loot setting.
 fn not_counted_without_group_items<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<String>, D::Error> {
     let mut keys = Vec::<String>::deserialize(deserializer)?;
-    keys.retain(|key| {
-        !crate::loot_profiles::built_in_profiles()
-            .iter()
-            .flat_map(|p| &p.groups)
-            .flat_map(|g| &g.items)
-            .any(|i| &i.id == key)
-    });
+    keys.retain(|key| key != "Metadata/Items/MapFragments/BetrayalAllflamePack");
     Ok(keys)
 }
 impl Default for LootSettings {

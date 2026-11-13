@@ -484,21 +484,24 @@
      "date": null,
      "items": [
       "cane",
-      "communion"
+      "communion",
+      "propagation"
      ]
     },
     {
      "run": 2,
      "date": null,
      "items": [
-      "urn"
+      "urn",
+      "allflame"
      ]
     },
     {
      "run": 3,
      "date": null,
      "items": [
-      "urn"
+      "urn",
+      "ethereal"
      ]
     },
     {
@@ -506,7 +509,8 @@
      "date": null,
      "items": [
       "cane",
-      "eye"
+      "eye",
+      "propagation"
      ]
     },
     {
@@ -532,7 +536,8 @@
      "run": 7,
      "date": null,
      "items": [
-      "bitterbind"
+      "bitterbind",
+      "allflame"
      ]
     },
     {
@@ -549,7 +554,8 @@
      "date": null,
      "items": [
       "urn",
-      "eye"
+      "eye",
+      "ethereal"
      ]
     },
     {
@@ -557,14 +563,16 @@
      "date": null,
      "items": [
       "spinehail",
-      "veiledex"
+      "veiledex",
+      "propagation"
      ]
     },
     {
      "run": 11,
      "date": null,
      "items": [
-      "cane"
+      "cane",
+      "allflame"
      ]
     },
     {
@@ -581,7 +589,8 @@
      "date": null,
      "items": [
       "queens",
-      "veiledex"
+      "veiledex",
+      "ethereal"
      ]
     },
     {
@@ -590,14 +599,16 @@
      "items": [
       "queens",
       "eye",
-      "veiledex"
+      "veiledex",
+      "propagation"
      ]
     },
     {
      "run": 15,
      "date": null,
      "items": [
-      "cane"
+      "cane",
+      "allflame"
      ]
     },
     {
@@ -625,7 +636,8 @@
      "items": [
       "urn",
       "eye",
-      "veiledex"
+      "veiledex",
+      "ethereal"
      ]
     },
     {
@@ -633,14 +645,16 @@
      "date": null,
      "items": [
       "urn",
-      "eye"
+      "eye",
+      "propagation"
      ]
     },
     {
      "run": 20,
      "date": null,
      "items": [
-      "spinehail"
+      "spinehail",
+      "allflame"
      ]
     },
     {
@@ -656,7 +670,8 @@
      "run": 22,
      "date": null,
      "items": [
-      "urn"
+      "urn",
+      "ethereal"
      ]
     },
     {
@@ -665,7 +680,8 @@
      "items": [
       "cane",
       "eye",
-      "veiledex"
+      "veiledex",
+      "propagation"
      ]
     },
     {
@@ -690,7 +706,8 @@
      "run": 26,
      "date": null,
      "items": [
-      "spinehail"
+      "spinehail",
+      "allflame"
      ]
     },
     {
@@ -698,14 +715,16 @@
      "date": null,
      "items": [
       "spinehail",
-      "veiledex"
+      "veiledex",
+      "ethereal"
      ]
     },
     {
      "run": 28,
      "date": null,
      "items": [
-      "urn"
+      "urn",
+      "propagation"
      ]
     },
     {
@@ -713,7 +732,8 @@
      "date": null,
      "items": [
       "diadem",
-      "eye"
+      "eye",
+      "allflame"
      ]
     },
     {
@@ -721,7 +741,8 @@
      "date": null,
      "items": [
       "bitterbind",
-      "eye"
+      "eye",
+      "ethereal"
      ]
     },
     {
@@ -729,7 +750,8 @@
      "date": null,
      "items": [
       "spinehail",
-      "veiledex"
+      "veiledex",
+      "propagation"
      ]
     },
     {
@@ -737,14 +759,16 @@
      "date": null,
      "items": [
       "spinehail",
-      "eye"
+      "eye",
+      "allflame"
      ]
     },
     {
      "run": 33,
      "date": null,
      "items": [
-      "bitterbind"
+      "bitterbind",
+      "ethereal"
      ]
     },
     {
@@ -763,7 +787,8 @@
      "items": [
       "queens",
       "eye",
-      "veiledex"
+      "veiledex",
+      "propagation"
      ]
     },
     {
@@ -780,7 +805,8 @@
      "run": 37,
      "date": null,
      "items": [
-      "cane"
+      "cane",
+      "allflame"
      ]
     },
     {
@@ -788,7 +814,8 @@
      "date": null,
      "items": [
       "urn",
-      "eye"
+      "eye",
+      "ethereal"
      ]
     },
     {
@@ -797,7 +824,8 @@
      "items": [
       "urn",
       "eye",
-      "veiledex"
+      "veiledex",
+      "propagation"
      ]
     },
     {
@@ -805,7 +833,8 @@
      "date": null,
      "items": [
       "queens",
-      "eye"
+      "eye",
+      "allflame"
      ]
     },
     {
@@ -840,7 +869,8 @@
      "date": null,
      "items": [
       "spinehail",
-      "veiledex"
+      "veiledex",
+      "ethereal"
      ]
     },
     {
@@ -848,7 +878,8 @@
      "date": null,
      "items": [
       "cane",
-      "eye"
+      "eye",
+      "propagation"
      ]
     },
     {
@@ -865,14 +896,16 @@
      "run": 47,
      "date": null,
      "items": [
-      "urn"
+      "urn",
+      "allflame"
      ]
     },
     {
      "run": 48,
      "date": null,
      "items": [
-      "urn"
+      "urn",
+      "ethereal"
      ]
     },
     {
@@ -888,7 +921,8 @@
      "run": 50,
      "date": null,
      "items": [
-      "spinehail"
+      "spinehail",
+      "propagation"
      ]
     },
     {
@@ -905,35 +939,40 @@
      "date": null,
      "items": [
       "spinehail",
-      "eye"
+      "eye",
+      "allflame"
      ]
     },
     {
      "run": 53,
      "date": null,
      "items": [
-      "cane"
+      "cane",
+      "ethereal"
      ]
     },
     {
      "run": 54,
      "date": null,
      "items": [
-      "urn"
+      "urn",
+      "propagation"
      ]
     },
     {
      "run": 55,
      "date": null,
      "items": [
-      "diadem"
+      "diadem",
+      "allflame"
      ]
     },
     {
      "run": 56,
      "date": null,
      "items": [
-      "diadem"
+      "diadem",
+      "ethereal"
      ]
     },
     {
@@ -942,7 +981,8 @@
      "items": [
       "spinehail",
       "eye",
-      "veiledex"
+      "veiledex",
+      "propagation"
      ]
     },
     {
@@ -959,7 +999,8 @@
      "date": null,
      "items": [
       "diadem",
-      "eye"
+      "eye",
+      "allflame"
      ]
     },
     {
@@ -968,7 +1009,8 @@
      "items": [
       "spinehail",
       "eye",
-      "veiledex"
+      "veiledex",
+      "ethereal"
      ]
     },
     {
@@ -983,14 +1025,16 @@
      "run": 62,
      "date": null,
      "items": [
-      "cane"
+      "cane",
+      "propagation"
      ]
     },
     {
      "run": 63,
      "date": null,
      "items": [
-      "spinehail"
+      "spinehail",
+      "allflame"
      ]
     },
     {
@@ -998,7 +1042,8 @@
      "date": null,
      "items": [
       "bitterbind",
-      "veiledex"
+      "veiledex",
+      "ethereal"
      ]
     },
     {
@@ -1006,7 +1051,8 @@
      "date": null,
      "items": [
       "cane",
-      "veiledex"
+      "veiledex",
+      "propagation"
      ]
     },
     {
@@ -1014,7 +1060,8 @@
      "date": null,
      "items": [
       "urn",
-      "veiledex"
+      "veiledex",
+      "allflame"
      ]
     },
     {
@@ -1037,7 +1084,8 @@
      "run": 69,
      "date": null,
      "items": [
-      "spinehail"
+      "spinehail",
+      "ethereal"
      ]
     },
     {
@@ -1045,7 +1093,8 @@
      "date": null,
      "items": [
       "urn",
-      "eye"
+      "eye",
+      "propagation"
      ]
     },
     {
@@ -1053,7 +1102,8 @@
      "date": null,
      "items": [
       "urn",
-      "eye"
+      "eye",
+      "allflame"
      ]
     },
     {
@@ -1068,7 +1118,8 @@
      "run": 73,
      "date": null,
      "items": [
-      "diadem"
+      "diadem",
+      "ethereal"
      ]
     },
     {
@@ -1076,28 +1127,32 @@
      "date": null,
      "items": [
       "diadem",
-      "eye"
+      "eye",
+      "propagation"
      ]
     },
     {
      "run": 75,
      "date": null,
      "items": [
-      "cane"
+      "cane",
+      "allflame"
      ]
     },
     {
      "run": 76,
      "date": null,
      "items": [
-      "queens"
+      "queens",
+      "ethereal"
      ]
     },
     {
      "run": 77,
      "date": null,
      "items": [
-      "diadem"
+      "diadem",
+      "propagation"
      ]
     },
     {

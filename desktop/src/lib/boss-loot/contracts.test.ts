@@ -137,6 +137,13 @@ describe('original fixture meanings', () => {
 		})
 	})
 
+	it('gives every fixture run exactly one Allflame Ember', async () => {
+		const [catarina] = await createFixtureProfiles(source.profiles).load()
+		const embers = catarina.groups.find((group) => group.id === 'allflame')!.items.map((item) => item.id)
+		const page = await createFixtureRuns(source.runs).list(profile, 1, 78)
+		const offenders = page.items.filter((row) => embers.filter((id) => (row.items.quantities[id] ?? 0) > 0).length !== 1)
+		expect(offenders.map((row) => row.run)).toEqual([])
+	})
 	it('retains all 78 original run rows', async () => {
 		const page = await createFixtureRuns(source.runs).list(profile, 1, 78)
 		expect(page.total).toBe(78)
@@ -155,7 +162,7 @@ describe('original fixture meanings', () => {
 
 	it('retains the historical Communion quantity', async () => {
 		const page = await createFixtureRuns(source.runs).list(profile, 8, 10)
-		expect(page.items[7].items.quantities).toEqual({ [cane]: 1, 'Communion Support': 1 })
+		expect(page.items[7].items.quantities).toEqual({ [cane]: 1, 'Communion Support': 1, 'Metadata/Items/MapFragments/PropagationAllflamePack': 1 })
 	})
 
 	it('defaults Communion to currently not counted', async () => {
