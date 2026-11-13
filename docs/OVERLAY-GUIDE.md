@@ -348,7 +348,7 @@ the timer, compass, path-strip and comparator widgets.
   `STACK_STAGGER_CSS` (175 px, measured off the owner's redrawn screenshot)
   right of the column and the lower one on it. A box carries
   the room the kill BUILDS and its kind and tier, its value rows, the tier
-  ladder, the temple mod and the warning-only market age line. The advisor's pick wears a 2 px
+  ladder, the architect line and the warning-only market age line. The advisor's pick wears a 2 px
   cyan frame — the same cyan as the room widget's kill glyph — and that frame
   IS the pointer; the other box is faint.
   They live with the SHEET and go when it closes. They REPLACE `temple.advice`,
@@ -872,7 +872,7 @@ engine and writes a new dump. The regression board is the 2026-09-03 laptop capt
 Workshop at C1). A pass (measured 2026-09-04 at 970470d): anchored at temple scale ≈ 1.0 with
 no search (`anchoring on the remembered screen scale …` or the scale table), `panelRect`
 ≈ [1131,5,543,453], `diamondRect` ≈ [1312,118,200,200], `markerError` null (6/6 seals),
-`panel — 2 architect block(s)` naming Hayoxi (upgrade → Omnitect Reactor Plant) and Xopec
+`panel — 2 architect block(s)` naming Hayoxi (upgrade → Omnitect Reactor Plant, the room's pre-3.30 name; 3.30.0: Grand Reactor) and Xopec
 (change → Explosives Room) with rects in `ocr-lines.json`, title Lightning Workshop.
 
 To drive it without touching the UI (from WSL, while `npx tauri dev` runs): start a SECOND
@@ -1408,7 +1408,7 @@ touching the named path.
 - **The offer box explains the number, in each of its six states** (POE-260,
   POE-277, restyled to v5 on 2026-09-10): the box is room-led and shows only
   facts that belong to the read. It is five SECTIONS with a 1 px hairline
-  between each pair that is present — header, items, room bonuses, temple mod,
+  between each pair that is present — header, items, room bonuses, architect,
   market warning — on a `rgb(13 15 20 / 96%)` ground with a 2 px frame on BOTH
   boxes (cyan on the pick, muted otherwise) and no `opacity` anywhere: faint is
   a muted frame and dimmer text, never a transparency. Its two-line header puts
@@ -1418,99 +1418,74 @@ touching the named path.
   muted ` · est.` after either where any term was guessed. There is no scale,
   rating or reason line.
 
-  1. **Priced.** Open a panel on a board with a chest-unique line — Crucible of
-     Flame, Toxic Grove, Sanctum of Immortality, Hybridisation Chamber, Conduit
-     of Lightning or Defense Research Lab. The sale row is 18 px of TEXT with
-     no icon and no placeholder glyph. Under it, ONE item row reading
-     `A + B ……→…… C`: the unique and the vial packed LEFT on 8 px gaps with a
-     muted `+` between them, then a flexible spacer carrying a muted `→` at its
-     own centre, then the recipe's upgraded result on the row's RIGHT edge.
-     Each cell is 39 px of art with its price centred UNDER it, and the upgrade
-     carries a muted `upgraded` caption under its price. Absent cells are
-     omitted rather than reserved: no `+` without both drops, and no spacer and
-     no arrow without the upgrade, so a line no vial upgrades is `A + B` packed
-     left and nothing else. The `base → vial →
-     upgraded` recipe ROW is gone (Vertolka, 12:19 — it redrew the row's own two
-     icons at half size underneath themselves) and its sentence moved into this
-     row's own layout (Vertolka, 13:16); so are the per-row
-     provenance letters and the per-run counts, both of which stay in the view data.
-     Unique and vial names are NOT printed — the icon is the identity and `alt`
-     stays on the `<img>` as the accessibility attribute; the `?` fallback
-     carries none; sale keeps its text. The fold path remains in the view code
-     but is unreachable while the four row kinds contain at most one sale,
-     unique, vial and mod term.
-     Rare unique and vial drops below 5% per run carry their rate as a caption
-     under the price, in the `upgraded` caption's style: the committed Allflame
-     capture shows Defense Research Lab's
-     Vial of Dominance at approximately 4.8%, Toxic Grove's Vial of Awakening at
-     approximately 1.2%, Locus of Corruption's Vial of Sacrifice at approximately
-     0.1%, and Throne of Atziri's Vial of the Ghost at approximately 0.1%.
+  1. **Priced.** Open a panel on a board with a chest-unique line — Conduit of
+     Lightning, Crucible of Flame, Defense Research Lab, Glittering Halls,
+     Hybridisation Chamber, Museum of Artefacts, Sanctum of Immortality or
+     Toxic Grove (the eight 3.30 chest rooms, [GAME-FACTS.md](GAME-FACTS.md)).
+     The sale row is 18 px of TEXT with no icon and no placeholder glyph. Under
+     it, one unique cell per pool item: 39 px of art with its price centred
+     UNDER it. Glittering Halls' four uniques fold the fourth
+     (`FULL_DRIVER_ROWS`; `view.ts` `offerUniqueDrops`). Vial cells, the `+`
+     between unique and vial and the `→` upgraded cell were removed in 3.30.0
+     (POE-366). With a known Cradle of Creation plate on the board, a tier-3
+     chest cell carries `(+Nc)` on its caption line; a scaled or fallback box
+     never does (`view.ts` `cradleBracket`; POE-370). The per-row provenance
+     letters and the per-run counts stay in the view data, not on the box.
+     Unique names are NOT printed — the icon is the identity and `alt` stays
+     on the `<img>` as the accessibility attribute; the `?` fallback carries
+     none; sale keeps its text. The row kinds are the two `ROW_KINDS`, sale and
+     unique (`overlay-geometry.ts`).
+     A unique drop below 5% per run carries its rate as a caption under the
+     price (`view.ts`).
      Room bonuses are a 31 px row: the `Room bonuses` label INLINE at the left,
-     then `+2/4/6%` over `quant` and `+4/8/12%` over `rarity`, each centred in
-     an equal share of what is left of the row — rungs at 15 px, one step above
-     the ramp's figure size and the owner's own ask, with the room's own tier
-     lit and the other two at .42 — and the unscaled chaos the two rates are
-     worth at the row's far right.
+     then `+4/8/12%` over `rarity` (`view.ts` `BONUS_WORDS`), centred in what
+     is left of the row — rungs at 15 px, with the room's own tier lit and the
+     other two at .42 — and the unscaled chaos the rate is worth at the row's
+     far right. The `quant` cell was removed in 3.30.0 (POE-369).
      **The ladders never shrink and the amount is what gives way.** A rung the
      row cannot fit would be clipped mid-figure, so the cells are fixed-width
      and the chaos amount is DROPPED instead — the box already carries what the
-     rates are worth inside the value at the top right, and the ladders it does
-     not repeat anywhere. The rule is the RUNG WIDTH and not a measured width
-     (a box that read its own `offsetWidth` would re-measure on every read):
-     the amount goes when any rung passes the width the stated ladders reach —
-     two digits at tier 1 or 2, three at tier 3. On the shipped table that is
-     **Factory alone** (`+22/44/66%`, its quantity stat printed twice and
-     summed), so check that room to see the amount absent and every other
-     priced room to see it present.
+     rates are worth inside the value at the top right. The rule is the RUNG
+     WIDTH and not a measured width (a box that read its own `offsetWidth`
+     would re-measure on every read): the amount goes when any rung passes the
+     width the stated ladders reach — two digits at tier 1 or 2, three at
+     tier 3.
      A `?` icon means the server's `/api/icon/temple/<name>` did not answer for
      that poe.ninja name; check one by hand before assuming the row is wrong.
-     A Locus of Corruption `?` is not Shadowstitch: its altar corrupts the
-     Sacrificial Garb the player brings into that item; its drop-side vial is
-     Vial of Sacrifice.
+     Locus of Corruption has no chest unique: its altar corrupts the
+     Sacrificial Garb the player brings into Shadowstitch.
      The cell prices are the ITEM's, not the term's: `Story of the Vaal 68c` is
-     right and `17c` is the bug. The mod section is `Temple mod: <name>` with
-     `(30c)` only for the sole priced case, Crucible of Flame/Puhuarte's
-     Vertolka 30c guess; no price cell for `no price`. **The mod NAME carries
-     the verdict as a colour** — green for Puhuarte, red for Matatl, the box's
-     own text colour for the other five (`LineView.modWorth`, from
-     `drops.rs`'s `Worth`; Vertolka, 2026-09-10: *"make Puhuarte green and
-     Matatl red"*). Under it, `Appears on:` followed by one word CHIP per item
-     class — uppercase slot names in muted 1 px boxes, NOT the nine grey
-     silhouettes, which the owner rejected as *"defenetely NOT intuitive"*. The
-     slot table is verified from poewiki's modifier tables, with every weapon
-     class folded into `Weapon`; the chips wrap once the row passes 272 px — five (Xopec) always, and four or even
-     three when BODY ARMOUR is among them (Guatelitzi, Tacati); two rows is the
-     worst case at any count, which the budget carries and is the one row here with two heights. The
-     market age line is present only for unavailable/stale prices; fresh prices
-     omit it and its hairline with it.
+     right and `17c` is the bug. The architect section is the architect's name
+     only, uncoloured, from `OfferBox.architect`, on every full box with a
+     non-blank read (`TempleOfferBoxes.svelte`). The `Temple mod: <name>` line,
+     its `(30c)` price, its green/red verdict colour and the `Appears on:` slot
+     chips were removed in 3.30.0 (POE-367). The market age line is present
+     only for unavailable/stale prices; fresh prices omit it and its hairline
+     with it.
 
-  2. **Content.** Open Locus of Corruption, Throne of Atziri, Doryani's
+  2. **Content.** Open Locus of Corruption, Cradle of Creation, Doryani's
      Institute or Temple Nexus. A resolved content line keeps one item row in
-     every value state, including fallback: its vial, when present, is the LEFT
-     cell, a flexible spacer separates it from the right-hand content sentence,
-     and there is no `+`, arrow or upgraded cell; the drops-nothing note yields
-     to the content cell, while Temple Nexus and Shrine of Unmaking keep their
-     `valued at its letter` line under the row. The content cell
-     is right-aligned, 13 px, and clamped to two lines; the row uses the same
-     57 px budget, or 69 px when its vial carries a rare-rate caption.
+     every value state, including fallback: the right-hand content sentence,
+     with no `+`, arrow or upgraded cell; the drops-nothing note yields to the
+     content cell, while Temple Nexus and Shrine of Unmaking keep their
+     `estimated — its worth is what it does, not what it drops` line under the
+     row (`view.ts`). The content cell is right-aligned, 13 px, and clamped to
+     two lines; the row uses the same 57 px budget.
 
   3. **Partial.** An item with no market price keeps its 39 px icon cell and
      prints `no price` at 11 px muted under it, never `0c` and never a missing
      cell. The header's second line carries the `floor · N unpriced` chip in
-     place of `per run`; the chip still counts an unpriced temple mod even
-     though its price cell is hidden. The remaining bonus, mod, chip and
+     place of `per run`. The remaining bonus, architect and
      warning-age rows follow their fixed slots when present.
 
   4. **Fallback.** Start the app with no network (or point its server URL at
      nothing) and open a panel. With no usable market, the value reads
-     `grade <tier><rank>` (for example `grade C1`) at 17 px — and there is NO `F` beside it, because the word
-     already says what the letter said; a ` · est.` on line two is the only
-     provenance mark left, and it fires where the rung is a live inference
+     the rung's chaos, marked ` · est.` (no grade letter is drawn since
+     POE-368; `view.ts` `offerValueText`); the ` · est.` is the only
+     provenance mark, and on line two it fires where the rung is a live inference
      (`valuation.rs`'s `summed <= 0` branch) rather than the cold preset's base
      value. **A chest line with no drop terms has no item row**; a resolved
-     content line keeps its content row, including on fallback. The upgrade
-     cell rides on chest-line drops rather than standing alone as a lone em dash
-     captioned `upgraded`. The warning age line reads `prices unavailable — base
+     content line keeps its content row, including on fallback. The warning age line reads `prices unavailable — base
      values`. If the line carries tier facts, the ladder still explains them;
      otherwise the bonus label is used, full width. No chaos figure or
      market-backed recommendation is invented. Flip DEBUG/PROD on a priced
@@ -1535,58 +1510,28 @@ touching the named path.
      becomes a strip of 26 px icons (up from a 20 px that was neither 39 nor 26
      and shimmered for it), and a warning-only market foot line follows it
      behind its own rule; a fresh compact box ends at the strip. One full box
-     beside one compact box is the regression. The compact strip excludes the
-     temple mod's price; the value's chip and its ` · est.` still account for
-     it, so on Crucible of Flame the strip is short of its largest term by
-     design. **The v5 box is taller, so the pair collapses sooner** — the
-     clearance is now `FULL_PAIR_CSS` 630 where it was 546, plus 12 for each
-     box carrying the borrowed-price line under a rate caption (2026-10-20).
+     beside one compact box is the regression. The pair clearance is
+     `FULL_PAIR_CSS` 588 (`overlay-geometry.ts`).
 
   **Measured heights.** Every row is a fixed `height` (or `line-height`) plus a
   stated `margin-top`; the component's stylesheet names both on each rule and
-  `overlay-geometry.test.ts` restates the table. The frame contributes
-  `2 × 2 = 4` and the padding `2 × 10 = 20`. The two-line header is
-  `26 + 15 = 41`. Each section hairline is
-  `6 + 1 + 6 = 13`, and there are at most four (under the header, and between
-  each pair of present sections). The sale row is 18. The item row is
-  `39 + 3 + 15 = 57`, or 69 with the `upgraded` caption, plus 5 under a sale
-  row; a content row uses the same 57/69 heights. A vial priced at the unique
-  it upgrades into (`~4578c`) adds a yellow `as <unique>` line: 69 when it is
-  the cell's only caption, 81 under a rate caption (owner, 2026-10-20). The
-  room-bonus row is `18 + 13 = 31`. The mod group is
-  `18 + 5 + 14 = 37` with one chip row and `18 + 5 + (14 + 4 + 14) = 55` with
-  two. The market line is 13.
+  `overlay-geometry.test.ts` restates the table. The tallest full box, the
+  chest WARN form, sums to `FULL_BOX_MAX_CSS` (`overlay-geometry.ts`):
+  frame `2 × 2 = 4` + padding `2 × 10 = 20` + header `26 + 15 = 41` + four
+  hairlines `4 × (6 + 1 + 6) = 52` + sale 18 + items `8 + 69 = 77` + fold
+  `3 + 13 = 16` + room bonuses `18 + 13 = 31` + architect 18 + market line 13
+  = **290 px**. The instrumental WARN form (Temple Nexus, content row and a
+  two-line note in place of sale, items and fold) is 277. Omitted sections
+  remove their own rows AND the hairline that would have preceded them.
+  Compact is `4 + 20 + 41 + 13 + 26 = **104 px**` fresh and **130 px** with
+  the warning line behind its own rule.
 
-  - The tallest the wording can build without a borrowed price — sale, an item
-    row carrying the upgrade, the bonus row, a mod with its chips on two rows, the market warning, and
-    the four hairlines those five sections put between themselves:
-    `4 + 20 + 41 + 52 + 18 + 77 + 31 + 55 + 13 = **311 px**`; with the
-    borrowed-price line under a rate caption the item row is 89 and the box
-    **323 px**.
-  - A priced full box on the pick with no sale row, one chip row and no
-    warning is **241 px**. Omitted sections remove their own rows AND the
-    hairline that would have preceded them.
-  - Chest fallback with the grade, the bonus row, a two-row mod block and the
-    warning age, with no item row, is **203 px**.
-  - Compact is `4 + 20 + 41 + 13 + 26 = **104 px**` fresh and **130 px** with
-    the warning line behind its own rule.
-
-  `FULL_BOX_MAX_CSS` is 311 px versus the MEASURED `DIAGONAL_BUDGET_CSS` at
-  316 px: on the committed 1920×1080 frame a 316 px box sits flush under
-  plate C0's crop with 0 px headroom. The one owner-approved overrun
-  (2026-10-20) is `FULL_BOX_BORROWED_MAX_CSS = 311 + 12 = 323`, held under
-  `FULL_BOX_BUDGET_CSS = 316 + 7`. That 7 px is not spare space: at the first
-  block (y 133) a 323 px box would reach 7 px into plate C0, and
-  `offerStackPlacement` lifts it to y 126, still on the staggered x and clear
-  of all 42 read regions (pinned in `overlay-geometry.test.ts`). The two-box
-  full clearance is `FULL_PAIR_CSS = 311×2 + 8 = 630 px`, and `offersCompact`
-  adds `BORROWED_LINE_CSS` (12) only for each box that actually carries the
-  line (`offerBoxBorrowedLine`), so a 720 CSS px host (631 px under the
-  block) stays full unless a borrowed box is on it. The constants describe
-  the WARN form, where the age line is present, and the test asserts both
-  `FULL_BOX_MAX_CSS ≤ DIAGONAL_BUDGET_CSS` and
-  `FULL_BOX_BORROWED_MAX_CSS ≤ FULL_BOX_BUDGET_CSS`. **A further row costs
-  content**, not headroom.
+  `FULL_BOX_MAX_CSS` 290 sits under the MEASURED `DIAGONAL_BUDGET_CSS` at
+  316 px (on the committed 1920×1080 frame a 316 px box sits flush under
+  plate C0's crop), leaving 26 px spare. `FULL_BOX_BUDGET_CSS = 316 + 7` is
+  unchanged. The two-box full clearance is `FULL_PAIR_CSS = 290×2 + 8 = 588
+  px`. The constants describe the WARN form, where the age line is present.
+  **A further row costs content**, not headroom.
 
 
   **And the blink must be gone.** Watch either box for three unbroken minutes on
@@ -1594,52 +1539,33 @@ touching the named path.
   adds the row once, and later text changes must not remeasure it. A flicker on
   the minute means something text-shaped is back in `offerBoxSignature`. ONE
   field left it with v5: `pick` (both frames are 2 px, so the pick buys no
-  height). `mod.slots.length` stays, because the chips wrap and two chip rows
-  are 18 px more than one.
+  height). The signature carries `unique<N>`, caption and bracket presence,
+  and architect presence (`view.ts` `offerBoxSignature`).
 
   **Owner judgement, not arithmetic**: whether the box is still readable at arm's
-  length over a game with the larger icons and optional temple-mod block, and
+  length over a game with the larger icons and the architect line, and
   whether the pick's cyan frame still wins the eye against them. If it does
   not, the fix is a product decision about what the box drops, not a change to
   the geometry.
-- **The vials-per-run knob moves the Temple page's totals** (POE-262): on the
-  Temple page pick **Custom** and find Glittering Halls' row in the value table.
-  The table prints CELL TOTALS and no per-driver rows, so this is where the knob
-  is read as a number rather than as a line. Note the tier-3 cell at the
-  shipped `0.1`, set **Vials per run** to `0.2`, and the cell must DOUBLE its
-  vial half; set it to `0` and it must fall to `15.00`, the 60 % rarity bonus
-  alone and the one figure here that does not move with the market. On the
-  committed capture (Vial of Transcendence at 428 c) the three read `86.33`,
-  `158` — 157.67, and cells at 100 c and up print whole — and `15.00`; a live
-  vial price moves the first two and not the third. Factory's tier-3 cell must
-  not move at any of the three — it names no vial. `NaN` or a negative value must be refused in place with the
-  field marked, and the table must stay on screen. Then set it back to `0.1`.
-- **The same knob keeps the offer data current even though the box omits counts**
-  (POE-262): with the value above set, open a live board on a tier-3 Glittering
-  Halls offer. The `Vial of Transcendence` row's per-run value remains in the
-  view data and the value table, while the rendered offer box shows only its
-  icon and chaos figure. At `0` the row must still be LISTED, reading no chaos,
-  rather than vanishing: a missing row would say the room rolls for no vial at
-  all.
+- **The vials-per-run knob items were removed in 3.30.0** (POE-366: no vial
+  term, no Vials-per-run knob).
 - **The value table sorts, and a re-sort moves nothing else** (POE-263): on a
   profile that has never set the sort (or after clearing the
-  `templeValueTableSort` pref), the Temple page's table must OPEN with Locus of
-  Corruption first and Doryani's Institute second — tier 3, biggest first, the
-  default sort. Click **Tier 3**: the order flips to cheapest first and the
+  `templeValueTableSort` pref), the Temple page's table must OPEN with the biggest tier-3 total first — the default sort. Click **Tier 3**: the order flips to cheapest first and the
   header's arrow with it. Click **Room line**: A→Z, and the arrow moves to that
-  header — not the direction that was on Tier 3. Click **Grade**: A1 first,
-  then A2 and A3, through E7; click again to reverse it. The column sorts on
-  Rust's derived `pickOrder`, not on the displayed tier/rank string.
-  Reach all three headers by TAB alone and fire one with Enter; a screen reader
+  header — not the direction that was on Tier 3. Only Room line and Tier 3
+  sort (`values.ts` `ValueSortKey`; a stored `grade:*` sort loads as
+  `DEFAULT_VALUE_SORT`; the Grade column was removed by POE-368).
+  Reach both headers by TAB alone and fire one with Enter; a screen reader
   must announce the sorted column as ascending or descending. Then close the app,
   reopen it, and the table must come back on the sort you left it on. **Nothing a
-  sort does may change a number**: note Locus's tier-3 cell before the first
+  sort does may change a number**: note the top row's tier-3 cell before the first
   click and check it is the same figure, with the same provenance letter, after
-  the third.
+  the second.
 - **Tiers 1-2 collapse, and a hand-priced hidden tier is still visible**
   (POE-263): on a profile with no stored `templeValueTableTiers` pick the table
   opens with **Tiers 1-2** ticked; a stored collapsed pick is kept. Clear it and the table
-  must be three columns (Room line, Grade, Tier 3) and the BOX must be narrower
+  must be two columns (Room line, Tier 3) and the BOX must be narrower
   than the card rather than stretched across it; the cleared pick must survive a
   restart like the sort. Tick it again and the two columns reappear. Then pick **Custom**,
   type a number into a tier-1 cell, and collapse the tiers again: the row's
