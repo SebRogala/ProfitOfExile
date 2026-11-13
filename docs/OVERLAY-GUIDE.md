@@ -560,12 +560,11 @@ the timer, compass, path-strip and comparator widgets.
   five constants would drift with nothing to fail — and `neverCoverRects` returns
   an EMPTY list both when there is no layout and when the scale factor has not
   resolved, which the callers must read as "place nothing yet" and never as "the
-  screen is free". **All four placers state that themselves rather than
-  inheriting it**: `offerStackPlacement`, `bannerPlacement`,
-  `doorDefaultPlacement` and `waitingDefaultPlacement` each return null on an
-  empty set (for the offer boxes that is null per BOX), and `doorDefaults` and
-  `waitingDefaults` in the route repeat it so no default is offered to the host
-  at all. The banner is
+  screen is free". **All three placers state that themselves rather than
+  inheriting it**: `offerStackPlacement`, `bannerPlacement` and
+  `doorDefaultPlacement` each return null on an empty set (for the offer boxes
+  that is null per BOX), and `doorDefaults` in the route repeats it so no
+  default is offered to the host at all. The banner is
   why the rule is stated per placer instead of once at the caller — its wanted
   position (top centre) is a function of the HOST alone, so an empty obstacle list
   did not withhold it, it PLACED it, straight over the panel crop the next tick

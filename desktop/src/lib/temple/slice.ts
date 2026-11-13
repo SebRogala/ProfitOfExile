@@ -728,7 +728,8 @@ export interface TempleSlice {
 	 * Alva line, a zone change, a completed read, a sighting, a stand-down and
 	 * the module being switched off.
 	 *
-	 * The notice's own gate is `overlayShowsWaiting`, not this field alone.
+	 * No overlay reads it since POE-388; the read prompt (`ssot.readPrompt`)
+	 * took over the waiting notice's job.
 	 */
 	waitingForPanel: boolean;
 	/**
