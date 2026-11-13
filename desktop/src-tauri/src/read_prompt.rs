@@ -165,14 +165,20 @@ fn apply_paused_in(state: &crate::AppState, change: Change, pause: &mut dyn FnMu
         }
     }
     pause();
-    // Lock order: the prompt mutex, then a module flag inside it. Nothing takes
-    // the prompt mutex while holding a module flag, and the check and the
-    // insertion share this guard with the disable clear below.
+    // Divine Font takes font_session before read_prompt, then the module flag.
+    // The lifecycle guard keeps take_font_upload from ending the context
+    // between the token check and prompt insertion. Module toggles release
+    // their flag before taking read_prompt, preserving WI-1's lock order.
+    let _font_session = matches!(change, Change::Arm(Mechanic::DivineFont))
+        .then(|| state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner()));
     edit_in(state, |p| match change {
         Change::Arm(mechanic) if !module_on(state, mechanic) => {}
         Change::Arm(Mechanic::DivineFont) => {
-            p.lab_context = state.lab_scan.font_context.load(std::sync::atomic::Ordering::SeqCst);
-            p.arm(Mechanic::DivineFont);
+            let token = state.lab_scan.font_context.load(std::sync::atomic::Ordering::SeqCst);
+            if token != 0 {
+                p.lab_context = token;
+                p.arm(Mechanic::DivineFont);
+            }
         }
         _ => p.apply(change),
     })
@@ -485,6 +491,14 @@ mod tests {
     }
 
     #[test]
+    fn a_divine_font_arm_without_a_context_publishes_no_prompt() {
+        let state = crate::settings::tests::test_app_state();
+        set_module(&state, Mechanic::DivineFont, true);
+        assert!(!apply_in(&state, Change::Arm(Mechanic::DivineFont)));
+        assert_eq!(shown_in(&state), None);
+    }
+
+    #[test]
     fn each_mechanic_arms_only_while_its_own_module_is_on() {
         let all = [Mechanic::DivineFont, Mechanic::Incursion, Mechanic::Mercenary];
         for mechanic in all {
@@ -495,6 +509,9 @@ mod tests {
             assert!(!apply_in(&state, Change::Arm(mechanic)), "{mechanic:?} armed with its module off");
             assert_eq!(shown_in(&state), None);
             set_module(&state, mechanic, true);
+            if mechanic == Mechanic::DivineFont {
+                crate::lab::font_context::arm_font_context(&state);
+            }
             assert!(apply_in(&state, Change::Arm(mechanic)));
             assert_eq!(shown_in(&state), Some(mechanic));
         }

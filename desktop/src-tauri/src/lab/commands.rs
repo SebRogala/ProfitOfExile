@@ -152,6 +152,7 @@ mod prompt_tests {
     fn disabling_lab_overlays_hides_the_shown_font_prompt() {
         let state = crate::settings::tests::test_app_state();
         set_lab_overlays_enabled_in(&state, true);
+        super::super::font_context::arm_font_context(&state);
         read_prompt::apply_in(&state, Change::Arm(Mechanic::DivineFont));
         assert_eq!(state.read_prompt.lock().unwrap().snapshot().mechanic, Some(Mechanic::DivineFont));
         set_lab_overlays_enabled_in(&state, false);

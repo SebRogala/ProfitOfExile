@@ -280,6 +280,33 @@ mod tests {
     }
 
     #[test]
+    fn a_font_open_after_idle_sealed_its_existing_context_publishes_no_prompt() {
+        let state = test_app_state();
+        let arm = arm_font_context(&state);
+        assert_eq!(arm_font_context_if_unarmed(&state), None);
+        let upload = take_font_upload(&state, Some(arm.idle_seq)).unwrap();
+
+        prompt(&state);
+
+        assert_eq!(shown(&state), None);
+        crate::read_prompt::end_lab_context_in(&state, upload.ended_token);
+        assert_eq!(shown(&state), None);
+    }
+
+    #[test]
+    fn a_font_open_after_idle_completion_publishes_no_prompt() {
+        let state = test_app_state();
+        let arm = arm_font_context(&state);
+        assert_eq!(arm_font_context_if_unarmed(&state), None);
+        let upload = take_font_upload(&state, Some(arm.idle_seq)).unwrap();
+        crate::read_prompt::end_lab_context_in(&state, upload.ended_token);
+
+        prompt(&state);
+
+        assert_eq!(shown(&state), None);
+    }
+
+    #[test]
     fn the_current_idle_seal_hides_its_font_prompt() {
         let state = test_app_state();
         let arm = arm_font_context(&state);
