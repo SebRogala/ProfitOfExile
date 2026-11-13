@@ -643,19 +643,6 @@
 				/>
 				<span class="meta">Atlas passive — four incursions per map instead of three.</span>
 			</div>
-			<BetaGate>
-				<label class="check">
-					<input
-						type="checkbox"
-						checked={temple.config.scarabOfTimelines}
-						onchange={(e) => setConfigFlag('scarabOfTimelines', e.currentTarget.checked)}
-					/>
-					<span>Incursion Scarab of Timelines <BetaBadge /></span>
-					<span class="meta">
-						Requires finishing every incursion, so "leave this map" is never advised.
-					</span>
-				</label>
-			</BetaGate>
 		</div>
 
 		<div class="setting">

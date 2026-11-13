@@ -578,7 +578,8 @@ export interface TempleConfig {
 	/** Atlas passive: *"Your Maps with Incursions always have four Incursions"*. */
 	artefactsOfTheVaal: boolean;
 	/** The Incursion Scarab of Timelines requires finishing every incursion in
-	 *  the map, which takes R5 (leave the map) away. */
+	 *  the map, which takes R5 (leave the map) away. Kept on the wire and in
+	 *  settings but inactive in 3.30 (POE-377), and no control draws it. */
 	scarabOfTimelines: boolean;
 }
 
@@ -755,7 +756,9 @@ export interface TempleSlice {
 	/** Null whenever there is no decision to make — no board, or no current
 	 *  room. Dropped, along with `mode`, when the module is switched off. */
 	advice: AdviceView | null;
-	/** `"chase"` or `"scarab"`, from the profile's own selector. */
+	/** The effective mode: always `"chase"` while `SCARAB_OF_TIMELINES_ACTIVE`
+	 *  in `strategy.rs` is false (POE-377); `"scarab"` stays a valid wire
+	 *  value. */
 	mode: string | null;
 	/** The config flags in force. Settings, not a reading: they survive the
 	 *  module being off. */
