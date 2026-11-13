@@ -7,8 +7,14 @@
  * which have no status store. There is no build-time or localhost fallback: until
  * the first snapshot lands the url is unknown (null).
  *
+ * The url also stays null until the Data & Privacy notice is accepted
+ * (`$lib/privacy/gate.svelte`, ADR-033): no webview request reaches our server
+ * before that. The first slice starts the gate in this window; the acceptance
+ * publishes the slice's url to the same waiters and listeners.
+ *
  * A leaf on purpose: it imports neither `$lib/api` nor `ssot.svelte`, because
  * `api.ts` reads from here and `ssot.svelte.ts` imports `api.ts` at module top.
+ * Its one import, the notice gate, is a leaf too.
  *
  * Usage:
  *   import { getServerUrl, whenServerUrl, onServerUrlChange } from '$lib/stores/server-base.svelte';
@@ -17,6 +23,8 @@
  *   // Watch: onServerUrlChange((url, previous) => …) — returns the unsubscribe
  *   // Write: applyServerSlice(snap.server) — ssot.svelte.ts `applySnapshot` only
  */
+
+import { initNoticeGate, noticeGate, onNoticeAccepted } from '$lib/privacy/gate.svelte';
 
 /** `AppSsotSnapshot.server` on the Rust side (same shape as ssot.svelte.ts `ServerSlice`). */
 export interface ServerSliceInput {
@@ -41,10 +49,22 @@ type Listener = (url: string, previous: string | null) => void;
 
 const listeners = new Set<Listener>();
 const waiters = new Set<(url: string) => void>();
+/** The last slice's url, published as `serverBase.url` once the notice is accepted. */
+let sliceUrl: string | null = null;
+let stopAcceptWait: (() => void) | null = null;
 
 /** The saved server base, or null before the first snapshot carries one. */
 export function getServerUrl(): string | null {
 	return serverBase.url;
+}
+
+function publish(): void {
+	if (sliceUrl === null || !noticeGate.accepted || sliceUrl === serverBase.url) return;
+	const url = sliceUrl;
+	const previous = serverBase.url;
+	serverBase.url = url;
+	for (const resolve of [...waiters]) resolve(url);
+	for (const fn of [...listeners]) fn(url, previous);
 }
 
 /**
@@ -54,12 +74,13 @@ export function getServerUrl(): string | null {
 export function applyServerSlice(slice: ServerSliceInput | undefined): void {
 	if (!slice) return;
 	if (slice.defaultUrl) serverBase.defaultUrl = slice.defaultUrl;
-	const url = slice.url || null;
-	if (url === null || url === serverBase.url) return;
-	const previous = serverBase.url;
-	serverBase.url = url;
-	for (const resolve of [...waiters]) resolve(url);
-	for (const fn of [...listeners]) fn(url, previous);
+	if (!slice.url) return;
+	sliceUrl = slice.url;
+	if (stopAcceptWait === null) {
+		initNoticeGate();
+		stopAcceptWait = onNoticeAccepted(publish);
+	}
+	publish();
 }
 
 /**
@@ -100,4 +121,7 @@ export function resetServerBaseForTests(): void {
 	serverBase.defaultUrl = '';
 	listeners.clear();
 	waiters.clear();
+	sliceUrl = null;
+	stopAcceptWait?.();
+	stopAcceptWait = null;
 }

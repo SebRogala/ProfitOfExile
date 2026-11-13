@@ -10,6 +10,7 @@
 	import { getServerUrl } from '$lib/stores/server-base.svelte';
 	import { currentDivineRate, initDivineRateStore } from '$lib/stores/divine-rate.svelte';
 	import { startMercureStore } from '$lib/stores/mercure.svelte';
+	import { initNoticeGate, whenNoticeAccepted } from '$lib/privacy/gate.svelte';
 	import { initNumberFormatStore } from '$lib/stores/number-format.svelte';
 	import { startRunRecorder } from '$lib/run-recorder';
 	import { nav, viewToPath, type View } from '$lib/stores/navigation.svelte';
@@ -18,7 +19,8 @@
 		MERC_FEATURE,
 		EXCHANGE_FEATURE,
 		TEMPLE_FEATURE,
-		BETA_FEATURE
+		BETA_FEATURE,
+		refreshEntitlements
 	} from '$lib/stores/entitlements.svelte';
 	import {
 		LAB_WINDOW_LABEL,
@@ -262,9 +264,15 @@
 	// ssot-changed nudge, but polling get_ssot is consistent with the overlays
 	// and cheap for a low-churn slice. No cleanup — this layout never unmounts.
 	startSsotStore();
-	initDivineRateStore();
-	// The app's one Mercure connection; it opens once store.status arrives.
-	startMercureStore();
+	// Nothing below reaches our server before the Data & Privacy notice is
+	// accepted (ADR-033); entitlements are re-asked at once on acceptance.
+	initNoticeGate();
+	void whenNoticeAccepted().then(() => {
+		initDivineRateStore();
+		// The app's one Mercure connection; it opens once store.status arrives.
+		startMercureStore();
+		void refreshEntitlements();
+	});
 	// The Number format pick every grouped figure reads (POE-323). Main window
 	// only: no overlay route formats a grouped number.
 	initNumberFormatStore();

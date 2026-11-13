@@ -291,6 +291,12 @@ pub struct Settings {
     /// file-owned like `proxy_url`.
     #[serde(default = "default_proxy_trade")]
     pub proxy_trade: bool,
+    /// The Data & Privacy notice revision the user accepted (POE-395,
+    /// ADR-033); `None` = never accepted. Written by `privacy::accept_at`,
+    /// read once at startup by [`privacy_accepted_revision_at`]; file-owned:
+    /// [`persist_overlay_settings`] carries it.
+    #[serde(default)]
+    pub privacy_accepted_revision: Option<u32>,
 }
 
 fn default_proxy_trade() -> bool {
@@ -778,6 +784,7 @@ impl Default for Settings {
             webview_gpu_disabled: false,
             proxy_url: String::new(),
             proxy_trade: default_proxy_trade(),
+            privacy_accepted_revision: None,
         }
     }
 }
@@ -894,7 +901,7 @@ fn save_to(path: &Path, settings: &Settings) -> Result<(), SaveError> {
 /// settings, `f` returns the settings to store. A file that exists but cannot
 /// be read or is not JSON is left untouched: overwriting it with defaults
 /// would drop a saved proxy nobody can see and unblock the next launch.
-fn update_at(
+pub(crate) fn update_at(
     path: &Path,
     resolve: impl FnOnce(Result<Settings, LoadError>) -> Settings,
     f: impl FnOnce(&Settings) -> Settings,
@@ -1035,6 +1042,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         webview_gpu_disabled: false, // File-owned, carried by persist_overlay_settings
         proxy_url: String::new(),    // File-owned, carried by persist_overlay_settings
         proxy_trade: default_proxy_trade(), // File-owned, carried by persist_overlay_settings
+        privacy_accepted_revision: None,    // File-owned, carried by persist_overlay_settings
     }
 }
 
@@ -1350,6 +1358,16 @@ pub fn persist_overlay_settings(existing: &Settings, target: &mut Settings) {
     target.webview_gpu_disabled = existing.webview_gpu_disabled;
     target.proxy_url = existing.proxy_url.clone();
     target.proxy_trade = existing.proxy_trade;
+    target.privacy_accepted_revision = existing.privacy_accepted_revision;
+}
+
+/// The notice revision the settings file at `path` records as accepted, read
+/// narrowly like [`proxy_config_at`]. No path, no file, an unreadable or
+/// non-JSON file, or a missing or malformed field all read as `None`: the
+/// notice shows again.
+pub fn privacy_accepted_revision_at(path: Option<&Path>) -> Option<u32> {
+    let json = settings_json_at(path?).ok()??;
+    json.get("privacy_accepted_revision")?.as_u64()?.try_into().ok()
 }
 
 /// The proxy the settings file at `path` asks for, read narrowly so an
@@ -1739,6 +1757,29 @@ pub(crate) mod tests {
         let _ = fs::remove_file(&path);
     }
 
+    #[test]
+    fn privacy_accepted_revision_survives_persist_settings() {
+        let (dir, path) = proxy_settings_file("privacy_carried", r#"{"privacy_accepted_revision":1}"#);
+        let state = test_app_state();
+        let result = update_at(&path, |loaded| loaded.unwrap(), |existing| {
+            let mut target = from_state(&state);
+            merge_stored_rows(existing, &mut target);
+            target
+        });
+        let read_back = privacy_accepted_revision_at(Some(&path));
+        let _ = fs::remove_dir_all(&dir);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(read_back, Some(1));
+    }
+
+    #[test]
+    fn privacy_accepted_revision_reader_returns_none_for_a_file_that_is_not_json() {
+        let (dir, path) = proxy_settings_file("privacy_not_json", r#"{"privacy_accepted_revision": 1"#);
+        let read_back = privacy_accepted_revision_at(Some(&path));
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(read_back, None);
+    }
+
     /// A settings file holding `contents` in a fresh per-test directory.
     fn proxy_settings_file(name: &str, contents: &str) -> (PathBuf, PathBuf) {
         let dir = std::env::temp_dir().join(format!("poe_test_proxy_cfg_{name}"));
@@ -1923,6 +1964,7 @@ pub(crate) mod tests {
             trade_client: crate::trade::TradeApiClient::new(&crate::http::ProxyConfig::none()),
             server_http: crate::http::client_builder(&crate::http::ProxyConfig::none(), crate::http::Transport::Other).build().unwrap(),
             proxy_in_effect: crate::http::ProxyConfig::none(),
+            privacy_gate: crate::http::NoticeGate::default(),
             watcher_cancel: Mutex::new(None),
             comparator_data: Mutex::new(serde_json::json!({})),
             overlay_hook_stop: Mutex::new(None),

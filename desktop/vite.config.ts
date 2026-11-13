@@ -14,6 +14,7 @@ export default defineConfig({
 		// reads `tokens.css` that way to prove the overlay window's palette is
 		// actually declared, so it needs the real text.
 		css: true,
+		setupFiles: ['./src/lib/privacy/test-accepted.ts'],
 		projects: [
 			{
 				extends: true,

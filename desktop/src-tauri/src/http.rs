@@ -154,6 +154,74 @@ pub fn client_builder(proxy: &ProxyConfig, transport: Transport) -> reqwest::Cli
     }
 }
 
+/// Whether the Data & Privacy notice is accepted this session (ADR-033).
+/// Closed by default; once opened it stays open for the process.
+#[derive(Clone, Default)]
+pub struct NoticeGate(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl NoticeGate {
+    pub fn open(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+pub const NOTICE_NOT_ACCEPTED: &str = "Data & privacy notice not accepted";
+
+/// The builder for the client that talks to our server: [`client_builder`]
+/// plus a layer that refuses every connection while `gate` is closed. The
+/// gate is read on each connection, so opening it unblocks a client that is
+/// already built.
+pub fn server_client_builder(proxy: &ProxyConfig, gate: NoticeGate) -> reqwest::ClientBuilder {
+    client_builder(proxy, Transport::Other).connector_layer(RefuseUntilAccepted(gate))
+}
+
+#[derive(Clone)]
+struct RefuseUntilAccepted(NoticeGate);
+
+impl<S> tower_layer::Layer<S> for RefuseUntilAccepted {
+    type Service = UntilAccepted<S>;
+
+    fn layer(&self, inner: S) -> UntilAccepted<S> {
+        UntilAccepted { inner, gate: self.0.clone() }
+    }
+}
+
+#[derive(Clone)]
+struct UntilAccepted<S> {
+    inner: S,
+    gate: NoticeGate,
+}
+
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+impl<S, R> tower_service::Service<R> for UntilAccepted<S>
+where
+    S: tower_service::Service<R>,
+    S::Response: Send + 'static,
+    S::Error: Into<BoxError>,
+    S::Future: Send + 'static,
+{
+    type Response = S::Response;
+    type Error = BoxError;
+    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<S::Response, BoxError>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx).map_err(Into::into)
+    }
+
+    fn call(&mut self, request: R) -> Self::Future {
+        if !self.gate.is_open() {
+            return Box::pin(std::future::ready(Err(NOTICE_NOT_ACCEPTED.into())));
+        }
+        let future = self.inner.call(request);
+        Box::pin(async move { future.await.map_err(Into::into) })
+    }
+}
+
 /// A connector layer that never calls the connector it wraps: every
 /// connection fails with the blocked reason before a socket opens.
 #[derive(Clone)]
@@ -430,6 +498,57 @@ mod tests {
             chain.contains("Proxy test reason. Nothing is sent until you fix or clear the proxy in Settings and restart the app."),
             "{chain}"
         );
+    }
+
+    /// The error's whole source chain, joined, so a reason nested inside
+    /// reqwest's connect error is visible.
+    fn error_chain(err: &reqwest::Error) -> String {
+        let mut chain = err.to_string();
+        let mut source = std::error::Error::source(err);
+        while let Some(e) = source {
+            chain.push_str(" | ");
+            chain.push_str(&e.to_string());
+            source = e.source();
+        }
+        chain
+    }
+
+    fn server_client(proxy: &ProxyConfig, gate: &NoticeGate) -> reqwest::Client {
+        server_client_builder(proxy, gate.clone()).timeout(Duration::from_secs(2)).build().unwrap()
+    }
+
+    #[tokio::test]
+    async fn server_client_refuses_before_the_notice_is_accepted() {
+        let (origin_port, seen) = recording_listener();
+        let err = server_client(&ProxyConfig::none(), &NoticeGate::default())
+            .get(format!("http://127.0.0.1:{origin_port}/api/status"))
+            .send()
+            .await
+            .unwrap_err();
+        assert!(seen.recv_timeout(Duration::from_millis(500)).is_err(), "the closed gate let a request reach the origin");
+        assert!(error_chain(&err).contains(NOTICE_NOT_ACCEPTED), "{}", error_chain(&err));
+    }
+
+    #[tokio::test]
+    async fn server_client_connects_once_its_gate_opens() {
+        let (origin_port, seen) = recording_listener();
+        let gate = NoticeGate::default();
+        let client = server_client(&ProxyConfig::none(), &gate);
+        gate.open();
+        let body = client.get(format!("http://127.0.0.1:{origin_port}/api/status")).send().await.unwrap().text().await.unwrap();
+        assert_eq!(body, "ok");
+        assert_eq!(seen.recv_timeout(Duration::from_secs(2)).unwrap(), "GET /api/status HTTP/1.1");
+    }
+
+    #[tokio::test]
+    async fn server_client_with_a_blocked_proxy_refuses_with_an_open_gate() {
+        let (origin_port, seen) = recording_listener();
+        let gate = NoticeGate::default();
+        gate.open();
+        let blocked = ProxyConfig { mode: ProxyMode::blocked("Proxy test reason"), trade: true };
+        let err = server_client(&blocked, &gate).get(format!("http://127.0.0.1:{origin_port}/")).send().await.unwrap_err();
+        assert!(seen.recv_timeout(Duration::from_millis(500)).is_err(), "a blocked proxy let a request reach the origin");
+        assert!(error_chain(&err).contains("Proxy test reason"), "{}", error_chain(&err));
     }
 
     #[test]

@@ -12,6 +12,27 @@ import {
 	whenServerUrl
 } from './server-base.svelte';
 
+import { resetNoticeGateForTests } from '$lib/privacy/gate.svelte';
+
+const tauri = vi.hoisted(() => ({
+	accepted: false,
+	onAccepted: null as null | (() => void)
+}));
+
+vi.mock('@tauri-apps/api/core', () => ({
+	invoke: vi.fn(async (cmd: string) =>
+		cmd === 'get_privacy_state'
+			? { currentRevision: 1, acceptedRevision: null, accepted: tauri.accepted, persisted: false }
+			: null
+	)
+}));
+vi.mock('@tauri-apps/api/event', () => ({
+	listen: vi.fn(async (_event: string, handler: () => void) => {
+		tauri.onAccepted = handler;
+		return () => {};
+	})
+}));
+
 const DEFAULT = 'https://default.example';
 
 function deliver(url: string): void {
@@ -165,5 +186,53 @@ describe('whenServerUrl', () => {
 		expect(resolved).not.toHaveBeenCalled();
 		expect(rejected).toHaveBeenCalledTimes(1);
 		expect(vi.getTimerCount()).toBe(0);
+	});
+});
+
+describe('before the Data & Privacy notice is accepted', () => {
+	beforeEach(() => {
+		resetNoticeGateForTests();
+		tauri.accepted = false;
+		tauri.onAccepted = null;
+	});
+
+	it('url stays null after the slice lands while the notice is not accepted', async () => {
+		deliver('https://a.example');
+		await vi.waitFor(() => expect(tauri.onAccepted).not.toBeNull());
+
+		expect(getServerUrl()).toBeNull();
+	});
+
+	it('url appears on privacy-accepted', async () => {
+		const heard = vi.fn();
+		onServerUrlChange(heard);
+		deliver('https://a.example');
+		await vi.waitFor(() => expect(tauri.onAccepted).not.toBeNull());
+
+		tauri.onAccepted!();
+
+		expect(getServerUrl()).toBe('https://a.example');
+		expect(heard.mock.calls).toEqual([['https://a.example', null]]);
+	});
+
+	it('whenServerUrl resolves only after accept', async () => {
+		const resolved = vi.fn();
+		whenServerUrl().then(resolved);
+		deliver('https://a.example');
+		await vi.waitFor(() => expect(tauri.onAccepted).not.toBeNull());
+		await Promise.resolve();
+		expect(resolved).not.toHaveBeenCalled();
+
+		tauri.onAccepted!();
+
+		await vi.waitFor(() => expect(resolved).toHaveBeenCalledWith('https://a.example'));
+	});
+
+	it('url appears when Rust already reports the notice accepted', async () => {
+		tauri.accepted = true;
+
+		deliver('https://a.example');
+
+		await vi.waitFor(() => expect(getServerUrl()).toBe('https://a.example'));
 	});
 });

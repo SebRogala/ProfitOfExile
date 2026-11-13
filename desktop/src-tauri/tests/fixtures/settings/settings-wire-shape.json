@@ -84,5 +84,6 @@
   "widgets": {},
   "webview_gpu_disabled": false,
   "proxy_url": "",
-  "proxy_trade": true
+  "proxy_trade": true,
+  "privacy_accepted_revision": null
 }

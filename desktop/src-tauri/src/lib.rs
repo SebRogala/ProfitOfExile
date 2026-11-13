@@ -23,6 +23,7 @@ mod mercenary;
 mod modules;
 mod ocr;
 mod overlay_hook;
+mod privacy;
 mod read_hotkey;
 mod settings;
 mod ssot;
@@ -386,6 +387,9 @@ pub struct AppState {
     /// The proxy `run()` read at startup and every transport uses until the
     /// next launch; the saved `Settings::proxy_url` may differ.
     pub proxy_in_effect: http::ProxyConfig,
+    /// Open once the Data & Privacy notice is accepted; `server_http` refuses
+    /// every connection until then (ADR-033).
+    pub privacy_gate: http::NoticeGate,
     /// Cancel signal for the current log watcher. Send () to stop it.
     pub watcher_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
     /// Cached comparator overlay data (results + trade data) shared between windows.
@@ -1781,6 +1785,10 @@ pub fn run() {
     // Also before the builder: the proxy goes into the WebView2 args and into
     // both reqwest clients below.
     let proxy_in_effect = settings::proxy_config_at(settings_path.as_deref());
+    let privacy_gate = http::NoticeGate::default();
+    if privacy::accepted(settings::privacy_accepted_revision_at(settings_path.as_deref()), privacy::current_revision()) {
+        privacy_gate.open();
+    }
     let prior = std::env::var(WEBVIEW2_ARGS_ENV).unwrap_or_default();
     if !prior.is_empty() {
         log::warn!("{} already set ({:?}); appending our flags", WEBVIEW2_ARGS_ENV, prior);
@@ -1807,7 +1815,7 @@ pub fn run() {
     if let Ok(v) = reqwest::header::HeaderValue::from_str(version) {
         default_headers.insert("X-App-Version", v);
     }
-    let server_http = http::client_builder(&proxy_in_effect, http::Transport::Other)
+    let server_http = http::server_client_builder(&proxy_in_effect, privacy_gate.clone())
         .default_headers(default_headers)
         .build()
         .expect("failed to build server HTTP client");
@@ -1840,6 +1848,7 @@ pub fn run() {
         trade_client: trade::TradeApiClient::new(&proxy_in_effect),
         server_http,
         proxy_in_effect: proxy_in_effect.clone(),
+        privacy_gate,
         watcher_cancel: Mutex::new(None),
         comparator_data: Mutex::new(serde_json::json!({"results":[],"tradeData":{}})),
         overlay_hook_stop: Mutex::new(None),
@@ -1876,6 +1885,9 @@ pub fn run() {
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_status,
+            privacy::get_privacy_state,
+            privacy::accept_privacy_revision,
+            privacy::quit_app,
             ssot::get_ssot,
             ssot::set_league,
             ssot::league_command::note_server_league,
