@@ -20,6 +20,7 @@ import (
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 	"profitofexile/internal/mercure"
+	"profitofexile/internal/retention"
 	"profitofexile/internal/server"
 	"profitofexile/internal/temple"
 	"profitofexile/internal/trade"
@@ -261,6 +262,10 @@ func main() {
 		// Trade refresh scheduling: collector publishes poe/collector/trade-tick
 		// Mercure events; the server subscriber routes them to HandleTradeTick.
 	}
+
+	// Runs regardless of TRADE_ENABLED; serviceCtx keeps it to one instance.
+	purger := retention.NewPurger(pool)
+	go purger.Run(serviceCtx, 24*time.Hour)
 
 	deviceRepo := device.NewRepository(pool)
 
