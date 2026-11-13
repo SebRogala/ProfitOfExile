@@ -159,7 +159,7 @@ returns 400, a mismatch returns 409 with `error: league_mismatch` and the active
 league. The native submitter treats 409 as terminal and triggers status
 reconciliation; it does not relabel or replay the outgoing result.
 
-Contribution is a separate persisted opt-in, disabled by default. When the user enables it, every successful native lookup should be contributed to the server so other users and analysis can benefit from a fresher shared pool.
+**Current behavior:** Every successful native lookup is contributed to the server so other users and analysis benefit from a fresher shared pool. The Data & Privacy notice covers it ([ADR-033](adr/033-one-versioned-privacy-notice-gates-every-server-request.md)); there is no per-feature opt-out.
 
 ```text
 Successful desktop result
