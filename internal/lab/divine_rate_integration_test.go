@@ -75,3 +75,39 @@ func TestLatestNinjaDivinePrice_noSnapshotIsZeroWithoutError(t *testing.T) {
 		t.Errorf("got (%v, %v), want (0, zero time)", chaos, at)
 	}
 }
+
+func TestNinjaDivinePriceAsOf_readsTheNewestSnapshotAtOrBeforeAsOf(t *testing.T) {
+	pool := labIntegrationPool(t)
+	id := "POE-307-ndp-asof-1"
+	registerLeague(t, pool, id)
+	cleanupAtTime(t, pool, futureTime(71), "currency_snapshots")
+	cleanupAtTime(t, pool, futureTime(73), "currency_snapshots")
+	seedNinjaDivine(t, pool, id, futureTime(73), 190)
+	seedNinjaDivine(t, pool, id, futureTime(71), 170)
+
+	chaos, at, err := NewRepository(pool).NinjaDivinePriceAsOf(context.Background(), league.Historical(id), futureTime(72))
+
+	if err != nil {
+		t.Fatalf("NinjaDivinePriceAsOf: %v", err)
+	}
+	if !valuesClose(chaos, 170) || !at.Equal(futureTime(71)) {
+		t.Errorf("got (%v, %v), want (170, %v) — the 190 snapshot is after asOf", chaos, at, futureTime(71))
+	}
+}
+
+func TestNinjaDivinePriceAsOf_noSnapshotBeforeAsOfIsZeroWithoutError(t *testing.T) {
+	pool := labIntegrationPool(t)
+	id := "POE-307-ndp-asof-2"
+	registerLeague(t, pool, id)
+	cleanupAtTime(t, pool, futureTime(73), "currency_snapshots")
+	seedNinjaDivine(t, pool, id, futureTime(73), 190)
+
+	chaos, at, err := NewRepository(pool).NinjaDivinePriceAsOf(context.Background(), league.Historical(id), futureTime(72))
+
+	if err != nil {
+		t.Fatalf("NinjaDivinePriceAsOf: %v", err)
+	}
+	if chaos != 0 || !at.IsZero() {
+		t.Errorf("got (%v, %v), want (0, zero time)", chaos, at)
+	}
+}

@@ -169,20 +169,31 @@ func (r *Repository) LatestGCPPrice(ctx context.Context, scope league.Scope) (fl
 // currency_snapshots and its snapshot time. No row, or a NULL price, is
 // (0, zero time, nil): the caller treats it as no rate.
 func (r *Repository) LatestNinjaDivinePrice(ctx context.Context, scope league.Scope) (float64, time.Time, error) {
-	if err := scope.Validate(); err != nil {
+	chaos, at, err := r.ninjaDivinePrice(ctx, scope, nil)
+	if err != nil {
 		return 0, time.Time{}, fmt.Errorf("lab repo: latest ninja divine price: %w", err)
+	}
+	return chaos, at, nil
+}
+
+// ninjaDivinePrice reads the newest divine snapshot at or before asOf; a nil
+// asOf is unbounded. No row, or a NULL price, is (0, zero time, nil).
+func (r *Repository) ninjaDivinePrice(ctx context.Context, scope league.Scope, asOf *time.Time) (float64, time.Time, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, time.Time{}, err
 	}
 	var chaos *float64
 	var at time.Time
 	err := r.pool.QueryRow(ctx, `
 		SELECT chaos, time FROM currency_snapshots
 		WHERE league = $1 AND currency_id = 'divine'
-		ORDER BY time DESC LIMIT 1`, scope.ID()).Scan(&chaos, &at)
+		  AND ($2::timestamptz IS NULL OR time <= $2)
+		ORDER BY time DESC LIMIT 1`, scope.ID(), asOf).Scan(&chaos, &at)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, time.Time{}, nil
 	}
 	if err != nil {
-		return 0, time.Time{}, fmt.Errorf("lab repo: latest ninja divine price: %w", err)
+		return 0, time.Time{}, err
 	}
 	if chaos == nil {
 		return 0, time.Time{}, nil
@@ -2248,4 +2259,15 @@ func FilterGemDictionary(all []string, transfigured bool) []string {
 		names = append(names, n)
 	}
 	return names
+}
+
+// NinjaDivinePriceAsOf is LatestNinjaDivinePrice as of asOf: the newest
+// poe.ninja divine snapshot taken at or before asOf, with its time. No such
+// row, or a NULL price, is (0, zero time, nil).
+func (r *Repository) NinjaDivinePriceAsOf(ctx context.Context, scope league.Scope, asOf time.Time) (float64, time.Time, error) {
+	chaos, at, err := r.ninjaDivinePrice(ctx, scope, &asOf)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("lab repo: ninja divine price as of: %w", err)
+	}
+	return chaos, at, nil
 }

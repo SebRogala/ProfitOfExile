@@ -61,28 +61,45 @@ func (r *DivineRateReader) Current() DivineRate {
 		return DivineRate{}
 	}
 	res, warm := r.cache.Snapshot(DefaultHorizon)
-	last, hasHour := LastUpdated(res)
-	if warm && res.DivineChaosRate > 0 {
-		return DivineRate{
-			Chaos:        res.DivineChaosRate,
-			Buy:          res.DivineChaosBuy,
-			Sell:         res.DivineChaosSell,
-			PriceHour:    last,
-			Source:       DivineRateSourceExchange,
-			ExchangeWarm: true,
-		}
+	ex := exchangeDivine{Chaos: res.DivineChaosRate, Buy: res.DivineChaosBuy, Sell: res.DivineChaosSell}
+	if last, hasHour := LastUpdated(res); hasHour {
+		ex.Hour = last
 	}
 
 	r.mu.RLock()
 	ninja, ninjaAt := r.ninja, r.ninjaAt
 	r.mu.RUnlock()
+	return chooseDivineRate(ex, warm, ninja, ninjaAt)
+}
+
+// exchangeDivine is the exchange's newest hour as the rate rules read it: its
+// divine/chaos VWAP (0 when the hour did not trade divine), spread, and hour
+// (zero when there is none).
+type exchangeDivine struct {
+	Chaos, Buy, Sell float64
+	Hour             time.Time
+}
+
+// chooseDivineRate holds the rate rules Current and DivineRateAsOf share: the
+// exchange's newest-hour rate while warm and non-zero, else the ninja snapshot,
+// else no rate (keeping the warm hour as PriceHour).
+func chooseDivineRate(ex exchangeDivine, warm bool, ninja float64, ninjaAt time.Time) DivineRate {
+	if warm && ex.Chaos > 0 {
+		return DivineRate{
+			Chaos:        ex.Chaos,
+			Buy:          ex.Buy,
+			Sell:         ex.Sell,
+			PriceHour:    ex.Hour,
+			Source:       DivineRateSourceExchange,
+			ExchangeWarm: true,
+		}
+	}
 	if ninja > 0 {
 		return DivineRate{Chaos: ninja, PriceHour: ninjaAt, Source: DivineRateSourceNinja, ExchangeWarm: warm}
 	}
-
 	out := DivineRate{ExchangeWarm: warm}
-	if warm && hasHour {
-		out.PriceHour = last
+	if warm {
+		out.PriceHour = ex.Hour
 	}
 	return out
 }
@@ -105,4 +122,37 @@ func (r *DivineRateReader) RefreshFallback(ctx context.Context) error {
 	r.ninja, r.ninjaAt = chaos, at
 	r.mu.Unlock()
 	return nil
+}
+
+// DivineRateAsOf is the answer Current would have given at asOf. rows are the
+// window Recompute reads, anchored on the newest stored hour before asOf
+// (Repository.NewestHourBefore, then LoadRows over the widest window), so a
+// stalled feed still answers its last real hour; ninjaChaos and ninjaAt are
+// the newest poe.ninja snapshot at or before asOf. Rows at or after asOf are
+// ignored. Like Current, an hour without a divine trade serves the ninja rate
+// rather than an older hour's VWAP. Never queries.
+func DivineRateAsOf(rows []StoredRow, asOf time.Time, ninjaChaos float64, ninjaAt time.Time) DivineRate {
+	var newest time.Time
+	warm := false
+	for _, r := range rows {
+		if r.Hour.Before(asOf) && (!warm || r.Hour.After(newest)) {
+			newest, warm = r.Hour, true
+		}
+	}
+
+	var ex exchangeDivine
+	if warm {
+		var hourRows []Row
+		for _, r := range rows {
+			if r.Hour.Equal(newest) {
+				hourRows = append(hourRows, r.Row)
+			}
+		}
+		ex.Hour = newest
+		ex.Chaos, _ = divineRateOf(hourRows)
+		if buy, sell, ok := divineSpreadOf(hourRows); ok {
+			ex.Buy, ex.Sell = buy, sell
+		}
+	}
+	return chooseDivineRate(ex, warm, ninjaChaos, ninjaAt)
 }

@@ -1190,3 +1190,26 @@ func TestPlaysPage_OverflowingPageIsEmptyWithUnchangedCounts(t *testing.T) {
 		})
 	}
 }
+
+func TestNewestHourBefore_returnsTheNewestStoredHourBeforeAsOf(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newTestRepository(t, pool)
+	ctx := context.Background()
+
+	earlier, later := baseHour, baseHour.Add(2*time.Hour)
+	for _, hour := range []time.Time{later, earlier} {
+		if _, err := repo.InsertHour(ctx, integrationScope, hour,
+			[]Row{pricedRow()}, hour.Add(time.Hour).Unix()); err != nil {
+			t.Fatalf("InsertHour %s: %v", hour, err)
+		}
+	}
+
+	newest, found, err := repo.NewestHourBefore(ctx, integrationScope, baseHour.Add(time.Hour))
+
+	if err != nil {
+		t.Fatalf("NewestHourBefore: %v", err)
+	}
+	if !found || !newest.Equal(earlier) {
+		t.Errorf("NewestHourBefore = (%s, %v), want (%s, true) — %s is after asOf", newest, found, earlier, later)
+	}
+}

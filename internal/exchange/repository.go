@@ -64,6 +64,9 @@ const selectCursorSQL = `SELECT next_hour FROM currency_exchange_cursor WHERE le
 // than a full read, and the predicate narrows it to one league.
 const selectNewestHourSQL = `SELECT MAX(time) FROM currency_exchange_markets WHERE league = $1`
 
+// selectNewestHourBeforeSQL is selectNewestHourSQL bounded to hours before $2.
+const selectNewestHourBeforeSQL = `SELECT MAX(time) FROM currency_exchange_markets WHERE league = $1 AND time < $2`
+
 // Repository persists currency-exchange hours in TimescaleDB. It is the only
 // reader and the only writer of currency_exchange_markets and
 // currency_exchange_cursor: downstream engines go through NewestHour and
@@ -620,3 +623,20 @@ func (p ScopedPlaysPager) PlaysPage(ctx context.Context, q PlaysPageQuery) (Play
 }
 
 var _ PlaysPager = ScopedPlaysPager{}
+
+// NewestHourBefore is NewestHour as of asOf: the newest stored feed hour
+// strictly before asOf, in UTC. It anchors an as-of read's window the way
+// NewestHour anchors Recompute's.
+func (r *Repository) NewestHourBefore(ctx context.Context, scope league.Scope, asOf time.Time) (time.Time, bool, error) {
+	if err := scope.Validate(); err != nil {
+		return time.Time{}, false, fmt.Errorf("exchange repo: newest hour before: %w", err)
+	}
+	var newest *time.Time
+	if err := r.pool.QueryRow(ctx, selectNewestHourBeforeSQL, scope.ID(), asOf).Scan(&newest); err != nil {
+		return time.Time{}, false, fmt.Errorf("exchange repo: newest hour before: %w", err)
+	}
+	if newest == nil {
+		return time.Time{}, false, nil
+	}
+	return newest.UTC(), true, nil
+}

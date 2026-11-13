@@ -133,3 +133,107 @@ func TestDivineRateReader_nilReaderIsNoRate(t *testing.T) {
 		t.Errorf("RefreshFallback() = %v, want nil", err)
 	}
 }
+
+// currentOn is what the live reader answers once a recompute over rows has run:
+// BestPlays → the default horizon's cache entry → Current, with the fallback
+// refreshed from fallback (nil means never).
+func currentOn(t *testing.T, rows []StoredRow, fallback DivineRateFallback) DivineRate {
+	t.Helper()
+	cache := NewCache()
+	cache.Set(DefaultHorizon, BestPlays("Allflame", rows, DefaultConfig()))
+	return refreshed(t, cache, fallback).Current()
+}
+
+// divineAtVWAP210 is a divine/chaos hour whose VWAP is 4,200,000 / 20,000 = 210.
+func divineAtVWAP210() rowSpec {
+	spec := wideDivineSpec()
+	spec.volume = [2]int64{4200000, 20000}
+	return spec
+}
+
+// nonDivineSpec is a chaos-quoted market that is not divine/chaos.
+func nonDivineSpec() rowSpec {
+	return rowSpec{
+		itemA:        chaosID,
+		itemB:        hellID,
+		volume:       [2]int64{5000, 100},
+		lowestStock:  [2]int64{1000, 20},
+		highestStock: [2]int64{2000, 40},
+		lowestRatio:  [2]int64{50, 1},
+		highestRatio: [2]int64{55, 1},
+	}
+}
+
+func TestDivineRateAsOf_equalsCurrentOnTheSameRows(t *testing.T) {
+	rows := storedAt(feedHour, wideDivineSpec().row())
+	current := currentOn(t, rows, nil)
+
+	got := DivineRateAsOf(rows, feedHour.Add(time.Hour), 0, time.Time{})
+
+	want := DivineRate{Chaos: 199, Buy: 196, Sell: 203, PriceHour: feedHour, Source: DivineRateSourceExchange, ExchangeWarm: true}
+	if current != want {
+		t.Fatalf("Current() = %+v, want %+v — the oracle itself moved", current, want)
+	}
+	if got != current {
+		t.Errorf("DivineRateAsOf = %+v, want Current's %+v", got, current)
+	}
+}
+
+func TestDivineRateAsOf_ignoresHoursAtOrAfterAsOf(t *testing.T) {
+	asOf := feedHour.Add(time.Hour)
+	rows := append(storedAt(feedHour, wideDivineSpec().row()),
+		storedAt(asOf, divineAtVWAP210().row())...)
+
+	got := DivineRateAsOf(rows, asOf, 0, time.Time{})
+
+	if got.Chaos != 199 || !got.PriceHour.Equal(feedHour) {
+		t.Errorf("DivineRateAsOf = %+v, want Chaos 199 at %v — the 210 hour starts at asOf", got, feedHour)
+	}
+}
+
+func TestDivineRateAsOf_hourWithoutADivineTradeServesTheNinjaRate(t *testing.T) {
+	// The older hour's 199 is what a skip-to-the-last-divine-hour rule would serve.
+	rows := append(storedAt(feedHour.Add(-time.Hour), wideDivineSpec().row()),
+		storedAt(feedHour, nonDivineSpec().row())...)
+
+	got := DivineRateAsOf(rows, feedHour.Add(time.Hour), 180, ninjaAt)
+
+	want := DivineRate{Chaos: 180, PriceHour: ninjaAt, Source: DivineRateSourceNinja, ExchangeWarm: true}
+	if got != want {
+		t.Errorf("DivineRateAsOf = %+v, want %+v", got, want)
+	}
+}
+
+func TestDivineRateAsOf_noRowsServesTheNinjaRate(t *testing.T) {
+	got := DivineRateAsOf(nil, feedHour, 180, ninjaAt)
+
+	want := DivineRate{Chaos: 180, PriceHour: ninjaAt, Source: DivineRateSourceNinja}
+	if got != want {
+		t.Errorf("DivineRateAsOf = %+v, want %+v", got, want)
+	}
+}
+
+func TestDivineRateAsOf_noRowsAndNoNinjaIsNoRate(t *testing.T) {
+	got := DivineRateAsOf(nil, feedHour, 0, time.Time{})
+
+	if got != (DivineRate{}) {
+		t.Errorf("DivineRateAsOf = %+v, want the zero DivineRate", got)
+	}
+}
+
+func TestDivineRateAsOf_stalledFeedEqualsCurrent(t *testing.T) {
+	// The only stored hour lies 30 h before asOf, past the 24 h widest window: a
+	// window anchored on the clock would hold nothing and serve the ninja 180.
+	asOf := feedHour.Add(30 * time.Hour)
+	rows := storedAt(feedHour, wideDivineSpec().row())
+	current := currentOn(t, rows, ninjaFallback(180, ninjaAt))
+
+	got := DivineRateAsOf(rows, asOf, 180, ninjaAt)
+
+	if current.Chaos != 199 || current.Source != DivineRateSourceExchange {
+		t.Fatalf("Current() = %+v, want Chaos 199, Source exchange — the oracle itself moved", current)
+	}
+	if got != current {
+		t.Errorf("DivineRateAsOf = %+v, want Current's %+v", got, current)
+	}
+}
