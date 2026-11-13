@@ -499,6 +499,14 @@ pub fn placements_for(screen: Option<&ScreenSlice>) -> Placements {
     }
 }
 
+/// The server base URLs carried on [`AppSsotSnapshot::server`].
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerSlice {
+    pub url: String,
+    pub default_url: String,
+}
+
 /// Full app-wide SSOT snapshot. Cloned for both the poll response and the
 /// eager event payload, so it stays cheap and `Send`.
 ///
@@ -568,6 +576,12 @@ pub struct AppSsotSnapshot {
     /// Capture-relative OCR and module placements derived from `screen`.
     /// These are projected at snapshot time, never stored as a second owner.
     pub placements: Placements,
+    /// The server base the webview builds its URLs from (POE-383), read through
+    /// `settings::server_base` at snapshot time — not stored in `AppState.ssot`.
+    /// `default_url` is the built-in default, which the server toggle treats as
+    /// "no target". `Default` is two empty strings, which the webview reads as
+    /// "not known yet".
+    pub server: ServerSlice,
     // future slices (e.g. account, config) added here as later tasks land.
 }
 
@@ -687,7 +701,12 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     // lets `publish_screen` re-enter here through `emit_ssot` after dropping
     // its own guard. `ScreenSlice` is `Copy`, so the deref clones it.
     let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
-    compose_snapshot(
+    // Lone acquisition inside `server_base`, ending with its own statement.
+    let server = ServerSlice {
+        url: crate::settings::server_base(state),
+        default_url: crate::settings::DEFAULT_SERVER_URL.to_string(),
+    };
+    let mut snapshot = compose_snapshot(
         base,
         normal_variant,
         dedication_variant,
@@ -700,7 +719,9 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         merc_tier_floor,
         temple,
         screen,
-    )
+    );
+    snapshot.server = server;
+    snapshot
 }
 
 /// Whether `consecutive_failures` failed fetch attempts should flip the SSOT to
@@ -1771,6 +1792,25 @@ mod tests {
     #[test]
     fn league_name_is_none_before_resolution() {
         assert_eq!(league_name(&crate::settings::tests::test_app_state()), None);
+    }
+
+    #[test]
+    fn build_snapshot_carries_the_saved_server_base() {
+        let state = crate::settings::tests::test_app_state();
+        let field = &state.server_url;
+        *field.lock().unwrap() = "https://saved.example/".into();
+        assert_eq!(build_snapshot(&state).server.url, "https://saved.example");
+    }
+
+    #[test]
+    fn build_snapshot_carries_the_built_default_server() {
+        let state = crate::settings::tests::test_app_state();
+        let field = &state.server_url;
+        *field.lock().unwrap() = "https://saved.example/".into();
+        assert_eq!(
+            build_snapshot(&state).server.default_url,
+            crate::settings::DEFAULT_SERVER_URL
+        );
     }
 
     /// Locks the fail-closed default: a fresh snapshot reports the league as
@@ -3684,7 +3724,7 @@ mod tests {
             last_error: Some("temple error".into()),
             ..Default::default()
         };
-        compose_snapshot(
+        let mut snapshot = compose_snapshot(
             base,
             "20/20".into(),
             "21/23".into(),
@@ -3697,7 +3737,12 @@ mod tests {
             2,
             temple,
             screen,
-        )
+        );
+        snapshot.server = ServerSlice {
+            url: "https://saved.example".into(),
+            default_url: "https://built.example".into(),
+        };
+        snapshot
     }
 
     /// Writes `path` under `SSOT_CONTRACT_UPDATE=1`, otherwise fails on a diff.

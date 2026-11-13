@@ -400,5 +400,9 @@
         757
       ]
     }
+  },
+  "server": {
+    "url": "https://saved.example",
+    "defaultUrl": "https://built.example"
   }
 }

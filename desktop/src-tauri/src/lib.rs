@@ -886,6 +886,8 @@ fn set_server_url(url: String, app: AppHandle) {
         temple::market::on_server_url_changed(&app);
         font_alerts::on_server_url_changed(&app);
         ssot::rearm_league(app.clone());
+        // Main-window nudge for the new `server` slice; overlays get it on the 3 s poll.
+        ssot::emit_ssot(&app);
     }
     emit_status(&app);
 }

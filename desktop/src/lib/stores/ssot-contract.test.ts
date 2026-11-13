@@ -15,6 +15,7 @@ import type {
 	BossLootSlice,
 	Placements,
 	ScreenSlice,
+	ServerSlice,
 	SsotSnapshot
 } from './ssot.svelte';
 import type { MercenarySlice } from '../mercenaries/capture';
@@ -32,7 +33,13 @@ const snapshotKeys: Record<keyof SsotSnapshot, true> = {
 	mercenary: true,
 	temple: true,
 	screen: true,
-	placements: true
+	placements: true,
+	server: true
+};
+
+const serverKeys: Record<keyof ServerSlice, true> = {
+	url: true,
+	defaultUrl: true
 };
 
 const leagueKeys: Record<keyof SsotSnapshot['league'], true> = {
@@ -130,7 +137,8 @@ describe('ssot-snapshot.json golden matches SsotSnapshot', () => {
 		['mercenary', mercenaryKeys],
 		['temple', templeKeys],
 		['screen', screenKeys],
-		['placements', placementsKeys]
+		['placements', placementsKeys],
+		['server', serverKeys]
 	] as const)('carries exactly the %s slice keys', (slice, table) => {
 		expect(keysOf(wire[slice])).toEqual(Object.keys(table).sort());
 	});

@@ -252,6 +252,12 @@ export interface BossLootSlice {
 	nowMs: number;
 }
 
+/** `AppSsotSnapshot.server` on the Rust side. */
+export interface ServerSlice {
+	url: string;
+	defaultUrl: string;
+}
+
 export interface SsotSnapshot {
 	league: { name: string | null; generation?: number };
 	/** A league resolve is in flight (bounded-retry fetch task running). */
@@ -293,6 +299,9 @@ export interface SsotSnapshot {
 	screen?: ScreenSlice | null;
 	/** Capture-relative placements derived from `screen`, never stored separately. */
 	placements?: Placements;
+	/** The server base URLs (POE-383), Rust-owned via `settings::server_base`.
+	 *  `''` means not known yet. Type only until WI-4 applies it. */
+	server?: ServerSlice;
 }
 
 /**
