@@ -189,7 +189,6 @@ func loadTradeConfig(leagueName string, cacheMax int) trade.TradeConfig {
 		}
 	}
 
-	cfg.UserAgent = getEnvDefault("TRADE_USER_AGENT", "profitofexile/0.1.0")
 	cfg.SyncWaitBudget = 500 * time.Millisecond
 	if v := os.Getenv("TRADE_SYNC_WAIT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {

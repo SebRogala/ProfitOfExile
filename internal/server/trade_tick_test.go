@@ -17,7 +17,6 @@ import (
 func newTickTestGate() *trade.Gate {
 	cfg := trade.TradeConfig{
 		LeagueName:        "Mirage",
-		UserAgent:         "ProfitOfExile/test",
 		CeilingFactor:     0.65,
 		DefaultSearchRate: 5,
 		DefaultFetchRate:  5,

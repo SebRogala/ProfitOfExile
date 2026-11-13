@@ -714,8 +714,8 @@
 // within one catch-up pass and defaults to 250ms; 0 disables the pacing, and the
 // default is applied by the cmd/collector wiring rather than by NewRunner.
 //
-// Naming rule: the Go package is named exchange, and every user-facing string
-// (User-Agent, error text, log message) says "currency-exchange". A bare "cx"
+// Naming rule: the Go package is named exchange, and error text and log
+// messages say "currency-exchange". A bare "cx"
 // identifier is never used.
 //
 // # Operations

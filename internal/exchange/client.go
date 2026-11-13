@@ -10,13 +10,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"profitofexile/internal/useragent"
 )
 
 // DefaultBaseURL is the public currency-exchange feed root.
 const DefaultBaseURL = "https://web.poecdn.com/api/currency-exchange"
 
 const (
-	userAgent      = "ProfitOfExile/1.0 (currency-exchange)"
 	requestTimeout = 30 * time.Second
 
 	// errorBodyLimit caps how much of a failing response body statusError quotes
@@ -76,7 +77,7 @@ func (c *Client) FetchHour(ctx context.Context, hour int64, realm string) (*Hour
 	if err != nil {
 		return nil, fmt.Errorf("exchange: create request %s: %w", rawURL, err)
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", useragent.Server())
 
 	resp, err := c.http.Do(req)
 	if err != nil {

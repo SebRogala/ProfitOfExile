@@ -25,7 +25,6 @@ type TradeConfig struct {
 	DefaultFetchRate  int           // conservative fetch req budget before real headers (default: 1 req/2s)
 	MaxQueueWait      time.Duration // max time a request can sit in queue before error (default: 30s)
 	CacheMaxEntries   int           // LRU cache capacity (default: 200)
-	UserAgent         string        // User-Agent header for GGG requests
 	SyncWaitBudget    time.Duration // max time handler blocks for fast-path response (default: 500ms)
 }
 

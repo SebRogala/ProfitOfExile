@@ -12,13 +12,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"profitofexile/internal/useragent"
 )
 
 // testTradeClient creates a Client pointing at the given test server.
 func testTradeClient(t *testing.T, server *httptest.Server) *Client {
 	t.Helper()
 	c := NewClient(TradeConfig{
-		UserAgent:  "ProfitOfExile/test",
 		LeagueName: "Mirage",
 	})
 	c.SetBaseURL(server.URL)
@@ -173,8 +174,32 @@ func TestSearch_UserAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if receivedUA != "ProfitOfExile/test" {
-		t.Errorf("User-Agent = %q, want %q", receivedUA, "ProfitOfExile/test")
+	assertServerUserAgent(t, receivedUA)
+}
+
+func TestFetch_UserAgent(t *testing.T) {
+	var receivedUA string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUA = r.Header.Get("User-Agent")
+		json.NewEncoder(w).Encode(tradeFetchResp{})
+	}))
+	defer server.Close()
+
+	c := testTradeClient(t, server)
+	if _, _, err := c.Fetch(context.Background(), "q", []string{"a"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertServerUserAgent(t, receivedUA)
+}
+
+func assertServerUserAgent(t *testing.T, got string) {
+	t.Helper()
+	if got != useragent.Server() {
+		t.Errorf("User-Agent = %q, want %q", got, useragent.Server())
+	}
+	if !strings.HasPrefix(got, "ProfitOfExile-server/") || !strings.HasSuffix(got, " (contact: contact@profitofexile.top)") {
+		t.Errorf("User-Agent = %q, want ProfitOfExile-server/<rev> (contact: contact@profitofexile.top)", got)
 	}
 }
 
@@ -442,7 +467,7 @@ func TestSearchFixedTarget_SendsDecodedTicketQueryInClientLeague(t *testing.T) {
 				json.NewEncoder(w).Encode(tradeSearchResp{ID: "q", Total: 0})
 			}))
 			defer server.Close()
-			c := NewClient(TradeConfig{UserAgent: "ProfitOfExile/test", LeagueName: "Keepers"})
+			c := NewClient(TradeConfig{LeagueName: "Keepers"})
 			c.SetBaseURL(server.URL)
 
 			if _, _, err := c.SearchFixedTarget(context.Background(), target); err != nil {

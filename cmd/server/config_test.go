@@ -24,7 +24,7 @@ var serverConfigEnv = []string{
 	"EXCHANGE_RECENT_WINDOW_HOURS", "EXCHANGE_RECENT_MIN_HOURS_SEEN",
 	"EXCHANGE_DAY_WINDOW_HOURS", "EXCHANGE_DAY_MIN_HOURS_SEEN",
 	"TRADE_ENABLED", "TRADE_CACHE_MAX", "TRADE_CEILING", "TRADE_LATENCY_PAD",
-	"TRADE_MAX_WAIT", "TRADE_SYNC_WAIT", "TRADE_USER_AGENT",
+	"TRADE_MAX_WAIT", "TRADE_SYNC_WAIT",
 }
 
 func clearServerConfigEnv(t *testing.T) {
@@ -338,7 +338,7 @@ func TestLoadTradeConfig_enabledUsesExistingDefaults(t *testing.T) {
 	if !got.Enabled || got.LeagueName != "Mirage" {
 		t.Fatalf("trade config identity = enabled %v, league %q; want true, Mirage", got.Enabled, got.LeagueName)
 	}
-	if got.CeilingFactor != 0.65 || got.LatencyPadding != time.Second || got.DefaultSearchRate != 1 || got.DefaultFetchRate != 1 || got.MaxQueueWait != 30*time.Second || got.CacheMaxEntries != 200 || got.UserAgent != "profitofexile/0.1.0" || got.SyncWaitBudget != 500*time.Millisecond {
+	if got.CeilingFactor != 0.65 || got.LatencyPadding != time.Second || got.DefaultSearchRate != 1 || got.DefaultFetchRate != 1 || got.MaxQueueWait != 30*time.Second || got.CacheMaxEntries != 200 || got.SyncWaitBudget != 500*time.Millisecond {
 		t.Fatalf("trade defaults = %+v, want existing startup defaults", got)
 	}
 }
@@ -397,16 +397,6 @@ func TestLoadTradeConfig_validOverridesPopulateTheirFields(t *testing.T) {
 			assert: func(t *testing.T, got trade.TradeConfig) {
 				if got.SyncWaitBudget != 125*time.Millisecond {
 					t.Errorf("SyncWaitBudget = %v, want 125ms", got.SyncWaitBudget)
-				}
-			},
-		},
-		{
-			name:  "user agent",
-			key:   "TRADE_USER_AGENT",
-			value: "fixture-user-agent",
-			assert: func(t *testing.T, got trade.TradeConfig) {
-				if got.UserAgent != "fixture-user-agent" {
-					t.Errorf("UserAgent = %q, want fixture-user-agent", got.UserAgent)
 				}
 			},
 		},

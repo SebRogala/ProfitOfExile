@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"profitofexile/internal/useragent"
 )
 
 const (
@@ -73,7 +75,7 @@ func NewClient(cfg TradeConfig) *Client {
 	return &Client{
 		httpClient: &http.Client{Timeout: tradeClientTimeout},
 		baseURL:    defaultTradeBaseURL,
-		userAgent:  cfg.UserAgent,
+		userAgent:  useragent.Server(),
 		leagueName: cfg.LeagueName,
 	}
 }

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"profitofexile/internal/useragent"
 )
 
 // emptyHourBody is a minimal valid 200 body for tests that assert on the
@@ -99,8 +101,11 @@ func TestFetchHour_setsUserAgentHeader(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if gotAgent != "ProfitOfExile/1.0 (currency-exchange)" {
-		t.Errorf("User-Agent = %q, want %q", gotAgent, "ProfitOfExile/1.0 (currency-exchange)")
+	if gotAgent != useragent.Server() {
+		t.Errorf("User-Agent = %q, want %q", gotAgent, useragent.Server())
+	}
+	if !strings.HasPrefix(gotAgent, "ProfitOfExile-server/") || !strings.HasSuffix(gotAgent, " (contact: contact@profitofexile.top)") {
+		t.Errorf("User-Agent = %q, want ProfitOfExile-server/<rev> (contact: contact@profitofexile.top)", gotAgent)
 	}
 }
 

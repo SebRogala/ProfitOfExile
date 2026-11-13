@@ -129,7 +129,6 @@ func newTestGate(t *testing.T, server *httptest.Server, pub *mockPublisher, maxW
 	t.Helper()
 	cfg := TradeConfig{
 		LeagueName:        "Mirage",
-		UserAgent:         "ProfitOfExile/test",
 		CeilingFactor:     0.65,
 		LatencyPadding:    0,
 		DefaultSearchRate: 5,
@@ -442,7 +441,6 @@ func TestGate_WaitEvent(t *testing.T) {
 	pub := &mockPublisher{}
 	cfg := TradeConfig{
 		LeagueName:        "Mirage",
-		UserAgent:         "ProfitOfExile/test",
 		CeilingFactor:     1.0, // use full budget so we can fill it precisely
 		LatencyPadding:    100 * time.Millisecond,
 		DefaultSearchRate: 1, // 1 req per 5s window
@@ -567,7 +565,6 @@ func TestGate_RateLimitSync(t *testing.T) {
 	pub := &mockPublisher{}
 	cfg := TradeConfig{
 		LeagueName:        "Mirage",
-		UserAgent:         "ProfitOfExile/test",
 		CeilingFactor:     0.65,
 		LatencyPadding:    0,
 		DefaultSearchRate: 1, // intentionally low default
@@ -625,7 +622,6 @@ func TestGate_CacheOnResult(t *testing.T) {
 	pub := &mockPublisher{}
 	cfg := TradeConfig{
 		LeagueName:        "Mirage",
-		UserAgent:         "ProfitOfExile/test",
 		CeilingFactor:     0.65,
 		LatencyPadding:    0,
 		DefaultSearchRate: 5,

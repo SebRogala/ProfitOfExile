@@ -20,7 +20,6 @@ func testConfig() TradeConfig {
 		DefaultFetchRate:  5,
 		MaxQueueWait:      30 * time.Second,
 		CacheMaxEntries:   100,
-		UserAgent:         "test-agent",
 		SyncWaitBudget:    500 * time.Millisecond,
 	}
 }
