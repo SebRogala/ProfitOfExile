@@ -317,7 +317,7 @@ the module is on, following [Overlay Guide § Screen reading (GGG policy)](../OV
   a Recalibrate is pending (`run::locate_decision`, `FallbackKey { refit, press }`). Scan now is
   gone; Recalibrate is the manual fix.
 - Clause 5: a full round 1 runs on a new capture, a replaced panel, a Recalibrate or a
-  template-store change; a held capture that no longer lines up also reads `Full`; any other
+  template-store change; an incomplete held capture that no longer lines up also reads `Full`; any other
   press is an unknown-only round.
 
 The merc column of "Where each clause lives" above names the POE-390 homes. Normative write-up
