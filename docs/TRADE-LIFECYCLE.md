@@ -85,8 +85,6 @@ Properties:
 
 ### One lookup per click
 
-Screen reading under GGG's policy is ruled in [Overlay Guide § Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy).
-
 Every native GGG trade request starts from a user click (POE-392); the desktop does not search on detection, on compare results, on capture, or on cache age. Each click sends its own lookup through the native queue and limiter, and the desktop displays the result locally:
 
 - Comparator per-gem trade button: one lookup for that gem.
@@ -494,6 +492,8 @@ Contributors should document trust boundaries and configuration behavior clearly
 ## GGG policy
 
 **Current behavior (POE-384, POE-385).** This section is the normative source for how ProfitOfExile identifies itself to GGG and budgets its requests. GGG's developer docs require an identifiable User-Agent with a contact on every request.
+
+Screen reading under GGG's policy is ruled in [Overlay Guide § Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy).
 
 ### User-Agent per surface
 
