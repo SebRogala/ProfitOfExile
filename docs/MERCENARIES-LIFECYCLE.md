@@ -26,6 +26,8 @@ and the work/page boundary remains in
 | Capture read | Apply ADR-025's full/unknown-only read budget, then switch to liveness checks; hover correction remains independent. | `2f53ee61` |
 | New identity or manual scan | Refill the read budget; template-generation changes also refill the merc budget. | `2f53ee61`, `f2f93cf9` |
 
+The automatic probes, retries and hover re-reads in this document break [Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy); POE-390 replaces the merc capture loop and POE-397 the gem icon reads.
+
 A qualifying Inspect line over a held capture is ignored. Otherwise a new
 qualifying line can re-arm two probes, bounded by the stale-line window from
 the first line in its chain. Text and asset normalization share one trigger

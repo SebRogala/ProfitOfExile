@@ -33,6 +33,7 @@ The shared scan interval is 250 ms. Gem scanning also ends on its 150-second
 timeout or after finding three distinct gems. These are code bounds, not
 guarantees that OCR will recognize a tooltip. Shipped in the shared scheduler:
 `7227d757`.
+This automatic scan breaks [Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy); POE-391 replaces it.
 
 Manual `start_scanning` starts a fresh gem generation and clears comparator
 gems; `stop_scanning` invalidates that generation. A replacement start also
