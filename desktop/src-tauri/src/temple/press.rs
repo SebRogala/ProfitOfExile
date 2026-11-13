@@ -45,12 +45,9 @@ impl PressContext for AppHandle {
 }
 
 /// The reason a press reads the temple at `now_ms`, or `None` when Client.txt
-/// puts no temple in scope. A Re-arm (`Manual`) arm is not temple context.
+/// puts no temple in scope.
 pub fn press_reason(arm: ArmState, now_ms: u64) -> Option<ArmReason> {
-    arm.arm
-        .reason()
-        .filter(|_| arm.arm.is_armed(now_ms))
-        .filter(|reason| matches!(reason, ArmReason::AlvaStart | ArmReason::TempleArea))
+    arm.arm.reason().filter(|_| arm.arm.is_armed(now_ms))
 }
 
 /// The temple's entry in `crate::read_hotkey::READERS`.
@@ -202,10 +199,12 @@ mod tests {
         assert!(read_by_the_worker(world, rx).is_empty());
     }
 
-    /// Re-arm is not Client.txt temple context (Coordinator ruling, 2026-11-13).
+    /// An arm whose deadline has passed is no temple context. Fails if
+    /// `press_reason` drops its `is_armed` check.
     #[test]
-    fn a_press_under_a_manual_arm_grabs_nothing() {
-        let (world, _rx) = world(armed(ArmReason::Manual));
+    fn a_press_under_an_expired_arm_grabs_nothing() {
+        let expired = TempleArm::Armed { until_ms: Some(1), reason: ArmReason::AlvaStart };
+        let (world, _rx) = world(ArmState { arm: expired, ..ArmState::default() });
 
         assert_eq!(press_through_the_read_key(&world, vec![sample(PRESSED)]), 0);
     }

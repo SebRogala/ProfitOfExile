@@ -186,9 +186,6 @@ pub enum ArmReason {
     AlvaStart,
     /// The player is inside The Temple of Atzoatl.
     TempleArea,
-    /// The user pressed Re-arm. No production constructor since POE-389
-    /// removed Re-arm; `press.rs` tests still name it.
-    Manual,
 }
 
 impl ArmReason {
@@ -197,7 +194,6 @@ impl ArmReason {
         match self {
             ArmReason::AlvaStart => "Alva's start line",
             ArmReason::TempleArea => "the temple",
-            ArmReason::Manual => "Re-arm",
         }
     }
 }
