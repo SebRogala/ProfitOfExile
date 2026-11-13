@@ -284,7 +284,7 @@ func TestGemNamesAutocomplete_offersTheLatestSnapshotHoweverStale(t *testing.T) 
 	// retention window (ADR-034), so the retention job cannot drop it mid-run.
 	// The odd sub-second offset keeps cleanupAtTime, which deletes across
 	// leagues, from matching a real row.
-	stale := time.Now().UTC().Add(-14*24*time.Hour).Truncate(time.Second).Add(437 * time.Microsecond)
+	stale := time.Now().UTC().Add(-14 * 24 * time.Hour).Truncate(time.Second).Add(437 * time.Microsecond)
 	cleanupAtTime(t, pool, stale, "gem_snapshots")
 
 	const name = "POE145 Cyclone of Tumult"
