@@ -377,11 +377,13 @@ describe('registration', () => {
 
 		expect(mocks.fetchDeviceMe).not.toHaveBeenCalled();
 		expect(mod.registration.state).toBe('checking');
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining('no device id yet'));
 	});
 
 	it('reads a registered answer with its alias and role', async () => {
 		const mod = await landWith(fx.registered);
 		expect({ ...mod.registration }).toEqual({ state: 'registered', alias: 'Gaming PC', role: 'beta' });
+		expect(warn).not.toHaveBeenCalled();
 	});
 
 	it('reads a registered answer without a role', async () => {
@@ -392,6 +394,7 @@ describe('registration', () => {
 	it('reads a null alias as unregistered', async () => {
 		const mod = await landWith(fx.unregistered);
 		expect(mod.registration.state).toBe('unregistered');
+		expect(warn).not.toHaveBeenCalled();
 	});
 
 	it('reads an empty alias as unregistered', async () => {
@@ -411,6 +414,10 @@ describe('registration', () => {
 		void mod.loadEntitlements();
 		await vi.advanceTimersByTimeAsync(0);
 		expect(mod.registration.state).toBe('unknown');
+		expect(warn).toHaveBeenCalledWith(
+			expect.stringContaining('/api/device/me failed'),
+			expect.any(Error)
+		);
 	});
 
 	it('moves from unknown to registered on the retry after a rejection', async () => {
@@ -605,5 +612,60 @@ describe('registration', () => {
 		void mod.loadEntitlements();
 		await vi.advanceTimersByTimeAsync(0);
 		expect(mod.registration.state).toBe('unregistered');
+	});
+
+	it('settles a load made before a server switch once the new server answers', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		const serverA = deferred();
+		mocks.fetchDeviceMe
+			.mockImplementationOnce(() => serverA.promise)
+			.mockResolvedValueOnce(fx.registered);
+		const mod = await import('./entitlements.svelte');
+		let beforeSwitch = false;
+		let afterSwitch = false;
+		void mod.loadEntitlements().then(() => {
+			beforeSwitch = true;
+		});
+		await vi.advanceTimersByTimeAsync(0);
+
+		mod.resetEntitlements();
+		void mod.refreshEntitlements().then(() => {
+			afterSwitch = true;
+		});
+		serverA.resolve(fx.unregistered);
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(mod.registration.state).toBe('registered');
+		expect([beforeSwitch, afterSwitch]).toEqual([true, true]);
+	});
+
+	it('asks again on a load made right after an awaited one landed', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe.mockResolvedValueOnce(fx.registered).mockResolvedValueOnce(fx.unregistered);
+		const mod = await import('./entitlements.svelte');
+
+		await mod.loadEntitlements();
+		await mod.loadEntitlements();
+
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(2);
+		expect(mod.registration.state).toBe('unregistered');
+	});
+
+	it('asks the new server on a reset and refresh right after an awaited load landed', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe.mockResolvedValueOnce(fx.registered).mockResolvedValueOnce(fx.unregistered);
+		const mod = await import('./entitlements.svelte');
+		let refreshed = false;
+
+		await mod.loadEntitlements();
+		mod.resetEntitlements();
+		void mod.refreshEntitlements().then(() => {
+			refreshed = true;
+		});
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(2);
+		expect(mod.registration.state).toBe('unregistered');
+		expect(refreshed).toBe(true);
 	});
 });

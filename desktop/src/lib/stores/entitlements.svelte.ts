@@ -281,14 +281,14 @@ let loading: Promise<void> | null = null;
  * written entitlements, which can be before the chain ends — an answer
  * without `alias` lands the grant but the chain keeps asking for registration.
  */
-let landed: { promise: Promise<void>; resolve: () => void } | null = null;
+let landed: { promise: Promise<void>; resolve: () => void; settled: boolean } | null = null;
 
-function newLanded(): { promise: Promise<void>; resolve: () => void } {
+function newLanded(): { promise: Promise<void>; resolve: () => void; settled: boolean } {
 	let resolve!: () => void;
 	const promise = new Promise<void>((r) => {
 		resolve = r;
 	});
-	return { promise, resolve };
+	return { promise, resolve, settled: false };
 }
 
 /**
@@ -314,9 +314,7 @@ let generation = 0;
 export function loadEntitlements(): Promise<void> {
 	if (!loading || !landed) {
 		landed = newLanded();
-		loading = runLoad().finally(() => {
-			loading = null;
-		});
+		loading = runLoad();
 	}
 	return landed.promise;
 }
@@ -354,7 +352,8 @@ export function refreshEntitlements(): Promise<void> {
  * landed grant), so this is the one place a grant is withdrawn without a
  * server saying so. Registration goes back to `checking` and an identify pin
  * is dropped with it; a running chain drops what it is waiting on and, if it
- * had landed, counts as not landed again.
+ * had landed, counts as not landed again (callers still waiting keep waiting
+ * for the new server's answer).
  */
 export function resetEntitlements(): void {
 	generation++;
@@ -363,7 +362,7 @@ export function resetEntitlements(): void {
 	registration.state = 'checking';
 	registration.alias = '';
 	registration.role = '';
-	if (loading) landed = newLanded();
+	if (loading && landed?.settled) landed = newLanded();
 }
 
 async function runLoad(): Promise<void> {
@@ -378,8 +377,19 @@ async function runLoad(): Promise<void> {
 		if (outcome.kind === 'answer') {
 			write(normalizeEntitlements(outcome.body));
 			writeRegistration(normalizeRegistration(outcome.body));
-			landed?.resolve();
-			if (registration.state !== 'unknown') return;
+			const waiting = landed;
+			const done = registration.state !== 'unknown';
+			// Cleared before the callers resume, so one that loads or resets
+			// right after its await starts a new chain instead of joining this one.
+			if (done) {
+				loading = null;
+				landed = null;
+			}
+			if (waiting) {
+				waiting.settled = true;
+				waiting.resolve();
+			}
+			if (done) return;
 		} else {
 			missRegistration(outcome.kind === 'no-device' ? 'checking' : 'unknown');
 		}
