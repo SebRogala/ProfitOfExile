@@ -1529,22 +1529,30 @@ async fn fetch_league_once(app: &AppHandle) -> bool {
     let Some(name) = fetch_league_from_server(&http, &server_url).await else {
         return false;
     };
-    let changed = {
-        let state = app.state::<AppState>();
-        let current_url = crate::settings::server_base(&state);
-        let task = LEAGUE_SCHEDULER.task.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(changed) = accept_league_response(
-            &state.ssot, (&current_url, task.url_generation), (&server_url, url_generation), name,
-        ) else {
-            return false;
-        };
-        changed
+    let state = app.state::<AppState>();
+    let Some(changed) = accept_for_current_server(&state, &LEAGUE_SCHEDULER.task, (&server_url, url_generation), name)
+    else {
+        return false;
     };
     publish_league_resolution(app, changed);
     true
 }
 
-/// The URL owner stays locked through this synchronous acceptance step.
+/// Holds the URL owner through acceptance: `set_server_url` writes the URL
+/// before it bumps `url_generation`, so a response read against the old URL in
+/// that gap would otherwise still match.
+fn accept_for_current_server(
+    state: &AppState,
+    task: &std::sync::Mutex<LeagueTask>,
+    requested: (&str, u64),
+    name: String,
+) -> Option<Option<LeagueChanged>> {
+    crate::settings::with_server_base(state, |current_url| {
+        let task = task.lock().unwrap_or_else(|e| e.into_inner());
+        accept_league_response(&state.ssot, (current_url, task.url_generation), requested, name)
+    })
+}
+
 fn accept_league_response(
     ssot: &std::sync::Mutex<AppSsotSnapshot>,
     current: (&str, u64),
@@ -3928,6 +3936,31 @@ mod league_resolver_tests {
         assert!(accept_league_response(&ssot, ("server", 2), ("server", 0), "A".into()).is_none());
         let snapshot = ssot.lock().unwrap();
         assert_eq!((snapshot.league.name.as_deref(), snapshot.league.generation), (Some("B"), 1));
+    }
+
+    #[test]
+    fn a_server_url_write_waits_for_league_acceptance_to_finish() {
+        let state = std::sync::Arc::new(crate::settings::tests::test_app_state());
+        let owner = &state.server_url;
+        *owner.lock().unwrap() = "https://a.example".into();
+        let task = std::sync::Arc::new(Mutex::new(LeagueTask::default()));
+        let blocked_task = task.lock().unwrap();
+        let acceptance = {
+            let (state, task) = (state.clone(), task.clone());
+            std::thread::spawn(move || {
+                accept_for_current_server(&state, &task, ("https://a.example", 0), "A".into()).is_some()
+            })
+        };
+        let owner_held = || matches!(owner.try_lock(), Err(std::sync::TryLockError::WouldBlock));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !owner_held() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let held_while_waiting = owner_held();
+        drop(blocked_task);
+        assert!(acceptance.join().unwrap(), "the response for the still-current URL is accepted");
+        assert!(held_while_waiting, "a URL write could land between the current-URL read and acceptance");
     }
 
     struct Hint<'a>(&'a Runtime);

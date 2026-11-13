@@ -726,7 +726,14 @@ pub const DEFAULT_SERVER_URL: &str = match option_env!("POE_SERVER_URL") {
 /// The one read of the runtime server base for native callers, without
 /// trailing slashes so `format!("{base}/api/...")` never yields `//api`.
 pub fn server_base(state: &crate::AppState) -> String {
-    state.server_url.lock().unwrap_or_else(|e| e.into_inner()).trim_end_matches('/').to_string()
+    with_server_base(state, str::to_string)
+}
+
+/// Runs `f` on the normalised server base while the URL owner stays locked,
+/// for a caller whose decision must not race a `set_server_url` write.
+pub fn with_server_base<R>(state: &crate::AppState, f: impl FnOnce(&str) -> R) -> R {
+    let held = state.server_url.lock().unwrap_or_else(|e| e.into_inner());
+    f(held.trim_end_matches('/'))
 }
 
 impl Default for Settings {
