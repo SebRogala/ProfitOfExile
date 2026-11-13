@@ -3,6 +3,7 @@
  * `privacy-accepted` event do to `noticeGate` and its waiters.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { listen } from '@tauri-apps/api/event';
 import { initNoticeGate, noticeGate, resetNoticeGateForTests, whenNoticeAccepted } from './gate.svelte';
 
 const tauri = vi.hoisted(() => ({
@@ -52,13 +53,36 @@ describe('initNoticeGate', () => {
 
 	it('a failed answer keeps the gate closed', async () => {
 		tauri.fail = true;
-		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		initNoticeGate();
 
-		await vi.waitFor(() => expect(tauri.invokes).toBe(1));
-		await Promise.resolve();
+		await vi.waitFor(() =>
+			expect(logged).toHaveBeenCalledWith('[privacy] get_privacy_state failed:', new Error('no backend'))
+		);
+		logged.mockRestore();
 		expect(noticeGate.accepted).toBe(false);
+	});
+
+	it('an acceptance made while the listener registers is read from the state query', async () => {
+		let registered!: () => void;
+		vi.mocked(listen).mockImplementationOnce(
+			(_event, handler) =>
+				new Promise((resolve) => {
+					registered = () => {
+						tauri.onAccepted = handler as () => void;
+						resolve(() => {});
+					};
+				})
+		);
+
+		initNoticeGate();
+		await Promise.resolve();
+		expect(tauri.invokes).toBe(0);
+		tauri.accepted = true; // another window accepted; its event fired before registration
+		registered();
+
+		await vi.waitFor(() => expect(noticeGate.accepted).toBe(true));
 	});
 
 	it('a second call asks Rust no second time', async () => {

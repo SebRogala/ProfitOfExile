@@ -37,19 +37,28 @@ function markAccepted(): void {
 	acceptedListeners.clear();
 }
 
-/** Ask Rust once and listen for `privacy-accepted`. Later calls do nothing. */
+/**
+ * Listen for `privacy-accepted`, then ask Rust once. Later calls do nothing.
+ * The listener is registered first: an acceptance in another window between
+ * the two would otherwise be missed for the session.
+ */
 export function initNoticeGate(): void {
 	if (started) return;
 	started = true;
-	listen('privacy-accepted', () => markAccepted()).catch((e) =>
-		console.error('[privacy] listen privacy-accepted failed:', e)
-	);
-	invoke<PrivacyState>('get_privacy_state')
-		.then((state) => {
+	void (async () => {
+		try {
+			await listen('privacy-accepted', () => markAccepted());
+		} catch (e) {
+			console.error('[privacy] listen privacy-accepted failed:', e);
+		}
+		try {
+			const state = await invoke<PrivacyState>('get_privacy_state');
 			if (state.accepted) markAccepted();
 			else noticeGate.known = true;
-		})
-		.catch((e) => console.error('[privacy] get_privacy_state failed:', e));
+		} catch (e) {
+			console.error('[privacy] get_privacy_state failed:', e);
+		}
+	})();
 }
 
 /** Call `fn` once when the notice is accepted (at once if it already is). */
