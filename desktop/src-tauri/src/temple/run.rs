@@ -8458,4 +8458,295 @@ mod tests {
             },
         }
     }
+
+    // ---------------------------- first-read verdict on the live capture --
+
+    /// Today's first read of a board, pinned on the live capture (POE-389
+    /// WI-0): the oracle for "one press gives the same verdict as today on the
+    /// same frame". The expected values were recorded by running the pre-change
+    /// code once; they are literals so a refactor of the read cannot move them.
+    mod first_read_verdict {
+        use super::*;
+        use crate::ocr::OcrLineBox;
+        use crate::temple::lattice::Slot;
+        use crate::temple::market::MarketInput;
+        use crate::temple::preset::{self, Preset, TempleCustomSettings};
+        use crate::temple::rooms::Match;
+        use std::cell::RefCell;
+        use std::collections::VecDeque;
+
+        /// One expected OCR call: what it is for, the crop it must be handed,
+        /// and what the engine answers.
+        struct Call {
+            label: String,
+            crop: DynamicImage,
+            response: Vec<OcrLineBox>,
+        }
+
+        /// An ordered response script. Each `recognize` pops the next call and
+        /// refuses a crop that is not, pixel for pixel, the one production cuts
+        /// for that call — so a reordered or re-cropped read fails here instead
+        /// of answering with another plate's text.
+        struct ScriptedOcr {
+            calls: RefCell<VecDeque<Call>>,
+            made: RefCell<usize>,
+        }
+
+        impl panel::TextRecognizer for ScriptedOcr {
+            fn recognize(&self, img: &DynamicImage) -> Result<Vec<OcrLineBox>, String> {
+                *self.made.borrow_mut() += 1;
+                let call = self
+                    .calls
+                    .borrow_mut()
+                    .pop_front()
+                    .expect("an OCR call the script does not expect");
+                assert!(
+                    img.as_bytes() == call.crop.as_bytes()
+                        && (img.width(), img.height()) == (call.crop.width(), call.crop.height()),
+                    "{}: the crop handed to OCR is not the one production cuts for it",
+                    call.label,
+                );
+                Ok(call.response)
+            }
+        }
+
+        impl ScriptedOcr {
+            fn assert_consumed(&self) {
+                let left: Vec<String> = self.calls.borrow().iter().map(|c| c.label.clone()).collect();
+                assert!(left.is_empty(), "scripted OCR calls never made: {left:?}");
+            }
+        }
+
+        /// The side panel as Windows.Media.Ocr boxed it on this capture
+        /// (laptop dump, capture px) — the same lines `panel.rs` pins.
+        const PANEL_LINES: [([i32; 4], &str); 9] = [
+            ([1288, 80, 254, 19], "LIGHTNING WORKSHOP"),
+            ([1505, 115, 113, 10], "HAYOXI, ARCHITECT OF"),
+            ([1526, 129, 70, 9], "DESTRUCTION"),
+            ([1479, 143, 163, 11], "(KILL TO UPGRADE TO OMNITECT"),
+            ([1520, 157, 83, 11], "REACTOR PLANT)"),
+            ([1194, 289, 146, 10], "XOPEC, ARCHITECT OF POWER"),
+            ([1188, 303, 160, 11], "(KILL TO CHANGE TO EXPLOSIVES"),
+            ([1251, 317, 34, 11], "ROOM)"),
+            ([1342, 364, 146, 12], "ENTER INCURSION"),
+        ];
+
+        /// The budget line under the layout, capture px.
+        const REMAINING_LINE: ([i32; 4], &str) = ([855, 786, 210, 16], "3 INCURSIONS REMAINING");
+
+        /// What each plate prints on the capture, in [`Slot::ALL`] order: its
+        /// name and its tier numeral (empty where the plate prints none).
+        const PLATES: [(&str, &str); 13] = [
+            ("APEX OF ATZOATL", ""),
+            ("HOUSE OF THE OTHERS", "III"),
+            ("VAULT", "I"),
+            ("CHASM", ""),
+            ("LIGHTNING WORKSHOP", "I"),
+            ("SANCTUM OF UNITY", "II"),
+            ("HALL OF CHAMPIONS", "III"),
+            ("SACRIFICIAL CHAMBER", "I"),
+            ("TEMPEST GENERATOR", "I"),
+            ("DEPARTMENT OF THAUMATURGY", "II"),
+            ("COURT OF SEALED DEATH", "III"),
+            ("ENTRANCE", ""),
+            ("HYBRIDISATION CHAMBER", "III"),
+        ];
+
+        /// The plates (indices into [`Slot::ALL`]) whose name the partial case
+        /// reads as nothing.
+        const UNREAD_PLATES: [usize; 2] = [1, 8];
+
+        fn line_at(text: &str, [x, y, w, h]: [i32; 4], origin: (i32, i32)) -> OcrLineBox {
+            OcrLineBox { text: text.to_string(), x: x - origin.0, y: y - origin.1, w, h }
+        }
+
+        fn crop(img: &DynamicImage, [x, y, w, h]: [i32; 4]) -> DynamicImage {
+            img.crop_imm(x as u32, y as u32, w as u32, h as u32)
+        }
+
+        /// The script for one first read: the two text regions in
+        /// [`text_regions`] order, then each plate's name and numeral.
+        fn script(img: &DynamicImage, layout: &TempleLayout, unread: &[usize]) -> ScriptedOcr {
+            let mut calls = VecDeque::new();
+            for (name, rect) in text_regions(layout) {
+                let (crop, origin) = crop_clipped(img, rect).expect("both text regions are on this capture");
+                let response = match name {
+                    slice::PANEL_REGION => PANEL_LINES.iter().map(|(r, t)| line_at(t, *r, origin)).collect(),
+                    _ => vec![line_at(REMAINING_LINE.1, REMAINING_LINE.0, origin)],
+                };
+                calls.push_back(Call { label: format!("text region {name}"), crop, response });
+            }
+            let lattice = Lattice::new(layout.origin, layout.scale);
+            for (i, (slot, (name, numeral))) in Slot::ALL.into_iter().zip(PLATES).enumerate() {
+                let name_lines = match unread.contains(&i) {
+                    true => Vec::new(),
+                    false => vec![OcrLineBox { text: name.to_string(), x: 0, y: 0, w: 100, h: 10 }],
+                };
+                calls.push_back(Call {
+                    label: format!("plate {i} name"),
+                    crop: crop(img, panel::name_strip(&lattice, slot)),
+                    response: name_lines,
+                });
+                let numeral_lines = match numeral.is_empty() {
+                    true => Vec::new(),
+                    false => vec![OcrLineBox { text: numeral.to_string(), x: 0, y: 0, w: 10, h: 10 }],
+                };
+                calls.push_back(Call {
+                    label: format!("plate {i} numeral"),
+                    crop: crop(img, panel::numeral_box(&lattice, slot)),
+                    response: numeral_lines,
+                });
+            }
+            ScriptedOcr { calls: RefCell::new(calls), made: RefCell::new(0) }
+        }
+
+        /// What a first read publishes, as plain values.
+        #[derive(Debug, PartialEq)]
+        struct Verdict {
+            status: TempleStatus,
+            unread: usize,
+            headline: Option<String>,
+            architect_index: Option<usize>,
+            doors: Vec<String>,
+            secondary_door: Option<String>,
+            map_action: Option<String>,
+            warnings: Vec<String>,
+            recommended_exit: Option<(String, String)>,
+            unclean: bool,
+        }
+
+        /// HEAD's `full_read` on its no-kept path, composed from the same
+        /// functions without an `AppHandle`: the valuation is the Default
+        /// preset with no market, and `read_at` is 0.
+        fn first_read(ocr: &ScriptedOcr) -> Verdict {
+            let img = live_capture();
+            let layout = live_layout(&img);
+            let settings = TempleSettings::default();
+
+            let clipped = clipped_text_rois(&text_regions(&layout), img.width(), img.height());
+            let clipped_names: Vec<&'static str> = clipped.iter().map(|(name, _)| *name).collect();
+            let plan = slice::plan_read(None, &clipped_names);
+
+            let mut lines = Vec::new();
+            for (name, rect) in text_regions(&layout) {
+                if !plan.text.contains(&name) {
+                    continue;
+                }
+                let Some((crop, origin)) = crop_clipped(&img, rect) else { continue };
+                let read = panel::TextRecognizer::recognize(ocr, &crop).expect("scripted");
+                lines.extend(read.into_iter().map(|line| panel::translated(line, origin)));
+            }
+            let panel_reading = panel::read_panel(&lines);
+
+            let lattice = Lattice::new(layout.origin, layout.scale);
+            let rooms = panel::read_slots(ocr, &img, &lattice, &plan.plates, &|| false);
+            let (settled, marker_error) = match plan.markers {
+                false => (None, None),
+                true => match read_markers(&img, &layout) {
+                    Ok(set) => (Some(set), None),
+                    Err(e) => (None, Some(e)),
+                },
+            };
+            let read = slice::KeptRead { layout, rooms, panel: panel_reading, settled, marker_error };
+
+            let valuation = preset::value_table(Preset::Default, &TempleCustomSettings::default(), &MarketInput::none());
+            let advice = slice::advise_read(
+                &read.layout,
+                &read.rooms,
+                &read.panel,
+                read.settled.as_ref(),
+                &settings,
+                &valuation,
+            );
+            let projected = slice::project(
+                &slice::ReadResult {
+                    layout: &read.layout,
+                    rooms: &read.rooms,
+                    panel: &read.panel,
+                    settled: read.settled.as_ref(),
+                    marker_error: read.marker_error.clone(),
+                    read_notice: None,
+                    advice: advice.as_ref(),
+                    config: settings.config.clone(),
+                    profile: settings.profile.clone(),
+                    preset: settings.preset,
+                    custom: settings.custom.clone(),
+                    valuation: &valuation,
+                    market: slice::market_view(&MarketInput::none()),
+                    read_at: 0,
+                },
+                Some(read.layout.calibration),
+            );
+            let unclean = slice::unclean(&read, &clipped_names);
+
+            let view = projected.advice.as_ref();
+            let top = view.and_then(|v| v.recommendations.first());
+            Verdict {
+                status: projected.status,
+                unread: read.rooms.iter().filter(|r| r.identity == Match::Unknown).count(),
+                headline: top.map(|r| r.headline.clone()),
+                architect_index: top.and_then(|r| r.architect_index),
+                doors: top.map(|r| r.doors.clone()).unwrap_or_default(),
+                secondary_door: view.and_then(|v| v.secondary_door.clone()),
+                map_action: view.map(|v| v.map_action.clone()),
+                warnings: view.map(|v| v.warnings.clone()).unwrap_or_default(),
+                recommended_exit: view
+                    .and_then(|v| v.recommended_exit.as_ref())
+                    .map(|e| (e.door.clone(), e.name.clone())),
+                unclean,
+            }
+        }
+
+        /// Recorded on HEAD 326256a2. The board is `unclean` on its own: the
+        /// engine's `OMNITECT REACTOR PLANT` is not in the room vocabulary, so
+        /// Hayoxi's offer stays unresolved and the panel is owed a re-read.
+        fn recorded_full_read() -> Verdict {
+            Verdict {
+                status: TempleStatus::Read,
+                unread: 0,
+                headline: Some("change → Demolition Lab".to_string()),
+                architect_index: Some(1),
+                doors: vec!["B0-C1".to_string()],
+                secondary_door: Some("B1-C1".to_string()),
+                map_action: Some("continue".to_string()),
+                warnings: vec!["architect target \"OMNITECT REACTOR PLANT\" is not a known room".to_string()],
+                recommended_exit: Some(("B0-C1".to_string(), "House of the Others".to_string())),
+                unclean: true,
+            }
+        }
+
+        /// 13 plates × (name + numeral) + the two text regions.
+        const OCR_CALLS: usize = 28;
+
+        #[test]
+        fn first_read_verdict_on_the_live_capture_is_the_recorded_one() {
+            let img = live_capture();
+            let ocr = script(&img, &live_layout(&img), &[]);
+
+            let got = first_read(&ocr);
+
+            ocr.assert_consumed();
+            assert_eq!(*ocr.made.borrow(), OCR_CALLS);
+            assert_eq!(got, recorded_full_read());
+        }
+
+        /// Two plates read as nothing: they count as unread, the board is
+        /// unclean, and the exit through House of the Others (plate 1) loses
+        /// its name — a guess is worse than silence — while the ranked move,
+        /// which needs neither plate, is unchanged.
+        #[test]
+        fn first_read_verdict_with_two_unread_plates_is_the_recorded_partial() {
+            let img = live_capture();
+            let ocr = script(&img, &live_layout(&img), &UNREAD_PLATES);
+
+            let got = first_read(&ocr);
+
+            ocr.assert_consumed();
+            assert_eq!(*ocr.made.borrow(), OCR_CALLS);
+            assert_eq!(
+                got,
+                Verdict { unread: 2, recommended_exit: None, unclean: true, ..recorded_full_read() },
+            );
+        }
+    }
 }
