@@ -95,7 +95,7 @@ export const modules: Module[] = [
 		reads: 'The recruit window, row by row.',
 		gives: [
 			'A verdict per community guide ruleset, with per-row glyphs on an overlay strip that clears four seconds after the window closes.',
-			'What the same mercenary is going for on trade (opt-in, with a searches-spent counter), plus links to the trade searches and a warrant price check.',
+			'Trade links for the same mercenary and a warrant price check, opened in your browser on a click; the app runs no trade search for it.',
 			'Gem icons it learns from the recruit window are pooled through the server as 24×24 signatures of the icon itself, so every device recognises them.',
 		],
 		// TODO screenshot: static/module-merc-page.png (the Mercenaries page).

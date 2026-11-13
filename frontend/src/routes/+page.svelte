@@ -26,7 +26,7 @@
 		},
 		{
 			title: 'Live Market Data',
-			desc: "The public Trade API from your own machine (opt-in), GGG's currency-exchange feed and poe.ninja baselines — real listings, seller concentration, price outliers.",
+			desc: "The public Trade API from your own machine on your click, GGG's currency-exchange feed and poe.ninja baselines — real listings, seller concentration, price outliers.",
 			icon: ICON_COIN,
 		},
 		{
@@ -191,6 +191,7 @@
 			<p class="platform-note">
 				Windows only. Requires Path of Exile 1.
 				<a href="https://github.com/SebRogala/ProfitOfExile/releases/latest/download/ProfitOfExile-standalone.exe" class="portable-link">Portable version (no install)</a>
+				&middot; <a href="/privacy" class="portable-link">Data &amp; privacy</a>
 				<br />
 				Non-English Windows may need the English OCR pack —
 				<a href="#ocr-language-pack" class="portable-link" onclick={() => (ocrPackOpen = true)}>instructions</a>
@@ -377,18 +378,15 @@
 						panel is on screen, so there's no reason to make you press a hotkey.</p>
 					<p><strong>Important privacy detail:</strong> no screenshot or screen capture ever leaves your machine.
 						The captured image is processed entirely locally by Windows' built-in OCR engine, then immediately
-						discarded. The only data that reaches the server is plain text the app extracted or recorded &mdash; gem names, craft option
-						wording, lab run outcomes &mdash; with one exception: the Mercenaries module learns gem icons from the recruit
-						window and pools each one through the server as a 24&times;24-pixel signature of the icon's disc, so every
-						device recognises it. An icon the pool already knows is matched locally and nothing is sent, so a synced
-						device uploads only when it meets art the pool has never seen. Game art only; no screenshot and nothing else
-						of your screen ever leaves your machine.</p>
+						discarded.</p>
+					<p>What the app does send to our server, and why, is listed in one place:
+						<a href="/privacy">Data &amp; privacy</a>.</p>
 				</div>
 				<div class="transparency-item">
-					<span class="transparency-label">3. Trade API (opt-in)</span>
-					<p>The app can query GGG's public Trade API to look up prices &mdash; gems in the lab, what a captured mercenary is
-						going for &mdash; but this is <strong>off by default</strong>. You enable it per module: the comparator's
-						"auto-trade" option, the Mercenaries page's trade setting. When enabled,
+					<span class="transparency-label">3. Trade API</span>
+					<p>The app queries GGG's public Trade API only when you click a trade lookup. The results (prices, listing
+						times) are shared with our server. Nothing searches trade on its own: neither the comparator nor the
+						Mercenaries page runs automatic searches any more; mercenary offers are trade links that open in your browser. On each query
 						the app's rate limiter reads GGG's own rate-limit headers and stays at 65% of the allowed budget with
 						additional safety padding.</p>
 				</div>
@@ -417,7 +415,7 @@
 				<li><strong>Send input</strong> to the game &mdash; no clicks, no keystrokes, no mouse movements</li>
 				<li><strong>Hook game functions</strong> &mdash; no DLL injection, no API hooking</li>
 				<li><strong>Automate gameplay</strong> &mdash; the app does not play the game for you in any way</li>
-				<li><strong>Connect to game servers</strong> &mdash; the app only uses the public Trade API (when you opt in), same as the official trade website</li>
+				<li><strong>Connect to game servers</strong> &mdash; the app only uses the public Trade API, on your click, same as the official trade website</li>
 			</ul>
 		</div>
 
@@ -647,6 +645,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 			<div class="footer-links">
 				<a href="https://discord.gg/QX53hrv5GP" target="_blank" rel="noopener">Discord</a>
 				<a href="/lab">Dashboard</a>
+				<a href="/privacy">Data &amp; privacy</a>
 				<a href="https://discord.com/channels/1489388543859232899/1489599916278808748" target="_blank" rel="noopener">Report Issue</a>
 			</div>
 			<p class="footer-disclaimer">
