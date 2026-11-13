@@ -38,7 +38,7 @@ func serveExceptionalSupports(t *testing.T, fake *fakeExceptionalPricer, cache *
 
 func readExceptionalGolden(t *testing.T, file string) string {
 	t.Helper()
-	b, err := os.ReadFile("../../../desktop/src/lib/compass/__fixtures__/" + file)
+	b, err := os.ReadFile("../../../desktop/src/lib/compass/__fixtures__/exceptional-supports/" + file)
 	if err != nil {
 		t.Fatalf("read golden %s: %v", file, err)
 	}
@@ -70,7 +70,7 @@ func TestExceptionalSupportPrices_servesTheContractBody(t *testing.T) {
 
 	rec := serveExceptionalSupports(t, fake, cacheWithDivineRate(230))
 
-	if got, want := strings.TrimSpace(rec.Body.String()), readExceptionalGolden(t, "exceptional-supports-priced.json"); got != want {
+	if got, want := strings.TrimSpace(rec.Body.String()), readExceptionalGolden(t, "priced.json"); got != want {
 		t.Errorf("body\n got %s\nwant %s", got, want)
 	}
 }
@@ -83,7 +83,7 @@ func TestExceptionalSupportPrices_missingGemServesNull(t *testing.T) {
 
 	rec := serveExceptionalSupports(t, fake, cacheWithDivineRate(230))
 
-	if got, want := strings.TrimSpace(rec.Body.String()), readExceptionalGolden(t, "exceptional-supports-missing.json"); got != want {
+	if got, want := strings.TrimSpace(rec.Body.String()), readExceptionalGolden(t, "missing.json"); got != want {
 		t.Errorf("body\n got %s\nwant %s", got, want)
 	}
 }
