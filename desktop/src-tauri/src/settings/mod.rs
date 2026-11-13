@@ -116,6 +116,7 @@ impl Default for LabSettings {
 pub struct Settings {
     pub boss_loot: crate::loot_capture::LootSettings,
     pub read_hotkey: Salvaged<crate::read_hotkey::ReadHotkeySettings>,
+    pub overlay_dismiss: Salvaged<crate::overlay_dismiss::DismissSettings>,
     /// None means the legacy numberFormat preference has not migrated yet.
     pub number_format: Option<crate::loot_capture::NumberFormat>,
     pub client_txt_path: String,
@@ -748,6 +749,7 @@ impl Default for Settings {
         Self {
             boss_loot: Default::default(),
             read_hotkey: Salvaged::new(Default::default()),
+            overlay_dismiss: Salvaged::new(Default::default()),
             number_format: None,
             client_txt_path: crate::detect_client_txt_path(),
             server_url: String::from(DEFAULT_SERVER_URL),
@@ -970,6 +972,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     let boss_loot = state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let number_format = *state.loot.number_format.lock().unwrap_or_else(|e| e.into_inner());
     let read_hotkey = state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let overlay_dismiss = state.overlay_dismiss.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let temple = state.temple_state.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     // Bound HERE rather than inside the struct literal below: a temporary
     // guard in a literal lives to the end of the whole statement, and this
@@ -988,6 +991,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     Settings {
         boss_loot,
         read_hotkey: Salvaged::new(read_hotkey),
+        overlay_dismiss: Salvaged::new(overlay_dismiss),
         number_format: Some(number_format),
         client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
@@ -1079,6 +1083,15 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     };
     *state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()) = boss_loot;
     *state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()) = read_hotkey;
+    let overlay_dismiss = match settings.overlay_dismiss.validate() {
+        Ok(()) if !settings.overlay_dismiss.was_salvaged() => (*settings.overlay_dismiss).clone(),
+        result => {
+            let reason = result.err().unwrap_or_else(|| "did not parse".into());
+            rejected.push(format!("overlay dismissal settings: {reason}; using defaults"));
+            Default::default()
+        }
+    };
+    *state.overlay_dismiss.lock().unwrap_or_else(|e| e.into_inner()) = overlay_dismiss;
     *state.loot.number_format.lock().unwrap_or_else(|e| e.into_inner()) =
         crate::loot_capture::NumberFormat::migrate(settings.number_format, settings.ui_prefs.get("numberFormat"));
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = settings.client_txt_path.clone();
@@ -1470,6 +1483,43 @@ pub(crate) mod tests {
         assert!(apply_to_state(&settings, &state).iter().any(|line| line.contains("boss loot")));
         assert_eq!(from_state(&state).boss_loot.auto_save_seconds, 10);
         assert!(!from_state(&state).sidebar_open);
+    }
+
+    #[test]
+    fn dismissal_settings_survive_restart_and_echo_through_ssot() {
+        let dir = fresh_test_dir("dismissal_restart");
+        let path = dir.join(SETTINGS_FILENAME);
+        let before = test_app_state();
+        let custom: crate::overlay_dismiss::DismissSettings = serde_json::from_value(serde_json::json!({
+            "timeoutSeconds": 20,
+            "shortcut": {"key": 82, "shift": false, "ctrl": true, "alt": false},
+            "overlays": {"temple.offers": {"timeout": {"override": 5}, "shortcut": "inherit"}}
+        })).unwrap();
+        crate::overlay_dismiss::store_settings(&before, custom.clone()).unwrap();
+        save_to(&path, &from_state(&before)).unwrap();
+        let after = test_app_state();
+        assert!(apply_to_state(&load_from(&path).unwrap(), &after).is_empty());
+        assert_eq!(*after.overlay_dismiss.lock().unwrap(), custom);
+        *after.sidebar_open.lock().unwrap() = false;
+        assert_eq!(*from_state(&after).overlay_dismiss, custom);
+        assert_eq!(serde_json::to_value(crate::ssot::build_snapshot(&after)).unwrap()["overlayDismiss"], serde_json::to_value(custom).unwrap());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn corrupt_dismissal_blocks_use_defaults_and_keep_other_settings() {
+        for block in [
+            serde_json::json!({"timeoutSeconds": -1}),
+            serde_json::json!({"timeoutSeconds": 7, "shortcut": {"key":27,"shift":false,"ctrl":false,"alt":false},"overlays":{}}),
+            serde_json::json!({"timeoutSeconds": 10, "shortcut": {"key":16,"shift":false,"ctrl":false,"alt":false},"overlays":{}}),
+        ] {
+            let settings: Settings = serde_json::from_value(serde_json::json!({"sidebar_open":false,"boss_loot":{"autoSaveSeconds":20},"overlay_dismiss":block})).unwrap();
+            let state = test_app_state();
+            assert!(apply_to_state(&settings, &state).iter().any(|line| line.contains("dismiss")));
+            assert_eq!(*state.overlay_dismiss.lock().unwrap(), crate::overlay_dismiss::DismissSettings::default());
+            assert!(!from_state(&state).sidebar_open);
+            assert_eq!(from_state(&state).boss_loot.auto_save_seconds, 20);
+        }
     }
 
     fn custom_read_hotkey() -> crate::read_hotkey::ReadHotkeySettings {
@@ -1938,6 +1988,7 @@ pub(crate) mod tests {
         crate::AppState {
             loot: crate::loot_capture::LootState::new(),
             read_hotkey: Mutex::new(crate::read_hotkey::ReadHotkeySettings::default()),
+            overlay_dismiss: Mutex::new(crate::overlay_dismiss::DismissSettings::default()),
             read_prompt: Mutex::new(crate::read_prompt::ReadPromptState::default()),
             device_id: String::new(),
             game_monitor: Mutex::new(None),

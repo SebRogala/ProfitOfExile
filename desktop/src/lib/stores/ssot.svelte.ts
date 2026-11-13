@@ -273,6 +273,19 @@ export interface ReadHotkeySettings {
 	delayMs: number;
 }
 
+export type DismissInheritance<T> = 'inherit' | { override: T };
+
+export interface OverlayDismiss {
+	timeout: DismissInheritance<number>;
+	shortcut: DismissInheritance<BossLootShortcut>;
+}
+
+export interface DismissSettings {
+	timeoutSeconds: number;
+	shortcut: BossLootShortcut;
+	overlays: Record<string, OverlayDismiss>;
+}
+
 /** A mechanic the read key reads; `read_prompt::Mechanic` on the Rust side. */
 export type ReadPromptMechanic = 'divineFont' | 'incursion' | 'mercenary';
 
@@ -329,6 +342,7 @@ export interface SsotSnapshot {
 	server?: ServerSlice;
 	/** The "Read screen" shortcut and press-to-grab delay, Rust-owned. */
 	readHotkey?: ReadHotkeySettings;
+	overlayDismiss?: DismissSettings;
 	/** The read prompt, Rust-owned by `read_prompt.rs`. */
 	readPrompt?: ReadPromptSnapshot;
 }
@@ -394,6 +408,7 @@ export const ssot = $state({
 	placements: null as Placements | null,
 	/** Unknown until Rust answers; the default lives in `read_hotkey.rs`. */
 	readHotkey: null as ReadHotkeySettings | null,
+	overlayDismiss: null as DismissSettings | null,
 	/** No prompt until Rust answers. */
 	readPrompt: { mechanic: null, seq: 0 } as ReadPromptSnapshot,
 });
@@ -715,6 +730,7 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	applyModules(snap.modules, dispatchedAtSeq);
 	if (snap.bossLoot !== undefined) ssot.bossLoot = snap.bossLoot;
 	if (snap.readHotkey !== undefined) ssot.readHotkey = snap.readHotkey;
+	if (snap.overlayDismiss !== undefined) ssot.overlayDismiss = snap.overlayDismiss;
 	if (snap.readPrompt !== undefined) ssot.readPrompt = snap.readPrompt;
 	applyMercenary(snap.mercenary);
 	applyTemple(snap.temple);

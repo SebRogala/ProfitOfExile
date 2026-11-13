@@ -1646,6 +1646,22 @@ describe('the readHotkey slice', () => {
 	});
 });
 
+describe('the overlayDismiss slice', () => {
+	it('waits for Rust defaults and retains the latest settings across partial snapshots', async () => {
+		const mod = await import('./ssot.svelte');
+		expect(mod.ssot.overlayDismiss).toBeNull();
+		const overlayDismiss = {
+			timeoutSeconds: 20,
+			shortcut: { key: 27, shift: false, ctrl: false, alt: false },
+			overlays: { 'temple.offers': { timeout: { override: 5 }, shortcut: 'inherit' } }
+		} as const;
+		mod.applySnapshot({ league: { name: null }, overlayDismiss });
+		expect(mod.ssot.overlayDismiss).toEqual(overlayDismiss);
+		mod.applySnapshot({ league: { name: null } });
+		expect(mod.ssot.overlayDismiss).toEqual(overlayDismiss);
+	});
+});
+
 describe('the readPrompt slice', () => {
 	it('shows no prompt before Rust answers', async () => {
 		const mod = await import('./ssot.svelte');

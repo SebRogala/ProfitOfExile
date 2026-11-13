@@ -394,6 +394,16 @@
     },
     "delayMs": 150
   },
+  "overlayDismiss": {
+    "timeoutSeconds": 10,
+    "shortcut": {
+      "key": 27,
+      "shift": false,
+      "ctrl": false,
+      "alt": false
+    },
+    "overlays": {}
+  },
   "readPrompt": {
     "mechanic": "divineFont",
     "seq": 3

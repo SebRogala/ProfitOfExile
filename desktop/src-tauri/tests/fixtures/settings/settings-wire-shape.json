@@ -27,6 +27,16 @@
     },
     "delayMs": 0
   },
+  "overlay_dismiss": {
+    "timeoutSeconds": 10,
+    "shortcut": {
+      "key": 27,
+      "shift": false,
+      "ctrl": false,
+      "alt": false
+    },
+    "overlays": {}
+  },
   "number_format": null,
   "client_txt_path": "C:/PoE/logs/Client.txt",
   "server_url": "https://fixture.invalid",
