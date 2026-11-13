@@ -147,13 +147,20 @@ func (r *Refresher) submit(ctx context.Context, gem, variant string) {
 // this; an external caller forgetting that gate is required deserves a loud
 // failure, not a deep nil-deref inside Submit.
 func SubmitRefresh(ctx context.Context, gate *Gate, gem, variant string) {
+	submitLowRefresh(ctx, gate, gem, variant, false)
+}
+
+// submitLowRefresh is the shared submit/wait/log path of SubmitRefresh and
+// SubmitFixedTargetRefresh; fixed selects the registry query.
+func submitLowRefresh(ctx context.Context, gate *Gate, gem, variant string, fixed bool) {
 	if gate == nil {
-		panic("trade.SubmitRefresh: gate is required")
+		panic("trade: refresh gate is required")
 	}
 
 	req := &GateRequest{
 		Gem:         gem,
 		Variant:     variant,
+		FixedTarget: fixed,
 		RequestID:   "refresh-" + gem,
 		Priority:    PriorityLow,
 		SubmittedAt: time.Now(),
@@ -166,10 +173,14 @@ func SubmitRefresh(ctx context.Context, gate *Gate, gem, variant string) {
 	case <-ctx.Done():
 		return
 	case resp := <-req.Result:
+		label := "trade refresh"
+		if fixed {
+			label = "trade fixed target refresh"
+		}
 		if resp.Error != nil {
-			slog.Warn("trade refresh failed", "gem", gem, "variant", variant, "error", resp.Error)
+			slog.Warn(label+" failed", "gem", gem, "variant", variant, "error", resp.Error)
 		} else {
-			slog.Info("trade refresh complete", "gem", gem, "variant", variant,
+			slog.Info(label+" complete", "gem", gem, "variant", variant,
 				"total", resp.Data.Total, "floor", resp.Data.PriceFloor)
 		}
 	}

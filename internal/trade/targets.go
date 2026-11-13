@@ -2,7 +2,6 @@ package trade
 
 import (
 	"context"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -162,28 +161,5 @@ func (s *FixedTargetScheduler) Claim(now time.Time) (FixedTarget, bool) {
 // SubmitFixedTargetRefresh enqueues a low-priority lookup of target and blocks
 // until the gate responds or ctx is cancelled. Logs the outcome.
 func SubmitFixedTargetRefresh(ctx context.Context, gate *Gate, target FixedTarget) {
-	if gate == nil {
-		panic("trade.SubmitFixedTargetRefresh: gate is required")
-	}
-	req := &GateRequest{
-		Gem:         target.Gem,
-		Variant:     target.Variant,
-		FixedTarget: true,
-		RequestID:   "refresh-" + target.Gem,
-		Priority:    PriorityLow,
-		SubmittedAt: time.Now(),
-		Result:      make(chan *GateResponse, 1),
-	}
-	gate.Submit(req)
-
-	select {
-	case <-ctx.Done():
-	case resp := <-req.Result:
-		if resp.Error != nil {
-			slog.Warn("trade fixed target refresh failed", "target", target.Gem, "error", resp.Error)
-		} else {
-			slog.Info("trade fixed target refresh complete", "target", target.Gem,
-				"total", resp.Data.Total, "floor", resp.Data.PriceFloor)
-		}
-	}
+	submitLowRefresh(ctx, gate, target.Gem, target.Variant, true)
 }
