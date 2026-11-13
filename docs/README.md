@@ -12,7 +12,7 @@ This is the documentation entry point. Documents are classified so historical pl
 - [Temple Lifecycle](TEMPLE-LIFECYCLE.md) — normative order of arming, per-press read, OCR and overlay show/hide for the temple module (POE-249, implemented 2026-09-04; one read per key press since 2026-11-13, POE-389); every rule tagged shipped with the commit that shipped it, plus where the POE-257 room valuation, market read and presets live.
 - [Boss loot lifecycle](BOSS-LOOT-LIFECYCLE.md) — current native capture, confirmation, runs, statistics and seed import; verified 2026-11-02.
 - [Lab font OCR lifecycle](LAB-FONT-OCR-LIFECYCLE.md) — current font and gem readers, craft ledger, including the open gem-read parity question; verified 2026-11-13.
-- [Mercenaries lifecycle](MERCENARIES-LIFECYCLE.md) — current Inspect trigger, bounded capture and triage; verified 2026-11-02.
+- [Mercenaries lifecycle](MERCENARIES-LIFECYCLE.md) — current Inspect text, per-press capture and triage; verified 2026-11-13 (POE-390).
 - [Game facts](GAME-FACTS.md) — current, dated reference of Path of Exile facts the code treats as invariants: one golden door per lab run, temple rooms log nothing, Divine Font wordings and parser anchors, Dedication rules, the 3.30 temple facts (vials and temple-mod items removed, renamed rooms, chest rooms) and the per-tier rarity / pack-size table, exchange sidebar categories, trade complexity; unvalidated claims kept in their own section.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current cross-layer recipe for adding a market-data source.
 - [Icons](ICONS.md) — current procedure for adding or changing an icon, and why seeding precedes deploy.

@@ -181,10 +181,11 @@ temple's, and neither monitor-sized window has a persisted rect of its own
 (below).
 
 The merc widget's **on-screen lifecycle** (owner decision, 2026-09-01) is: shown
-for as long as a recruit window is being worked — `scanning` (the burst after
-a voice line or Scan now), `live` (reading), `done` (read paused) — and for
-`LINGER_MS` (4 s) after the module goes `idle`, whether that idle is "window
-gone" over a retired capture or "waiting" over nothing; then the panel clears
+for as long as a recruit window is being worked — `scanning` (a press read
+running), `live` (reading), `done` (rounds finished; reads on the next press) —
+and for `LINGER_MS` (4 s) after the module goes `idle`, whether that idle is
+"window gone" over a capture retired by a non-occluded missed press or an area
+change, or "waiting" over nothing; then the panel clears
 and the whole overlay disappears. The gate is `overlayShown` in
 `desktop/src/lib/mercenaries/overlay-view.ts`; the route owns only the clock.
 The full contract is in `desktop/src/lib/mercenaries/README.md`.
@@ -1017,7 +1018,13 @@ touching the named path.
   widget clears; a widget still showing "waiting for a mercenary" a minute
   later means the idle linger
   (`overlayShown` / `lingerAdvance`) is not being advanced by the route.
-- **Merc header, across re-detects** (added after the 2026-08-25 smoke, where
+- **Merc read on press** (POE-390): open a recruit window and press the read key
+  once → exactly one `Merc: read on press — …` line in `app.log`. Hover a
+  support the widget marks `?` and press twice within 10 s → the cell confirms.
+  Close the window and press again → `Merc: window gone`. Between presses no
+  merc capture line appears.
+- **Merc header, across re-detects** — **historical (superseded 2026-11-13,
+  POE-390)** (added after the 2026-08-25 smoke, where
   the header blinked between the mercenary's name and its class every two
   seconds): keep one recruit window open and watch the header line for at least
   three re-detects. Fields may only be FILLED IN, never blanked or swapped for a
@@ -1025,10 +1032,8 @@ touching the named path.
   header that changes back and forth means the sticky merge (`read.rs`'s
   `merge_header`, applied in `run.rs`'s detect tick) is not being applied to the
   published capture.
-- **Merc probes, hover re-reads and gem icon reads** below break
-  [Screen reading (GGG policy)](#screen-reading-ggg-policy); POE-390 replaces the
-  merc capture loop and POE-397 the gem icon reads.
-- **Merc widget, the done state**: with a recruit window open, hover every cell
+- **Merc widget, the done state** — **historical (superseded 2026-11-13,
+  POE-390)**: with a recruit window open, hover every cell
   the widget marks `?` or `✕` until the status line reads `done · N rows · all
   icons read`. From then on the log says `capture complete — OCR paused` once,
   the widget must stay on screen with its verdict, and closing the window must
@@ -1047,7 +1052,8 @@ touching the named path.
   along with the confirmations in the retained slot, so a spent cell stays spent
   across a retire and re-detect of the same panel. Only a genuinely new window
   refills it.
-- **Merc hover, the occluded panel** (added after the 2026-08-25 smoke, where
+- **Merc hover, the occluded panel** — **historical (superseded 2026-11-13,
+  POE-390)** (added after the 2026-08-25 smoke, where
   hovering a cell retired the capture two ticks later and the cell flipped back
   to `✕`): with a recruit window open, park the cursor on a support cell for at
   least 5 s so the game tooltip covers the panel, then move off it. The log must
@@ -1074,7 +1080,8 @@ touching the named path.
   mercenary's name and level; a `confirmations were dropped` line there means
   `same_panel_positive` found no positive evidence, which a tick that read
   neither a level nor two skill names is expected to produce.
-- **Merc rematch / fast swap**: with a capture on screen, press REMATCH (or
+- **Merc rematch / fast swap** — **historical (superseded 2026-11-13,
+  POE-390)**: with a capture on screen, press REMATCH (or
   close the window and open a different mercenary within ~20 s, before the
   liveness check retires the first). The header must switch to the NEW
   mercenary's name, class and level in one step, and the log must say `recruit
@@ -1085,7 +1092,8 @@ touching the named path.
   the inverse check matters too: a tick that merely read the panel badly must
   NOT log `recruit window replaced`, because that log line means the session's
   hover confirmations were just thrown away.
-- **Merc capture contract** (POE-278, ADR-025): open a recruit window with some
+- **Merc capture contract** — **historical (superseded 2026-11-13, POE-390)**
+  (POE-278, ADR-025): open a recruit window with some
   support icons the module does not know yet (cells the widget marks `?`) and
   keep it open. `app.log` must say `Merc: read round 1 of 3 — full — …`, then
   at most two more `Merc: read round N of 3 — re-read R rows, C cells, header

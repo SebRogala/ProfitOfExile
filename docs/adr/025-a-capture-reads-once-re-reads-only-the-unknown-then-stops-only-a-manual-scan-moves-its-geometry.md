@@ -27,7 +27,7 @@ Amended 2026-11-13 (POE-387): for automatic captures, the re-read and retry
 clauses are superseded by [Overlay Guide § Screen reading (GGG policy)](../OVERLAY-GUIDE.md#screen-reading-ggg-policy);
 POE-389 (temple), POE-390 (merc) and POE-391 (lab) carry the replacement.
 
-Merc: clause 1 shipped; clause 4 shipped (`POE-278 WI-B`, `f78786e`); clauses 2, 3 and 5 shipped (`POE-278 WI-C`, `072c98c`).
+Merc: clauses 1–5 carried by POE-390 (`4cd237b9`, `9a12ce5c`, 2026-11-13); see the POE-390 amendment below. Before it: clause 4 `POE-278 WI-B` (`f78786e`), clauses 2, 3 and 5 `POE-278 WI-C` (`072c98c`).
 
 ## Enforcement
 
@@ -38,6 +38,11 @@ Scope: Temple and merc capture read budgets, liveness, geometry replacement and 
 Summary: Read once, retry only unknowns within the budget, then stop OCR; move live geometry only manually and honor the amended temple lock and cold-sweep rules.
 
 ## Context
+
+The merc text in Context, Decision and Consequences is **historical
+(superseded 2026-11-13, POE-390)** wherever it names Scan now, probes, the
+re-detect or liveness cadence; current merc behaviour is the
+[POE-390 amendment](#amended-2026-11-13-poe-390).
 
 The owner's acceptance criteria on POE-278, as stated:
 
@@ -139,11 +144,11 @@ POE-278).
 
 | Clause | Temple (shipped) | Merc |
 |---|---|---|
-| 1 one full read | POE-389: one per press — `press::TempleReader`, `run::worker_loop`, `run::read_press`, `run::read_board` | shipped: `run::detect_tick` — placed crop (`geometry::placed_panel_crop`, `geometry::placed_layout`), then `read::pass2_texts` and `read::build_planned` with no plan (`read::build_capture` is now the debug/test wrapper) |
-| 2 two partial rounds | POE-389: none — `slice::plan_read(None, …)` reads the whole board each press | shipped (`POE-278 WI-C`, `072c98c`): `read::plan_read` → `ReadPlan` / `RowPlan` from the kept capture, `read::pass2_planned`, `read::build_planned` (copies confident cells), `read::fold_unresolved_header`, `read::lines_up`; `run::RETRIES`, `run::LoopState::rounds`, `run::round_plan` |
-| 3 then stop (**temple amended by the POE-282 amendment below**) | POE-389: nothing captures between presses — `run::worker_loop` owns no grab | shipped (`POE-278 WI-C`, `072c98c`): `read::capture_complete` or `LoopState::rounds_spent` → `LoopState::detect_interval` returns `LIVENESS_INTERVAL`; `ReadPlan::Nothing` → `read::carry_capture` re-reads nothing, and `run::replaced_on_sight` checks a REMATCH on pass 1 |
-| 4 geometry moves only on a manual scan | POE-389: `run::locate_on_miss` (null/unplaced slice only), `placed_origin_contradiction`, `run::finish` → `ssot::remember_anchor`; Recalibrate is the manual fix | shipped (`POE-278 WI-B`, `f78786e`): `run::locate_decision` (`LocateReason::{ColdStart, ManualMiss}`, `PlacedRead`), asked from `run::detect_tick`; `run::manual_tick` / `refit_requested` — a voice-probe miss while a Recalibrate is pending is a manual miss; `MERC_COLUMN_TRUSTED_LINE` |
-| 5 fresh budget (**temple amended by the POE-282 amendment below**) | POE-389: no budget or board key; each press is an independent read | shipped (`POE-278 WI-C`, `072c98c`): `LoopState::refill_rounds` — from `run::round_plan` on a new capture or one `read::panel_replaced` dropped, `LoopState::resume` on Scan now, `run::refills_budget` on a Recalibrate `consume_refit` acted on; and, merc-specific (not in clause 5), `run::refills_budget` on a template-store generation change (`run::generation_changed`) |
+| 1 one full read | POE-389: one per press — `press::TempleReader`, `run::worker_loop`, `run::read_press`, `run::read_board` | POE-390: one per press — `press::MercReader`, `run::worker_loop`, `run::read_press`, `detect::detect_tick(frame)` — placed crop (`geometry::placed_panel_crop`, `geometry::placed_layout`), then `read::pass2_texts` and `read::build_planned` with no plan |
+| 2 two partial rounds | POE-389: none — `slice::plan_read(None, …)` reads the whole board each press | POE-390: a press is a round and refills the budget — `run::round_plan` (clamps `LoopState::rounds`, plans with the full `run::RETRIES`), `read::plan_read` → `ReadPlan` / `RowPlan` from the kept capture, `read::pass2_planned`, `read::build_planned` (copies confident cells), `read::fold_unresolved_header`, `read::lines_up` |
+| 3 then stop (**temple amended by the POE-282 amendment below**) | POE-389: nothing captures between presses — `run::worker_loop` owns no grab | POE-390: nothing reads between presses — `run::worker_loop` owns no grab; a complete capture plans `ReadPlan::Nothing` → `read::carry_capture`, and `run::replaced_on_sight` checks a REMATCH on pass 1; a non-occluded missed press retires (`RETIRE_AFTER = 1`) |
+| 4 geometry moves only on a manual scan | POE-389: `run::locate_on_miss` (null/unplaced slice only), `placed_origin_contradiction`, `run::finish` → `ssot::remember_anchor`; Recalibrate is the manual fix | POE-390: `run::locate_decision` (`LocateReason::{ColdStart, ManualMiss}`, `PlacedRead`, `FallbackKey { refit, press }`), asked from `detect::detect_tick`; `refit_requested` — a placed miss while a Recalibrate is pending is a manual miss; `MERC_COLUMN_TRUSTED_LINE`; Recalibrate is the manual fix |
+| 5 fresh budget (**temple amended by the POE-282 amendment below**) | POE-389: no budget or board key; each press is an independent read | POE-390: `LoopState::refill_rounds` — a full round 1 from `run::round_plan` on a new capture or one `read::panel_replaced` dropped, and `run::refills_budget` on a Recalibrate `consume_refit` acted on or a template-store generation change (`run::generation_changed`); any other press is an unknown-only round |
 
 Row numbers and section names are those of [Temple Lifecycle](../TEMPLE-LIFECYCLE.md).
 
@@ -292,3 +297,24 @@ following [Overlay Guide § Screen reading (GGG policy)](../OVERLAY-GUIDE.md#scr
 The temple column of "Where each clause lives" above names the POE-389 homes; the POE-275 and
 POE-282 temple amendments above are **historical (superseded 2026-11-13, POE-389)**. Normative
 write-up in [Temple Lifecycle](../TEMPLE-LIFECYCLE.md), "Per press".
+
+## Amended 2026-11-13 (POE-390)
+
+**Merc clauses 1–5 are amended.** The merc module reads once per press of the read key, while
+the module is on, following [Overlay Guide § Screen reading (GGG policy)](../OVERLAY-GUIDE.md#screen-reading-ggg-policy).
+
+- Clause 1: one read per press, on the pressed frame (`press::MercReader`, `run::read_press`,
+  `detect::detect_tick(frame)`).
+- Clauses 2 and 3: a press is a round, and every press refills the budget. A press over an
+  incomplete held capture re-reads only the unknown (unresolved rows, cells and header fields)
+  on its one frame; confident cells are never replaced; a complete capture reads nothing.
+  Nothing reads between presses. The three-round cap and the liveness check no longer apply to
+  merc.
+- Clause 4: the full-screen locate runs on a press only on a cold start (no placement) or while
+  a Recalibrate is pending (`run::locate_decision`, `FallbackKey { refit, press }`). Scan now is
+  gone; Recalibrate is the manual fix.
+- Clause 5: a full round 1 runs on a new capture, a replaced panel, a Recalibrate or a
+  template-store change; any other press is an unknown-only round.
+
+The merc column of "Where each clause lives" above names the POE-390 homes. Normative write-up
+in [Mercenaries Lifecycle](../MERCENARIES-LIFECYCLE.md), "Per press".

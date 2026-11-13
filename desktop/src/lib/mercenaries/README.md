@@ -20,11 +20,11 @@ four seconds longer**:
 
 | Module status | Strip | What it shows |
 |---|---|---|
-| `scanning` | shown, for as long as the burst looks | `scanning for the recruit window…`, prefixed `heard <name> · ` when a voice line named the speaker — a `Scan now` burst has no speaker and shows the bare line |
+| `scanning` | shown, while a press read runs | `scanning for the recruit window…` (since POE-390 no speaker is published, so the `heard <name> · ` prefix never shows) |
 | `live` | shown, for as long as the read lasts | `reading · N rows · …`, or `N rows on screen, M read` when the sensor is ahead, plus header, verdict line and per-row glyphs |
 | `done` | shown, for as long as the window is on screen | `done · N rows · …`, or `N rows on screen, M read` when the sensor is ahead, plus header, verdict line and per-row glyphs |
 | `idle` — window gone | shown for **4 s** after the retire, then cleared | `recruit window gone — last read` over the last verdict |
-| `idle` — waiting | shown for **4 s** after going idle, then cleared | `waiting for a mercenary · Scan now on the page` |
+| `idle` — waiting | shown for **4 s** after going idle, then cleared | `waiting for a mercenary` |
 | `off`, `unavailable` | never shown | — |
 
 "Cleared" means the panel is not rendered at all — the widget stays where
@@ -32,8 +32,8 @@ Settings placed it, but nothing is drawn, so the overlay disappears.
 
 Rules that follow from the table:
 
-- A burst that fires during the linger (a voice line right after the window
-  closed) shows the strip in full; the idle after it gets a fresh four seconds.
+- A press read during the linger (a press right after the window closed)
+  shows the strip in full; the idle after it gets a fresh four seconds.
 - Staying idle does not restart the clock. The route polls the slice every
   three seconds, and a clock restarted on each poll would never run out.
 - The clear is driven by the linger, not by the next poll: the route arms one
@@ -83,8 +83,8 @@ One placed-crop read locates and reads the panel: round 1 of a capture,
 `run::detect_tick` — pass 1 on the crop, then pass 2 for every row
 (`read::pass2_texts`) and the icon walk for every row (`read::build_planned`
 with no plan, the form `read::build_capture` names). While the kept capture
-(`Session.current`) is incomplete, at most `run::RETRIES` = 2 more rounds run
-at `REDETECT_INTERVAL`, each re-reading only what the kept read leaves unknown:
+(`Session.current`) is incomplete, each later press is a round that re-reads
+only what the kept read leaves unknown:
 a row whose skill is not confident, a support cell that is not `Matched` or
 `Confirmed` (`read::confident`), and a header field `read::header_complete`
 does not accept (`read::unresolved_header_fields`) — name missing or not
@@ -115,55 +115,53 @@ so it can replace a confident read. An unresolved
 header field is folded from pass 1 with `read::merge_header`'s rules and a
 resolved one is kept verbatim (`read::fold_unresolved_header`). The round count
 is `run::LoopState::rounds` (`note_round`, `rounds_left`, `refill_rounds`),
-and `run::round_plan` is where the plan and the budget meet. Each reading
-round logs `Merc: read round N of 3 — full | re-read R rows, C cells, header
-<fields> — pass 2 N ms, icons N ms; complete | incomplete, K rounds left`; a
-budget spent over an incomplete capture says once what is still unread.
+and `run::round_plan` is where the plan and the budget meet. Since POE-390 a
+press is a round and every press refills the budget: `round_plan` clamps the
+round count and plans with the full `RETRIES`, so a press over an incomplete
+held capture re-reads its unresolved rows, cells and header fields however
+many presses came before. Each reading round logs `Merc: read round N — full |
+re-read R rows, C cells, header <fields> — pass 2 N ms, icons N ms; <verdict>`.
 
-Once `read::capture_complete` holds, or the rounds are spent, the plan is
-`Nothing` and `LoopState::detect_interval` drops to `LIVENESS_INTERVAL`
-(10 s). That detect OCRs the placed crop — is the window still there, is it a
-REMATCH, is a header field still to fold — and re-reads nothing: no pass 2,
-no icon walk (`read::carry_capture`). Copied cells keep their cached crops
+Once `read::capture_complete` holds, the plan is `Nothing`. A press then OCRs
+the placed crop — is the window still there, is it a REMATCH, is a header
+field still to fold — and re-reads nothing: no pass 2, no icon walk
+(`read::carry_capture`). Nothing reads between presses. Copied cells keep their cached crops
 across a read (`read::ReadResult::carried` → `run::merge_sigs`), so a hover
 can still learn from a copied cell whose crop was cached; one with no cached
 crop stays `NoCrop` (accepted), and no crop is carried across a registration
 change (`run::carried_for_sigs`). The REMATCH check runs on pass 1 before the plan
 (`run::replaced_on_sight` → `read::panel_replaced`, thresholds unchanged), so
-a tick that reads nothing still sees a rematch at the same level. The hover
-tick is not a read round: it is the player's per-cell correction under
-`HoverBudget` and keeps running over a complete or round-spent capture. A
-round-spent capture opens no trade session; a hover that completes it opens one
-on the next liveness tick's complete edge.
+a press that reads nothing still sees a rematch at the same level. The
+tooltip read on a press is not a read round: it is the player's per-cell
+correction under `HoverBudget`, on the same frame, over a complete capture
+too.
 
-The full-screen locate (`geometry::detect_reason`) runs only on a cold start
-with no placement, or on a Scan now / Recalibrate whose placed read missed,
-once per key; only the second may replace the remembered panel
-(`ssot::remember_anchor`, after a successful read). The placement is
-`run::merc_placement`, seed or remembered, and it is missing only with no
-screen slice — a placed miss with no remembered anchor is still a placed miss,
-not a cold start (ADR-025, "Merc clause 4, as specified"). The voice-line
-probe, the live re-detect and a `ColumnMoved` placed layout trust the
-placement. A Recalibrate counts as manual from the press until the merc loop
-acts on it (`consume_refit` runs on the next tick that produces a layout);
-until then every placed miss, a voice-probe miss included, is a manual miss and
-may locate once per `FallbackKey`. Shipped in POE-278 WI-B (`f78786e`):
-`run::locate_decision`, asked from `run::detect_tick`.
+The full-screen locate (`geometry::detect_reason`) runs on a press only on a
+cold start with no placement, or while a Recalibrate is pending and the placed
+read missed, once per `FallbackKey { refit, press }`; only the second may
+replace the remembered panel (`ssot::remember_anchor`, after a successful
+read). The placement is `run::merc_placement`, seed or remembered, and it is
+missing only with no screen slice — a placed miss with no remembered anchor is
+still a placed miss, not a cold start (ADR-025, "Merc clause 4, as
+specified"). Any other placed miss, and a `ColumnMoved` placed layout, trust
+the placement. A Recalibrate counts as manual from the click until the merc
+worker acts on it (`consume_refit` runs on the next press that produces a
+layout). Home: `run::locate_decision`, asked from `detect::detect_tick`
+(POE-278 WI-B `f78786e`, POE-390).
 
 Round 1 again, with a fresh budget, on: a new capture (no kept capture — a
 first look, including after a retire and `restore_retained`); a panel
-`read::panel_replaced` judges a REMATCH; a Scan now (`LoopState::resume`,
-whether or not it resumed a paused read, so Scan now over an incomplete
-capture buys a fresh read too); a Recalibrate the loop acted on
+`read::panel_replaced` judges a REMATCH; a Recalibrate the worker acted on
 (`consume_refit` answered `Dropped` or `NothingHeld`, `run::refills_budget`);
 and — merc-specific, not in ADR-025 clause 5 — a template-store generation
 change (`run::generation_changed`: a forget or reset disowned confirmations, or
 a sync corpus landed), so a `Confirmed` cell whose confirmation was disowned is
 read afresh rather than copied.
 
-Accepted costs: a read still incomplete after three rounds waits for a hover,
-or a Scan now or Recalibrate; a wrong placement waits for Scan now or
-Recalibrate; a real trailing cell that is not confident and reads dark for one
+Any other press over a held capture is an unknown-only round.
+
+Accepted costs: a read still incomplete waits for the next press; a wrong
+placement waits for Recalibrate; a real trailing cell that is not confident and reads dark for one
 frame is dropped, as a full read drops it, and is walked again as unseen on a
 later partial round; the `refills_budget(.., templates_moved)` wiring in
 `run::detect_tick` is pinned only at the pure-function level
@@ -174,5 +172,5 @@ which cannot be predicted on the cold-start tick, so `read::lines_up` refuses
 the kept read and round 2 is `Full` too; a manual relocation on a tick that
 also moves the screen scale publishes this tick's seed size
 (`run::relocated_panel`), so the next tick's seed differs and round 2 is
-`Full` as well. Open residual: `geometry::placed_panel_contradicted` compares origins only, so a Scan now
-taken while a tooltip hides the top rows can still remember an occluded locate.
+`Full` as well. Open residual: `geometry::placed_panel_contradicted` compares origins only, so a Recalibrate
+locate taken while a tooltip hides the top rows can still remember an occluded locate.

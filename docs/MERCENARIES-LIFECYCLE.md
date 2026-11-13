@@ -2,7 +2,12 @@
 
 **Status:** current implemented behavior.
 
-**Last verified:** 2026-11-02 at `842d6a18`.
+**Last verified:** 2026-11-13 at `9a12ce5c`.
+
+**Amended 2026-11-13 (POE-390):** the merc module reads the screen only on a
+press of the read key; see [Per press](#per-press). The arming, probe and
+cadence text below is kept as history. Policy:
+[Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy).
 
 **Canonical for:** Mercenary trigger-to-verdict flow and module lifecycle.
 
@@ -14,7 +19,33 @@ Placement remains in [ADR-024](adr/024-module-ocr-positions-are-placed-from-the-
 and the work/page boundary remains in
 [ADR-014](adr/014-desktop-features-are-modules-with-a-work-toggle-and-a-view-page.md).
 
-## Arming and capture
+## Per press
+
+Shipped: `4cd237b9`, `9a12ce5c` (POE-390).
+
+- Client.txt: a known Inspect text is matched and logged as heard; it arms
+  nothing and publishes nothing. An area change goes to the worker as
+  `MercInbox::AreaChanged`.
+- A press of the read key with the module on (worker inbox installed: module
+  on, session open, OCR available) hands that press's one frame and the cursor
+  to the merc worker (`press::MercReader`).
+- The worker (`run::read_press`) reads the panel on that frame, then, when the
+  cursor is on a held cell, the hovered tooltip on the same frame.
+- The full-screen locate runs only with no placement or a pending Recalibrate.
+  A placed miss is a miss; Recalibrate is the manual fix.
+- Every press refills the read budget. The first press reads the panel fully;
+  a later press over the same incomplete capture re-reads only its unresolved
+  rows, cells and header fields. Confident cells are kept; a complete capture
+  reads nothing.
+- Two tooltip reads that agree within 10 s (`PENDING_CONFIRM_TTL`), from two
+  presses, learn a support.
+- A press that finds no panel with the cursor off it, or an area change,
+  retires the live capture. A press with the cursor inside the held panel is
+  occluded and holds the capture, however long since the last press.
+- `Scanning` shows only while a press read runs. Each press logs one
+  `Merc: read on press — <outcome>` line. Nothing reads between presses.
+
+## Arming and capture — historical (superseded 2026-11-13, POE-390)
 
 | Event | Current behavior | Shipped |
 | --- | --- | --- |
@@ -26,7 +57,8 @@ and the work/page boundary remains in
 | Capture read | Apply ADR-025's full/unknown-only read budget, then switch to liveness checks; hover correction remains independent. | `2f53ee61` |
 | New identity or manual scan | Refill the read budget; template-generation changes also refill the merc budget. | `2f53ee61`, `f2f93cf9` |
 
-The automatic probes, retries and hover re-reads in this document break [Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy); POE-390 replaces the merc capture loop and POE-397 the gem icon reads.
+The rest of this section and [Read and liveness ownership](#read-and-liveness-ownership--historical-superseded-2026-11-13-poe-390)
+are **historical (superseded 2026-11-13, POE-390)**.
 
 A qualifying Inspect line over a held capture is ignored. Otherwise a new
 qualifying line can re-arm two probes, bounded by the stale-line window from
@@ -54,7 +86,7 @@ foreground grace expired (60 seconds). Armed waiting uses a 100 ms loop quantum.
 One log line records each arm and each stand-down. Shipped: `c4723819` retains
 the timing and stand-down model.
 
-## Read and liveness ownership
+## Read and liveness ownership — historical (superseded 2026-11-13, POE-390)
 
 `mercenary::run::LoopState` chooses read plans and cadence;
 `mercenary::read` builds and merges the capture. While a live capture still
@@ -92,8 +124,9 @@ follow the [Overlay Guide](OVERLAY-GUIDE.md).
 
 ## Code homes
 
-- `desktop/src-tauri/src/mercenary/trigger.rs`: text matching, speaker history and probe gate.
-- `desktop/src-tauri/src/mercenary/run.rs` and `run/detect.rs`: loop, read budget, hover and publication.
+- `desktop/src-tauri/src/mercenary/press.rs`: the merc reader on the read key; hands the pressed frame to the worker.
+- `desktop/src-tauri/src/mercenary/trigger.rs`: text matching, speaker history, area hand-off.
+- `desktop/src-tauri/src/mercenary/run.rs` and `run/detect.rs`: worker, read budget, tooltip read, publication.
 - `desktop/src-tauri/src/mercenary/run/session_open.rs`: session open, including the ordered template-store open (purge, reset, load, re-key, seeds, corpus merge).
 - `desktop/src-tauri/src/mercenary/read.rs`: read plans, confidence and capture merge.
 - `desktop/src/lib/mercenaries/verdict.ts`: pure triage result tree.

@@ -359,7 +359,9 @@ stated once in
 Its clause 4 governs every full-frame locate this ADR describes — Decision 3's
 one fallback locate and each amendment's.
 
-For merc, two sentences above become Manual-only (Scan now, Recalibrate):
+For merc, two sentences above become Manual-only (Recalibrate; Scan now was
+removed 2026-11-13 by POE-390, and a merc read runs only on a press of the read
+key — ADR-025's POE-390 amendment):
 
 - the POE-270 amendment's "a placed crop whose Wager/Recruit/button anchors are
   absent while the voice gate is active, spends one full-screen locate for that
