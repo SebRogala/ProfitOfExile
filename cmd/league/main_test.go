@@ -113,7 +113,7 @@ func assertRolloverGuidance(t *testing.T, output string) {
 		"  <one-shot> wipe \"OldLeague\" --allow-delete\n  <one-shot> status\n",
 		"Then re-enable server auto-restart, restart the server and wait until healthy.",
 		"Only then re-enable collector auto-restart and start the collector.",
-		"Check /health and /latest report league \"NextLeague\".",
+		"Check server /api/analysis/status and collector /health report league \"NextLeague\", and server /api/health is ok.",
 	}
 	previous := -1
 	for _, step := range steps {

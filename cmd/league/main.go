@@ -267,7 +267,7 @@ If outgoing league %[2]q rows remain, run:
   <one-shot> status
 Then re-enable server auto-restart, restart the server and wait until healthy.
 Only then re-enable collector auto-restart and start the collector.
-Check /health and /latest report league %[1]q.
+Check server /api/analysis/status and collector /health report league %[1]q, and server /api/health is ok.
 `, result.ToID, result.FromID, shellQuoteID(result.FromID))
 	return err
 }

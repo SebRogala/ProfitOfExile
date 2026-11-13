@@ -3,7 +3,10 @@
 **Status:** Current runbook for league rollover with the POE-127 CLI, plus the
 POE-119 migration gate requiring the matching POE-120/POE-121 application revision.
 
-**Last verified:** 2026-11-11 against the league CLI's fence refusals and
+**Last verified:** 2026-11-13 by the Allflame → Covens production rollover for
+Phase B steps 3–5, 8 and 10–12: the Coolify service actions, the detached runtime fence, the
+scratch-restore dump verification, and the health endpoints.
+2026-11-11 against the league CLI's fence refusals and
 activation guidance, and the server and collector startup order (fence, then
 league resolve), by a local rollover run and the league integration tests.
 2026-11-13 for the count manifest and wipe list against `league.ScopedTables`.
@@ -165,6 +168,49 @@ byte, and `runtime`, masked to 63 bits. `AcquireFencedScope` in
 the league schema, so use it for the initial wipe-first archive too; older
 writers may not honor it, so both services must still remain stopped.
 
+### Detached fence session (accepted alternative)
+
+A detached `psql` session may hold the fence instead of an interactive one.
+Name the session, take the lock, and sleep in one `psql -c` statement. Run it
+detached through the private database administration procedure:
+
+```sh
+psql "$DATABASE_URL" -c "SELECT set_config('application_name', 'league-fence', false), pg_try_advisory_lock(2547706464772240820::bigint) AS acquired, pg_sleep(14400);"
+```
+
+Choose a `pg_sleep` longer than the counts, dump, and archive verification.
+The statement prints `acquired` only when it ends, so check the fence from
+another session:
+
+```sql
+SELECT a.pid
+FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+WHERE a.application_name = 'league-fence' AND l.locktype = 'advisory'
+  AND l.granted AND l.classid = 593184136 AND l.objid = 146224564;
+```
+
+**Proceed only if this returns exactly one row.** `classid` and `objid` are the
+high and low 32 bits of the key. Zero rows means the lock was not acquired:
+apply the stop rule below. Re-run the check before the dump and after archive
+verification. Release the detached fence by terminating its backend; this drops
+the session lock:
+
+```sql
+SELECT pg_terminate_backend(a.pid)
+FROM pg_stat_activity a WHERE a.application_name = 'league-fence';
+```
+
+Require `t`. Then confirm no advisory lock remains before activation:
+
+```sql
+SELECT count(*) FROM pg_locks WHERE locktype = 'advisory';
+```
+
+Require `0`. Wherever this runbook says to release the fence in the held
+session, a detached fence is released this way instead.
+
+### Fence stop rule
+
 Keep the same session connected and the fence held through archive verification.
 If acquisition returns `f`, errors, or the fence session drops, **stop**. Re-verify
 both services are stopped with auto-restart disabled, re-acquire the fence in a
@@ -269,7 +315,32 @@ changing the running league. Phase B performs the flip at league start.
 including casing and spaces, as used by poe.ninja and trade requests. Compare
 with poe.ninja's league id, not a display alias. Replace all placeholders before
 running commands; `<server container>` names the current server container and
-must be resolved again after its restart. Keep deployment handles private.
+must be resolved again after its restart, by its stable service id prefix as
+[DEPLOY.md](DEPLOY.md#verifying-a-deploy-landed) describes. Keep deployment
+handles private.
+
+**Coolify service actions.** Production runs both services under Coolify.
+Each fact below changes how a Phase B step is carried out:
+
+- Coolify **Stop** removes the service's container. Nothing remains to
+  auto-restart.
+- `docker stop` on a container with restart policy `unless-stopped` leaves the
+  container `Exited`. Docker does not restart it.
+- Either form meets "stopped with auto-restart disabled".
+- Apply a changed `EXPECTED_LEAGUE` only through a Coolify **Restart** or
+  **Redeploy**. Each creates a new container from the current environment.
+- Do not `docker start` an old container after changing `EXPECTED_LEAGUE`. It
+  reuses the stale value, and its startup assertion refuses to boot.
+
+After each Coolify Restart or Redeploy, re-check `EXPECTED_LEAGUE` in the new
+container's environment:
+
+```sh
+docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' <server container> | grep '^EXPECTED_LEAGUE='
+```
+
+Expect `EXPECTED_LEAGUE=<NewLeagueId>`, or no line when it is unset. Run the
+same check against the collector container.
 
 While the server is stopped in Phase B, run `/league` in a one-shot container
 from the same immutable server image. The production `Dockerfile` copies the
@@ -325,7 +396,9 @@ ADR-009 amendment of 2026-11-12 (POE-118).
 ### Phase B — activate, wipe, and restart (at league start)
 
 3. Disable auto-restart for **both collector and server**, stop both services,
-   and confirm both remain stopped with no writes in flight. Keep this
+   and confirm both remain stopped with no writes in flight. Under Coolify, use
+   **Stop** or `docker stop` as
+   [Coolify service actions](#changing-the-active-league) describes. Keep this
    stopped-write boundary through the final dump, activation, wipe, and any
    stray cleanup. Server and collector resolve their league only after acquiring
    their fence, and activation refuses while either fence is held, but a writer
@@ -336,14 +409,38 @@ ADR-009 amendment of 2026-11-12 (POE-118).
    counts, dump, and archive verification. Capture outgoing-league counts for all
    seventeen scoped tables and take the final dedicated `pg_dump` outside the
    nightly rotation. `pg_dump` warns that there are circular foreign-key
-   constraints on TimescaleDB's `hypertable` catalog table; the warning is
-   harmless for this dump.
-   Retain the counts as the dump's manifest, including zero-count tables, and
-   verify the dump and its restore procedure using the private backup/restore
-   guide outside this repository. Past-league analysis requires restoring that
+   constraints on TimescaleDB's `hypertable` catalog table, and prints
+   `--data-only` hints for the `chunk` and `continuous_agg` catalog tables.
+   Both are harmless for this dump.
+   Retain the counts as the dump's manifest, including zero-count tables.
+   Verify the dump by restoring it into a scratch database on the same
+   TimescaleDB version:
+
+   ```sql
+   CREATE DATABASE <scratch db>;
+   -- connected to <scratch db>:
+   CREATE EXTENSION IF NOT EXISTS timescaledb;
+   SELECT timescaledb_pre_restore();
+   ```
+
+   ```sh
+   pg_restore --no-owner --no-acl -d <scratch db> <final dump>
+   ```
+
+   ```sql
+   SELECT timescaledb_post_restore();
+   ```
+
+   A 323 MB dump restored in about 80 s on 2026-11-13. In the scratch
+   database, count the outgoing league in all seventeen scoped tables. Compare
+   each count with the counted `status` manifest; stop on any mismatch. Then
+   drop the scratch database. The private backup/restore guide outside this
+   repository owns the dump and scratch locations. Past-league analysis requires restoring that
    dump to a scratch database (ADR-011); do not record backup locations here.
 5. After archive verification, release the fence explicitly in the same held
-   session, immediately before running the activation commands:
+   session, immediately before running the activation commands. For a
+   [detached fence](#detached-fence-session-accepted-alternative), terminate
+   its backend and confirm zero advisory locks instead:
 
    ```sql
    SELECT pg_advisory_unlock(2547706464772240820::bigint) AS released;
@@ -394,7 +491,9 @@ ADR-009 amendment of 2026-11-12 (POE-118).
    A refusal for other leagues' rows requires investigation; reserve
    `--allow-delete` for the checked stray cleanup below.
 8. Set `EXPECTED_LEAGUE` to `"<NewLeagueId>"` or unset it in **both** server and
-   collector deployment configuration. A stale assertion refuses startup.
+   collector deployment configuration (the Coolify environment). A stale
+   assertion refuses startup. The change takes effect only in a new container,
+   so steps 10 and 11 use a Coolify Restart or Redeploy.
 9. Before restarting either service, check counted status with the one-shot CLI:
 
     ```sh
@@ -417,12 +516,26 @@ ADR-009 amendment of 2026-11-12 (POE-118).
     With mixed leagues this deletes only outgoing rows, preserving the new
     league's rows; an exclusive outgoing-only set still selects TRUNCATE.
     Confirm no outgoing rows remain.
-10. Re-enable server auto-restart, restart the server, and wait until healthy.
-    Do not start the collector yet.
-11. Re-enable collector auto-restart and start the collector, after server health
-    and cleanup have passed.
-12. Check `/health` and `/latest` report `"<NewLeagueId>"`. Confirm a scoped
-    write/read lands under it and the server rejects a lingering old-league event.
+10. Re-enable server auto-restart, then start the server with a Coolify
+    **Restart** or **Redeploy**, never `docker start` of the old container.
+    Wait until healthy. Re-check `EXPECTED_LEAGUE` in the new server
+    container's environment. Do not start the collector yet.
+11. After server health and cleanup have passed, re-enable collector
+    auto-restart and start the collector the same way. Re-check
+    `EXPECTED_LEAGUE` in the new collector container's environment.
+12. Check these endpoints:
+    - server `/api/health`: `status` and `db` are `ok`, and `version` is the
+      intended commit;
+    - server `/api/analysis/status`: `league` is `"<NewLeagueId>"`;
+    - collector `/health`: `league` is `"<NewLeagueId>"` and `revision` is the
+      activated revision.
+
+    The server has no `/latest` route; `/latest` belongs to the collector.
+    Before the new league launches, two readings are expected. Collector
+    `lastSnapshot` stays at the Unix epoch. The currency-exchange
+    `hour stored` log shows `rows=0` with a non-zero `otherLeagueRows`.
+    Confirm a scoped write/read lands under the new league once it opens, and
+    that the server rejects a lingering old-league event.
 13. Clients need no manual step in the normal case. The desktop app follows the
     restarted server's `poe/league/active` boot event, re-checks the server's
     league on every Mercure stream open, and rearms its league when trade submit
@@ -540,3 +653,26 @@ the restart and cleanup order with the POE-127 CLI.
    volume from an allowed IP (`scripts/download-gem-icons.py` → repopulate the
    volume). New-league gems also need color seeding (a `gem_colors` migration)
    and their icon URLs added — see [ICONS.md](ICONS.md).
+
+## Operational lessons from the Allflame → Covens rollover (2026-11-13)
+
+The first production run of the POE-127 Phase B procedure. The Phase B steps
+above incorporate each lesson.
+
+1. **Coolify Stop removes the container.** It does not leave a stopped
+   container to restart. `docker stop` on an `unless-stopped` container leaves
+   it `Exited` instead.
+2. **A changed `EXPECTED_LEAGUE` needs a new container.** A `docker start` of
+   the old server container reused the stale value and refused to boot. A
+   Coolify Restart or Redeploy picked up the new value.
+3. **The fence can be held from a detached session.** A named `psql -c` that
+   took the lock and slept held it. `pg_locks` joined to `pg_stat_activity`
+   proved the hold, and `pg_terminate_backend` released it.
+4. **Scratch-restore verification is fast enough to run every time.** The
+   323 MB dump restored in about 80 s, and all seventeen counts matched the
+   manifest.
+5. **The server has no `/latest`.** `/api/latest` returned 404; the checks are
+   server `/api/health` and `/api/analysis/status`, and collector `/health`.
+6. **Pre-launch readings look empty.** Collector `lastSnapshot` stayed at the
+   epoch, and the currency-exchange hourly store logged `rows=0` with non-zero
+   `otherLeagueRows`, until the new league opened.
