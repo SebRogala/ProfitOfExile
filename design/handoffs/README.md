@@ -8,3 +8,4 @@
 | Desktop app → Boss loot: page, capture overlay + confirmation, sidebar, settings (POE-317) | `poe-317--desktop-app--boss-loot/` | 2026-11-01 |
 | Desktop app → Overlay → Divine Font craft alerts (POE-328) | `poe-328--desktop-app--overlay--font-alerts/` | 2026-11-02 |
 | Desktop app → Lab Farming → Font EV → Recipes (POE-329) | `poe-329--desktop-app--lab-farming--font-ev--recipes/` | 2026-11-02 |
+| Desktop app → Top bar → Account button (POE-362) | `poe-362--desktop-app--top-bar--account/` | 2026-11-13 |

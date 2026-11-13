@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Top bar — account button</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+/* Static stand-ins for :hover / :focus-visible so the references can show them. */
+.acct.is-hover{background:rgba(255,255,255,.06)}
+.acct.is-hover .av{color:var(--text);border-color:var(--text)}
+.acct.registered.is-hover .av{color:var(--surface)}
+.acct.is-focus{outline:1px solid var(--color-lab-blue);outline-offset:1px}
+</style>
+</helmet>
+<div style="width: 1024px; height: 110px; background: var(--bg); position: relative">
+<header class="tb">
+  <div class="tb-l"><img class="tb-logo" src="/_blob/1f6ef4dd72b006dba7d72f004dd6e24d" alt="ProfitOfExile"><span class="tb-name">ProfitOfExile</span></div>
+  <div class="tb-c">
+    <span class="tb-dot on" title="Server: Connected"></span>
+    <span class="tb-dot" title="OCR Scanner: Idle"></span>
+    <button class="tb-gear" title="Settings">⚙️</button>
+  </div>
+  <div class="tb-r">
+    <button class="rate"><img src="/_blob/b5a214848b06a00bdef1dd6020290e38" alt="Divine Orb"><span class="n">1</span><span>=</span><span class="n">360</span><img src="/_blob/edc35d3275f4e5d484a7a66fd2d366a5" alt="Chaos Orb"></button>
+    <span class="acct-wrap">
+      <button class="{{btnCls}}" aria-label="{{aria}}">
+        <span class="av" aria-hidden="true">
+          <sc-if value="{{glyphInitial}}" hint-placeholder-val="{{ true }}"><span>{{initial}}</span></sc-if>
+          <sc-if value="{{glyphPerson}}" hint-placeholder-val="{{ false }}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="5.5" r="2.8"></circle><path d="M2.8 14c.6-2.7 2.7-4.2 5.2-4.2s4.6 1.5 5.2 4.2"></path></svg></sc-if>
+          <sc-if value="{{glyphQ}}" hint-placeholder-val="{{ false }}"><span>?</span></sc-if>
+          <sc-if value="{{glyphDots}}" hint-placeholder-val="{{ false }}"><span style="letter-spacing: -1px">…</span></sc-if>
+        </span>
+      </button>
+      <sc-if value="{{tip}}" hint-placeholder-val="{{ true }}">
+        <div class="tip" role="tooltip" style="right: -142px"><b>{{tipTitle}}</b><sc-if value="{{hasLine}}" hint-placeholder-val="{{ true }}"><div class="l2">{{tipLine}}</div></sc-if></div>
+      </sc-if>
+    </span>
+    <div class="tb-win"><button title="Minimize">–</button><button title="Maximize">◻</button><button title="Close">✕</button></div>
+  </div>
+</header>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"state":{"editor":"enum","options":["registered","unregistered","unknown","checking"],"default":"registered"},"look":{"editor":"enum","options":["rest","hover","focus"],"default":"hover"},"$preview":{"width":1024,"height":110}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const st = this.props.state ?? 'registered';
+    const look = this.props.look ?? 'hover';
+    const alias = 'Gaming PC';
+    const role = 'beta';
+    const copy = {
+      registered: { aria: 'Account: registered as ' + alias, t: 'Registered as “' + alias + '”', l: 'Role ' + role + ' · click to open device identity' },
+      unregistered: { aria: 'Account: not registered', t: 'Not registered', l: 'This device has no alias on the server yet. Click to set one.' },
+      unknown: { aria: 'Account: registration unknown', t: 'Registration unknown', l: 'Server unreachable or outdated. Click to check again.' },
+      checking: { aria: 'Account: checking registration', t: 'Checking registration…', l: '' }
+    }[st];
+    return {
+      btnCls: 'acct ' + st + (look === 'hover' ? ' is-hover' : look === 'focus' ? ' is-focus' : ''),
+      glyphInitial: st === 'registered', glyphPerson: st === 'unregistered', glyphQ: st === 'unknown', glyphDots: st === 'checking',
+      initial: (alias.trim()[0] || '?').toUpperCase(),
+      tip: look !== 'rest', aria: copy.aria, tipTitle: copy.t, tipLine: copy.l, hasLine: copy.l !== ''
+    };
+  }
+}
+</script>
+</body>
+</html>

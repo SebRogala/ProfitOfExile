@@ -1,0 +1,25 @@
+{
+ "_note": "Exact mock data for POE-362. Do NOT invent or widen fields. One owner. Each record is a GET /api/device/me outcome; the shapes are the live server's (internal/server/handlers/device.go, deviceMeResponse). The alias is the dialog's own placeholder example, not a real device.",
+ "_owners": {
+  "deviceMe": "internal/device (GET /api/device/me) — exists, no backend change",
+  "identify": "internal/device (POST /api/device/identify) — exists, no backend change",
+  "registration": "derived (client, this task): from deviceMe / identify per README § Interactions & state"
+ },
+ "deviceMe": {
+  "registered": { "role": "beta", "alias": "Gaming PC", "channel": "beta", "features": ["temple", "merc", "exchange", "beta"] },
+  "registeredNoRole": { "role": "", "alias": "Gaming PC", "channel": "stable", "features": ["temple"], "_note": "line 2 drops 'Role … · '" },
+  "unregistered": { "role": "", "alias": null, "channel": "stable", "features": ["temple"] },
+  "unregisteredEmpty": { "role": "", "alias": "", "channel": "stable", "features": ["temple"], "_note": "empty string reads as unregistered, like null" },
+  "unknownOldServer": { "role": "beta", "channel": "beta", "features": ["temple", "merc", "exchange", "beta"], "_note": "no alias key at all → unknown" },
+  "unknownFailed": { "_note": "request rejected (network error / non-2xx) → unknown; retries continue" },
+  "checking": { "_note": "no answer yet for this device id, or just after a server switch" }
+ },
+ "identify": {
+  "success": { "alias": "Gaming PC", "_note": "POST response body; the button takes this alias at once" }
+ },
+ "_formats": {
+  "initial": "first character of alias.trim(), by code point ([...s][0]), toUpperCase()",
+  "tooltipAlias": "typographic quotes: “Gaming PC”",
+  "ariaAlias": "no quotes: 'Account: registered as Gaming PC'"
+ }
+}
