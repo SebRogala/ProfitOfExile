@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -910,5 +911,218 @@ func TestTradeLookupsUniqueAccountsMigrationStripsNamesAndKeepsConcentration(t *
 	}
 	if columns != 0 {
 		t.Errorf("unique_accounts columns after rollback = %d, want 0", columns)
+	}
+}
+
+func TestDeviceRetentionMigrationAllowsAnonymisedRows(t *testing.T) {
+	pool, m := testSetup(t)
+	defer pool.Close()
+	defer m.Close()
+	ctx := context.Background()
+	const previousVersion uint = 20261113130000
+	const device = "poe396-retention-fixture"
+	pastStart := time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC)
+	futureStart := time.Now().Add(365 * 24 * time.Hour)
+
+	var fontID, pastLabID, futureLabID, bossID, mercID int64
+	cleanup := func() {
+		for _, q := range []struct {
+			sql string
+			id  *int64
+		}{
+			{`DELETE FROM font_sessions WHERE id = $1`, &fontID},
+			{`DELETE FROM lab_runs WHERE id = $1`, &pastLabID},
+			{`DELETE FROM lab_runs WHERE id = $1`, &futureLabID},
+			{`DELETE FROM boss_loot_runs WHERE id = $1`, &bossID},
+			{`DELETE FROM merc_icon_templates WHERE id = $1`, &mercID},
+		} {
+			if _, err := pool.Exec(ctx, q.sql, *q.id); err != nil {
+				t.Errorf("cleanup %q: %v", q.sql, err)
+			}
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM devices WHERE fingerprint = $1`, device); err != nil {
+			t.Errorf("cleanup device: %v", err)
+		}
+	}
+	defer func() {
+		cleanup()
+		if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+			t.Errorf("restore fully migrated schema: %v", err)
+		}
+	}()
+
+	if err := m.Migrate(previousVersion); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatalf("migrate to pre-retention version: %v", err)
+	}
+	seed := []struct {
+		name string
+		sql  string
+		args []any
+		id   *int64
+	}{
+		{"device", `INSERT INTO devices (fingerprint) VALUES ($1) RETURNING 0`, []any{device}, new(int64)},
+		{"font_sessions", `INSERT INTO font_sessions (lab_type, total_crafts, device_id, pair_code) VALUES ('Uber', 3, $1, 'P') RETURNING id`, []any{device}, &fontID},
+		{"lab_runs past", `INSERT INTO lab_runs (device_id, difficulty, strategy, started_at, elapsed_seconds, room_count) VALUES ($1, 'Uber', 's', $2, 60, 5) RETURNING id`, []any{device, pastStart}, &pastLabID},
+		{"lab_runs future", `INSERT INTO lab_runs (device_id, difficulty, strategy, started_at, elapsed_seconds, room_count) VALUES ($1, 'Uber', 's', $2, 60, 5) RETURNING id`, []any{device, futureStart}, &futureLabID},
+		{"boss_loot_runs", `INSERT INTO boss_loot_runs (league, device_id, boss, profile_key, profile_version, run_number, items) VALUES ('Mirage', $1, 'b', 'k', 1, 1, '{"quantities":{},"counted":[]}') RETURNING id`, []any{device}, &bossID},
+		{"merc_icon_templates", `INSERT INTO merc_icon_templates (family, tier, format_version, signature, device_id) VALUES ('f', 1, 1, decode(repeat('00', 576), 'hex'), $1) RETURNING id`, []any{device}, &mercID},
+	}
+	for _, s := range seed {
+		if err := pool.QueryRow(ctx, s.sql, s.args...).Scan(s.id); err != nil {
+			t.Fatalf("seed %s: %v", s.name, err)
+		}
+	}
+	migrateBefore := time.Now()
+	migrateUp(t, m)
+
+	t.Run("lab_runs_created_at_backfills_past_start", func(t *testing.T) {
+		var createdAt time.Time
+		if err := pool.QueryRow(ctx, `SELECT created_at FROM lab_runs WHERE id = $1`, pastLabID).Scan(&createdAt); err != nil {
+			t.Fatalf("read created_at: %v", err)
+		}
+		if !createdAt.Equal(pastStart) {
+			t.Errorf("created_at = %v, want started_at %v", createdAt, pastStart)
+		}
+	})
+
+	t.Run("lab_runs_created_at_caps_future_start_at_migration_time", func(t *testing.T) {
+		var createdAt time.Time
+		if err := pool.QueryRow(ctx, `SELECT created_at FROM lab_runs WHERE id = $1`, futureLabID).Scan(&createdAt); err != nil {
+			t.Fatalf("read created_at: %v", err)
+		}
+		if createdAt.After(time.Now()) || createdAt.Before(migrateBefore.Add(-time.Minute)) {
+			t.Errorf("created_at = %v, want the migration time (started_at was %v)", createdAt, futureStart)
+		}
+	})
+
+	t.Run("boss_loot_runs_created_at_backfilled", func(t *testing.T) {
+		var createdAt time.Time
+		if err := pool.QueryRow(ctx, `SELECT created_at FROM boss_loot_runs WHERE id = $1`, bossID).Scan(&createdAt); err != nil {
+			t.Fatalf("read created_at: %v", err)
+		}
+		if createdAt.After(time.Now()) || createdAt.Before(migrateBefore.Add(-time.Minute)) {
+			t.Errorf("created_at = %v, want the migration time", createdAt)
+		}
+	})
+
+	t.Run("boss_loot_fk_sets_null_on_device_delete", func(t *testing.T) {
+		var delType string
+		if err := pool.QueryRow(ctx, `
+			SELECT confdeltype::text FROM pg_constraint
+			WHERE conrelid = 'boss_loot_runs'::regclass AND contype = 'f' AND confrelid = 'devices'::regclass`).Scan(&delType); err != nil {
+			t.Fatalf("read FK: %v", err)
+		}
+		if delType != "n" {
+			t.Errorf("confdeltype = %q, want n (SET NULL)", delType)
+		}
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer tx.Rollback(ctx)
+		if _, err := tx.Exec(ctx, `DELETE FROM devices WHERE fingerprint = $1`, device); err != nil {
+			t.Fatalf("delete device with boss-loot rows: %v", err)
+		}
+		var deviceID *string
+		if err := tx.QueryRow(ctx, `SELECT device_id FROM boss_loot_runs WHERE id = $1`, bossID).Scan(&deviceID); err != nil {
+			t.Fatalf("read boss-loot row: %v", err)
+		}
+		if deviceID != nil {
+			t.Errorf("boss_loot_runs.device_id = %q after device delete, want NULL", *deviceID)
+		}
+	})
+
+	anonymise := []struct {
+		table, sql string
+		id         *int64
+	}{
+		{"font_sessions", `UPDATE font_sessions SET device_id = NULL, pair_code = NULL WHERE id = $1`, &fontID},
+		{"lab_runs", `UPDATE lab_runs SET device_id = NULL WHERE id = $1`, &pastLabID},
+		{"boss_loot_runs", `UPDATE boss_loot_runs SET device_id = NULL WHERE id = $1`, &bossID},
+		{"merc_icon_templates", `UPDATE merc_icon_templates SET device_id = NULL WHERE id = $1`, &mercID},
+	}
+	t.Run("device_columns_accept_null", func(t *testing.T) {
+		for _, a := range anonymise {
+			if _, err := pool.Exec(ctx, a.sql, *a.id); err != nil {
+				t.Errorf("%s: store anonymised row: %v", a.table, err)
+			}
+		}
+	})
+
+	t.Run("down_refuses_while_anonymised_rows_exist", func(t *testing.T) {
+		err := m.Migrate(previousVersion)
+		if err == nil {
+			t.Fatal("down succeeded with NULL device_id rows present, want failure")
+		}
+		if !strings.Contains(err.Error(), "font_sessions") {
+			t.Errorf("down error = %v, want it to name font_sessions", err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM font_sessions WHERE id = $1`, fontID); err != nil {
+			t.Fatalf("clear font_sessions: %v", err)
+		}
+		forceRetentionVersion(t, m)
+		err = m.Migrate(previousVersion)
+		if err == nil || !strings.Contains(err.Error(), "lab_runs") {
+			t.Errorf("down error after clearing font_sessions = %v, want it to name lab_runs", err)
+		}
+		forceRetentionVersion(t, m)
+	})
+
+	t.Run("down_restores_schema_once_rows_are_cleared", func(t *testing.T) {
+		for _, a := range anonymise[1:] {
+			if _, err := pool.Exec(ctx, `DELETE FROM `+a.table+` WHERE id = $1`, *a.id); err != nil {
+				t.Fatalf("clear %s: %v", a.table, err)
+			}
+		}
+		if err := m.Migrate(previousVersion); err != nil {
+			t.Fatalf("down after clearing NULL rows: %v", err)
+		}
+		var nullable []string
+		rows, err := pool.Query(ctx, `
+			SELECT table_name || '.' || column_name FROM information_schema.columns
+			WHERE table_schema = 'public' AND is_nullable = 'YES'
+			  AND (table_name, column_name) IN (('font_sessions','device_id'), ('font_sessions','pair_code'),
+			      ('lab_runs','device_id'), ('boss_loot_runs','device_id'), ('merc_icon_templates','device_id'))`)
+		if err != nil {
+			t.Fatalf("read nullability: %v", err)
+		}
+		for rows.Next() {
+			var c string
+			if err := rows.Scan(&c); err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			nullable = append(nullable, c)
+		}
+		rows.Close()
+		if len(nullable) != 0 {
+			t.Errorf("columns still nullable after down: %v", nullable)
+		}
+		var createdAtCols int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM information_schema.columns
+			WHERE table_schema = 'public' AND column_name = 'created_at' AND table_name IN ('lab_runs', 'boss_loot_runs')`).Scan(&createdAtCols); err != nil {
+			t.Fatalf("read created_at columns: %v", err)
+		}
+		if createdAtCols != 0 {
+			t.Errorf("created_at columns after down = %d, want 0", createdAtCols)
+		}
+		var delType string
+		if err := pool.QueryRow(ctx, `
+			SELECT confdeltype::text FROM pg_constraint
+			WHERE conrelid = 'boss_loot_runs'::regclass AND contype = 'f' AND confrelid = 'devices'::regclass`).Scan(&delType); err != nil {
+			t.Fatalf("read FK: %v", err)
+		}
+		if delType != "a" {
+			t.Errorf("confdeltype after down = %q, want a (NO ACTION)", delType)
+		}
+	})
+}
+
+// forceRetentionVersion clears the dirty flag a failed down migration leaves;
+// the down's guard raises before any DDL, so the schema is still at the version.
+func forceRetentionVersion(t *testing.T, m *migrate.Migrate) {
+	t.Helper()
+	if err := m.Force(20261113140000); err != nil {
+		t.Fatalf("force retention version after failed down: %v", err)
 	}
 }
