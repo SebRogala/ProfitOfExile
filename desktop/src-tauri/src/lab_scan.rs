@@ -43,6 +43,11 @@ pub struct LabScanState {
     /// Font session data — accumulated rounds, shared between the lab scan loop
     /// and handlers.
     pub font_session: Mutex<FontSessionData>,
+    /// When a current font frame last read each alert craft (POE-328). Written
+    /// by the font loop's `process_frame`, cleared wherever `font_session` is
+    /// reset, read by `font_alerts::get_font_alerts`; otherwise it ages out
+    /// through `FONT_ALERT_HOLD`. Acquired alone.
+    pub font_alert_seen: Mutex<crate::font_alerts::AlertSeen>,
 }
 
 const SCAN_INTERVAL: Duration = Duration::from_millis(250);
@@ -563,6 +568,19 @@ impl FontProcessingState {
             Ok(lines) => {
                 let panel = crate::font_parser::parse_font_panel(&lines);
                 self.frame_saw_panel = panel.font_active;
+                let current = self.frame_is_current(
+                    generation,
+                    state.lab_scan.font_scan_generation.load(Ordering::SeqCst),
+                    state.lab_scan.font_scan_live_gen.load(Ordering::SeqCst),
+                );
+                if current {
+                    crate::font_alerts::note_alert_read(
+                        &mut state.lab_scan.font_alert_seen.lock().unwrap_or_else(|e| e.into_inner()),
+                        panel.font_active,
+                        &panel.options,
+                        Instant::now(),
+                    );
+                }
                 if !panel.font_active && !lines.is_empty() && self.loop_count % 40 == 1 {
                     crate::app_log(
                         app,

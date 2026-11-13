@@ -1,6 +1,7 @@
 mod capture;
 mod clock;
 mod fingerprint;
+mod font_alerts;
 mod font_ledger;
 mod font_parser;
 mod font_session;
@@ -507,6 +508,12 @@ pub struct AppState {
     /// a copy reloaded from disk at the next launch would be a price with no
     /// server behind it. Acquired alone, like every other module-owned Mutex.
     pub temple_market: Mutex<temple::market::MarketInput>,
+    /// The exceptional-support price read behind the Font alerts overlay (POE-328).
+    ///
+    /// Written ONLY by `font_alerts::spawn_exceptional_price_poll` and
+    /// `font_alerts::on_server_url_changed`; not persisted (a copy of what a
+    /// server said); acquired alone.
+    pub exceptional_prices: Mutex<font_alerts::PriceMirror>,
     /// The valuation table computed from the preset, the Custom table and the
     /// market read above — stored so a read LOOKS IT UP instead of rebuilding
     /// it (POE-257 WI-3, 2026-09-07; the owner's "computed on update, and the
@@ -1030,6 +1037,7 @@ fn set_server_url(url: String, app: AppHandle) {
         // league's prices land as soon as the league does.
         ssot::supersede_league_fetches();
         temple::market::on_server_url_changed(&app);
+        font_alerts::on_server_url_changed(&app);
         ssot::rearm_league(app.clone());
     }
     emit_status(&app);
@@ -2507,6 +2515,7 @@ fn spawn_font_scan(app: &AppHandle) {
     state.lab_scan.font_scan_live_gen.store(generation, Ordering::SeqCst);
 
     *state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner()) = FontSessionData::default();
+    font_alerts::clear_alert_reads(&state.lab_scan.font_alert_seen);
     app_log(app, format!("Font scan started (gen={})", generation));
     emit_status(app);
 
@@ -2569,6 +2578,7 @@ fn discard_font_session(app: AppHandle) {
         *session = FontSessionData::default();
         discarded
     };
+    font_alerts::clear_alert_reads(&state.lab_scan.font_alert_seen);
     app_log(&app, format!("Font session discarded ({} rounds)", discarded));
     emit_status(&app);
 }
@@ -2617,6 +2627,7 @@ fn send_font_session_data(app: &AppHandle) {
     // Reset session.
     *session = FontSessionData::default();
     drop(session);
+    font_alerts::clear_alert_reads(&state.lab_scan.font_alert_seen);
 
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -3374,6 +3385,7 @@ pub fn run() {
             lab_scan_generation: AtomicU64::new(0),
             font_opened_seq: AtomicU64::new(0),
             font_session: Mutex::new(FontSessionData::default()),
+            font_alert_seen: Mutex::new(font_alerts::AlertSeen::default()),
         },
         lab_state: Mutex::new(lab_state::LabState::Idle),
         logs: Mutex::new(Vec::new()),
@@ -3414,6 +3426,7 @@ pub fn run() {
         temple: Mutex::new(temple::slice::TempleSlice::default()),
         temple_settings: Mutex::new(temple::slice::TempleSettings::default()),
         temple_market: Mutex::new(temple::market::MarketInput::none()),
+        exceptional_prices: Mutex::new(font_alerts::PriceMirror::default()),
         temple_valuation: Mutex::new(None),
         temple_arm: Mutex::new(temple::trigger::ArmState::default()),
         temple_rearm: AtomicU64::new(0),
@@ -3499,6 +3512,8 @@ pub fn run() {
             set_overlay_config_mode,
             get_overlay_config_mode,
             get_comparator_data,
+            font_alerts::get_font_alerts,
+            font_alerts::get_exceptional_support_prices,
             set_overlay_clickthrough,
             request_trade_refresh,
             get_widget_geometries,
@@ -3616,6 +3631,7 @@ pub fn run() {
             // whether or not the capture loop is running, and the poll's first
             // attempt waits on the league fetch above rather than on a timer.
             temple::market::spawn_temple_market_poll(handle.clone());
+            font_alerts::spawn_exceptional_price_poll(handle.clone());
             emit_status(&handle);
             emit_logs(&handle);
             // Modules start LAST: the owner map is effective by now
