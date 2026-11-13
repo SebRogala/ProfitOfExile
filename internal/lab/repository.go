@@ -137,6 +137,31 @@ func (r *Repository) LatestGCPPrice(ctx context.Context, scope league.Scope) (fl
 	return *chaos, nil
 }
 
+// LatestNinjaDivinePrice returns the newest poe.ninja divine price in
+// currency_snapshots and its snapshot time. No row, or a NULL price, is
+// (0, zero time, nil): the caller treats it as no rate.
+func (r *Repository) LatestNinjaDivinePrice(ctx context.Context, scope league.Scope) (float64, time.Time, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, time.Time{}, fmt.Errorf("lab repo: latest ninja divine price: %w", err)
+	}
+	var chaos *float64
+	var at time.Time
+	err := r.pool.QueryRow(ctx, `
+		SELECT chaos, time FROM currency_snapshots
+		WHERE league = $1 AND currency_id = 'divine'
+		ORDER BY time DESC LIMIT 1`, scope.ID()).Scan(&chaos, &at)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, time.Time{}, nil
+	}
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("lab repo: latest ninja divine price: %w", err)
+	}
+	if chaos == nil {
+		return 0, time.Time{}, nil
+	}
+	return *chaos, at, nil
+}
+
 // SaveFontResults batch-inserts Font of Divine Skill analysis results.
 func (r *Repository) SaveFontResults(ctx context.Context, scope league.Scope, results []FontResult) (int, error) {
 	if err := scope.Validate(); err != nil {

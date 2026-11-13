@@ -428,6 +428,12 @@ type Result struct {
 	// govern only whether a recipe counted towards HoursSeen. It is 0 when the
 	// newest hour had no divine/chaos trade.
 	DivineChaosRate float64 `json:"divineChaosRate"`
+	// DivineChaosBuy and DivineChaosSell are the newest hour's cheapest (Buy) and
+	// dearest (Sell) realized divine price in chaos, via priceIn; 0 when that row
+	// is not PriceValid or the hour had no divine/chaos market. Cache-only: never
+	// serialized, never stored (the repository stores only DivineChaosRate).
+	DivineChaosBuy  float64 `json:"-"`
+	DivineChaosSell float64 `json:"-"`
 	Plays           []Play  `json:"plays"`
 }
 
@@ -1034,6 +1040,9 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 		}
 		if i == 0 {
 			result.DivineChaosRate = hourRate
+			if buy, sell, ok := divineSpreadOf(hourRows); ok {
+				result.DivineChaosBuy, result.DivineChaosSell = buy, sell
+			}
 		}
 
 		view := windowView{hour: hour, byMarket: history}
@@ -1203,6 +1212,21 @@ func divineRateOf(hourRows []Row) (rate float64, found bool) {
 		return vwapIn(r, DivineID, ChaosID)
 	}
 	return 0, false
+}
+
+// divineSpreadOf returns ONE hour's cheapest (buy) and dearest (sell) divine
+// price in chaos from its divine/chaos market. ok is false when the hour had no
+// such market or its row is not priceable (priceIn), so the caller reports no
+// spread while the VWAP rate may still stand.
+func divineSpreadOf(hourRows []Row) (buy, sell float64, ok bool) {
+	for _, r := range hourRows {
+		if pairKey(r.ItemA, r.ItemB) != pairKey(DivineID, ChaosID) {
+			continue
+		}
+		low, high, ok := priceIn(r, DivineID, ChaosID)
+		return low.price, high.price, ok
+	}
+	return 0, 0, false
 }
 
 // chaosPerUnit values one unit of a quote currency in chaos.

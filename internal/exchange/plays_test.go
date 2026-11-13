@@ -3444,3 +3444,45 @@ func TestBestPlays_apocalypseDivineMarketWithOneCardInItsWindow_isServedFromThat
 		t.Errorf("legs priced %v / %v divine, want the 20:00Z card's 4 / 4", buy.Price, sell.Price)
 	}
 }
+
+// wideDivineSpec is the newest hour's divine/chaos market for the spread tests:
+// one divine went for 196 chaos at the cheapest and 203 at the dearest, and
+// 3,980,000 chaos against 20,000 divine puts the VWAP on 199.
+func wideDivineSpec() rowSpec {
+	spec := divineChaosAnchor()
+	spec.volume = [2]int64{3980000, 20000}
+	spec.lowestRatio = [2]int64{196, 1}
+	spec.highestRatio = [2]int64{203, 1}
+	return spec
+}
+
+func TestBestPlays_divineChaosSpread_isTheNewestHoursCheapestAndDearestDivine(t *testing.T) {
+	// The older hour's 150/260 is wider on both ends, so reading any hour but the
+	// newest, or crossing low and high, moves at least one figure.
+	older := divineChaosAnchor()
+	older.lowestRatio = [2]int64{150, 1}
+	older.highestRatio = [2]int64{260, 1}
+	rows := append(
+		storedAt(feedHour, wideDivineSpec().row()),
+		storedAt(feedHour.Add(-time.Hour), older.row())...,
+	)
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	wantClose(t, "DivineChaosBuy", got.DivineChaosBuy, 196)
+	wantClose(t, "DivineChaosSell", got.DivineChaosSell, 203)
+}
+
+func TestBestPlays_unpricedNewestDivineRow_reportsNoSpreadButKeepsTheRate(t *testing.T) {
+	// A row Normalize marked unpriceable still carries volumes, so the VWAP rate
+	// stands while its ratio-based buy and sell do not.
+	spec := wideDivineSpec()
+	spec.priceInvalid = true
+
+	got := BestPlays("Allflame", storedAt(feedHour, spec.row()), DefaultConfig())
+
+	if got.DivineChaosBuy != 0 || got.DivineChaosSell != 0 {
+		t.Errorf("Buy, Sell = %v, %v; want 0, 0 — the row is not PriceValid", got.DivineChaosBuy, got.DivineChaosSell)
+	}
+	wantClose(t, "DivineChaosRate", got.DivineChaosRate, 199)
+}
