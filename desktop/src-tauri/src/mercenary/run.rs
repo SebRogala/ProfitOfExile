@@ -1999,7 +1999,7 @@ struct Retained {
 }
 
 /// Identity of one full-screen locate opportunity ([`locate_decision`]). A
-/// Recalibrate (`merc_refit`) or a fresh voice line / Scan now arm (the trigger
+/// Recalibrate (`merc.refit`) or a fresh voice line / Scan now arm (the trigger
 /// generation) opens a new one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FallbackKey {
@@ -2222,7 +2222,7 @@ struct Session {
     /// knows the pitch. See [`super::geometry::header_guard_bounds`] and
     /// [`publishable_header`]. Cleared with `panel` on retire.
     header_guard: Option<[i32; 4]>,
-    /// The one full-screen locate per `(merc_refit, trigger generation)` —
+    /// The one full-screen locate per `(merc.refit, trigger generation)` —
     /// spent only where [`locate_decision`] allows it.
     fallback: FallbackBudget,
     /// The key [`MERC_COLUMN_TRUSTED_LINE`] was last said under. See
@@ -2264,7 +2264,7 @@ struct Session {
     /// does not re-fire on the first tick of this one, which has nothing held
     /// to drop anyway. See [`refit_requested`].
     refit_seen: u64,
-    /// The `merc_refit` value the locate decision last treated as acted on —
+    /// The `merc.refit` value the locate decision last treated as acted on —
     /// kept apart from [`Self::refit_seen`], which [`consume_refit`] must read
     /// at the fit (ssot bump-before-write).
     refit_located: u64,

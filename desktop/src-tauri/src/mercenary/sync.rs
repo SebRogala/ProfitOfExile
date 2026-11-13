@@ -1069,7 +1069,7 @@ fn claim_step(
 /// Wait out the load seam's window for a corpus, then release the seam claim.
 ///
 /// Called from the capture loop's start AFTER the loaded store has been
-/// installed into `merc_templates`. That ordering is the single-writer rule: the
+/// installed into `merc.templates`. That ordering is the single-writer rule: the
 /// store is in place before the claim drops, so whichever side ends up merging —
 /// this one or a later [`spawn_pull`] task — merges into the installed store
 /// under its mutex, and no merge can be erased by a whole-store write that
@@ -1104,7 +1104,7 @@ pub fn wait_for_pull(
 /// Merge a corpus into the INSTALLED store, save, and publish.
 ///
 /// The one merge path, shared by the load seam and by a pull that landed after
-/// the seam let go. Both take `merc_templates` and do the whole read-modify-write
+/// the seam let go. Both take `merc.templates` and do the whole read-modify-write
 /// inside that one acquisition, so the merged store is never visible half-done
 /// and never overwritten by a caller that loaded it earlier.
 ///
@@ -1196,7 +1196,7 @@ pub fn apply_corpus(
     // snapshot is what decides whether an emit reaches the window at all.
     //
     // No lock is held here: the store and directory block closed above, and
-    // `build_snapshot` takes `merc_sync` and `mercenary` only.
+    // `build_snapshot` takes `merc.sync` and `mercenary` only.
     crate::ssot::emit_ssot(app);
 }
 

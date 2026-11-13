@@ -1644,7 +1644,7 @@ fn parse_listing(item: &Value, divine_rate: Option<f64>) -> Option<MercTradeList
     })
 }
 
-/// The merc result cache behind `AppState::merc_trade_cache`, keyed by
+/// The merc result cache behind `AppState.merc.trade_cache`, keyed by
 /// `(league, query hash)` and carrying the unix ms each result was fetched at.
 ///
 /// Named here rather than spelled out at the field, so the key stays one

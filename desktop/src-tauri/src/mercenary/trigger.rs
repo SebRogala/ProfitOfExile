@@ -559,7 +559,7 @@ pub struct BurstGate {
     /// long as a mercenary kept talking. See [`Self::hear`].
     looks: u32,
     /// Monotonic identity of the current voice/manual arm. The merc fallback
-    /// budget keys on this plus `merc_refit`, so a fresh gate opens a fresh
+    /// budget keys on this plus `merc.refit`, so a fresh gate opens a fresh
     /// one-locate budget even when its probe count returns to zero — spent
     /// only by a cold start or a Scan now / Recalibrate crop miss
     /// (`run::locate_decision`).

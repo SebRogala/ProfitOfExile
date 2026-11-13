@@ -704,7 +704,7 @@ fn register_geometry<E: DetectionEffects>(
     // few lines down, on the same tick, so the two can never disagree.
     //
     // No lock is held at this point: the only guard this tick opens is
-    // `merc_templates`, around `build_capture` below. Called on every tick that
+    // `merc.templates`, around `build_capture` below. Called on every tick that
     // reads a panel — a tick with no recruit window returns well above here —
     // and `ssot::screen_changed` is what keeps a re-measurement of the same
     // screen from waking every overlay's poll.

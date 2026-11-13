@@ -435,7 +435,7 @@ pub const BLOCKLIST_FILE: &str = "seed-blocklist.json";
 ///
 /// # Lock order — normative, and stated only here
 ///
-/// **`icons::writing_icons_dir` → `AppState::merc_templates` → this lock.**
+/// **`icons::writing_icons_dir` → `AppState.merc.templates` → this lock.**
 /// Every seed path takes a PREFIX or a SUFFIX of that chain and never inverts
 /// it; the callers cite this doc rather than arguing the order again:
 ///
@@ -963,7 +963,7 @@ struct SeedState {
 /// — the capture loop, the fetch task, and whichever tick re-derives.
 ///
 /// **Never held across the store mutex.** Every function below takes it, reads
-/// or writes plain data, and drops it before touching `merc_templates`.
+/// or writes plain data, and drops it before touching `merc.templates`.
 static SEED_STATE: Mutex<SeedState> = Mutex::new(SeedState {
     fetching: false,
     cache_scanned: false,
