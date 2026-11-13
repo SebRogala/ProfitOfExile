@@ -24,17 +24,22 @@ pub(crate) fn armed_token(lab: &LabScanState) -> Option<u64> {
 
 impl ScreenReader<AppHandle> for LabFontReader {
     fn arm(&self, app: &AppHandle, _press: &Press) -> Option<Box<dyn PendingRead<AppHandle>>> {
-        armed_token(&app.state::<AppState>().lab_scan).map(|token| Box::new(PendingFontRead { token }) as _)
+        let state = app.state::<AppState>();
+        armed_token(&state.lab_scan).map(|token| Box::new(PendingFontRead {
+            token,
+            prompt: crate::read_prompt::armed_id_in(&state, crate::read_prompt::Mechanic::DivineFont),
+        }) as _)
     }
 }
 
 struct PendingFontRead {
     token: u64,
+    prompt: Option<u64>,
 }
 
 impl PendingRead<AppHandle> for PendingFontRead {
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, app: &AppHandle) {
-        consume(app, self.token, frame);
+        consume(app, self.token, self.prompt, frame);
     }
 }
 
@@ -42,7 +47,7 @@ thread_local! {
     static LOGGED: std::cell::Cell<(u64, u8)> = const { std::cell::Cell::new((0, 0)) };
 }
 
-fn consume(app: &AppHandle, token: u64, frame: Result<&Arc<Capture>, &str>) {
+fn consume(app: &AppHandle, token: u64, prompt: Option<u64>, frame: Result<&Arc<Capture>, &str>) {
     report_engine_once(app);
     let state = app.state::<AppState>();
     let once = |what: LogOnce| once_per_context(&LOGGED, token, what);
@@ -76,7 +81,7 @@ fn consume(app: &AppHandle, token: u64, frame: Result<&Arc<Capture>, &str>) {
     match crate::ocr::recognize_text(&processed) {
         Ok(lines) => {
             let read = read_font_lines(&state, token, &lines);
-            publish_font_read(app, &lines, read);
+            publish_font_read(app, &lines, read, prompt);
         }
         Err(e) => {
             if once(LogOnce::FrameError) {
@@ -112,7 +117,7 @@ pub(crate) fn read_font_lines(state: &AppState, captured: u64, lines: &[String])
     FontLinesRead { panel, record }
 }
 
-fn publish_font_read(app: &AppHandle, lines: &[String], read: FontLinesRead) {
+fn publish_font_read(app: &AppHandle, lines: &[String], read: FontLinesRead, prompt: Option<u64>) {
     let FontLinesRead { panel, record } = read;
     if !panel.font_active {
         if !lines.is_empty() {
@@ -124,6 +129,7 @@ fn publish_font_read(app: &AppHandle, lines: &[String], read: FontLinesRead) {
         app_log(app, "Font read skipped (its font context ended before the read)".to_string());
         return;
     };
+    crate::read_prompt::read_done(app, crate::read_prompt::Mechanic::DivineFont, prompt);
     if let Some(detection) = record.detection {
         crate::publish_lab_detection(app, detection);
     }

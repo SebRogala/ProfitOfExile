@@ -31,19 +31,24 @@ pub(crate) fn armed_token(lab: &LabScanState) -> Option<u64> {
 
 impl ScreenReader<AppHandle> for LabGemReader {
     fn arm(&self, app: &AppHandle, press: &Press) -> Option<Box<dyn PendingRead<AppHandle>>> {
-        armed_token(&app.state::<AppState>().lab_scan)
-            .map(|token| Box::new(PendingGemRead { token, cursor: press.cursor }) as _)
+        let state = app.state::<AppState>();
+        armed_token(&state.lab_scan).map(|token| Box::new(PendingGemRead {
+            token,
+            cursor: press.cursor,
+            prompt: crate::read_prompt::armed_id_in(&state, crate::read_prompt::Mechanic::DivineFont),
+        }) as _)
     }
 }
 
 struct PendingGemRead {
     token: u64,
     cursor: Option<(i32, i32)>,
+    prompt: Option<u64>,
 }
 
 impl PendingRead<AppHandle> for PendingGemRead {
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, app: &AppHandle) {
-        consume(app, self.token, self.cursor, frame);
+        consume(app, self.token, self.cursor, self.prompt, frame);
     }
 }
 
@@ -71,7 +76,7 @@ fn with_context_log<R>(token: u64, f: impl FnOnce(&mut ContextLog) -> R) -> R {
     })
 }
 
-fn consume(app: &AppHandle, token: u64, cursor: Option<(i32, i32)>, frame: Result<&Arc<Capture>, &str>) {
+fn consume(app: &AppHandle, token: u64, cursor: Option<(i32, i32)>, prompt: Option<u64>, frame: Result<&Arc<Capture>, &str>) {
     report_engine_once(app);
     let state = app.state::<AppState>();
     let once = |what: LogOnce| once_per_context(&LOGGED, token, what);
@@ -132,7 +137,7 @@ fn consume(app: &AppHandle, token: u64, cursor: Option<(i32, i32)>, frame: Resul
         lines
     };
     let read = read_gem_frame(&state, token, &grab.image, grab.origin, cursor, &lab, tooltip_ocr);
-    publish_gem_frame(app, token, read);
+    publish_gem_frame(app, token, read, prompt);
 }
 
 fn recognize(app: &AppHandle, once: impl Fn(LogOnce) -> bool, image: &DynamicImage) -> Vec<String> {
@@ -420,7 +425,7 @@ pub(crate) fn publish_gem_commit(app: &AppHandle, commit: GemCommit) {
     });
 }
 
-fn publish_gem_frame(app: &AppHandle, token: u64, read: GemFrameRead) {
+fn publish_gem_frame(app: &AppHandle, token: u64, read: GemFrameRead, prompt: Option<u64>) {
     let (commit, icons_skipped, tooltip) = match read {
         GemFrameRead::NoVocab => return,
         GemFrameRead::NoPanel { joint } => {
@@ -465,7 +470,10 @@ fn publish_gem_frame(app: &AppHandle, token: u64, read: GemFrameRead) {
         }),
     }
     match commit {
-        Some(commit) => publish_gem_commit(app, commit),
+        Some(commit) => {
+            crate::read_prompt::read_done(app, crate::read_prompt::Mechanic::DivineFont, prompt);
+            publish_gem_commit(app, commit);
+        }
         None => app_log(app, "Gem read: not stored — the gem choice or the lab mode changed since the press".to_string()),
     }
 }

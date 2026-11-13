@@ -1915,6 +1915,7 @@ trait PressEffects {
     /// The panel read of the pressed frame. `None` when it bailed (stop
     /// signal, OCR failure).
     fn panel_read(&mut self, frame: &crate::capture::Capture, cursor: Option<(i32, i32)>) -> Option<DetectOutcome>;
+    fn prompt_read_done(&mut self, prompt: Option<u64>);
     /// Whether `cursor` sits on a cell of the capture the panel read left.
     fn cell_under(&mut self, cursor: (i32, i32)) -> bool;
     fn tooltip_read(&mut self, frame: &crate::capture::Capture, cursor: (i32, i32));
@@ -1936,7 +1937,9 @@ fn read_press<E: PressEffects>(effects: &mut E, pressed: PressedMercFrame) {
         }
     };
     effects.begin();
-    effects.panel_read(&frame, pressed.cursor);
+    if matches!(effects.panel_read(&frame, pressed.cursor), Some(DetectOutcome::Captured | DetectOutcome::Refreshed)) {
+        effects.prompt_read_done(pressed.prompt);
+    }
     if let Some(cursor) = pressed.cursor {
         if effects.cell_under(cursor) {
             effects.tooltip_read(&frame, cursor);
@@ -1955,6 +1958,9 @@ struct AppPressEffects<'a> {
 }
 
 impl PressEffects for AppPressEffects<'_> {
+    fn prompt_read_done(&mut self, prompt: Option<u64>) {
+        crate::read_prompt::read_done(self.app, crate::read_prompt::Mechanic::Mercenary, prompt);
+    }
     fn begin(&mut self) {
         // Each press logs its miss once.
         self.session.miss_logged = false;
@@ -6432,7 +6438,7 @@ mod tests {
     }
 
     fn pressed(monitor_id: u32, cursor: Option<(i32, i32)>) -> PressedMercFrame {
-        PressedMercFrame { frame: Ok(frame(monitor_id)), cursor }
+        PressedMercFrame { frame: Ok(frame(monitor_id)), cursor, prompt: Some(4) }
     }
 
     #[derive(Debug, PartialEq)]
@@ -6440,6 +6446,7 @@ mod tests {
         Begin,
         Fail,
         Panel(u32),
+        PromptDone(Option<u64>),
         Tooltip(u32),
         End,
     }
@@ -6456,6 +6463,9 @@ mod tests {
     }
 
     impl PressEffects for RecordingPress {
+        fn prompt_read_done(&mut self, prompt: Option<u64>) {
+            self.calls.push(Call::PromptDone(prompt));
+        }
         fn begin(&mut self) {
             self.calls.push(Call::Begin);
         }
@@ -6483,6 +6493,28 @@ mod tests {
     fn read_one(mut effects: RecordingPress, press: PressedMercFrame) -> Vec<Call> {
         read_press(&mut effects, press);
         effects.calls
+    }
+
+    #[test]
+    fn a_captured_panel_completes_the_pressed_prompt_after_the_panel_read() {
+        let effects = RecordingPress { panel: Some(DetectOutcome::Captured), ..RecordingPress::default() };
+        assert_eq!(read_one(effects, pressed(1, None)),
+            vec![Call::Begin, Call::Panel(1), Call::PromptDone(Some(4)), Call::End]);
+    }
+
+    #[test]
+    fn a_refreshed_panel_completes_the_pressed_prompt_after_the_panel_read() {
+        let effects = RecordingPress { panel: Some(DetectOutcome::Refreshed), ..RecordingPress::default() };
+        assert_eq!(read_one(effects, pressed(1, None)),
+            vec![Call::Begin, Call::Panel(1), Call::PromptDone(Some(4)), Call::End]);
+    }
+
+    #[test]
+    fn an_unsuccessful_panel_read_keeps_the_prompt() {
+        for panel in [Some(DetectOutcome::Missed), Some(DetectOutcome::Occluded), Some(DetectOutcome::Retired), None] {
+            let effects = RecordingPress { panel, ..RecordingPress::default() };
+            assert_eq!(read_one(effects, pressed(1, None)), vec![Call::Begin, Call::Panel(1), Call::End], "{panel:?}");
+        }
     }
 
     #[test]
@@ -6536,7 +6568,7 @@ mod tests {
     /// D5: a failed grab reads nothing and counts no miss.
     #[test]
     fn a_failed_grab_only_fails() {
-        let press = PressedMercFrame { frame: Err("no monitor".to_string()), cursor: Some((5, 5)) };
+        let press = PressedMercFrame { frame: Err("no monitor".to_string()), cursor: Some((5, 5)), prompt: Some(4) };
 
         assert_eq!(read_one(RecordingPress::default(), press), vec![Call::Fail]);
     }
@@ -6551,6 +6583,7 @@ mod tests {
     }
 
     impl PressEffects for SessionPress<'_> {
+        fn prompt_read_done(&mut self, _prompt: Option<u64>) {}
         fn begin(&mut self) {}
         fn fail(&mut self, _msg: String) {}
         fn panel_read(&mut self, _frame: &crate::capture::Capture, cursor: Option<(i32, i32)>) -> Option<DetectOutcome> {

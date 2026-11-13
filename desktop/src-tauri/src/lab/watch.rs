@@ -123,6 +123,7 @@ pub(crate) fn on_client_line(app: &AppHandle, line: &str, watch: &mut LabWatchSt
                     app_log(app, "Lab nav: darkshrine activated".to_string());
                 }
             }
+            crate::read_prompt::apply(app, crate::read_prompt::lab_nav_change(&nav_event));
             if !nav_emitted {
                 if let Err(e) = app.emit("lab-nav", &nav_event) {
                     log::warn!("emit lab-nav failed: {}", e);
@@ -208,6 +209,7 @@ pub(crate) fn on_client_line(app: &AppHandle, line: &str, watch: &mut LabWatchSt
             // (GetForegroundWindow — more reliable than Client.txt)
             lab_state::LabEvent::GameFocused | lab_state::LabEvent::GameBlurred => {}
         }
+        crate::read_prompt::apply(app, crate::read_prompt::lab_event_change(&event));
     }
 }
 

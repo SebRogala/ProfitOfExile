@@ -41,6 +41,7 @@ pub struct ReadPromptSnapshot {
 pub struct ReadPromptState {
     active: Vec<(Mechanic, u64)>,
     seq: u64,
+    lab_context: u64,
 }
 
 impl ReadPromptState {
@@ -63,6 +64,9 @@ impl ReadPromptState {
     /// The context of `mechanic` ended.
     pub fn end(&mut self, mechanic: Mechanic) {
         self.active.retain(|(m, _)| *m != mechanic);
+        if mechanic == Mechanic::DivineFont {
+            self.lab_context = 0;
+        }
     }
     /// The player changed area. Only the mercenary prompt ends here: the
     /// temple arms on an area line and the lab ends through its own seams.
@@ -95,6 +99,34 @@ pub fn temple_change(event: Option<LineEvent>, armed_after: bool) -> Option<Chan
             (!armed_after).then_some(Change::End(Mechanic::Incursion))
         }
     }
+}
+
+pub fn lab_nav_change(event: &crate::lab_navigation::NavEvent) -> Option<Change> {
+    use crate::lab_navigation::NavEvent;
+    match event {
+        NavEvent::LabFinished => Some(Change::Arm(Mechanic::DivineFont)),
+        NavEvent::LabExited => Some(Change::End(Mechanic::DivineFont)),
+        _ => None,
+    }
+}
+
+pub fn lab_event_change(event: &crate::lab_state::LabEvent) -> Option<Change> {
+    use crate::lab_state::LabEvent;
+    match event {
+        LabEvent::FontOpened => Some(Change::Arm(Mechanic::DivineFont)),
+        LabEvent::ZoneChanged { .. } => Some(Change::End(Mechanic::DivineFont)),
+        _ => None,
+    }
+}
+
+/// An idle seal may arrive after a portal return armed another font context.
+/// Check its identity under the same prompt guard as the replacement arm.
+pub fn end_lab_context_in(state: &crate::AppState, ended: u64) -> bool {
+    edit_in(state, |p| {
+        if p.lab_context == ended {
+            p.end(Mechanic::DivineFont);
+        }
+    })
 }
 
 /// Runs `edit` on the state's prompt; true when the snapshot changed.
@@ -138,6 +170,10 @@ fn apply_paused_in(state: &crate::AppState, change: Change, pause: &mut dyn FnMu
     // insertion share this guard with the disable clear below.
     edit_in(state, |p| match change {
         Change::Arm(mechanic) if !module_on(state, mechanic) => {}
+        Change::Arm(Mechanic::DivineFont) => {
+            p.lab_context = state.lab_scan.font_context.load(std::sync::atomic::Ordering::SeqCst);
+            p.arm(Mechanic::DivineFont);
+        }
         _ => p.apply(change),
     })
 }
@@ -181,6 +217,9 @@ pub fn read_done(app: &AppHandle, mechanic: Mechanic, id: Option<u64>) {
 pub fn modules_changed(app: &AppHandle) {
     emit_if(app, modules_changed_in(&app.state::<crate::AppState>()));
 }
+pub fn end_lab_context(app: &AppHandle, ended: u64) {
+    emit_if(app, end_lab_context_in(&app.state::<crate::AppState>(), ended));
+}
 pub fn area_changed(app: &AppHandle) {
     emit_if(app, area_changed_in(&app.state::<crate::AppState>()));
 }
@@ -191,6 +230,75 @@ mod tests {
     use crate::temple::trigger::{apply_line, classify, ArmReason, ArmState, Transition};
 
     const NOW: u64 = 1_756_800_000_000;
+
+    const FONT_OPEN: &str = "[INFO Client 1] InstanceClientLabyrinthCraftResultOptionsList recieved";
+
+    fn lab_line(prompt: &mut ReadPromptState, sm: &mut crate::lab_state::LabStateMachine, line: &str) {
+        if let Some(event) = crate::lab_navigation::parse_nav_event(line, true) {
+            if let Some(change) = lab_nav_change(&event) { prompt.apply(change); }
+        }
+        if let Some(event) = sm.process_line(line) {
+            if let Some(change) = lab_event_change(&event) { prompt.apply(change); }
+        }
+    }
+
+    #[test]
+    fn izaros_defeat_shows_the_divine_font_prompt() {
+        let mut prompt = ReadPromptState::default();
+        lab_line(&mut prompt, &mut crate::lab_state::LabStateMachine::new(),
+            "[INFO Client 1] Izaro: I die for the Empire!");
+        assert_eq!(prompt.snapshot().mechanic, Some(Mechanic::DivineFont));
+    }
+
+    #[test]
+    fn each_font_open_line_shows_a_fresh_prompt() {
+        let mut prompt = ReadPromptState::default();
+        let mut sm = crate::lab_state::LabStateMachine::new();
+        lab_line(&mut prompt, &mut sm, FONT_OPEN);
+        let first = prompt.armed_id(Mechanic::DivineFont).expect("first font prompt");
+        lab_line(&mut prompt, &mut sm, FONT_OPEN);
+        assert!(prompt.armed_id(Mechanic::DivineFont).unwrap() > first);
+    }
+
+    #[test]
+    fn a_zone_change_ends_the_font_prompt() {
+        let mut prompt = ReadPromptState::default();
+        prompt.arm(Mechanic::DivineFont);
+        let mut sm = crate::lab_state::LabStateMachine::new();
+        sm.process_line(FONT_OPEN);
+        let event = sm.process_line(r#"Generating level 69 area "2_10_town" with seed 1"#).unwrap();
+        assert!(matches!(event, crate::lab_state::LabEvent::ZoneChanged { .. }));
+        if let Some(change) = lab_event_change(&event) { prompt.apply(change); }
+        assert_eq!(prompt.snapshot().mechanic, None);
+    }
+
+    #[test]
+    fn a_lab_exit_ends_the_font_prompt_without_a_font_open() {
+        let mut prompt = ReadPromptState::default();
+        prompt.arm(Mechanic::DivineFont);
+        lab_line(&mut prompt, &mut crate::lab_state::LabStateMachine::new(),
+            "[INFO Client 1] : You have entered Lioneye's Watch.");
+        assert_eq!(prompt.snapshot().mechanic, None);
+    }
+
+    #[test]
+    fn unrelated_lab_lines_leave_the_prompt_unchanged() {
+        let mut prompt = ReadPromptState::default();
+        prompt.arm(Mechanic::Mercenary);
+        let before = prompt.snapshot();
+        lab_line(&mut prompt, &mut crate::lab_state::LabStateMachine::new(),
+            "[INFO Client 1] Izaro: Ascend with precision.");
+        assert_eq!(prompt.snapshot(), before);
+    }
+
+    #[test]
+    fn a_font_open_with_lab_overlays_off_shows_no_prompt() {
+        let state = crate::settings::tests::test_app_state();
+        *state.lab_overlays_enabled.lock().unwrap() = false;
+        let event = crate::lab_state::LabStateMachine::new().process_line(FONT_OPEN).unwrap();
+        apply_in(&state, lab_event_change(&event).expect("font open arms"));
+        assert_eq!(shown_in(&state), None);
+    }
 
     fn stamped(at_ms: u64, message: &str) -> String {
         use chrono::TimeZone;

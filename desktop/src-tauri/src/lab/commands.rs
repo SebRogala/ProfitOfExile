@@ -131,9 +131,32 @@ pub(crate) fn get_lab_overlays_enabled(app: AppHandle) -> bool {
 pub(crate) fn set_lab_overlays_enabled(enabled: bool, app: AppHandle) {
     {
         let state = app.state::<AppState>();
-        *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) = enabled;
+        if set_lab_overlays_enabled_in(&state, enabled) {
+            crate::ssot::emit_ssot(&app);
+        }
     }
     persist_settings(&app);
+}
+
+fn set_lab_overlays_enabled_in(state: &AppState, enabled: bool) -> bool {
+    *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) = enabled;
+    crate::read_prompt::modules_changed_in(state)
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::*;
+    use crate::read_prompt::{self, Change, Mechanic};
+
+    #[test]
+    fn disabling_lab_overlays_hides_the_shown_font_prompt() {
+        let state = crate::settings::tests::test_app_state();
+        set_lab_overlays_enabled_in(&state, true);
+        read_prompt::apply_in(&state, Change::Arm(Mechanic::DivineFont));
+        assert_eq!(state.read_prompt.lock().unwrap().snapshot().mechanic, Some(Mechanic::DivineFont));
+        set_lab_overlays_enabled_in(&state, false);
+        assert_eq!(state.read_prompt.lock().unwrap().snapshot().mechanic, None);
+    }
 }
 
 #[tauri::command]

@@ -9,9 +9,9 @@
 //!   window went with the area it was in (ruling 4);
 //! - a **known Inspect text** — a normalized two-or-more-word Inspect line, or
 //!   a one-word Inspect grunt licensed by the same speaker's previous known
-//!   multi-word mercenary line — is logged as heard, and nothing else: no
-//!   status, no speaker on the slice (ruling 5). The matching is kept for the
-//!   "press the read key" prompt (POE-388).
+//!   multi-word mercenary line — arms the read prompt (POE-388). With the
+//!   module on it is also logged as heard; it writes no status or speaker on
+//!   the slice (ruling 5).
 //!
 //! # The Inspect match (POE-280, owner decision 2026-09-14)
 //!
@@ -291,31 +291,120 @@ fn module_enabled(app: &AppHandle) -> bool {
 ///
 /// An area change goes to the installed read worker (if any). Any other line
 /// runs the Inspect match, which updates the per-speaker history whatever the
-/// module state; a match with the module on is logged and nothing else.
+/// module state; a match arms the prompt through its module-gated entry and
+/// is logged with the module on.
 pub fn on_client_line(
     app: &AppHandle,
     line: &str,
     voice_lines: &MercVoiceLines,
     history: &mut MercSpeakerHistory,
 ) {
-    if let Some(message) = client_line_effect(line) {
-        if let Some(tx) = super::press::installed_inbox(app) {
+    on_client_line_with(&mut AppMercSink(app), line, voice_lines, history);
+}
+
+trait MercLineSink {
+    fn send_inbox(&mut self, message: MercInbox);
+    fn module_enabled(&self) -> bool;
+    fn log(&mut self, message: String);
+    fn arm_prompt(&mut self);
+}
+
+struct AppMercSink<'a>(&'a AppHandle);
+
+impl MercLineSink for AppMercSink<'_> {
+    fn send_inbox(&mut self, message: MercInbox) {
+        if let Some(tx) = super::press::installed_inbox(self.0) {
             // A send error means the worker is stopping; nothing to retire.
             let _ = tx.send(message);
         }
+    }
+    fn module_enabled(&self) -> bool { module_enabled(self.0) }
+    fn log(&mut self, message: String) { crate::app_log(self.0, message); }
+    fn arm_prompt(&mut self) {
+        crate::read_prompt::apply(self.0, Some(crate::read_prompt::Change::Arm(crate::read_prompt::Mechanic::Mercenary)));
+    }
+}
+
+fn on_client_line_with(
+    sink: &mut impl MercLineSink,
+    line: &str,
+    voice_lines: &MercVoiceLines,
+    history: &mut MercSpeakerHistory,
+) {
+    if let Some(message) = client_line_effect(line) {
+        sink.send_inbox(message);
         return;
     }
     let Some(speaker) = trigger_line(line, voice_lines, history) else {
         return;
     };
-    if module_enabled(app) {
-        crate::app_log(app, format!("Merc: heard {speaker} — press the read key to read"));
+    if sink.module_enabled() {
+        sink.log(format!("Merc: heard {speaker} — press the read key to read"));
     }
+    sink.arm_prompt();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct RecordingSink {
+        state: crate::AppState,
+        calls: Vec<String>,
+    }
+    impl RecordingSink {
+        fn new(enabled: bool) -> Self {
+            let state = crate::settings::tests::test_app_state();
+            state.modules_enabled.lock().unwrap().insert(MODULE_ID.to_string(), enabled);
+            Self { state, calls: Vec::new() }
+        }
+        fn line(&mut self, line: &str) {
+            on_client_line_with(self, line, &MercVoiceLines::shipped(), &mut MercSpeakerHistory::default());
+        }
+    }
+    impl MercLineSink for RecordingSink {
+        fn send_inbox(&mut self, message: MercInbox) {
+            assert!(matches!(message, MercInbox::AreaChanged));
+            self.calls.push("area".into());
+        }
+        fn module_enabled(&self) -> bool { self.state.modules_enabled.lock().unwrap()[MODULE_ID] }
+        fn log(&mut self, message: String) { self.calls.push(message); }
+        fn arm_prompt(&mut self) {
+            self.calls.push("arm".into());
+            crate::read_prompt::apply_in(&self.state, crate::read_prompt::Change::Arm(crate::read_prompt::Mechanic::Mercenary));
+        }
+    }
+
+    #[test]
+    fn an_inspect_line_shows_the_merc_prompt_after_the_heard_log() {
+        let mut sink = RecordingSink::new(true);
+        sink.line(THRASSEL_INSPECT);
+        assert_eq!(sink.calls, ["Merc: heard Thrassel, the Azadin Sadist — press the read key to read", "arm"]);
+        assert_eq!(sink.state.read_prompt.lock().unwrap().snapshot().mechanic, Some(crate::read_prompt::Mechanic::Mercenary));
+    }
+
+    #[test]
+    fn an_inspect_line_with_the_module_off_shows_no_prompt() {
+        let mut sink = RecordingSink::new(false);
+        sink.line(THRASSEL_INSPECT);
+        assert_eq!(sink.calls, ["arm"]);
+        assert_eq!(sink.state.read_prompt.lock().unwrap().snapshot().mechanic, None);
+    }
+
+    #[test]
+    fn a_non_inspect_line_arms_no_prompt() {
+        let mut sink = RecordingSink::new(true);
+        sink.line(THRASSEL_APPROACH);
+        assert!(sink.calls.is_empty());
+        assert_eq!(sink.state.read_prompt.lock().unwrap().snapshot().mechanic, None);
+    }
+
+    #[test]
+    fn an_area_line_only_reaches_the_worker_inbox() {
+        let mut sink = RecordingSink::new(true);
+        sink.line("[INFO Client 1] : You have entered Lioneye's Watch.");
+        assert_eq!(sink.calls, ["area"]);
+    }
 
     const THRASSEL_APPROACH: &str = concat!(
         "2026/09/14 05:15:54 215134062 cffb065b [INFO Client 38536] ",

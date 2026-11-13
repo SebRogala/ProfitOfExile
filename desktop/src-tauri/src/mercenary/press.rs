@@ -20,6 +20,8 @@ use crate::read_hotkey::{PendingRead, Press, ScreenReader};
 pub struct PressedMercFrame {
     pub frame: Result<Arc<Capture>, String>,
     pub cursor: Option<(i32, i32)>,
+    /// The Mercenary prompt arm live when this press was accepted.
+    pub prompt: Option<u64>,
 }
 
 /// What the merc worker receives.
@@ -36,11 +38,15 @@ pub trait PressContext {
     /// The merc worker's inbox, `None` while the module is off, the session is
     /// not open, or capture is unavailable.
     fn inbox(&self) -> Option<Sender<MercInbox>>;
+    fn prompt_arm(&self) -> Option<u64> { None }
 }
 
 impl PressContext for AppHandle {
     fn inbox(&self) -> Option<Sender<MercInbox>> {
         installed_inbox(self)
+    }
+    fn prompt_arm(&self) -> Option<u64> {
+        crate::read_prompt::armed_id_in(&self.state::<crate::AppState>(), crate::read_prompt::Mechanic::Mercenary)
     }
 }
 
@@ -65,19 +71,20 @@ pub static MERC_READER: MercReader = MercReader;
 pub struct MercPending {
     tx: Sender<MercInbox>,
     cursor: Option<(i32, i32)>,
+    prompt: Option<u64>,
 }
 
 impl<C: PressContext> ScreenReader<C> for MercReader {
     fn arm(&self, ctx: &C, press: &Press) -> Option<Box<dyn PendingRead<C>>> {
         let tx = ctx.inbox()?;
-        Some(Box::new(MercPending { tx, cursor: press.cursor }))
+        Some(Box::new(MercPending { tx, cursor: press.cursor, prompt: ctx.prompt_arm() }))
     }
 }
 
 impl<C> PendingRead<C> for MercPending {
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, _ctx: &C) {
         let frame = frame.map(Arc::clone).map_err(str::to_string);
-        let pressed = PressedMercFrame { frame, cursor: self.cursor };
+        let pressed = PressedMercFrame { frame, cursor: self.cursor, prompt: self.prompt };
         if self.tx.send(MercInbox::Press(pressed)).is_err() {
             log::warn!("merc: read worker gone, pressed frame dropped");
         }
@@ -96,16 +103,29 @@ mod tests {
     /// A fake app: the merc inbox the module would install.
     struct World {
         inbox: Mutex<Option<Sender<MercInbox>>>,
+        prompt: Mutex<Option<u64>>,
     }
     impl PressContext for World {
         fn inbox(&self) -> Option<Sender<MercInbox>> {
             self.inbox.lock().unwrap().clone()
         }
+        fn prompt_arm(&self) -> Option<u64> { *self.prompt.lock().unwrap() }
     }
 
     fn world() -> (World, Receiver<MercInbox>) {
         let (tx, rx) = mpsc::channel();
-        (World { inbox: Mutex::new(Some(tx)) }, rx)
+        (World { inbox: Mutex::new(Some(tx)), prompt: Mutex::new(None) }, rx)
+    }
+
+    #[test]
+    fn a_pressed_frame_keeps_the_prompt_arm_from_acceptance() {
+        let (world, rx) = world();
+        *world.prompt.lock().unwrap() = Some(4);
+        let armed = crate::read_hotkey::arm_all(Press { cursor: None }, Default::default(), &[&MERC_READER], &world);
+        *world.prompt.lock().unwrap() = Some(5);
+        crate::read_hotkey::run_armed(armed, &world, &mut |_| {}, &mut || Ok(capture(1)));
+        let MercInbox::Press(pressed) = rx.try_recv().unwrap() else { panic!("expected press") };
+        assert_eq!(pressed.prompt, Some(4));
     }
 
     fn capture(monitor_id: u32) -> Capture {
@@ -272,7 +292,7 @@ mod tests {
     // ------------------------------------------------- the worker's receive --
 
     fn press(monitor_id: u32) -> MercInbox {
-        MercInbox::Press(PressedMercFrame { frame: Ok(Arc::new(capture(monitor_id))), cursor: None })
+        MercInbox::Press(PressedMercFrame { frame: Ok(Arc::new(capture(monitor_id))), cursor: None, prompt: None })
     }
 
     #[test]
@@ -300,7 +320,7 @@ mod tests {
     #[test]
     fn a_grab_error_is_received_once_as_the_error() {
         let (tx, rx) = mpsc::channel();
-        tx.send(MercInbox::Press(PressedMercFrame { frame: Err("no monitor".to_string()), cursor: None }))
+        tx.send(MercInbox::Press(PressedMercFrame { frame: Err("no monitor".to_string()), cursor: None, prompt: None }))
             .unwrap();
         drop(tx);
 

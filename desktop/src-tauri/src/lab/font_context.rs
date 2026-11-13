@@ -46,6 +46,7 @@ pub(crate) struct FontReadRecord {
 /// What a finalize took out of the session.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FontUpload {
+    pub ended_token: u64,
     pub sealed_leftover: Option<SealedRound>,
     /// The `POST /api/desktop/font-session` body; `None` with no rounds.
     pub payload: Option<serde_json::Value>,
@@ -136,7 +137,7 @@ pub(crate) fn take_font_upload(state: &AppState, expected_idle_seq: Option<u64>)
             return None;
         }
     }
-    state.lab_scan.font_context.store(0, Ordering::SeqCst);
+    let ended_token = state.lab_scan.font_context.swap(0, Ordering::SeqCst);
     bump_idle(state);
     font_alerts::clear_alert_reads(&state.lab_scan.font_alert_seen);
 
@@ -155,7 +156,7 @@ pub(crate) fn take_font_upload(state: &AppState, expected_idle_seq: Option<u64>)
     let payload = font_session::finalize_font_session(&session, lab_type, &variant, &state.device_id, &pair);
     let rounds = session.rounds.len();
     *session = FontSessionData::default();
-    Some(FontUpload { sealed_leftover, payload, rounds })
+    Some(FontUpload { ended_token, sealed_leftover, payload, rounds })
 }
 
 pub(crate) fn log_sealed_round(app: &AppHandle, sealed: &SealedRound) {
@@ -171,10 +172,10 @@ pub(crate) fn log_sealed_round(app: &AppHandle, sealed: &SealedRound) {
 }
 
 /// The finalize adapter: take the upload, log, emit the status and POST.
-/// Returns whether it acted.
-pub(crate) fn finalize_font_context(app: &AppHandle, expected_idle_seq: Option<u64>) -> bool {
+/// Returns the ended context's token when it acted.
+pub(crate) fn finalize_font_context(app: &AppHandle, expected_idle_seq: Option<u64>) -> Option<u64> {
     let state = app.state::<AppState>();
-    let Some(upload) = take_font_upload(&state, expected_idle_seq) else { return false };
+    let upload = take_font_upload(&state, expected_idle_seq)?;
     if let Some(sealed) = &upload.sealed_leftover {
         log_sealed_round(app, sealed);
     }
@@ -201,7 +202,7 @@ pub(crate) fn finalize_font_context(app: &AppHandle, expected_idle_seq: Option<u
         });
     }
     emit_status(app);
-    true
+    Some(upload.ended_token)
 }
 
 /// Finalize `IDLE_LIMIT` after `seq`, unless anything bumped the seq first.
@@ -209,8 +210,9 @@ pub(crate) fn spawn_font_idle_timer(app: &AppHandle, seq: u64) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(IDLE_LIMIT).await;
-        if finalize_font_context(&app, Some(seq)) {
+        if let Some(ended) = finalize_font_context(&app, Some(seq)) {
             app_log(&app, "Font session sealed (no font panel read for 10 minutes)".to_string());
+            crate::read_prompt::end_lab_context(&app, ended);
         }
     });
 }
@@ -266,6 +268,51 @@ mod tests {
 
     fn font_context(state: &AppState) -> u64 {
         state.lab_scan.font_context.load(Ordering::SeqCst)
+    }
+
+    fn prompt(state: &AppState) {
+        *state.lab_overlays_enabled.lock().unwrap() = true;
+        crate::read_prompt::apply_in(state, crate::read_prompt::Change::Arm(crate::read_prompt::Mechanic::DivineFont));
+    }
+
+    fn shown(state: &AppState) -> Option<crate::read_prompt::Mechanic> {
+        state.read_prompt.lock().unwrap().snapshot().mechanic
+    }
+
+    #[test]
+    fn the_current_idle_seal_hides_its_font_prompt() {
+        let state = test_app_state();
+        let arm = arm_font_context(&state);
+        prompt(&state);
+        let upload = take_font_upload(&state, Some(arm.idle_seq)).unwrap();
+        assert_eq!(upload.ended_token, arm.token);
+        crate::read_prompt::end_lab_context_in(&state, upload.ended_token);
+        assert_eq!(shown(&state), None);
+    }
+
+    #[test]
+    fn a_stale_idle_deadline_leaves_the_new_font_prompt_shown() {
+        let state = test_app_state();
+        let old = arm_font_context(&state);
+        arm_font_context(&state);
+        prompt(&state);
+        assert_eq!(take_font_upload(&state, Some(old.idle_seq)), None);
+        assert_eq!(shown(&state), Some(crate::read_prompt::Mechanic::DivineFont));
+    }
+
+    #[test]
+    fn an_idle_completion_delivered_after_rearm_keeps_the_new_font_prompt() {
+        let state = test_app_state();
+        let old = arm_font_context(&state);
+        prompt(&state);
+        let upload = take_font_upload(&state, Some(old.idle_seq)).unwrap();
+        let new = arm_font_context_if_unarmed(&state).unwrap();
+        assert_ne!(new.token, old.token);
+        prompt(&state);
+        crate::read_prompt::end_lab_context_in(&state, upload.ended_token);
+        assert_eq!(shown(&state), Some(crate::read_prompt::Mechanic::DivineFont));
+        assert!(crate::read_prompt::end_lab_context_in(&state, new.token), "replacement token must own the prompt");
+        assert_eq!(shown(&state), None);
     }
 
     /// What the reader does with a current read: alerts under their own lock,
