@@ -49,7 +49,7 @@ const ROOTS: MirrorRoot[] = [
 		name: 'lib',
 		desktop: byRelativePath(desktopLib, DESKTOP_LIB),
 		web: byRelativePath(webLib, WEB_LIB),
-		identical: ['trade-utils.ts', 'trade-utils.test.ts', 'price.svelte.ts', 'session-queue.ts', 'comparator/league-fence.ts', 'comparator/league-fence.test.ts'],
+		identical: ['trade-utils.ts', 'trade-utils.test.ts', 'price.svelte.ts', 'session-queue.ts', 'comparator/league-fence.ts', 'comparator/league-fence.test.ts', 'privacy/notice.json'],
 		divergent: {
 			'api.ts':
 				'shared open contract (MercureHandlers names, onOpen on every open after onConnectionChange(true)); bodies differ by topic set (desktop 5, web 2), web trade dispatch, and token base/headers (desktop Tauri, web same-origin)',

@@ -1,0 +1,25 @@
+{
+	"revision": 1,
+	"date": "2026-11-13",
+	"draft": true,
+	"changes": [
+		{
+			"revision": 1,
+			"date": "2026-11-13",
+			"items": ["[DRAFT] Placeholder change item; WI-6 writes the text."]
+		}
+	],
+	"sections": [
+		{ "id": "controller", "heading": "Who is responsible", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the controller section."], "items": [] },
+		{ "id": "data-items", "heading": "What the app sends and why", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the data items section."], "items": [] },
+		{ "id": "identify", "heading": "Identify (device accounts)", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the Identify section."], "items": [] },
+		{ "id": "trade", "heading": "Trade searches", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the trade section."], "items": [] },
+		{ "id": "not-collected", "heading": "What is not collected", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the not-collected section."], "items": [] },
+		{ "id": "legal-basis", "heading": "Legal basis", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the legal basis section."], "items": [] },
+		{ "id": "recipients", "heading": "Recipients and transfers", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the recipients section."], "items": [] },
+		{ "id": "third-parties", "heading": "Third-party services", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the third-party section."], "items": [] },
+		{ "id": "retention", "heading": "Retention", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the retention section."], "items": [] },
+		{ "id": "rights", "heading": "Your rights", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the rights section."], "items": [] },
+		{ "id": "revision", "heading": "Revision history", "paragraphs": ["[DRAFT] Placeholder text; WI-6 writes the revision section."], "items": [] }
+	]
+}
