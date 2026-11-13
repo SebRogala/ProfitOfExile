@@ -71,6 +71,13 @@ is comparable and is the only market identity. `GemKey` strips a trailing
   until POE-309 sets it); the trade price still stands;
 - the price is the observed price, never scaled by age or confidence (L9).
 
+ADR-027 Decision 4 carries forward as amended by POE-295 L4: a
+never-checked gem is priced from poe.ninja, keeps its confidence flags
+(`never-checked`, and `thin-sample` when thin), and stays eligible for TOP
+detection, tier boundaries and Font EV, so a league wipe does not empty them.
+This is the rule for the consumer switch (POE-310); today's analyzers still
+follow ADR-027 Decision 4 unchanged.
+
 Observations carry native amounts only (`Money{Amount, Currency}`), never a
 converted chaos value (L13). Divine converts at the `Rate` passed at resolve
 time, rounded to one decimal like `trade.NormalizeToChaos`; divine without a
