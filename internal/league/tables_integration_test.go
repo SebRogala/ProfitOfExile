@@ -55,12 +55,75 @@ func TestScopedTablesMatchesPublicLeagueForeignKeys(t *testing.T) {
 	}
 }
 
+// ADR-034: every league-scoped hypertable carries one 21-day retention job at
+// creation, and no other relation (device-keyed tables included) has one.
+func TestScopedHypertablesCarryTheMarketRetentionPolicy(t *testing.T) {
+	pool := newTestPool(t, requireDatabase(t))
+	ctx := context.Background()
+
+	scoped := make(map[string]bool)
+	for _, name := range ScopedTables() {
+		scoped[name] = true
+	}
+	hypertables := make(map[string]bool)
+	rows, err := pool.Query(ctx, `SELECT hypertable_name FROM timescaledb_information.hypertables WHERE hypertable_schema = 'public'`)
+	if err != nil {
+		t.Fatalf("query hypertables: %v", err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan hypertable: %v", err)
+		}
+		if scoped[name] {
+			hypertables[name] = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read hypertables: %v", err)
+	}
+	if len(hypertables) == 0 {
+		t.Fatal("no ScopedTables() entry is a hypertable; cannot check retention")
+	}
+
+	jobs := make(map[string][]bool)
+	rows, err = pool.Query(ctx, `SELECT hypertable_name, (config->>'drop_after')::interval = INTERVAL '21 days' FROM timescaledb_information.jobs WHERE proc_name = 'policy_retention'`)
+	if err != nil {
+		t.Fatalf("query retention jobs: %v", err)
+	}
+	for rows.Next() {
+		var name string
+		var is21d bool
+		if err := rows.Scan(&name, &is21d); err != nil {
+			t.Fatalf("scan retention job: %v", err)
+		}
+		jobs[name] = append(jobs[name], is21d)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read retention jobs: %v", err)
+	}
+
+	for name := range hypertables {
+		got := jobs[name]
+		if len(got) != 1 || !got[0] {
+			t.Errorf("%s retention jobs (true = 21 days) = %v, want exactly one 21-day job", name, got)
+		}
+	}
+	for name := range jobs {
+		if !hypertables[name] {
+			t.Errorf("%s has a retention job but is not a league-scoped market hypertable", name)
+		}
+	}
+}
+
 func TestScopedTablesReturnsMeasuredWipeOrder(t *testing.T) {
 	// D6 adopts the sixteen-table TRUNCATE order in the league migration runbook;
-	// ADR-030 appends the two currency-exchange plays tables.
+	// ADR-030 appends the two currency-exchange plays tables; ADR-034 drops trend_results.
 	want := []string{
 		"gem_snapshots", "currency_snapshots", "fragment_snapshots", "font_snapshots",
-		"transfigure_results", "quality_results", "trend_results", "gem_features",
+		"transfigure_results", "quality_results", "gem_features",
 		"gem_signals", "dedication_snapshots", "trade_lookups", "market_context",
 		"currency_exchange_markets", "currency_exchange_cursor", "double_corrupt_snapshots", "item_snapshots",
 		"currency_exchange_plays", "currency_exchange_play_sets",

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -90,7 +91,11 @@ func TestLeagueMigrationsPreserveLegacySchemaContract(t *testing.T) {
 	assertPolicyCoverage(t, "retention", retentionBefore, retainedRelations)
 	assertPolicyCoverage(t, "continuous aggregate refresh", refreshBefore, continuousAggregates)
 
-	migrateUp(t, m)
+	// POE-399 later replaces this contract (21-day retention, aggregates and
+	// trend_results dropped); it is proven at the last version where it holds.
+	if err := m.Migrate(preMarketRetentionVersion); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatalf("migrate to pre-POE-399 schema: %v", err)
+	}
 
 	assertLegacyRowsBackfilledToMirage(t, pool, legacyTime)
 	assertLegacyRelationsRemoved(t, pool)
@@ -240,7 +245,6 @@ func TestScopedRelationsHaveLeagueIdentityAndPrimaryKeys(t *testing.T) {
 		"quality_results":          {"league", "time", "name", "level"},
 		"trade_lookups":            {"league", "time", "gem", "variant"},
 		"transfigure_results":      {"league", "time", "transfigured_name", "variant"},
-		"trend_results":            {"league", "time", "name", "variant"},
 	}
 
 	for relation, wantPrimaryKey := range relations {
@@ -407,81 +411,11 @@ func TestGemSnapshotsAllowSameIdentityAcrossLeaguesAndRejectDuplicatesWithinOneL
 	}
 }
 
-func TestGemContinuousAggregatesPreserveLeagueAndCorruption(t *testing.T) {
-	pool, m := testSetup(t)
-	defer pool.Close()
-	defer m.Close()
-	requireTimescaleDB(t, pool)
-	migrateUp(t, m)
-
-	ctx := context.Background()
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin transaction: %v", err)
-	}
-	defer tx.Rollback(ctx)
-
-	const secondLeague = "POE-119-Aggregate-Test"
-	if _, err := tx.Exec(ctx, `INSERT INTO leagues (id, display_name, collection_state) VALUES ($1, $1, 'collecting')`, secondLeague); err != nil {
-		t.Fatalf("create aggregate test league: %v", err)
-	}
-	const snapshotName = "POE-119 Aggregate Gem"
-	snapshotTime := time.Date(2099, 1, 3, 1, 15, 0, 0, time.UTC)
-	for _, row := range []struct {
-		league      string
-		isCorrupted bool
-		chaos       int
-	}{
-		{"Mirage", false, 10},
-		{"Mirage", true, 20},
-		{secondLeague, false, 30},
-	} {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO gem_snapshots (league, time, name, variant, is_corrupted, chaos, listings)
-			VALUES ($1, $2, $3, '1/20', $4, $5, 1)`, row.league, snapshotTime, snapshotName, row.isCorrupted, row.chaos); err != nil {
-			t.Fatalf("insert aggregate input for %s corrupted=%t: %v", row.league, row.isCorrupted, err)
-		}
-	}
-
-	for _, aggregate := range []string{"gem_snapshots_hourly", "gem_snapshots_daily"} {
-		t.Run(aggregate, func(t *testing.T) {
-			rows, err := tx.Query(ctx, fmt.Sprintf(`
-				SELECT league, is_corrupted, avg_chaos::float8
-				FROM %s
-				WHERE name = $1 AND variant = '1/20'
-					AND bucket = time_bucket(CASE WHEN $2 = 'gem_snapshots_hourly' THEN '1 hour'::interval ELSE '1 day'::interval END, $3::timestamptz)
-				ORDER BY league, is_corrupted`, aggregate), snapshotName, aggregate, snapshotTime)
-			if err != nil {
-				t.Fatalf("query %s: %v", aggregate, err)
-			}
-			defer rows.Close()
-
-			got := map[string]float64{}
-			for rows.Next() {
-				var league string
-				var corrupted bool
-				var chaos float64
-				if err := rows.Scan(&league, &corrupted, &chaos); err != nil {
-					t.Fatalf("scan aggregate row: %v", err)
-				}
-				got[fmt.Sprintf("%s/%t", league, corrupted)] = chaos
-			}
-			if err := rows.Err(); err != nil {
-				t.Fatalf("iterate aggregate rows: %v", err)
-			}
-			want := map[string]float64{
-				"Mirage/false":          10,
-				"Mirage/true":           20,
-				secondLeague + "/false": 30,
-			}
-			if fmt.Sprint(got) != fmt.Sprint(want) {
-				t.Errorf("aggregate rows = %v, want %v", got, want)
-			}
-		})
-	}
-}
-
 const preLeagueSchemaVersion uint = 20260412224254
+
+// preMarketRetentionVersion is the last version before POE-399's 21-day
+// market retention migration.
+const preMarketRetentionVersion uint = 20261113140000
 
 // scopedRelations is the set of league-scoped relations that PREDATE the league
 // migration: every one of them existed at preLeagueSchemaVersion, was backfilled
@@ -501,9 +435,10 @@ var scopedRelations = []string{
 // added by POE-254 and retained boss_loot_runs added by POE-317.
 // currency_exchange_cursor is a plain table and the other three are younger than
 // the backfill, so none of the four can join scopedRelations — the FK is the
-// one contract all of them share.
-var leagueRegistryRelations = append(append([]string{},
-	scopedRelations...), "currency_exchange_markets", "currency_exchange_cursor",
+// one contract all of them share. trend_results is left out: POE-399 drops it.
+var leagueRegistryRelations = append(slices.DeleteFunc(slices.Clone(scopedRelations),
+	func(relation string) bool { return relation == "trend_results" }),
+	"currency_exchange_markets", "currency_exchange_cursor",
 	"double_corrupt_snapshots", "item_snapshots", "boss_loot_runs")
 
 var retainedRelations = []string{
@@ -1125,4 +1060,181 @@ func forceRetentionVersion(t *testing.T, m *migrate.Migrate) {
 	if err := m.Force(20261113140000); err != nil {
 		t.Fatalf("force retention version after failed down: %v", err)
 	}
+}
+
+const marketRetentionUpFile = "migrations/20261113150000_market_data_retention.up.sql"
+
+// marketRetentionTables are the 14 league-scoped hypertables POE-399 gives a
+// 21-day retention policy; the registry's plain tables are not among them.
+var marketRetentionTables = []string{
+	"currency_exchange_markets", "currency_snapshots", "dedication_snapshots", "double_corrupt_snapshots",
+	"font_snapshots", "fragment_snapshots", "gem_features", "gem_signals", "gem_snapshots",
+	"item_snapshots", "market_context", "quality_results", "trade_lookups", "transfigure_results",
+}
+
+func TestMarketDataRetentionMigration(t *testing.T) {
+	pool, m := testSetup(t)
+	defer pool.Close()
+	defer m.Close()
+	requireTimescaleDB(t, pool)
+	ctx := context.Background()
+	defer func() {
+		if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+			t.Errorf("restore fully migrated schema: %v", err)
+		}
+	}()
+
+	if err := m.Migrate(preMarketRetentionVersion); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatalf("migrate to pre-POE-399 schema: %v", err)
+	}
+	legacySchema := marketRetentionSchemaFacts(t, pool)
+	legacyRefresh := continuousAggregateRefreshConfigurations(t, pool)
+	legacyCompression := scopedPolicyConfigurations(t, pool, "policy_compression", []string{"trend_results"})
+	// A surviving policy with another period must be replaced, not kept.
+	if _, err := pool.Exec(ctx, `SELECT add_retention_policy('gem_snapshots', INTERVAL '90 days')`); err != nil {
+		t.Fatalf("install stray 90-day retention policy: %v", err)
+	}
+	migrateUp(t, m)
+
+	t.Run("each_market_hypertable_has_one_21_day_policy", func(t *testing.T) {
+		assertMarketRetentionJobs(t, pool)
+	})
+
+	t.Run("aggregates_and_trend_results_are_dropped", func(t *testing.T) {
+		assertMarketRetentionDrops(t, pool)
+	})
+
+	t.Run("rerunning_the_up_sql_keeps_one_21_day_policy", func(t *testing.T) {
+		upSQL, err := db.MigrationsFS.ReadFile(marketRetentionUpFile)
+		if err != nil {
+			t.Fatalf("read %s: %v", marketRetentionUpFile, err)
+		}
+		if _, err := pool.Exec(ctx, string(upSQL)); err != nil {
+			t.Fatalf("re-run %s: %v", marketRetentionUpFile, err)
+		}
+		assertMarketRetentionJobs(t, pool)
+		assertMarketRetentionDrops(t, pool)
+	})
+
+	t.Run("down_restores_the_legacy_schema_without_retention", func(t *testing.T) {
+		if err := m.Migrate(preMarketRetentionVersion); err != nil {
+			t.Fatalf("migrate down through POE-399: %v", err)
+		}
+		if got := retentionJobDropAfter(t, pool); len(got) != 0 {
+			t.Errorf("retention jobs after down = %v, want none", got)
+		}
+		if got := marketRetentionSchemaFacts(t, pool); !slices.Equal(got, legacySchema) {
+			t.Errorf("schema after down =\n%s\nwant pre-POE-399\n%s", strings.Join(got, "\n"), strings.Join(legacySchema, "\n"))
+		}
+		if got := continuousAggregateRefreshConfigurations(t, pool); !reflect.DeepEqual(got, legacyRefresh) {
+			t.Errorf("aggregate refresh policies after down = %v, want %v", got, legacyRefresh)
+		}
+		if got := scopedPolicyConfigurations(t, pool, "policy_compression", []string{"trend_results"}); !reflect.DeepEqual(got, legacyCompression) {
+			t.Errorf("trend_results compression policy after down = %v, want %v", got, legacyCompression)
+		}
+	})
+}
+
+func assertMarketRetentionJobs(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	got := retentionJobDropAfter(t, pool)
+	want := make(map[string][]string, len(marketRetentionTables))
+	for _, table := range marketRetentionTables {
+		want[table] = []string{"21 days"}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("retention jobs (drop_after per table) = %v, want %v", got, want)
+	}
+}
+
+func assertMarketRetentionDrops(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	for _, relation := range []string{"gem_snapshots_hourly", "gem_snapshots_daily", "trend_results"} {
+		var present bool
+		if err := pool.QueryRow(context.Background(), `SELECT to_regclass($1) IS NOT NULL`, relation).Scan(&present); err != nil {
+			t.Fatalf("look up %s: %v", relation, err)
+		}
+		if present {
+			t.Errorf("%s still exists", relation)
+		}
+	}
+	var refreshJobs int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name = 'policy_refresh_continuous_aggregate'`).Scan(&refreshJobs); err != nil {
+		t.Fatalf("count aggregate refresh jobs: %v", err)
+	}
+	if refreshJobs != 0 {
+		t.Errorf("continuous aggregate refresh jobs = %d, want 0", refreshJobs)
+	}
+}
+
+func retentionJobDropAfter(t *testing.T, pool *pgxpool.Pool) map[string][]string {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		SELECT hypertable_name, config->>'drop_after'
+		FROM timescaledb_information.jobs
+		WHERE proc_name = 'policy_retention'
+		ORDER BY hypertable_name, job_id`)
+	if err != nil {
+		t.Fatalf("query retention jobs: %v", err)
+	}
+	defer rows.Close()
+	jobs := make(map[string][]string)
+	for rows.Next() {
+		var table, dropAfter string
+		if err := rows.Scan(&table, &dropAfter); err != nil {
+			t.Fatalf("scan retention job: %v", err)
+		}
+		jobs[table] = append(jobs[table], dropAfter)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate retention jobs: %v", err)
+	}
+	return jobs
+}
+
+// marketRetentionSchemaFacts lists what POE-399's down must restore: the
+// trend_results columns, constraints, indexes and compression settings, and both
+// aggregates' definitions and indexes.
+func marketRetentionSchemaFacts(t *testing.T, pool *pgxpool.Pool) []string {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		SELECT format('column %s %s not_null=%s default=%s', a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull, pg_get_expr(d.adbin, d.adrelid))
+		FROM pg_attribute AS a
+		LEFT JOIN pg_attrdef AS d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+		WHERE a.attrelid = to_regclass('trend_results') AND a.attnum > 0 AND NOT a.attisdropped
+		UNION ALL
+		SELECT format('constraint %s %s', conname, pg_get_constraintdef(oid))
+		FROM pg_constraint WHERE conrelid = to_regclass('trend_results')
+		UNION ALL
+		SELECT 'index ' || indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'trend_results'
+		UNION ALL
+		SELECT 'index ' || indexname FROM pg_indexes
+		WHERE indexname IN ('idx_gem_snapshots_hourly_league_name_variant', 'idx_gem_snapshots_daily_league_name_variant')
+		UNION ALL
+		SELECT format('compression %s segmentby=%s orderby=%s asc=%s', attname, segmentby_column_index, orderby_column_index, orderby_asc)
+		FROM timescaledb_information.compression_settings WHERE hypertable_name = 'trend_results'
+		UNION ALL
+		SELECT format('aggregate %s materialized_only=%s %s', view_name, materialized_only, view_definition)
+		FROM timescaledb_information.continuous_aggregates
+		WHERE view_name IN ('gem_snapshots_hourly', 'gem_snapshots_daily')
+		ORDER BY 1`)
+	if err != nil {
+		t.Fatalf("query POE-399 schema facts: %v", err)
+	}
+	defer rows.Close()
+	var facts []string
+	for rows.Next() {
+		var fact string
+		if err := rows.Scan(&fact); err != nil {
+			t.Fatalf("scan schema fact: %v", err)
+		}
+		facts = append(facts, fact)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate schema facts: %v", err)
+	}
+	if len(facts) == 0 {
+		t.Fatal("no POE-399 schema facts found; trend_results and the aggregates are missing")
+	}
+	return facts
 }

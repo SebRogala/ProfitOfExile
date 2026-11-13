@@ -42,7 +42,6 @@ func seedWipeRows(t *testing.T, ctx context.Context, tx pgx.Tx, id string) {
 		`INSERT INTO font_snapshots (league,time,color,variant,mode,pool,winners) VALUES ($1,NOW(),'WI3 Font','1/20','safe',1,1)`,
 		`INSERT INTO transfigure_results (league,time,base_name,transfigured_name,variant,base_price,transfigured_price) VALUES ($1,NOW(),'WI3 Base','WI3 Transfigure','1/20',1,2)`,
 		`INSERT INTO quality_results (league,time,name,level,buy_price,price_q20) VALUES ($1,NOW(),'WI3 Quality',20,1,2)`,
-		`INSERT INTO trend_results (league,time,name,variant,current_price,current_listings) VALUES ($1,NOW(),'WI3 Trend','1/20',1,1)`,
 		`INSERT INTO gem_features (league,time,name,variant,chaos,listings) VALUES ($1,NOW(),'WI3 Feature','1/20',1,1)`,
 		`INSERT INTO gem_signals (league,time,name,variant,signal,confidence) VALUES ($1,NOW(),'WI3 Signal','1/20','STABLE',1)`,
 		`INSERT INTO dedication_snapshots (league,time,variant,color,gem_type,mode,pool,winners) VALUES ($1,NOW(),'21/23c','WI3 Dedication','skill','safe',1,1)`,

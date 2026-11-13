@@ -10,7 +10,6 @@ func ScopedTables() []string {
 		"font_snapshots",
 		"transfigure_results",
 		"quality_results",
-		"trend_results",
 		"gem_features",
 		"gem_signals",
 		"dedication_snapshots",
