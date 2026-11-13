@@ -69,7 +69,7 @@ const ROOTS: MirrorRoot[] = [
 		divergent: {
 			'Comparator.svelte': 'desktop shell over the Tauri-bound controller; web owns its state inline',
 			'FontEVCompare.svelte':
-				'desktop reads and writes variant/dedication selection through the ssot store with SegmentedButtons and Tooltip; web takes a league prop and keeps local Select state',
+				'desktop reads and writes variant/dedication selection through the ssot store with SegmentedButtons and Tooltip, and carries the Recipes cards (exceptional prices from the Tauri font-alerts mirror); web takes a league prop and keeps local Select state',
 			'ByVariant.svelte':
 				'desktop tab follows the ssot normal variant, hands its rankings query up to the Tauri-bound controller, loads/saves the low-confidence toggle through Tauri settings and uses the shared Tooltip; web keeps a local tab, fetches its own page, a league prop and InfoTooltip',
 			'InfoTooltip.svelte': 'desktop wraps the shared Tooltip component; web implements its own hover/pin panel',

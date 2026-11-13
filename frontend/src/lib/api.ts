@@ -106,6 +106,41 @@ export interface FontEVResponse {
 	bestColorSafe: string;
 	bestColorPremium: string;
 	bestColorJackpot: string;
+	/** Facetor's Lens craft quotes; null when the server predates the field. */
+	lens: FontLensCraft | null;
+}
+
+/** One trade-queue quote: `chaos` null when unusable, `fetchedAt` null when never checked. */
+export interface LensQuote {
+	chaos: number | null;
+	listings: number;
+	fetchedAt: string | null;
+	lowConfidence: boolean;
+}
+
+/** The Facetor's Lens 60% craft: lens (outcome), support (feeder) and the server's signed EV. */
+export interface FontLensCraft {
+	outcome: LensQuote;
+	feeder: LensQuote & { tradeUrl: string | null };
+	ev: number | null;
+}
+
+function mapLensQuote(q: any): LensQuote {
+	return {
+		chaos: typeof q?.chaos === 'number' ? q.chaos : null,
+		listings: q?.listings ?? 0,
+		fetchedAt: q?.fetchedAt ?? null,
+		lowConfidence: q?.lowConfidence === true,
+	};
+}
+
+export function mapFontLensCraft(lens: any): FontLensCraft | null {
+	if (lens == null) return null;
+	return {
+		outcome: mapLensQuote(lens.outcome),
+		feeder: { ...mapLensQuote(lens.feeder), tradeUrl: lens.feeder?.tradeUrl || null },
+		ev: typeof lens.ev === 'number' ? lens.ev : null,
+	};
 }
 
 // --- Dedication types ---
@@ -504,6 +539,7 @@ export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
 		bestColorSafe: string;
 		bestColorPremium: string;
 		bestColorJackpot: string;
+		lens?: unknown;
 	}>('/analysis/font', params);
 
 	return {
@@ -513,6 +549,7 @@ export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
 		bestColorSafe: resp.bestColorSafe || '',
 		bestColorPremium: resp.bestColorPremium || '',
 		bestColorJackpot: resp.bestColorJackpot || '',
+		lens: mapFontLensCraft(resp.lens),
 	};
 }
 

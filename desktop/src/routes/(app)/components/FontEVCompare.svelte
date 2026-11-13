@@ -6,6 +6,10 @@
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import InfoTooltip from './InfoTooltip.svelte';
+	import RecipeCard from './RecipeCard.svelte';
+	import { invoke } from '@tauri-apps/api/core';
+	import { exceptionalView, type ExceptionalSupportsPayload } from '$lib/compass/font-alerts-view';
+	import { lensView } from '$lib/font-recipes';
 
 	let { refreshKey = 0, labMode = 'normal' }: { refreshKey?: number; labMode?: 'normal' | 'dedication' } = $props();
 
@@ -233,6 +237,29 @@
 	};
 
 	$effect(() => { refreshKey; labMode; loadAll(); });
+
+	let showRecipes = $state(true);
+	// Rust's mirror (font_alerts.rs) polls the server; this reads that one copy
+	// and re-reads it on the same tick that moves the footer ages.
+	let exceptionalPrices = $state<ExceptionalSupportsPayload | null>(null);
+	let nowMs = $state(Date.now());
+	const RECIPES_TICK_MS = 30_000;
+
+	async function readExceptionalPrices() {
+		try {
+			exceptionalPrices = (await invoke<ExceptionalSupportsPayload | null>('get_exceptional_support_prices')) ?? exceptionalPrices;
+		} catch (err) {
+			console.error('[FontEV] exceptional support prices unavailable:', err);
+		}
+		nowMs = Date.now();
+	}
+
+	$effect(() => {
+		if (isDedication) return;
+		readExceptionalPrices();
+		const timer = setInterval(readExceptionalPrices, RECIPES_TICK_MS);
+		return () => clearInterval(timer);
+	});
 </script>
 
 <section class="section">
@@ -486,6 +513,46 @@
 			</tbody>
 		</table>
 
+		<button class="pool-toggle" aria-expanded={showRecipes} onclick={() => { showRecipes = !showRecipes; }}>
+			{showRecipes ? '\u25BC' : '\u25B6'} Recipes
+		</button>
+
+		{#if showRecipes}
+			{@const exceptional = exceptionalView(exceptionalPrices, nowMs, (c) => formatPrice(c))}
+			{@const lens = lensView(data[VARIANTS[0]]?.lens, nowMs, (c) => formatPrice(c), (c) => formatPriceSigned(c))}
+			{#snippet supportBuy()}
+				{#if lens.tradeUrl}
+					<Tooltip text="Buy the cheapest Exceptional Support Gem lv 3+"><a
+						class="buy-btn buy-blue"
+						href={lens.tradeUrl}
+						target="_blank"
+					>BUY</a></Tooltip>
+				{:else}
+					<span class="buy-btn buy-blue buy-disabled" aria-disabled="true" title="Trade link unavailable \u2014 the server sent no support search">BUY</span>
+				{/if}
+			{/snippet}
+			<div class="recipe-grid">
+				<RecipeCard
+					title="Exceptional support"
+					option="Exchange a Support Gem for a random Empower, Enlighten, or Enhance Support"
+					givesLabel="Gives one at random"
+					gives={exceptional.rows}
+					source={exceptional.footer}
+					age={exceptional.age}
+				/>
+				<RecipeCard
+					title={'Facetor\u2019s Lens \u00B7 60%'}
+					option={'Sacrifice a Gem to gain 60% of its experience as a Facetor\u2019s Lens'}
+					givesLabel="Gives"
+					gives={[{ name: 'Facetor\u2019s Lens', sub: 'stored experience \u2265 999,627,000', cell: lens.lens }]}
+					costs={[{ name: 'Exceptional Support Gem lv 3+', cell: lens.support, action: supportBuy }]}
+					ev={lens.ev}
+					source={'trade \u00B7 median of the 3 lowest'}
+					age={lens.age}
+				/>
+			</div>
+		{/if}
+
 		<button class="pool-toggle" onclick={() => { showPool = !showPool; }}>
 			{showPool ? '\u25BC' : '\u25B6'} Pool Overview
 		</button>
@@ -706,6 +773,12 @@
 		margin-top: 8px;
 	}
 	.pool-toggle:hover { color: var(--color-lab-text); }
+	.recipe-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+		gap: 12px;
+		align-items: start;
+	}
 	.pool-section { margin-top: 4px; }
 	.pool-variant-select {
 		display: inline-flex;

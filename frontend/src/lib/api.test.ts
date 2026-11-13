@@ -127,3 +127,55 @@ describe('fetchRankingsPage', () => {
 		]);
 	});
 });
+
+describe('fetchFontEV lens', () => {
+	const originalFetch = globalThis.fetch;
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	async function fetchWith(body: Record<string, unknown>) {
+		globalThis.fetch = vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			statusText: 'OK',
+			json: async () => structuredClone(body),
+		})) as unknown as typeof fetch;
+		const { fetchFontEV } = await import('./api');
+		return fetchFontEV('1/0');
+	}
+
+	const TRADE_URL = 'https://www.pathofexile.com/trade/search/Mirage?q=%7B%7D';
+
+	it('maps the server lens object with both quotes, the EV and the feeder trade search', async () => {
+		const resp = await fetchWith({
+			safe: [],
+			lens: {
+				outcome: { chaos: 412, listings: 3, fetchedAt: '2026-11-02T11:42:00Z', lowConfidence: false },
+				feeder: { chaos: 95, listings: 2, fetchedAt: '2026-11-02T11:40:00Z', lowConfidence: true, tradeUrl: TRADE_URL },
+				ev: 317,
+			},
+		});
+		expect(resp.lens).toEqual({
+			outcome: { chaos: 412, listings: 3, fetchedAt: '2026-11-02T11:42:00Z', lowConfidence: false },
+			feeder: { chaos: 95, listings: 2, fetchedAt: '2026-11-02T11:40:00Z', lowConfidence: true, tradeUrl: TRADE_URL },
+			ev: 317,
+		});
+	});
+
+	it('keeps null prices and a null EV as null, not 0', async () => {
+		const resp = await fetchWith({
+			lens: {
+				outcome: { chaos: null, listings: 0, fetchedAt: null, lowConfidence: false },
+				feeder: { chaos: null, listings: 0, fetchedAt: null, lowConfidence: false, tradeUrl: TRADE_URL },
+				ev: null,
+			},
+		});
+		expect([resp.lens?.outcome.chaos, resp.lens?.feeder.chaos, resp.lens?.ev]).toEqual([null, null, null]);
+		expect(resp.lens?.feeder.tradeUrl).toBe(TRADE_URL);
+	});
+
+	it('maps an absent lens key (older server) to null', async () => {
+		expect((await fetchWith({ safe: [] })).lens).toBeNull();
+	});
+});
