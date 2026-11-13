@@ -69,6 +69,7 @@ rollover in [ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-a
 - [ADR-029: Overlay widget action boundary](adr/029-overlay-widget-action-boundary.md)
 - [ADR-030: Paginated lists page, sort and filter in the backend](adr/030-paginated-lists-page-sort-and-filter-in-the-backend.md)
 - [ADR-031: Proxy: one setting for every transport, and it fails closed](adr/031-proxy-one-setting-every-transport-fails-closed.md)
+- [ADR-032: One price engine: a key per market, a pure resolver, and a book](adr/032-one-price-engine-key-per-market-resolver-and-book.md) — Accepted; no consumer until POE-310; divine becomes a key in POE-308.
 - [ADR-033: One versioned privacy notice gates every server request](adr/033-one-versioned-privacy-notice-gates-every-server-request.md)
 - [ADR-034: Market data is retained for 21 days](adr/034-market-data-is-retained-for-21-days.md) — supersedes the retention parts of ADR-010 and ADR-011
 
