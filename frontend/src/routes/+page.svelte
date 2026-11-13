@@ -231,7 +231,7 @@
 	<section class="modules" id="modules">
 		<h2 class="section-heading">Modules</h2>
 		<p class="modules-intro">
-			Every module has the same shape: a Client.txt event arms it, it reads one panel on a press of the read
+			Every module has the same shape: it reads one panel on a press of the read
 			key, and it shows its verdict in an overlay you place once. Switch each on or off in the app's sidebar.
 		</p>
 		<div class="module-list">
