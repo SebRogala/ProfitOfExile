@@ -381,14 +381,9 @@
 		cursor: pointer;
 		display: inline-flex;
 		align-items: center;
-		height: 24px;
-		padding: 1px;
-		border-radius: 12px;
+		height: 14px;
+		border-radius: 50%;
 		-webkit-app-region: no-drag;
-	}
-
-	.account:hover {
-		background: rgba(255, 255, 255, 0.06);
 	}
 
 	.account:focus-visible {
@@ -398,30 +393,38 @@
 
 	.av {
 		box-sizing: border-box;
-		width: 22px;
-		height: 22px;
+		width: 14px;
+		height: 14px;
 		border-radius: 50%;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 11px;
+		font-size: 9px;
 		font-weight: 700;
 		line-height: 1;
 		color: var(--text-muted);
-		border: 1.5px solid var(--text-muted);
+		border: 1px solid var(--text-muted);
 	}
 
 	.av svg {
-		width: 13px;
-		height: 13px;
+		width: 10px;
+		height: 10px;
 	}
 
-	.account:hover .av {
+	.account:hover .av,
+	.account:focus-visible .av {
 		color: var(--text);
 		border-color: var(--text);
 	}
 
 	.account.registered .av {
+		background: var(--text-muted);
+		color: var(--surface);
+		border-color: var(--text-muted);
+	}
+
+	.account.registered:hover .av,
+	.account.registered:focus-visible .av {
 		background: var(--text);
 		color: var(--surface);
 		border-color: var(--text);
