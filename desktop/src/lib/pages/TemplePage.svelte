@@ -1021,7 +1021,7 @@
 		gap: 0.6rem;
 	}
 
-	/* The five rates, one per line so each keeps its unit hint beside it — the
+	/* The four rates, one per line so each keeps its unit hint beside it — the
 	   hints are the whole reason a player can set these at all. */
 	.knobs {
 		display: flex;
