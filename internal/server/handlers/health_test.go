@@ -21,6 +21,7 @@ func (m *mockPinger) Ping(ctx context.Context) error {
 }
 
 func TestHealth(t *testing.T) {
+	t.Setenv("SOURCE_COMMIT", "fedcba9876543210fedcba9876543210fedcba98")
 	healthyPinger := &mockPinger{
 		PingFn: func(ctx context.Context) error { return nil },
 	}
@@ -41,7 +42,7 @@ func TestHealth(t *testing.T) {
 			pinger:          healthyPinger,
 			method:          http.MethodGet,
 			wantStatus:      http.StatusOK,
-			wantBody:        &healthResponse{Status: "ok", Version: "dev", DB: "ok"},
+			wantBody:        &healthResponse{Status: "ok", DB: "ok"},
 			wantContentType: "application/json",
 		},
 		{
@@ -49,7 +50,7 @@ func TestHealth(t *testing.T) {
 			pinger:          failingPinger,
 			method:          http.MethodGet,
 			wantStatus:      http.StatusServiceUnavailable,
-			wantBody:        &healthResponse{Status: "degraded", Version: "dev", DB: "error"},
+			wantBody:        &healthResponse{Status: "degraded", DB: "error"},
 			wantContentType: "application/json",
 		},
 		{
@@ -59,7 +60,7 @@ func TestHealth(t *testing.T) {
 			},
 			method:          http.MethodGet,
 			wantStatus:      http.StatusServiceUnavailable,
-			wantBody:        &healthResponse{Status: "degraded", Version: "dev", DB: "error"},
+			wantBody:        &healthResponse{Status: "degraded", DB: "error"},
 			wantContentType: "application/json",
 		},
 		{
@@ -111,8 +112,8 @@ func TestHealth(t *testing.T) {
 				if got.Status != tt.wantBody.Status {
 					t.Errorf("Status = %q, want %q", got.Status, tt.wantBody.Status)
 				}
-				if got.Version != tt.wantBody.Version {
-					t.Errorf("Version = %q, want %q", got.Version, tt.wantBody.Version)
+				if got.Version != "fedcba9876543210fedcba9876543210fedcba98" {
+					t.Errorf("Version = %q, want full SOURCE_COMMIT revision", got.Version)
 				}
 				if got.DB != tt.wantBody.DB {
 					t.Errorf("DB = %q, want %q", got.DB, tt.wantBody.DB)
@@ -129,6 +130,22 @@ func TestHealth_NilPingerPanics(t *testing.T) {
 		}
 	}()
 	Health(nil, nil)
+}
+
+func TestHealth_LegacyBuildStampFallback(t *testing.T) {
+	t.Setenv("SOURCE_COMMIT", "HEAD")
+	previous := Version
+	Version = "abcdef0123456789abcdef0123456789abcdef01"
+	t.Cleanup(func() { Version = previous })
+	w := httptest.NewRecorder()
+	Health(NopPinger{}, nil)(w, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	var got healthResponse
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != "abcdef0123456789abcdef0123456789abcdef01" {
+		t.Errorf("Version = %q, want legacy build stamp", got.Version)
+	}
 }
 
 // mockFence lets a health test drive the LivenessChecker outcome.

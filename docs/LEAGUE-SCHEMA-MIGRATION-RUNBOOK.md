@@ -6,7 +6,8 @@ POE-119 migration gate requiring the matching POE-120/POE-121 application revisi
 **Last verified:** 2026-11-11 against the league CLI's fence refusals and
 activation guidance, and the server and collector startup order (fence, then
 league resolve), by a local rollover run and the league integration tests.
-2026-10-23 for the scoped-table registry. Step 13's client behaviour is
+2026-11-13 for the count manifest and wipe list against `league.ScopedTables`.
+Step 13's client behaviour is
 described from the client code, not verified in a rollover. Migration rehearsal
 measurements retain their original dates below.
 
@@ -106,12 +107,14 @@ run the rehearsal against the live database.
    migration and health checks pass. Confirm server and collector startup
    health, then dispose of the rehearsal database.
 
-## Sixteen-table count manifest
+## League-scoped count manifest
 
 Capture a `COUNT(*)` for each relation before and after the migration. The
-manifest is complete only with all sixteen rows. The last four rows postdate the
-POE-119 migration (two added 2026-08-19 by POE-173, one 2026-08-24 by POE-125, one
-2026-09-06 by POE-254):
+manifest follows the authoritative `league.ScopedTables` registry in
+`internal/league/tables.go`, currently seventeen tables. The last six rows
+postdate the POE-119 migration (two added 2026-08-19 by POE-173, one 2026-08-24 by POE-125, one
+2026-09-06 by POE-254, and two by
+`20261113002101_create_currency_exchange_plays`):
 for a POE-119 rehearsal their pre/post-migration and null-`league` columns are
 `n/a`; for a league rollover they count like every other row. A rehearsal
 restored from a backup older than a table's migration records that row as
@@ -140,6 +143,8 @@ table is excluded from the rollover wipe by decision, not by oversight — see t
 | `currency_exchange_cursor` |  |  |  |
 | `double_corrupt_snapshots` |  |  |  |
 | `item_snapshots` |  |  |  |
+| `currency_exchange_plays` |  |  |  |
+| `currency_exchange_play_sets` |  |  |  |
 
 ## Runtime fence for archival
 
@@ -206,16 +211,18 @@ steps in order; each line is one action or one check.
 5. Immediately before TRUNCATE, repeat the manifest counts on the old schema
    and compare every present table against the final dump's manifest. Stop on
    any mismatch; investigate and repeat the final backup before retrying.
-6. On the production database (old schema, pre-migration), truncate the sixteen
+6. On the production database (old schema, pre-migration), truncate the present
    league-scoped tables in one statement:
-   `TRUNCATE gem_snapshots, currency_snapshots, fragment_snapshots, font_snapshots, transfigure_results, quality_results, gem_features, gem_signals, dedication_snapshots, trade_lookups, market_context, currency_exchange_markets, currency_exchange_cursor, double_corrupt_snapshots, item_snapshots;`
+   `TRUNCATE gem_snapshots, currency_snapshots, fragment_snapshots, font_snapshots, transfigure_results, quality_results, gem_features, gem_signals, dedication_snapshots, trade_lookups, market_context, currency_exchange_markets, currency_exchange_cursor, double_corrupt_snapshots, item_snapshots, currency_exchange_plays, currency_exchange_play_sets;`
    (Plain `TRUNCATE` works directly on the compressed hypertables — no decompress
    step; ~3.5 s for 27M rows in rehearsal. `currency_exchange_markets` and
    `currency_exchange_cursor` exist only from the POE-173 migration onward, and
    `double_corrupt_snapshots` from the POE-125 migration onward, and
-   `item_snapshots` from the POE-254 migration onward; drop absent
+   `item_snapshots` from the POE-254 migration onward, and
+   `currency_exchange_plays` / `currency_exchange_play_sets` from
+   `20261113002101_create_currency_exchange_plays` onward; drop absent
    tables from the statement when running against an older schema.)
-7. Confirm all sixteen tables report zero rows.
+7. Confirm every present table in the manifest reports zero rows.
    Release the fence in the same held session before deployment:
 
    ```sql
@@ -327,7 +334,7 @@ ADR-009 amendment of 2026-11-12 (POE-118).
 4. Inside that boundary, first acquire and check the held-session
    [runtime fence](#runtime-fence-for-archival). Keep it held through the final
    counts, dump, and archive verification. Capture outgoing-league counts for all
-   sixteen scoped tables and take the final dedicated `pg_dump` outside the
+   seventeen scoped tables and take the final dedicated `pg_dump` outside the
    nightly rotation. `pg_dump` warns that there are circular foreign-key
    constraints on TimescaleDB's `hypertable` catalog table; the warning is
    harmless for this dump.
@@ -368,7 +375,7 @@ ADR-009 amendment of 2026-11-12 (POE-118).
    docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image> wipe "<OldLeagueId>" --dry-run
    ```
 
-   Compare all sixteen per-table counts against the final dump's outgoing-league
+   Compare all seventeen per-table counts against the final dump's outgoing-league
    manifest. **Stop on any mismatch or missing table count.** Investigate the
    stopped-write boundary and repeat the final dump and manifest before retrying;
    do not wipe data absent from the archive. Only after every count matches,
@@ -378,7 +385,7 @@ ADR-009 amendment of 2026-11-12 (POE-118).
    docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image> wipe "<OldLeagueId>"
    ```
 
-   With only outgoing-league rows, this selects one TRUNCATE across the sixteen
+   With only outgoing-league rows, this selects one TRUNCATE across the seventeen
    tables in `ScopedTables` (`internal/league/tables.go`). Both services remain
    stopped. ACCESS EXCLUSIVE locks block table access for the
    `EXISTS` probes plus TRUNCATE, without a full count under that lock. The lock
@@ -516,8 +523,8 @@ the restart and cleanup order with the POE-127 CLI.
    Current Phase B keeps both writers stopped and verifies archival before any
    cleanup, then restarts the server. Use the one-shot `/league status`, then
    `/league wipe "<OldLeagueId>" --allow-delete` (dry-run first) as specified
-   there. The registry covers sixteen tables; mixed-league cleanup preserves
-   new-league rows.
+   there. The current registry covers seventeen tables; mixed-league cleanup
+   preserves new-league rows.
 5. **Collector boot fence can crash-loop on restart.** If a previous collector
    instance's DB connection is still holding `RuntimeLockKey`, the new one refuses
    to start ("another collector still holds the runtime fence after 15s"). It

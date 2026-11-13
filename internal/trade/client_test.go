@@ -161,6 +161,7 @@ func TestSearch_RequestBody(t *testing.T) {
 }
 
 func TestSearch_UserAgent(t *testing.T) {
+	t.Setenv("SOURCE_COMMIT", "fedcba9876543210fedcba9876543210fedcba98")
 	var receivedUA string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedUA = r.Header.Get("User-Agent")
@@ -174,7 +175,9 @@ func TestSearch_UserAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	assertServerUserAgent(t, receivedUA)
+	if receivedUA != "ProfitOfExile-server/fedcba987654 (contact: contact@profitofexile.top)" {
+		t.Errorf("User-Agent = %q, want SOURCE_COMMIT revision", receivedUA)
+	}
 }
 
 func TestFetch_UserAgent(t *testing.T) {

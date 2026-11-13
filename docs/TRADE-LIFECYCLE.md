@@ -500,9 +500,10 @@ Screen reading under GGG's policy is ruled in [Overlay Guide § Screen reading (
 | Surface | User-Agent |
 |---|---|
 | Desktop app | `ProfitOfExile/<app version> (contact: contact@profitofexile.top)` (`TRADE_USER_AGENT` in `desktop/src-tauri/src/trade/client.rs`) |
-| Server (trade client and Currency Exchange client) | `ProfitOfExile-server/<version> (contact: contact@profitofexile.top)` |
+| Server trade client and Currency Exchange client (server and collector) | `ProfitOfExile-server/<version> (contact: contact@profitofexile.top)` |
 
-- The server `<version>` is the Go VCS revision stamped into the binary (`vcs.revision`, first 12 characters), or `unknown` when the build carries none. It is never a hard-coded number, and the dirty-tree flag is not reported. Built in `internal/useragent`; no environment variable overrides it.
+- `internal/useragent` resolves the revision from runtime `SOURCE_COMMIT`, then Go VCS metadata (`vcs.revision`), then `unknown`. Empty values and the placeholders `dev`, `HEAD`, and `unknown` are ignored. The User-Agent uses the first 12 characters; the dirty-tree flag is not reported.
+- `/api/health` uses the same resolver and reports the full revision. Between `SOURCE_COMMIT` and VCS metadata, health accepts its legacy `handlers.Version` build stamp injected by `GIT_SHA`; the outbound clients have no legacy stamp.
 - Neither surface uses an `OAuth` prefix: ProfitOfExile holds no registered GGG OAuth client.
 - poe.ninja is not GGG and is out of scope for this policy.
 

@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"profitofexile/internal/useragent"
 )
 
 // emptyHourBody is a minimal valid 200 body for tests that assert on the
@@ -90,6 +88,7 @@ func TestFetchHour_publishedHour_decodesMarkets(t *testing.T) {
 }
 
 func TestFetchHour_setsUserAgentHeader(t *testing.T) {
+	t.Setenv("SOURCE_COMMIT", "fedcba9876543210fedcba9876543210fedcba98")
 	var gotAgent string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAgent = r.Header.Get("User-Agent")
@@ -101,8 +100,8 @@ func TestFetchHour_setsUserAgentHeader(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if gotAgent != useragent.Server() {
-		t.Errorf("User-Agent = %q, want %q", gotAgent, useragent.Server())
+	if gotAgent != "ProfitOfExile-server/fedcba987654 (contact: contact@profitofexile.top)" {
+		t.Errorf("User-Agent = %q, want SOURCE_COMMIT revision", gotAgent)
 	}
 	if !strings.HasPrefix(gotAgent, "ProfitOfExile-server/") || !strings.HasSuffix(gotAgent, " (contact: contact@profitofexile.top)") {
 		t.Errorf("User-Agent = %q, want ProfitOfExile-server/<rev> (contact: contact@profitofexile.top)", gotAgent)

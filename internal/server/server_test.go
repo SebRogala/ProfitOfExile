@@ -27,6 +27,7 @@ import (
 )
 
 func TestNewRouter_HealthRoute(t *testing.T) {
+	t.Setenv("SOURCE_COMMIT", "fedcba9876543210fedcba9876543210fedcba98")
 	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
@@ -53,8 +54,8 @@ func TestNewRouter_HealthRoute(t *testing.T) {
 	if body.Status != "ok" {
 		t.Errorf("status = %q, want %q", body.Status, "ok")
 	}
-	if body.Version != "dev" {
-		t.Errorf("version = %q, want %q", body.Version, "dev")
+	if body.Version != "fedcba9876543210fedcba9876543210fedcba98" {
+		t.Errorf("version = %q, want full SOURCE_COMMIT revision", body.Version)
 	}
 }
 

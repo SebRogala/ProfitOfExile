@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+
+	"profitofexile/internal/useragent"
 )
 
 // Pinger abstracts the database ping operation for health checking.
@@ -66,7 +68,7 @@ func Health(pinger Pinger, fence LivenessChecker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resp := healthResponse{
 			Status:  statusOK,
-			Version: Version,
+			Version: useragent.Revision(Version),
 		}
 		httpStatus := http.StatusOK
 

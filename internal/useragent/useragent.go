@@ -3,8 +3,9 @@
 package useragent
 
 import (
+	"os"
 	"runtime/debug"
-	"sync"
+	"strings"
 )
 
 const (
@@ -15,13 +16,41 @@ const (
 )
 
 // Server returns "ProfitOfExile-server/<rev> (contact: …)", where <rev> is the
-// binary's VCS revision cut to 12 characters, or "unknown" when none is stamped.
-var Server = sync.OnceValue(func() string {
-	return fromBuildInfo(debug.ReadBuildInfo())
-})
+// runtime or binary revision cut to 12 characters, or "unknown" when unavailable.
+func Server() string {
+	return format(Revision(""))
+}
 
-func fromBuildInfo(info *debug.BuildInfo, ok bool) string {
-	return product + "/" + revision(info, ok) + " (contact: " + contact + ")"
+// Revision resolves SOURCE_COMMIT, a legacy build stamp, then Go VCS metadata.
+// The health handler passes its existing ldflags stamp; the collector has none.
+func Revision(buildVersion string) string {
+	info, ok := debug.ReadBuildInfo()
+	return resolveRevision(os.Getenv("SOURCE_COMMIT"), buildVersion, info, ok)
+}
+
+func resolveRevision(sourceCommit, buildVersion string, info *debug.BuildInfo, ok bool) string {
+	for _, value := range []string{sourceCommit, buildVersion} {
+		if value = usableRevision(value); value != "" {
+			return value
+		}
+	}
+	return revision(info, ok)
+}
+
+func usableRevision(value string) string {
+	value = strings.TrimSpace(value)
+	switch strings.ToLower(value) {
+	case "", "dev", "head", "unknown":
+		return ""
+	}
+	return value
+}
+
+func format(rev string) string {
+	if len(rev) > revisionLength {
+		rev = rev[:revisionLength]
+	}
+	return product + "/" + rev + " (contact: " + contact + ")"
 }
 
 func revision(info *debug.BuildInfo, ok bool) string {
@@ -32,13 +61,10 @@ func revision(info *debug.BuildInfo, ok bool) string {
 		if s.Key != "vcs.revision" {
 			continue
 		}
-		if s.Value == "" {
-			return unknownVersion
+		if value := usableRevision(s.Value); value != "" {
+			return value
 		}
-		if len(s.Value) > revisionLength {
-			return s.Value[:revisionLength]
-		}
-		return s.Value
+		return unknownVersion
 	}
 	return unknownVersion
 }
