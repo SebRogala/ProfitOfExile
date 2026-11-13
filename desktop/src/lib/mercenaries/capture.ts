@@ -237,7 +237,7 @@ export interface MercenarySlice {
 	geometrySource: MercGeometrySource;
 	/**
 	 * The guides taking NO part in the verdict (POE-199) — Rust's settings echo,
-	 * composed onto the slice at read time from `AppState.merc_sources_off`.
+	 * composed onto the slice at read time from `AppState.merc.sources_off`.
 	 *
 	 * It lives here rather than in the ADR-013 prefs map because TWO windows
 	 * read it: the page and the verdict overlay evaluate the same capture, and
@@ -248,7 +248,7 @@ export interface MercenarySlice {
 	sourcesOff: string[];
 	/**
 	 * The shared template pool's state (POE-201) — Rust's echo, composed onto
-	 * the slice at read time from `AppState.merc_sync` for the same reason
+	 * the slice at read time from `AppState.merc.sync` for the same reason
 	 * `sourcesOff` is: the pull and the uploader are tasks, not the capture
 	 * loop, so the slice keeps a single writer.
 	 */

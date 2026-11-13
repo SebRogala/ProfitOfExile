@@ -2258,7 +2258,7 @@ struct Session {
     /// Which cue the LAST tick's layout was registered from, so a step into or
     /// out of [`ScaleSource::Ocr`] can be seen for what it is.
     scale_source: ScaleSource,
-    /// The `AppState.merc_refit` value this session has already acted on — the
+    /// The `AppState.merc.refit` value this session has already acted on — the
     /// Settings **Recalibrate** counter (POE-227). Seeded from the counter at
     /// session start, not from 0, so a button press from an EARLIER session
     /// does not re-fire on the first tick of this one, which has nothing held
@@ -2721,7 +2721,7 @@ pub fn status(app: &AppHandle) -> MercStatus {
 
 fn learned_keys(app: &AppHandle) -> Vec<String> {
     let state = app.state::<AppState>();
-    let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+    let store = state.merc.templates.lock().unwrap_or_else(|e| e.into_inner());
     store.learned_keys()
 }
 
@@ -2730,14 +2730,14 @@ fn learned_keys(app: &AppHandle) -> Vec<String> {
 /// `merc_forget_seed(family)`.
 fn seeded_keys(app: &AppHandle) -> Vec<String> {
     let state = app.state::<AppState>();
-    let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+    let store = state.merc.templates.lock().unwrap_or_else(|e| e.into_inner());
     store.seeded_families()
 }
 
 /// The keys no local hover taught — the pool's contribution (POE-201).
 fn pooled_keys(app: &AppHandle) -> Vec<String> {
     let state = app.state::<AppState>();
-    let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+    let store = state.merc.templates.lock().unwrap_or_else(|e| e.into_inner());
     store.pooled_keys()
 }
 
@@ -2748,7 +2748,7 @@ fn pooled_keys(app: &AppHandle) -> Vec<String> {
 /// [`refit_requested`].
 fn refit_counter(app: &AppHandle) -> u64 {
     let state = app.state::<AppState>();
-    let counter = state.merc_refit.load(std::sync::atomic::Ordering::SeqCst);
+    let counter = state.merc.refit.load(std::sync::atomic::Ordering::SeqCst);
     counter
 }
 
@@ -2756,7 +2756,7 @@ fn refit_counter(app: &AppHandle) -> u64 {
 fn template_generation(app: &AppHandle) -> u64 {
     let state = app.state::<AppState>();
     let generation = state
-        .merc_template_generation
+        .merc.template_generation
         .load(std::sync::atomic::Ordering::SeqCst);
     generation
 }
@@ -3468,7 +3468,7 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
     } = {
         let state = app.state::<AppState>();
         learn_confirmed(
-            &state.merc_templates,
+            &state.merc.templates,
             agreed.crop,
             &family,
             tier,

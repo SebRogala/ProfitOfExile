@@ -150,7 +150,7 @@ const PRE_FIT_DIR: &str = "pre-fit";
 /// that no index names, under an ETag that says the pool already served it, so
 /// every later pull answers 304 and the art never comes back.
 ///
-/// **Lock order: this lock FIRST, then `AppState::merc_templates`.** Every
+/// **Lock order: this lock FIRST, then `AppState.merc.templates`.** Every
 /// writer takes it around the whole read-modify-write, which is also what stops
 /// a snapshot going stale between being taken and being written. Taking the
 /// store's mutex first anywhere would close a cycle with the callers that hold

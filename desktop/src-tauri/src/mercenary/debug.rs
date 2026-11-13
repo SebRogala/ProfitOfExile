@@ -491,7 +491,7 @@ fn debug_capture_blocking(
             let result = {
                 let state = app.state::<AppState>();
                 let store = state
-                    .merc_templates
+                    .merc.templates
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
                 report.learned_templates = store.len();
@@ -623,9 +623,9 @@ pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) ->
         // The user's un-poison click writes the same directory the loop's
         // off-tick writer and the pool's merge do. See
         // `icons::writing_icons_dir`.
-        super::icons::writing_icons_dir(&state.merc_icons_write, || {
+        super::icons::writing_icons_dir(&state.merc.icons_write, || {
             let mut store = state
-                .merc_templates
+                .merc.templates
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             // Asked BEFORE the forget, because afterwards there is nothing
@@ -698,7 +698,7 @@ pub fn merc_forget_seed(family: String, app: AppHandle) -> Result<(), String> {
     let seeded_now = {
         let state = app.state::<AppState>();
         let mut store = state
-            .merc_templates
+            .merc.templates
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         if !store.forget_seed(&family) {
@@ -775,9 +775,9 @@ pub fn merc_reset_templates(app: AppHandle) -> Result<(), String> {
     let dir = templates_dir(&app)?;
     let count = {
         let state = app.state::<AppState>();
-        super::icons::writing_icons_dir(&state.merc_icons_write, || {
+        super::icons::writing_icons_dir(&state.merc.icons_write, || {
             let mut store = state
-                .merc_templates
+                .merc.templates
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             // Seeds excluded: the line says "learned templates", and a seed
@@ -825,7 +825,7 @@ pub fn merc_reset_templates(app: AppHandle) -> Result<(), String> {
 pub(super) fn bump_generation(app: &AppHandle) {
     let state = app.state::<AppState>();
     state
-        .merc_template_generation
+        .merc.template_generation
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
 

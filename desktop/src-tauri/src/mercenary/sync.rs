@@ -305,7 +305,7 @@ pub enum PullResult {
 
 /// What the page shows about the shared pool.
 ///
-/// Composed onto the `mercenary` slice at read time from `AppState.merc_sync`,
+/// Composed onto the `mercenary` slice at read time from `AppState.merc.sync`,
 /// the same way the enabled-guide echo is: the uploader and the pull run on
 /// their own tasks, and giving them a second copy of the slice to write would
 /// put two writers on it.
@@ -329,7 +329,7 @@ impl MercSyncStatus {
     /// The status the SSOT composes onto the mercenary slice.
     pub fn current(state: &AppState) -> Self {
         state
-            .merc_sync
+            .merc.sync
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .status
@@ -499,7 +499,7 @@ pub struct PendingSample {
     pub bytes: Vec<u8>,
 }
 
-/// The pool conversation's live state — `AppState.merc_sync`.
+/// The pool conversation's live state — `AppState.merc.sync`.
 #[derive(Debug, Default)]
 pub struct SyncState {
     /// Samples waiting to be offered.
@@ -550,7 +550,7 @@ pub struct SyncState {
 
 fn with_state<T>(app: &AppHandle, f: impl FnOnce(&mut SyncState) -> T) -> T {
     let state = app.state::<AppState>();
-    let mut guard = state.merc_sync.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = state.merc.sync.lock().unwrap_or_else(|e| e.into_inner());
     f(&mut guard)
 }
 
@@ -1128,9 +1128,9 @@ pub fn apply_corpus(
         // only long enough to clone, so this write and that one would otherwise
         // interleave in the same directory. See `icons::writing_icons_dir` for
         // the lock order and what the interleave costs.
-        super::icons::writing_icons_dir(&state.merc_icons_write, || {
+        super::icons::writing_icons_dir(&state.merc.icons_write, || {
             let mut store = state
-                .merc_templates
+                .merc.templates
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             // Snapshotted INSIDE the one acquisition that holds the merge:
@@ -1581,9 +1581,9 @@ fn mark_uploaded(app: &AppHandle, batch: &[PendingSample]) {
     let save_err = {
         let state = app.state::<AppState>();
         // Inside the directory lock, like every other writer of it.
-        super::icons::writing_icons_dir(&state.merc_icons_write, || {
+        super::icons::writing_icons_dir(&state.merc.icons_write, || {
             let mut store = state
-                .merc_templates
+                .merc.templates
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             let mut touched = false;
@@ -1609,7 +1609,7 @@ pub fn enqueue_backfill(app: &AppHandle) {
     let pending: Vec<PendingSample> = {
         let state = app.state::<AppState>();
         let store = state
-            .merc_templates
+            .merc.templates
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         store

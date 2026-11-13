@@ -415,76 +415,10 @@ pub struct AppState {
     /// slice. Written by the capture loop, projected read-only into every
     /// snapshot by `ssot::build_snapshot`. See src/mercenary/mod.rs.
     pub mercenary: Mutex<mercenary::MercenarySlice>,
-    /// Learned support-icon templates (POE-165 D4). Shared because two owners
-    /// need it: the capture loop matches and learns through it, and the
-    /// `merc_forget_template` / `merc_reset_templates` commands are the
-    /// un-poison path a user reaches for while that loop is running. Never
-    /// acquired inside a module lock (lock order — see src/modules.rs); the one
-    /// lock it IS taken inside is `merc_icons_write` below, on the four paths
-    /// that write the directory.
-    pub merc_templates: Mutex<mercenary::icons::TemplateStore>,
-    /// Serialises WRITES of the icon-template DIRECTORY (POE-204 WI-B).
-    ///
-    /// A second owner because there are two questions, not one: `merc_templates`
-    /// guards the store in memory, this guards the files on disk. The loop's
-    /// off-tick writer drops the store mutex before it writes — holding it
-    /// across the PNG writes would move the detect stall rather than remove it
-    /// — so the store mutex cannot be what keeps two `TemplateStore::save`
-    /// calls from interleaving. See `mercenary::icons::writing_icons_dir`,
-    /// which is the only way to take it, and which states the lock order: this
-    /// one first, `merc_templates` inside it.
-    pub merc_icons_write: Mutex<()>,
-    /// Which guides take NO part in the merc verdict (POE-199) — the single
-    /// owner of the enabled-guide set, in `mercenary::sources::SOURCE_IDS`
-    /// order. Echoed onto the `mercenary` slice by `ssot::compose_snapshot`,
-    /// so the page and the verdict overlay evaluate one capture against one
-    /// set. Acquired alone, like every other merc-owned Mutex.
-    pub merc_sources_off: Mutex<Vec<String>>,
-    /// Whether the captured mercenary is auto-searched on the trade site
-    /// (POE-202) — the single owner of the toggle. Read by the capture loop's
-    /// trade tick, echoed onto the `mercenary` slice by
-    /// `ssot::compose_snapshot`. Acquired alone, like every other merc Mutex.
-    pub merc_trade_auto: Mutex<bool>,
-    /// Main webview's divine rate snapshot, read when a merc lookup starts.
-    /// Only `mercenary::search::merc_set_divine_rate` writes this bridge.
-    pub merc_divine_rate: Mutex<Option<f64>>,
-    /// The lowest support tier that search accepts, 1..=3 (POE-202). Its own
-    /// owner beside `merc_trade_auto` rather than a field of one struct: the
-    /// two have separate commands and separate defaults, and neither is ever
-    /// read without the other being available anyway.
-    pub merc_tier_floor: Mutex<u8>,
-    /// Merc trade results keyed by `(league, query hash)`, with the unix ms
-    /// they were fetched at (POE-202).
-    ///
-    /// What makes a retire-and-re-detect of the same recruit window free: the
-    /// new capture session gets a fresh 3-search budget, but the question it
-    /// asks is byte-identical, so the cache answers it without spending any.
-    /// Entries past `mercenary::search::RESULT_TTL_MS` are dropped on the next
-    /// insert — the map only grows on that path.
-    ///
-    /// The league is half the key because the hash is not computed over it: the
-    /// query body names the mercenary, and the league is a path segment of the
-    /// search. A league switch inside one TTL would otherwise serve the old
-    /// economy's prices under the new league's link.
-    pub merc_trade_cache: Mutex<mercenary::search::MercResultCache>,
-    /// The shared icon-template pool conversation (POE-201) — the upload queue,
-    /// the single-flight pull flags, and the status the page shows. Its own
-    /// owner rather than a corner of `merc_templates` because the uploader and
-    /// the pull run on tasks that must not hold the store's mutex across a
-    /// network round-trip. Acquired alone, like every other merc-owned Mutex.
-    pub merc_sync: Mutex<mercenary::sync::SyncState>,
-    /// The merc OCR burst gate (POE-198) — the single owner of "should the
-    /// capture loop be looking right now". Armed by the Client.txt log watcher
-    /// (a mercenary's voice line) or by `merc_scan_now`, read and disarmed by
-    /// the capture loop. Acquired alone, like every other module-owned Mutex.
-    pub merc_burst: Mutex<mercenary::trigger::BurstGate>,
-    /// Bumped whenever the template store is EDITED by the user
-    /// (`merc_forget_template` / `merc_reset_templates`). The capture loop
-    /// watches it to drop the confirmations it is still re-applying from
-    /// memory — a forgotten template that keeps being re-applied is the
-    /// un-poison button not working. An atomic, not a Mutex: it is read on
-    /// every detect tick and never read together with the store.
-    pub merc_template_generation: AtomicU64,
+    /// The merc module's runtime state (POE-342) — templates, trade toggles,
+    /// sync, burst gate and counters, each with its own lock. See
+    /// `mercenary::MercState`.
+    pub merc: mercenary::MercState,
     /// Temple builder state (POE-171) — the owner of the `temple` SSOT slice.
     /// Written by the temple capture loop and by the `temple_set_*` commands,
     /// projected read-only into every snapshot by `ssot::build_snapshot`.
@@ -580,16 +514,6 @@ pub struct AppState {
     /// An atomic for the same reason as its sibling: read once per tick, never
     /// read together with anything else.
     pub temple_epoch: AtomicU64,
-    /// Bumped by `ssot::geometry_recalibrate` — the Settings **Recalibrate**
-    /// button (POE-227). The merc detect loop compares it against the value its
-    /// session last saw and, when it moved, throws away the frame registration
-    /// it had SETTLED on so the next tick measures the panel again from the OCR
-    /// cue. Without it the button clears the shared screen scale and the merc
-    /// loop republishes the same held number onto it on its next tick, which is
-    /// the one thing Recalibrate exists to stop. `temple_rearm`'s mirror on the
-    /// merc side, and an atomic for the same reason: read once per tick, never
-    /// read together with anything else.
-    pub merc_refit: AtomicU64,
     /// The screen the game is drawn on and the game-UI scale measured on it
     /// (POE-214) — the owner of the `screen` SSOT slice. Written by ONE writer,
     /// the merc detect tick, through `ssot::publish_screen`, and projected
@@ -3203,16 +3127,7 @@ pub fn run() {
         module_handles: Mutex::new(std::collections::HashMap::new()),
         modules_shutting_down: AtomicBool::new(false),
         mercenary: Mutex::new(mercenary::MercenarySlice::default()),
-        merc_templates: Mutex::new(mercenary::icons::TemplateStore::new()),
-        merc_icons_write: Mutex::new(()),
-        merc_sources_off: Mutex::new(Vec::new()),
-        merc_trade_auto: Mutex::new(mercenary::DEFAULT_TRADE_AUTO),
-        merc_divine_rate: Mutex::new(None),
-        merc_tier_floor: Mutex::new(mercenary::DEFAULT_TIER_FLOOR),
-        merc_trade_cache: Mutex::new(std::collections::HashMap::new()),
-        merc_sync: Mutex::new(mercenary::sync::SyncState::default()),
-        merc_burst: Mutex::new(mercenary::trigger::BurstGate::default()),
-        merc_template_generation: AtomicU64::new(0),
+        merc: mercenary::MercState::new(),
         temple: Mutex::new(temple::slice::TempleSlice::default()),
         temple_settings: Mutex::new(temple::slice::TempleSettings::default()),
         temple_market: Mutex::new(temple::market::MarketInput::none()),
@@ -3221,7 +3136,6 @@ pub fn run() {
         temple_arm: Mutex::new(temple::trigger::ArmState::default()),
         temple_rearm: AtomicU64::new(0),
         temple_epoch: AtomicU64::new(0),
-        merc_refit: AtomicU64::new(0),
         screen: Mutex::new(None),
         game_monitor: Mutex::new(None),
         widgets: Mutex::new(std::collections::BTreeMap::new()),

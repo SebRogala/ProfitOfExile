@@ -1194,7 +1194,7 @@ fn install_pass(app: &AppHandle, ctx: &InstallContext, only: Option<&str>) -> In
 
     let state = app.state::<AppState>();
     let mut store = state
-        .merc_templates
+        .merc.templates
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     // AND AGAIN under the store mutex, which is the read that decides. The

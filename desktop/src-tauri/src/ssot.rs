@@ -576,7 +576,7 @@ pub struct AppSsotSnapshot {
 ///
 /// The enabled-guide set (`merc_sources_off`, POE-199) is composed onto the
 /// mercenary slice here rather than stored in it — the owner is
-/// `AppState.merc_sources_off`, exactly as `lab_settings` owns the markets.
+/// `AppState.merc.sources_off`, exactly as `lab_settings` owns the markets.
 ///
 /// The mercenary slice's `status` is forced to `Off` when the module is
 /// disabled. This is the single place module enablement reaches that slice, so
@@ -670,7 +670,7 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     let mercenary = state.mercenary.lock().unwrap_or_else(|e| e.into_inner()).clone();
     // Its own lone acquisition, like every other owner read here.
     let merc_sources_off = state
-        .merc_sources_off
+        .merc.sources_off
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
@@ -678,8 +678,8 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     // `merc_sync` guard inside one statement.
     let merc_sync = crate::mercenary::sync::MercSyncStatus::current(state);
     // Lone acquisitions again, each ending with its own statement.
-    let merc_trade_auto = *state.merc_trade_auto.lock().unwrap_or_else(|e| e.into_inner());
-    let merc_tier_floor = *state.merc_tier_floor.lock().unwrap_or_else(|e| e.into_inner());
+    let merc_trade_auto = *state.merc.trade_auto.lock().unwrap_or_else(|e| e.into_inner());
+    let merc_tier_floor = *state.merc.tier_floor.lock().unwrap_or_else(|e| e.into_inner());
     // Same discipline again: the temple guard ends with this statement, so it
     // is never held alongside the merc one or across the compose.
     let temple = state.temple.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -1330,7 +1330,7 @@ pub fn geometry_recalibrate(app: AppHandle) {
             .temple_rearm
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         state
-            .merc_refit
+            .merc.refit
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
     crate::settings::persist_forgetting_screen_scale(&app);

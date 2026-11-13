@@ -141,7 +141,7 @@ pub fn merc_set_sources_off(sources_off: Vec<String>, app: AppHandle) -> Result<
     {
         let state = app.state::<AppState>();
         *state
-            .merc_sources_off
+            .merc.sources_off
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = accepted.clone();
     }

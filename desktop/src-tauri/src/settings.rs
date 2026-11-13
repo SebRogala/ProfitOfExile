@@ -986,10 +986,10 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         // the `None` that keeps re-reading the old preference into a real
         // value — which is what ends the migration.
         merc_sources_off: Some(
-            state.merc_sources_off.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            state.merc.sources_off.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         ),
-        merc_trade_auto: *state.merc_trade_auto.lock().unwrap_or_else(|e| e.into_inner()),
-        merc_tier_floor: *state.merc_tier_floor.lock().unwrap_or_else(|e| e.into_inner()),
+        merc_trade_auto: *state.merc.trade_auto.lock().unwrap_or_else(|e| e.into_inner()),
+        merc_tier_floor: *state.merc.tier_floor.lock().unwrap_or_else(|e| e.into_inner()),
         // Read here, like every other owner-held field and for the same reason:
         // `persist_settings` rewrites the WHOLE file from this function and
         // `Settings` has no `skip_serializing_if`, so a field not read here is
@@ -1131,7 +1131,7 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
                 "merc settings: {id:?} is not a guide, ignoring it in the off-list"
             ));
         }
-        *state.merc_sources_off.lock().unwrap_or_else(|e| e.into_inner()) = accepted;
+        *state.merc.sources_off.lock().unwrap_or_else(|e| e.into_inner()) = accepted;
     }
 
     // The trade auto-search (POE-202). The floor is CLAMPED rather than
@@ -1143,8 +1143,8 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     // user asking for the loosest search there is, and answering it with 3 —
     // the tightest — inverts what the file says. Reported either way, because
     // the file and the running value now disagree.
-    *state.merc_trade_auto.lock().unwrap_or_else(|e| e.into_inner()) = settings.merc_trade_auto;
-    *state.merc_tier_floor.lock().unwrap_or_else(|e| e.into_inner()) =
+    *state.merc.trade_auto.lock().unwrap_or_else(|e| e.into_inner()) = settings.merc_trade_auto;
+    *state.merc.tier_floor.lock().unwrap_or_else(|e| e.into_inner()) =
         match crate::mercenary::validate_tier_floor(settings.merc_tier_floor) {
             Ok(floor) => floor,
             Err(why) => {
@@ -1772,16 +1772,7 @@ pub(crate) mod tests {
             module_handles: Mutex::new(std::collections::HashMap::new()),
             modules_shutting_down: AtomicBool::new(false),
             mercenary: Mutex::new(crate::mercenary::MercenarySlice::default()),
-            merc_templates: Mutex::new(crate::mercenary::icons::TemplateStore::new()),
-            merc_icons_write: Mutex::new(()),
-            merc_sources_off: Mutex::new(Vec::new()),
-            merc_trade_auto: Mutex::new(crate::mercenary::DEFAULT_TRADE_AUTO),
-            merc_divine_rate: Mutex::new(None),
-            merc_tier_floor: Mutex::new(crate::mercenary::DEFAULT_TIER_FLOOR),
-            merc_trade_cache: Mutex::new(std::collections::HashMap::new()),
-            merc_sync: Mutex::new(crate::mercenary::sync::SyncState::default()),
-            merc_burst: Mutex::new(crate::mercenary::trigger::BurstGate::default()),
-            merc_template_generation: AtomicU64::new(0),
+            merc: crate::mercenary::MercState::new(),
             temple: Mutex::new(crate::temple::slice::TempleSlice::default()),
             temple_settings: Mutex::new(crate::temple::slice::TempleSettings::default()),
             temple_market: Mutex::new(crate::temple::market::MarketInput::none()),
@@ -1790,7 +1781,6 @@ pub(crate) mod tests {
             temple_arm: Mutex::new(crate::temple::trigger::ArmState::default()),
             temple_rearm: AtomicU64::new(0),
             temple_epoch: AtomicU64::new(0),
-            merc_refit: AtomicU64::new(0),
             screen: Mutex::new(None),
             widgets: Mutex::new(std::collections::BTreeMap::new()),
         }
@@ -3560,8 +3550,8 @@ pub(crate) mod tests {
 
         let _ = apply_to_state(&parsed, &state);
 
-        assert!(*state.merc_trade_auto.lock().unwrap(), "the auto-search ships on");
-        assert_eq!(*state.merc_tier_floor.lock().unwrap(), 3);
+        assert!(*state.merc.trade_auto.lock().unwrap(), "the auto-search ships on");
+        assert_eq!(*state.merc.tier_floor.lock().unwrap(), 3);
     }
 
     /// A hand-edited 0 is a user asking for the loosest search there is.
@@ -3575,7 +3565,7 @@ pub(crate) mod tests {
 
         let rejected = apply_to_state(&settings, &state);
 
-        assert_eq!(*state.merc_tier_floor.lock().unwrap(), 1);
+        assert_eq!(*state.merc.tier_floor.lock().unwrap(), 1);
         assert!(
             rejected.iter().any(|line| line.contains("tier floor 0") && line.contains("using 1")),
             "the disagreement must be surfaced: {rejected:?}",
@@ -3590,7 +3580,7 @@ pub(crate) mod tests {
 
         let rejected = apply_to_state(&settings, &state);
 
-        assert_eq!(*state.merc_tier_floor.lock().unwrap(), 3);
+        assert_eq!(*state.merc.tier_floor.lock().unwrap(), 3);
         assert!(
             rejected.iter().any(|line| line.contains("tier floor 9") && line.contains("using 3")),
             "the disagreement must be surfaced: {rejected:?}",
@@ -3607,7 +3597,7 @@ pub(crate) mod tests {
 
         let rejected = apply_to_state(&settings, &state);
 
-        assert_eq!(*state.merc_tier_floor.lock().unwrap(), 2);
+        assert_eq!(*state.merc.tier_floor.lock().unwrap(), 2);
         assert!(!rejected.iter().any(|line| line.contains("tier floor")), "{rejected:?}");
     }
 
@@ -3617,15 +3607,15 @@ pub(crate) mod tests {
     #[test]
     fn the_trade_toggle_and_floor_round_trip_through_state() {
         let state = test_app_state();
-        *state.merc_trade_auto.lock().unwrap() = false;
-        *state.merc_tier_floor.lock().unwrap() = 1;
+        *state.merc.trade_auto.lock().unwrap() = false;
+        *state.merc.tier_floor.lock().unwrap() = 1;
 
         let saved = from_state(&state);
         let reloaded = test_app_state();
         let _ = apply_to_state(&saved, &reloaded);
 
-        assert!(!*reloaded.merc_trade_auto.lock().unwrap());
-        assert_eq!(*reloaded.merc_tier_floor.lock().unwrap(), 1);
+        assert!(!*reloaded.merc.trade_auto.lock().unwrap());
+        assert_eq!(*reloaded.merc.tier_floor.lock().unwrap(), 1);
     }
 
     /// A settings file written before POE-199 carries the guide set only in
@@ -3647,7 +3637,7 @@ pub(crate) mod tests {
         let _ = apply_to_state(&settings, &state);
 
         assert_eq!(
-            *state.merc_sources_off.lock().unwrap(),
+            *state.merc.sources_off.lock().unwrap(),
             vec!["guide-a".to_string()],
         );
     }
@@ -3658,7 +3648,7 @@ pub(crate) mod tests {
     #[test]
     fn a_written_guide_set_outranks_the_stale_preference_on_the_next_load() {
         let state = test_app_state();
-        *state.merc_sources_off.lock().unwrap() = Vec::new();
+        *state.merc.sources_off.lock().unwrap() = Vec::new();
         let mut saved = from_state(&state);
         saved.ui_prefs.insert(
             crate::mercenary::sources::LEGACY_PREF_KEY.to_string(),
@@ -3674,7 +3664,7 @@ pub(crate) mod tests {
         let _ = apply_to_state(&saved, &reloaded);
 
         assert!(
-            reloaded.merc_sources_off.lock().unwrap().is_empty(),
+            reloaded.merc.sources_off.lock().unwrap().is_empty(),
             "the typed field said every guide is on — the old pref is ignored",
         );
     }
@@ -3693,7 +3683,7 @@ pub(crate) mod tests {
         let rejected = apply_to_state(&settings, &state);
 
         assert_eq!(
-            *state.merc_sources_off.lock().unwrap(),
+            *state.merc.sources_off.lock().unwrap(),
             vec!["guide-b".to_string()],
         );
         assert!(

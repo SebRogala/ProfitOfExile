@@ -77,7 +77,7 @@
 //! `module_handles` NOT held, is fine anywhere (`from_state`, `apply_to_state`,
 //! `ssot::build_snapshot` and `set_module_enabled` all do it).
 //! Module-owned state Mutexes sit OUTSIDE this order and are acquired alone:
-//! `AppState.mercenary` and `AppState.merc_templates` (POE-165), and
+//! `AppState.mercenary` and `AppState.merc.templates` (POE-165), and
 //! `AppState.temple` and `AppState.temple_settings` (POE-171), and
 //! `AppState.screen` (POE-214 — named for what it holds rather than for a
 //! module, but singly owned all the same: the merc detect tick is its only

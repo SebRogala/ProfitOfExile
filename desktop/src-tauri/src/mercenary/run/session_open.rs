@@ -15,7 +15,7 @@ use super::super::icons::{PooledCorpus, PurgedStore};
 /// The two locks and the directory the store open writes under.
 ///
 /// Lock order is `dir_lock` (`writing_icons_dir`) then `store`
-/// (`merc_templates`), the order every other writer takes.
+/// (`merc.templates`), the order every other writer takes.
 pub(super) struct StoreHandles<'a> {
     pub(super) dir: &'a Path,
     pub(super) dir_lock: &'a Mutex<()>,
@@ -214,8 +214,8 @@ pub(super) fn open_session(
         let state = app.state::<AppState>();
         let handles = StoreHandles {
             dir,
-            dir_lock: &state.merc_icons_write,
-            store: &state.merc_templates,
+            dir_lock: &state.merc.icons_write,
+            store: &state.merc.templates,
         };
         // Read off `pool-sync.json`, which the purge that runs first inside
         // `open_template_store` does not touch.
@@ -280,10 +280,10 @@ pub(super) fn open_session(
                 // one — and what stops the snapshot going stale between being
                 // taken and being written. See [`icons::writing_icons_dir`].
                 let result =
-                    super::super::icons::writing_icons_dir(&state.merc_icons_write, || {
+                    super::super::icons::writing_icons_dir(&state.merc.icons_write, || {
                         let snapshot = {
                             let store =
-                                state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+                                state.merc.templates.lock().unwrap_or_else(|e| e.into_inner());
                             store.clone()
                         };
                         snapshot.save(&dir)
@@ -416,7 +416,7 @@ pub(super) fn open_template_store(
     // two would merge into the installed store, save, persist its ETag, and
     // then be erased in memory by the assignment: a 304 promising art
     // nobody will rewrite. Lock order is unchanged — `writing_icons_dir`
-    // then `merc_templates`, the order every other writer takes.
+    // then `merc.templates`, the order every other writer takes.
     //
     // INSTALL FIRST, MERGE SECOND. The whole-store write happens here, while
     // the seam still holds its pull claim, and every merge — this start's or
@@ -482,7 +482,7 @@ pub(super) fn open_template_store(
     //
     // The purge above released the directory lock (it is a non-reentrant
     // `std::sync::Mutex<()>`), so this takes it for itself, then the store's
-    // mutex inside it — `writing_icons_dir` → `merc_templates`, the order
+    // mutex inside it — `writing_icons_dir` → `merc.templates`, the order
     // `apply_corpus` takes. Under one acquisition of both, so no forget or
     // reset landing between the load and the save can rewrite an index
     // naming PNGs this is about to unlink.

@@ -813,7 +813,7 @@ pub fn on_client_line(
     let at = arm_at(now_ms(), line_timestamp_ms(line));
     let fresh = {
         let state = app.state::<AppState>();
-        let mut gate = state.merc_burst.lock().unwrap_or_else(|e| e.into_inner());
+        let mut gate = state.merc.burst.lock().unwrap_or_else(|e| e.into_inner());
         gate.hear(speaker.to_string(), at)
     };
     announce(app, Some(speaker.to_string()));
@@ -829,7 +829,7 @@ pub fn on_client_line(
 pub fn step(app: &AppHandle, now_ms: u64) -> GateStep {
     let state = app.state::<AppState>();
     let step = state
-        .merc_burst
+        .merc.burst
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .step(now_ms);
@@ -840,7 +840,7 @@ pub fn step(app: &AppHandle, now_ms: u64) -> GateStep {
 pub fn speaker(app: &AppHandle) -> Option<String> {
     let state = app.state::<AppState>();
     let speaker = state
-        .merc_burst
+        .merc.burst
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .speaker()
@@ -852,7 +852,7 @@ pub fn speaker(app: &AppHandle) -> Option<String> {
 pub fn take_stood_down(app: &AppHandle, now_ms: u64) -> Option<StandDown> {
     let state = app.state::<AppState>();
     let stood_down = state
-        .merc_burst
+        .merc.burst
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .take_stood_down(now_ms);
@@ -863,7 +863,7 @@ pub fn take_stood_down(app: &AppHandle, now_ms: u64) -> Option<StandDown> {
 pub fn generation(app: &AppHandle) -> u64 {
     let state = app.state::<AppState>();
     let generation = state
-        .merc_burst
+        .merc.burst
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .generation();
@@ -874,7 +874,7 @@ pub fn generation(app: &AppHandle) -> u64 {
 pub fn note_probe(app: &AppHandle, now_ms: u64) {
     let state = app.state::<AppState>();
     state
-        .merc_burst
+        .merc.burst
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .note_probe(now_ms);
@@ -884,7 +884,7 @@ pub fn note_probe(app: &AppHandle, now_ms: u64) {
 pub fn note_full_detect(app: &AppHandle) {
     let state = app.state::<AppState>();
     state
-        .merc_burst
+        .merc.burst
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .note_full_detect();
@@ -894,7 +894,7 @@ pub fn note_full_detect(app: &AppHandle) {
 pub fn disarm(app: &AppHandle) {
     let state = app.state::<AppState>();
     state
-        .merc_burst
+        .merc.burst
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .disarm();
@@ -904,7 +904,7 @@ pub fn disarm(app: &AppHandle) {
 pub fn disarm_probe(app: &AppHandle) {
     let state = app.state::<AppState>();
     state
-        .merc_burst
+        .merc.burst
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .disarm_probe();
@@ -944,7 +944,7 @@ pub fn scan_now(app: &AppHandle) -> Result<(), String> {
     }
     let fresh = {
         let state = app.state::<AppState>();
-        let mut gate = state.merc_burst.lock().unwrap_or_else(|e| e.into_inner());
+        let mut gate = state.merc.burst.lock().unwrap_or_else(|e| e.into_inner());
         gate.request_full_detect(now_ms())
     };
     // Announced here, not on the loop's next tick, for the reason `announce`

@@ -1168,11 +1168,11 @@ pub fn tick(
 ) {
     let state = app.state::<AppState>();
     let auto = *state
-        .merc_trade_auto
+        .merc.trade_auto
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     let floor = *state
-        .merc_tier_floor
+        .merc.tier_floor
         .lock()
         .unwrap_or_else(|e| e.into_inner());
 
@@ -1210,7 +1210,7 @@ pub fn tick(
     let cached = match (&league, session.built_query.as_ref()) {
         (Some(league), Some(query)) => {
             let cache = state
-                .merc_trade_cache
+                .merc.trade_cache
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             cache_get(&cache, league, &query.hash, now_ms)
@@ -1393,7 +1393,7 @@ fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
         .unwrap_or_else(|e| e.into_inner()).league.name.clone();
     let divine_rate = *app
         .state::<AppState>()
-        .merc_divine_rate
+        .merc.divine_rate
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     let app = app.clone();
@@ -1439,7 +1439,7 @@ fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
                 {
                     let state = app.state::<AppState>();
                     let mut cache = state
-                        .merc_trade_cache
+                        .merc.trade_cache
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
                     cache_insert(&mut cache, now_ms(), result.clone());
@@ -1700,7 +1700,7 @@ fn cache_insert(cache: &mut MercResultCache, now_ms: u64, result: MercTradeResul
 pub fn merc_set_divine_rate(divine_rate: Option<f64>, app: AppHandle) {
     *app
         .state::<AppState>()
-        .merc_divine_rate
+        .merc.divine_rate
         .lock()
         .unwrap_or_else(|e| e.into_inner()) = divine_rate;
 }
@@ -1715,7 +1715,7 @@ pub fn merc_set_trade_auto(auto: bool, app: AppHandle) -> Result<(), String> {
     {
         let state = app.state::<AppState>();
         *state
-            .merc_trade_auto
+            .merc.trade_auto
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = auto;
     }
@@ -1749,7 +1749,7 @@ pub fn merc_set_tier_floor(floor: u8, app: AppHandle) -> Result<(), String> {
     {
         let state = app.state::<AppState>();
         *state
-            .merc_tier_floor
+            .merc.tier_floor
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = accepted;
     }

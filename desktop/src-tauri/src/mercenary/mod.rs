@@ -253,6 +253,114 @@ pub const DEFAULT_TRADE_AUTO: bool = true;
 /// links.
 pub const DEFAULT_TIER_FLOOR: u8 = 3;
 
+/// The merc module's runtime state, embedded by value in `AppState` as
+/// `AppState.merc` (POE-342). Every field keeps its own lock or atomic — the
+/// struct is a grouping, never a lock of its own.
+pub struct MercState {
+    /// Learned support-icon templates (POE-165 D4). Shared because two owners
+    /// need it: the capture loop matches and learns through it, and the
+    /// `merc_forget_template` / `merc_reset_templates` commands are the
+    /// un-poison path a user reaches for while that loop is running. Never
+    /// acquired inside a module lock (lock order — see src/modules.rs); the one
+    /// lock it IS taken inside is `icons_write` below, on the four paths
+    /// that write the directory.
+    pub(crate) templates: std::sync::Mutex<icons::TemplateStore>,
+    /// Serialises WRITES of the icon-template DIRECTORY (POE-204 WI-B).
+    ///
+    /// A second owner because there are two questions, not one: `templates`
+    /// guards the store in memory, this guards the files on disk. The loop's
+    /// off-tick writer drops the store mutex before it writes — holding it
+    /// across the PNG writes would move the detect stall rather than remove it
+    /// — so the store mutex cannot be what keeps two `TemplateStore::save`
+    /// calls from interleaving. See `mercenary::icons::writing_icons_dir`,
+    /// which is the only way to take it, and which states the lock order: this
+    /// one first, `templates` inside it.
+    pub(crate) icons_write: std::sync::Mutex<()>,
+    /// Which guides take NO part in the merc verdict (POE-199) — the single
+    /// owner of the enabled-guide set, in `mercenary::sources::SOURCE_IDS`
+    /// order. Echoed onto the `mercenary` slice by `ssot::compose_snapshot`,
+    /// so the page and the verdict overlay evaluate one capture against one
+    /// set. Acquired alone, like every other merc-owned Mutex.
+    pub(crate) sources_off: std::sync::Mutex<Vec<String>>,
+    /// Whether the captured mercenary is auto-searched on the trade site
+    /// (POE-202) — the single owner of the toggle. Read by the capture loop's
+    /// trade tick, echoed onto the `mercenary` slice by
+    /// `ssot::compose_snapshot`. Acquired alone, like every other merc Mutex.
+    pub(crate) trade_auto: std::sync::Mutex<bool>,
+    /// Main webview's divine rate snapshot, read when a merc lookup starts.
+    /// Only `mercenary::search::merc_set_divine_rate` writes this bridge.
+    pub(crate) divine_rate: std::sync::Mutex<Option<f64>>,
+    /// The lowest support tier that search accepts, 1..=3 (POE-202). Its own
+    /// owner beside `trade_auto` rather than a field of one struct: the
+    /// two have separate commands and separate defaults, and neither is ever
+    /// read without the other being available anyway.
+    pub(crate) tier_floor: std::sync::Mutex<u8>,
+    /// Merc trade results keyed by `(league, query hash)`, with the unix ms
+    /// they were fetched at (POE-202).
+    ///
+    /// What makes a retire-and-re-detect of the same recruit window free: the
+    /// new capture session gets a fresh 3-search budget, but the question it
+    /// asks is byte-identical, so the cache answers it without spending any.
+    /// Entries past `mercenary::search::RESULT_TTL_MS` are dropped on the next
+    /// insert — the map only grows on that path.
+    ///
+    /// The league is half the key because the hash is not computed over it: the
+    /// query body names the mercenary, and the league is a path segment of the
+    /// search. A league switch inside one TTL would otherwise serve the old
+    /// economy's prices under the new league's link.
+    pub(crate) trade_cache: std::sync::Mutex<search::MercResultCache>,
+    /// The shared icon-template pool conversation (POE-201) — the upload queue,
+    /// the single-flight pull flags, and the status the page shows. Its own
+    /// owner rather than a corner of `templates` because the uploader and
+    /// the pull run on tasks that must not hold the store's mutex across a
+    /// network round-trip. Acquired alone, like every other merc-owned Mutex.
+    pub(crate) sync: std::sync::Mutex<sync::SyncState>,
+    /// The merc OCR burst gate (POE-198) — the single owner of "should the
+    /// capture loop be looking right now". Armed by the Client.txt log watcher
+    /// (a mercenary's voice line) or by `merc_scan_now`, read and disarmed by
+    /// the capture loop. Acquired alone, like every other module-owned Mutex.
+    pub(crate) burst: std::sync::Mutex<trigger::BurstGate>,
+    /// Bumped whenever the template store is EDITED by the user
+    /// (`merc_forget_template` / `merc_reset_templates`). The capture loop
+    /// watches it to drop the confirmations it is still re-applying from
+    /// memory — a forgotten template that keeps being re-applied is the
+    /// un-poison button not working. An atomic, not a Mutex: it is read on
+    /// every detect tick and never read together with the store.
+    pub(crate) template_generation: std::sync::atomic::AtomicU64,
+    /// Bumped by `ssot::geometry_recalibrate` — the Settings **Recalibrate**
+    /// button (POE-227). The merc detect loop compares it against the value its
+    /// session last saw and, when it moved, throws away the frame registration
+    /// it had SETTLED on so the next tick measures the panel again from the OCR
+    /// cue. Without it the button clears the shared screen scale and the merc
+    /// loop republishes the same held number onto it on its next tick, which is
+    /// the one thing Recalibrate exists to stop. `temple_rearm`'s mirror on the
+    /// merc side, and an atomic for the same reason: read once per tick, never
+    /// read together with anything else.
+    pub(crate) refit: std::sync::atomic::AtomicU64,
+}
+
+impl MercState {
+    /// The one construction source for `run()` and `test_app_state`.
+    /// Deliberately not a `Default` impl, like `test_app_state`: a new field
+    /// breaking this constructor is the intended signal to decide whether it
+    /// also needs a settings touch point.
+    pub(crate) fn new() -> Self {
+        Self {
+            templates: std::sync::Mutex::new(icons::TemplateStore::new()),
+            icons_write: std::sync::Mutex::new(()),
+            sources_off: std::sync::Mutex::new(Vec::new()),
+            trade_auto: std::sync::Mutex::new(DEFAULT_TRADE_AUTO),
+            divine_rate: std::sync::Mutex::new(None),
+            tier_floor: std::sync::Mutex::new(DEFAULT_TIER_FLOOR),
+            trade_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            sync: std::sync::Mutex::new(sync::SyncState::default()),
+            burst: std::sync::Mutex::new(trigger::BurstGate::default()),
+            template_generation: std::sync::atomic::AtomicU64::new(0),
+            refit: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
 /// `merc_tier_floor` as a support tier, or the reason it is not one.
 ///
 /// A separate function from the clamp in
@@ -447,7 +555,7 @@ pub struct MercenarySlice {
     ///
     /// A settings ECHO, not a reading: the capture loop never writes it, and
     /// the stored slice always holds the empty default. It is composed onto
-    /// every snapshot at read time from `AppState.merc_sources_off`
+    /// every snapshot at read time from `AppState.merc.sources_off`
     /// (`ssot::compose_snapshot`, the same way `normal_variant` is), so there
     /// is no second copy to keep in step and the page and the overlay cannot
     /// evaluate one capture against two different guide sets.
@@ -459,7 +567,7 @@ pub struct MercenarySlice {
     ///
     /// A settings-style ECHO like [`Self::sources_off`], and for the same
     /// reason: the pull and the uploader run on their own tasks, so composing
-    /// it at read time from `AppState.merc_sync` keeps the slice's only writer
+    /// it at read time from `AppState.merc.sync` keeps the slice's only writer
     /// the capture loop.
     #[serde(default)]
     pub sync: sync::MercSyncStatus,
@@ -474,13 +582,13 @@ pub struct MercenarySlice {
     #[serde(default)]
     pub trade: MercTradeState,
     /// Whether the auto-search runs at all — a settings ECHO of
-    /// `AppState.merc_trade_auto`, composed like [`Self::sources_off`] and for
+    /// `AppState.merc.trade_auto`, composed like [`Self::sources_off`] and for
     /// the same reason: the page renders the toggle from it while the module
     /// is off and no loop will ever publish it.
     #[serde(default)]
     pub trade_auto: bool,
     /// The lowest support tier the search accepts, 1..=3 — a settings ECHO of
-    /// `AppState.merc_tier_floor`, composed like [`Self::trade_auto`].
+    /// `AppState.merc.tier_floor`, composed like [`Self::trade_auto`].
     #[serde(default)]
     pub tier_floor: u8,
 }

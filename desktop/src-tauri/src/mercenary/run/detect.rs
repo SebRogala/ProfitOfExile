@@ -182,7 +182,7 @@ impl DetectionEffects for AppDetectionEffects<'_> {
         read: impl FnOnce(&crate::mercenary::icons::TemplateStore) -> R,
     ) -> R {
         let state = self.app.state::<AppState>();
-        let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+        let store = state.merc.templates.lock().unwrap_or_else(|e| e.into_inner());
         read(&store)
     }
 
