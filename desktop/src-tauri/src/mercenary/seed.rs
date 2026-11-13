@@ -43,6 +43,8 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tokio::sync::watch;
 
+use crate::gem_art;
+
 use super::icons::{SeedInstall, TemplateStore};
 use super::{icons::CellSig, MercGeometry, Thresholds};
 use crate::AppState;
@@ -393,28 +395,9 @@ pub fn art_dir(icons_dir: &Path) -> PathBuf {
     icons_dir.join(SEED_ART_DIR)
 }
 
-/// File-name-safe form of a gem name — the cache file's stem and the fixture's.
-pub fn art_slug(gem: &str) -> String {
-    let s: String = gem
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    if s.is_empty() {
-        "unnamed".to_string()
-    } else {
-        s
-    }
-}
-
 /// `<icons_dir>/seed/<slug>.png` — where one gem's art is cached.
 pub fn art_path(icons_dir: &Path, gem: &str) -> PathBuf {
-    art_dir(icons_dir).join(format!("{}.png", art_slug(gem)))
+    gem_art::art_file(&art_dir(icons_dir), gem)
 }
 
 /// The blocklist file, beside `index.json` and `pool-sync.json`.
@@ -587,14 +570,6 @@ pub fn seed_epoch() -> u64 {
     SEED_EPOCH.load(Ordering::SeqCst)
 }
 
-/// Request timeout for one gem-art call.
-///
-/// The same 20 s [`super::sync`] gives a pool call, and for the same reason —
-/// the shared HTTP client sets none. It has to clear the server's own 10 s
-/// poewiki timeout, which is what a DEV server spends on the first request for
-/// an icon its cache volume does not hold yet; prod answers from that volume.
-const ART_TIMEOUT: Duration = Duration::from_secs(20);
-
 /// How long the load seam waits for the fetch's cache pass.
 ///
 /// Mirrors [`super::sync`]'s `STARTUP_WAIT`, and for the same reason: what is
@@ -657,63 +632,6 @@ pub fn plan_fetch(
     plan
 }
 
-/// What one gem-art request came back with, before it is judged.
-///
-/// Two variants rather than a `Result<Response>` because the transport failure
-/// and the server's answer are different EVIDENCE even though they get the same
-/// verdict — the log line names which one happened.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ArtReply {
-    /// No response at all — offline, DNS, TLS, a timeout.
-    Unreachable(String),
-    /// An HTTP status and whatever body came with it.
-    Response(u16, Vec<u8>),
-}
-
-/// Accept one reply as cacheable art, or say why the family stays unseeded.
-///
-/// **Everything that is not a 200 carrying a decodable PNG is unavailable, and
-/// unavailable means nothing is written.** That absence IS the retry: the next
-/// module start's [`plan_fetch`] finds no cached file and asks again. 404 (the
-/// gem is not in the server's embedded map) and 502 (the server holds the name
-/// but could not produce bytes) deliberately collapse into the same answer —
-/// both are the server's, both can be temporary on a dev server that fetches
-/// the wiki live, and neither is something this device can act on differently.
-///
-/// The format is pinned to PNG rather than sniffed: the route serves PNG, and
-/// a proxy's HTML error page decodes as nothing, but a captive-portal login
-/// screen served as a JPEG would decode as an image and cache as gem art.
-pub fn accept_art(reply: ArtReply) -> Result<Vec<u8>, String> {
-    let (status, body) = match reply {
-        ArtReply::Unreachable(why) => return Err(format!("unreachable — {why}")),
-        ArtReply::Response(status, body) => (status, body),
-    };
-    if status != 200 {
-        return Err(format!("server returned {status}"));
-    }
-    match image::load_from_memory_with_format(&body, image::ImageFormat::Png) {
-        Ok(_) => Ok(body),
-        Err(e) => Err(format!("not a readable PNG — {e}")),
-    }
-}
-
-/// `{server}/api/icon/gems/{gem}`, with the gem percent-encoded as one path
-/// segment.
-///
-/// `server_url` carries no `/api` suffix — the JS `apiBase` does, and a URL
-/// built by pasting the two together 404s. The segment goes through the URL
-/// parser rather than a `format!` because every gem name has spaces in it and
-/// four have none of the other characters that would make a hand-rolled
-/// encoder look wrong until the map grows one.
-///
-/// `None` when `server` is not a parseable absolute URL, which is a
-/// misconfigured device, not a failed fetch — the caller skips the pass.
-pub fn art_url(server: &str, gem: &str) -> Option<String> {
-    let mut url = reqwest::Url::parse(server).ok()?;
-    url.path_segments_mut().ok()?.pop_if_empty().extend(["api", "icon", "gems", gem]);
-    Some(url.to_string())
-}
-
 /// Cache one gem's art, unless a reset landed since `epoch`.
 ///
 /// Under [`SEED_BLOCKLIST_LOCK`] — the same lock [`clear_seed_state`] holds
@@ -721,8 +639,7 @@ pub fn art_url(server: &str, gem: &str) -> Option<String> {
 /// interleave, and the epoch decides which of them wins when they are
 /// concurrent. `Ok(false)` means the reset won and nothing was written.
 ///
-/// Temp-then-rename like every other file this module owns: a half-written PNG
-/// would read as cached and never be fetched again.
+/// Temp-then-rename through [`gem_art::write_art`].
 pub fn store_art(icons_dir: &Path, gem: &str, bytes: &[u8], epoch: u64) -> Result<bool, String> {
     let _guard = SEED_BLOCKLIST_LOCK
         .lock()
@@ -730,12 +647,7 @@ pub fn store_art(icons_dir: &Path, gem: &str, bytes: &[u8], epoch: u64) -> Resul
     if seed_epoch() != epoch {
         return Ok(false);
     }
-    let dir = art_dir(icons_dir);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let path = art_path(icons_dir, gem);
-    let tmp = path.with_extension("png.tmp");
-    std::fs::write(&tmp, bytes).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))?;
+    gem_art::write_art(&art_dir(icons_dir), gem, bytes)?;
     Ok(true)
 }
 
@@ -787,23 +699,10 @@ pub struct InstallTally {
     pub blocked: usize,
 }
 
-/// Decode one cached art file.
-///
-/// A file that is present but does not decode is DELETED, not just skipped: it
-/// reads as cached forever otherwise, so the family would never be seeded and
-/// never re-fetched either. A truncated download and a half-written file are
-/// the two ways to get one, and both want the same answer — ask again next
-/// start.
+/// Decode one cached art file; an undecodable one is deleted
+/// ([`gem_art::read_art`]) so the next start re-fetches it.
 fn read_art(icons_dir: &Path, gem: &str) -> Option<RgbaImage> {
-    let path = art_path(icons_dir, gem);
-    let bytes = std::fs::read(&path).ok()?;
-    match image::load_from_memory_with_format(&bytes, image::ImageFormat::Png) {
-        Ok(img) => Some(img.to_rgba8()),
-        Err(_) => {
-            let _ = std::fs::remove_file(&path);
-            None
-        }
-    }
+    gem_art::read_art(&art_dir(icons_dir), gem)
 }
 
 /// One signature per eligible family whose art is cached, at this scale.
@@ -1104,24 +1003,14 @@ async fn fetch_pass(app: AppHandle) {
             summary.cached += 1;
             continue;
         }
-        let Some(url) = art_url(&server, &entry.gem) else {
+        let Some(reply) = gem_art::fetch_art(&http, &server, &entry.gem).await else {
             crate::app_log(
                 &app,
                 format!("Merc: no seeds — {server} is not a usable server address"),
             );
             break;
         };
-        let reply = match http.get(&url).timeout(ART_TIMEOUT).send().await {
-            Ok(response) => {
-                let status = response.status().as_u16();
-                match response.bytes().await {
-                    Ok(body) => ArtReply::Response(status, body.to_vec()),
-                    Err(e) => ArtReply::Unreachable(e.to_string()),
-                }
-            }
-            Err(e) => ArtReply::Unreachable(e.to_string()),
-        };
-        match accept_art(reply).and_then(|bytes| store_art(&dir, &entry.gem, &bytes, epoch)) {
+        match gem_art::accept_art(reply).and_then(|bytes| store_art(&dir, &entry.gem, &bytes, epoch)) {
             Ok(true) => {
                 summary.fetched += 1;
                 // Through the same function the seam uses, so art that lands
@@ -1299,6 +1188,7 @@ pub fn rederive_for_window(app: &AppHandle, geometry: &MercGeometry, scale: f32)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gem_art::{accept_art, art_slug, ArtReply};
     use crate::mercenary::geometry::outer_rect_for_inner;
     use crate::mercenary::icons::{
         cell_candidates, CellCandidates, TemplateStore, SHIFT_MAX, SIG_DIM,
@@ -3038,72 +2928,6 @@ mod tests {
         assert!(plan.cached.is_empty());
     }
 
-    /// A server that cannot be reached at all leaves the family unseeded.
-    #[test]
-    fn an_unreachable_server_yields_no_art() {
-        let why = accept_art(ArtReply::Unreachable("dns error".into()))
-            .expect_err("an unreachable server produced art");
-
-        assert!(why.contains("dns error"), "{why}");
-    }
-
-    /// A gem the server's map does not carry answers 404, and 404 is not art.
-    #[test]
-    fn a_404_yields_no_art() {
-        let why = accept_art(ArtReply::Response(404, b"not found".to_vec()))
-            .expect_err("a 404 produced art");
-
-        assert!(why.contains("404"), "{why}");
-    }
-
-    /// A 502 — the server holds the name but could not produce bytes — is the
-    /// same non-answer as a 404, and must not be cached as art.
-    #[test]
-    fn a_502_yields_no_art() {
-        let why = accept_art(ArtReply::Response(502, art_bytes("Fork Support")))
-            .expect_err("a 502 produced art");
-
-        assert!(why.contains("502"), "{why}");
-    }
-
-    /// A 200 carrying something that is not a PNG is refused. A proxy's error
-    /// page arrives exactly like this, and caching it would seed the family
-    /// with a picture of an error.
-    #[test]
-    fn a_body_that_is_not_a_png_yields_no_art() {
-        let why = accept_art(ArtReply::Response(200, b"<html>login</html>".to_vec()))
-            .expect_err("an HTML body produced art");
-
-        assert!(why.contains("PNG"), "{why}");
-    }
-
-    /// A 200 carrying a JPEG is refused too. This is the case the FORMAT PIN
-    /// buys: a sniffing decoder would take it, and the family would be seeded
-    /// with whatever a captive portal or a mis-configured proxy served.
-    #[test]
-    fn a_body_that_is_a_jpeg_yields_no_art() {
-        let mut jpeg = Vec::new();
-        DynamicImage::ImageRgba8(RgbaImage::from_pixel(16, 16, image::Rgba([90, 40, 20, 255])))
-            .to_rgb8()
-            .write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
-            .expect("encode a JPEG");
-
-        let why = accept_art(ArtReply::Response(200, jpeg)).expect_err("a JPEG produced art");
-
-        assert!(why.contains("PNG"), "{why}");
-    }
-
-    /// The accepted path hands back the bytes AS SERVED — the cache holds the
-    /// file the route sent, not a re-encoding of it.
-    #[test]
-    fn a_200_carrying_a_png_is_accepted_byte_for_byte() {
-        let bytes = art_bytes("Fork Support");
-
-        let accepted = accept_art(ArtReply::Response(200, bytes.clone())).expect("accepted");
-
-        assert_eq!(accepted, bytes);
-    }
-
     /// Unavailable means NOTHING IS WRITTEN, and that absence is the retry:
     /// the next start plans the same request again. The contrast is the point
     /// — the family that succeeded is not asked for twice.
@@ -3168,21 +2992,6 @@ mod tests {
         assert_eq!(
             line,
             "Merc: seeded 15 families (4 fetched, 11 cached, 2 unavailable, 1 blocklisted)",
-        );
-    }
-
-    /// The gem is one percent-encoded path segment under `/api/icon/gems`, and
-    /// `server_url` carries no `/api` of its own.
-    #[test]
-    fn the_art_url_encodes_the_gem_under_the_api_prefix() {
-        assert_eq!(
-            art_url("https://profitofexile.top", "Added Chaos Damage Support").as_deref(),
-            Some("https://profitofexile.top/api/icon/gems/Added%20Chaos%20Damage%20Support"),
-        );
-        // A trailing slash on the configured server must not double up.
-        assert_eq!(
-            art_url("https://profitofexile.top/", "Fork Support").as_deref(),
-            Some("https://profitofexile.top/api/icon/gems/Fork%20Support"),
         );
     }
 

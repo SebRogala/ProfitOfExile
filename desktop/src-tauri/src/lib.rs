@@ -6,6 +6,7 @@ mod font_alerts;
 mod font_ledger;
 mod font_parser;
 mod font_session;
+mod gem_art;
 mod gem_matcher;
 mod http;
 mod lab;
