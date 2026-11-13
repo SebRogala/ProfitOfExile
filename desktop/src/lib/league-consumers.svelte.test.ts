@@ -24,7 +24,10 @@ beforeEach(() => {
 		return Promise.resolve({ ok: true, json: async () => ({ ...await reply, warm: true }) });
 	}));
 	resetDivineRate();
-	applySnapshot({ league: { name: 'A', generation: ssot.leagueGeneration + 1 } });
+	applySnapshot({
+		league: { name: 'A', generation: ssot.leagueGeneration + 1 },
+		server: { url: 'https://a.example', defaultUrl: 'https://a.example' }
+	});
 });
 afterEach(() => { for (const stop of stops.splice(0)) stop(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 function deferred<T>() {
