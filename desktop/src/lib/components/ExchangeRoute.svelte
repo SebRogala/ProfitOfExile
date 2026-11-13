@@ -75,7 +75,7 @@
 		play: CurrencyExchangePlay;
 		density: ExchangeDensity;
 		/** `getApiBase()` — the origin the legs' relative icon paths hang off. */
-		apiBase: string;
+		apiBase: string | null;
 		/**
 		 * The response's newest-hour chaos value of one divine — what a row entered
 		 * in divine is read back in chaos with. 0 when that hour carried no

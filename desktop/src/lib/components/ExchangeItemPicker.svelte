@@ -40,7 +40,7 @@
 		categories: string[];
 		categoryRules: CategoryRules;
 		itemRules: ItemRule[];
-		apiBase: string;
+		apiBase: string | null;
 		/**
 		 * The element that opened this popover, counted as part of it for
 		 * dismissal — see the `$effect` below. `null` leaves the popover itself

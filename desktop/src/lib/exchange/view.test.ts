@@ -1823,6 +1823,16 @@ describe('iconSrc', () => {
 			'https://server.test/api/icon/currency-exchange/Chaos'
 		);
 	});
+
+	it('iconSrc answers null when the server base is not known yet', () => {
+		// Before the first SSOT snapshot the base is null; the page renders no icon.
+		expect(iconSrc(null, '/icon/x')).toBeNull();
+	});
+
+	it('iconSrc answers null for an empty server base', () => {
+		// `''` also means unknown: joining it would request `/icon/x` from the webview origin.
+		expect(iconSrc('', '/icon/x')).toBeNull();
+	});
 });
 
 describe('chaosIconPath', () => {

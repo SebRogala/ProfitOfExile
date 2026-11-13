@@ -16,7 +16,7 @@
 		apiBase,
 		kept = false,
 		onpick
-	}: { chip: Chip; apiBase: string; kept?: boolean; onpick: (itemId: string) => void } = $props();
+	}: { chip: Chip; apiBase: string | null; kept?: boolean; onpick: (itemId: string) => void } = $props();
 </script>
 
 <button

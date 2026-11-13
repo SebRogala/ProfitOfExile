@@ -993,10 +993,11 @@ export function rowCounts({ total, afterRules, afterGates, matched, shown }: Row
  * joined onto the base would request the base itself, which answers with
  * something that is not an image. The trailing slash is trimmed off the base
  * because a `server_url` typed with one would otherwise produce `//` in the
- * path, which some proxies normalise and others 404.
+ * path, which some proxies normalise and others 404. A `null` or `""` base
+ * means the server is not known yet and also answers `null`.
  */
-export function iconSrc(apiBase: string, path: string | null): string | null {
-	if (!path) return null;
+export function iconSrc(apiBase: string | null, path: string | null): string | null {
+	if (!apiBase || !path) return null;
 	const base = apiBase.replace(/\/+$/, '');
 	return path.startsWith('/') ? `${base}${path}` : `${base}/${path}`;
 }

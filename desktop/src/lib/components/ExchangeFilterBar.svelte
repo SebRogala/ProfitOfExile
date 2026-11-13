@@ -152,7 +152,7 @@
 		 * takes nothing, it just stops drawing.
 		 */
 		counts: RowCounts;
-		apiBase: string;
+		apiBase: string | null;
 		/** The pill's NEXT state, per `cycleCategoryRule`; `undefined` is neutral. */
 		oncategoryrule: (category: string, state: CategoryRuleState | undefined) => void;
 		/** `undefined` removes the item's rule. */

@@ -21,7 +21,7 @@
 		onpick
 	}: {
 		card: TierCard;
-		apiBase: string;
+		apiBase: string | null;
 		onmove: (tier: string, to: Pick) => void;
 		onpick: (itemId: string) => void;
 	} = $props();
