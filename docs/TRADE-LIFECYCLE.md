@@ -374,6 +374,8 @@ At the current default cadence of 45 seconds, ticks alternate between:
 
 The current minimum age is five minutes. The filtered selection uses `>= MID`, so “MID+” means MID, MID-HIGH, HIGH, or TOP.
 
+The fixed craft targets (the Facetor's Lens and its feeder support, POE-329) ride the same tick: when one is due, the tick submits it instead of the gem pick, regardless of the tier filter. A target is due when both its cached quote and its last claim are at least 30 minutes old; never-checked targets go first, ties in registry order (lens first). The claim is recorded before submitting, so overlapping ticks never pick the same target and a failed lookup waits 30 minutes before retrying.
+
 Important boundaries:
 
 - A tick contains no trade result.

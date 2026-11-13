@@ -326,8 +326,9 @@ func main() {
 		return server.NewMercureSubscriber(hubURL, topics, subscriberKey, handler)
 	}
 	if tradeGate != nil {
+		fixedTargets := trade.NewFixedTargetScheduler(tradeCache, scope)
 		runtime.tradeTick = func(eventCtx context.Context, raw []byte) {
-			server.HandleTradeTick(eventCtx, tradeGate, tradeCache, labCache, scope, raw, deps.KnownGem)
+			server.HandleTradeTick(eventCtx, tradeGate, tradeCache, fixedTargets, labCache, scope, raw, deps.KnownGem)
 		}
 	}
 	runtime.updateRate = func(_ context.Context) {

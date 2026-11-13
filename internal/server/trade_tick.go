@@ -40,7 +40,10 @@ var tradeTickTierRank = map[string]int{
 // filter and submit it to the trade gate. The submit outcome is logged
 // inside trade.SubmitRefresh; there is no reply path here since Mercure
 // is fire-and-forget.
-func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCache, labCache *lab.Cache, scope league.Scope, raw []byte, checker func(context.Context, league.Scope, string) (bool, error)) {
+//
+// A due fixed craft target from fixed (nil disables them) takes the tick
+// instead of the gem pick, whatever the tier filter.
+func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCache, fixed *trade.FixedTargetScheduler, labCache *lab.Cache, scope league.Scope, raw []byte, checker func(context.Context, league.Scope, string) (bool, error)) {
 	var p TradeTickPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		slog.Warn("trade tick: invalid payload", "error", err)
@@ -68,6 +71,16 @@ func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCa
 			return
 		}
 		minTierRank = r
+	}
+
+	if ctx.Err() != nil {
+		return
+	}
+	if fixed != nil {
+		if target, ok := fixed.Claim(time.Now()); ok {
+			trade.SubmitFixedTargetRefresh(ctx, gate, target)
+			return
+		}
 	}
 
 	var tierSet map[string]bool

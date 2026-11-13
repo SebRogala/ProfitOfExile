@@ -1,5 +1,14 @@
 package trade
 
+import (
+	"context"
+	"log/slog"
+	"sync"
+	"time"
+
+	"profitofexile/internal/league"
+)
+
 // FixedTargetRole tells the outcome of a craft from its input (the feeder).
 type FixedTargetRole string
 
@@ -96,4 +105,85 @@ func IsFixedTargetKey(key string) bool {
 	gem, variant := ParseCacheKey(key)
 	_, ok := LookupFixedTarget(gem, variant)
 	return ok
+}
+
+// FixedTargetMinAge is how old a fixed target's quote, or its last claim, must
+// be before the trade tick refreshes it again (POE-329 D2).
+const FixedTargetMinAge = 30 * time.Minute
+
+// FixedTargetScheduler decides which fixed target the trade tick refreshes.
+// Overlapping tick goroutines share one scheduler, so a claim is recorded
+// before the target is enqueued; the claim time, not FetchedAt, is the retry
+// backoff after a failed lookup or a rejected submit.
+type FixedTargetScheduler struct {
+	cache  *TradeCache
+	scope  league.Scope
+	mu     sync.Mutex
+	claims map[string]time.Time
+}
+
+// NewFixedTargetScheduler binds a scheduler to the trade cache of scope.
+func NewFixedTargetScheduler(cache *TradeCache, scope league.Scope) *FixedTargetScheduler {
+	return &FixedTargetScheduler{cache: cache, scope: scope, claims: make(map[string]time.Time)}
+}
+
+// Claim selects the due fixed target that was checked longest ago (never
+// checked first, ties in registry order), records the claim at now and returns
+// it. It returns false when no target is due.
+func (s *FixedTargetScheduler) Claim(now time.Time) (FixedTarget, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var (
+		picked   FixedTarget
+		pickedAt time.Time
+		found    bool
+		cache    = s.cache.For(s.scope)
+	)
+	for _, t := range fixedTargets {
+		key := t.Key()
+		last := s.claims[key]
+		if r, ok := cache.Get(key); ok && r.FetchedAt.After(last) {
+			last = r.FetchedAt
+		}
+		if !last.IsZero() && now.Sub(last) < FixedTargetMinAge {
+			continue
+		}
+		if !found || last.Before(pickedAt) {
+			picked, pickedAt, found = t, last, true
+		}
+	}
+	if found {
+		s.claims[picked.Key()] = now
+	}
+	return picked, found
+}
+
+// SubmitFixedTargetRefresh enqueues a low-priority lookup of target and blocks
+// until the gate responds or ctx is cancelled. Logs the outcome.
+func SubmitFixedTargetRefresh(ctx context.Context, gate *Gate, target FixedTarget) {
+	if gate == nil {
+		panic("trade.SubmitFixedTargetRefresh: gate is required")
+	}
+	req := &GateRequest{
+		Gem:         target.Gem,
+		Variant:     target.Variant,
+		FixedTarget: true,
+		RequestID:   "refresh-" + target.Gem,
+		Priority:    PriorityLow,
+		SubmittedAt: time.Now(),
+		Result:      make(chan *GateResponse, 1),
+	}
+	gate.Submit(req)
+
+	select {
+	case <-ctx.Done():
+	case resp := <-req.Result:
+		if resp.Error != nil {
+			slog.Warn("trade fixed target refresh failed", "target", target.Gem, "error", resp.Error)
+		} else {
+			slog.Info("trade fixed target refresh complete", "target", target.Gem,
+				"total", resp.Data.Total, "floor", resp.Data.PriceFloor)
+		}
+	}
 }

@@ -56,7 +56,7 @@ func TestHandleTradeTick_InvalidJSON_NoSubmit(t *testing.T) {
 	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	labCache := lab.NewCache(league.Historical("Mirage"))
 
-	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"), []byte("not json"), nil)
+	HandleTradeTick(context.Background(), gate, cache, nil, labCache, league.Historical("Mirage"), []byte("not json"), nil)
 
 	if _, ok := drainLow(gate); ok {
 		t.Fatal("invalid payload must not enqueue a refresh")
@@ -71,7 +71,7 @@ func TestHandleTradeTick_UnknownMinTier_NoSubmit(t *testing.T) {
 	// Even with a stale candidate present, an unknown minTier must short-circuit.
 	seedStaleEntry(cache, "Arc of Surging", "20/20")
 
-	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
+	HandleTradeTick(context.Background(), gate, cache, nil, labCache, league.Historical("Mirage"),
 		[]byte(`{"variant":"20/20","minTier":"NOPE","minAge":"1m"}`), nil)
 
 	if _, ok := drainLow(gate); ok {
@@ -84,7 +84,7 @@ func TestHandleTradeTick_EmptyCache_NoSubmit(t *testing.T) {
 	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	labCache := lab.NewCache(league.Historical("Mirage"))
 
-	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
+	HandleTradeTick(context.Background(), gate, cache, nil, labCache, league.Historical("Mirage"),
 		[]byte(`{"variant":"20/20","minAge":"1m"}`), nil)
 
 	if _, ok := drainLow(gate); ok {
@@ -113,7 +113,7 @@ func TestHandleTradeTick_StaleTierMatch_Submits(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		HandleTradeTick(ctx, gate, cache, labCache, league.Historical("Mirage"),
+		HandleTradeTick(ctx, gate, cache, nil, labCache, league.Historical("Mirage"),
 			[]byte(`{"variant":"20/20","minTier":"MID-HIGH","minAge":"1m"}`), nil)
 		close(done)
 	}()
@@ -153,7 +153,7 @@ func TestHandleTradeTick_BaseGemFilter_NoSubmit(t *testing.T) {
 	// Seed a stale base gem — should be ignored.
 	seedStaleEntry(cache, "Arc", "20/20")
 
-	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
+	HandleTradeTick(context.Background(), gate, cache, nil, labCache, league.Historical("Mirage"),
 		[]byte(`{"variant":"20/20","minAge":"1m"}`), nil)
 
 	if _, ok := drainLow(gate); ok {
@@ -177,7 +177,7 @@ func TestHandleTradeTick_EmptyTierSet_NoSubmit(t *testing.T) {
 		{Name: "Arc of Surging", Variant: "1/0", Tier: "HIGH"},
 	})
 
-	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
+	HandleTradeTick(context.Background(), gate, cache, nil, labCache, league.Historical("Mirage"),
 		[]byte(`{"variant":"20/20","minTier":"MID-HIGH","minAge":"1m"}`), nil)
 
 	if _, ok := drainLow(gate); ok {
@@ -192,7 +192,7 @@ func TestHandleTradeTick_InvalidMinAge_NoSubmit(t *testing.T) {
 
 	seedStaleEntry(cache, "Arc of Surging", "20/20")
 
-	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
+	HandleTradeTick(context.Background(), gate, cache, nil, labCache, league.Historical("Mirage"),
 		[]byte(`{"variant":"20/20","minAge":"notaduration"}`), nil)
 
 	if _, ok := drainLow(gate); ok {
@@ -213,7 +213,7 @@ func TestHandleTradeTick_DefaultsToTwentyTwenty_Submits(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		HandleTradeTick(ctx, gate, cache, labCache, league.Historical("Mirage"), []byte(`{"minAge":"1m"}`), nil)
+		HandleTradeTick(ctx, gate, cache, nil, labCache, league.Historical("Mirage"), []byte(`{"minAge":"1m"}`), nil)
 		close(done)
 	}()
 
@@ -250,7 +250,7 @@ func TestHandleTradeTick_NoTierFilter_PicksAnyTransfigured(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		HandleTradeTick(ctx, gate, cache, labCache, league.Historical("Mirage"),
+		HandleTradeTick(ctx, gate, cache, nil, labCache, league.Historical("Mirage"),
 			[]byte(`{"variant":"20/20","minAge":"1m"}`), nil)
 		close(done)
 	}()
@@ -281,7 +281,7 @@ func runDictionaryTradeTick(t *testing.T, cache *trade.TradeCache, dictionary *l
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		HandleTradeTick(ctx, gate, cache, dictionary, league.Historical("Mirage"),
+		HandleTradeTick(ctx, gate, cache, nil, dictionary, league.Historical("Mirage"),
 			[]byte(`{"variant":"20/20","minAge":"5m"}`), checker)
 		close(done)
 	}()
@@ -389,5 +389,165 @@ func TestHandleTradeTick_DictionaryQueryFailureDoesNotSubmit(t *testing.T) {
 		})
 	if req != nil || cache.Len() != 1 {
 		t.Fatalf("submitted=%+v cache=%v, want no refresh on dictionary failure", req, cache.GetSnapshot())
+	}
+}
+
+// startTick runs HandleTradeTick in a goroutine; the returned channel closes
+// when the tick returns.
+func startTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCache, fixed *trade.FixedTargetScheduler, labCache *lab.Cache, payload string) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		HandleTradeTick(ctx, gate, cache, fixed, labCache, league.Historical("Mirage"), []byte(payload), nil)
+		close(done)
+	}()
+	return done
+}
+
+func receiveLow(t *testing.T, gate *trade.Gate) *trade.GateRequest {
+	t.Helper()
+	select {
+	case req := <-gate.LowChan():
+		return req
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for a low-priority submission")
+		return nil
+	}
+}
+
+func waitTick(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleTradeTick did not return")
+	}
+}
+
+func freshFixedTargets(cache *trade.TradeCache) {
+	for _, target := range trade.FixedTargets() {
+		cache.Set(target.Key(), &trade.TradeLookupResult{Gem: target.Gem, Variant: target.Variant, Total: 4, FetchedAt: time.Now()})
+	}
+}
+
+func TestHandleTradeTick_EmptyCacheSubmitsLensThenSupport(t *testing.T) {
+	gate := newTickTestGate()
+	scope := league.Historical("Mirage")
+	cache := trade.NewTradeCache(10, scope)
+	fixed := trade.NewFixedTargetScheduler(cache, scope)
+	labCache := lab.NewCache(scope)
+
+	var got []string
+	for i := 0; i < 2; i++ {
+		done := startTick(context.Background(), gate, cache, fixed, labCache, `{"variant":"20/20","minAge":"1m"}`)
+		req := receiveLow(t, gate)
+		if !req.FixedTarget || req.Priority != trade.PriorityLow {
+			t.Fatalf("tick %d submitted %+v, want a low-priority fixed target", i, req)
+		}
+		got = append(got, req.Gem)
+		req.Result <- &trade.GateResponse{Error: errors.New("upstream down")}
+		waitTick(t, done)
+	}
+	if got[0] != trade.FixedTargetLens60Outcome || got[1] != trade.FixedTargetLens60Feeder {
+		t.Fatalf("submitted %q, want lens then support", got)
+	}
+}
+
+func TestHandleTradeTick_FreshFixedTargetsLetTheGemPickProceed(t *testing.T) {
+	gate := newTickTestGate()
+	scope := league.Historical("Mirage")
+	cache := trade.NewTradeCache(10, scope)
+	fixed := trade.NewFixedTargetScheduler(cache, scope)
+	labCache := lab.NewCache(scope)
+	freshFixedTargets(cache)
+	seedStaleEntry(cache, "Arc of Surging", "20/20")
+	labCache.SetGemSignals([]lab.GemSignal{{Name: "Arc of Surging", Variant: "20/20", Tier: "HIGH"}})
+
+	done := startTick(context.Background(), gate, cache, fixed, labCache, `{"variant":"20/20","minTier":"MID","minAge":"1m"}`)
+	req := receiveLow(t, gate)
+	req.Result <- &trade.GateResponse{Error: errors.New("upstream down")}
+	waitTick(t, done)
+	if req.FixedTarget || req.Gem != "Arc of Surging" {
+		t.Fatalf("submitted %s (fixed=%v), want the stale gem pick", req.Gem, req.FixedTarget)
+	}
+}
+
+func TestHandleTradeTick_OverlappingTicksClaimDistinctTargets(t *testing.T) {
+	gate := newTickTestGate()
+	scope := league.Historical("Mirage")
+	cache := trade.NewTradeCache(10, scope)
+	fixed := trade.NewFixedTargetScheduler(cache, scope)
+	labCache := lab.NewCache(scope)
+	payload := `{"variant":"20/20","minAge":"1m"}`
+
+	// The first lookup stays pending while the next ticks arrive.
+	first := startTick(context.Background(), gate, cache, fixed, labCache, payload)
+	lens := receiveLow(t, gate)
+	second := startTick(context.Background(), gate, cache, fixed, labCache, payload)
+	support := receiveLow(t, gate)
+	HandleTradeTick(context.Background(), gate, cache, fixed, labCache, scope, []byte(payload), nil)
+	third, thirdQueued := drainLow(gate)
+
+	lens.Result <- &trade.GateResponse{Error: errors.New("upstream down")}
+	support.Result <- &trade.GateResponse{Error: errors.New("upstream down")}
+	waitTick(t, first)
+	waitTick(t, second)
+
+	if lens.Gem != trade.FixedTargetLens60Outcome || support.Gem != trade.FixedTargetLens60Feeder {
+		t.Fatalf("overlapping ticks submitted %q and %q, want lens and support", lens.Gem, support.Gem)
+	}
+	if thirdQueued {
+		t.Fatalf("third tick within %v submitted %q", trade.FixedTargetMinAge, third.Gem)
+	}
+}
+
+func TestHandleTradeTick_TierFilterWithColdLabCacheStillSubmitsDueFixedTarget(t *testing.T) {
+	gate := newTickTestGate()
+	scope := league.Historical("Mirage")
+	cache := trade.NewTradeCache(10, scope)
+	fixed := trade.NewFixedTargetScheduler(cache, scope)
+	labCache := lab.NewCache(scope)
+
+	done := startTick(context.Background(), gate, cache, fixed, labCache, `{"variant":"20/20","minTier":"MID","minAge":"1m"}`)
+	req := receiveLow(t, gate)
+	req.Result <- &trade.GateResponse{Error: errors.New("upstream down")}
+	waitTick(t, done)
+	if !req.FixedTarget || req.Gem != trade.FixedTargetLens60Outcome {
+		t.Fatalf("submitted %s (fixed=%v), want the lens", req.Gem, req.FixedTarget)
+	}
+}
+
+func TestHandleTradeTick_TierFilterWithWarmEmptyLabCacheStillSubmitsDueFixedTarget(t *testing.T) {
+	gate := newTickTestGate()
+	scope := league.Historical("Mirage")
+	cache := trade.NewTradeCache(10, scope)
+	fixed := trade.NewFixedTargetScheduler(cache, scope)
+	labCache := lab.NewCache(scope)
+	labCache.SetGemSignals([]lab.GemSignal{})
+
+	done := startTick(context.Background(), gate, cache, fixed, labCache, `{"variant":"20/20","minTier":"MID","minAge":"1m"}`)
+	req := receiveLow(t, gate)
+	req.Result <- &trade.GateResponse{Error: errors.New("upstream down")}
+	waitTick(t, done)
+	if !req.FixedTarget || req.Gem != trade.FixedTargetLens60Outcome {
+		t.Fatalf("submitted %s (fixed=%v), want the lens", req.Gem, req.FixedTarget)
+	}
+}
+
+func TestHandleTradeTick_CancelledContextClaimsNothing(t *testing.T) {
+	gate := newTickTestGate()
+	scope := league.Historical("Mirage")
+	cache := trade.NewTradeCache(10, scope)
+	fixed := trade.NewFixedTargetScheduler(cache, scope)
+	labCache := lab.NewCache(scope)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	HandleTradeTick(ctx, gate, cache, fixed, labCache, scope, []byte(`{"variant":"20/20","minAge":"1m"}`), nil)
+
+	if req, ok := drainLow(gate); ok {
+		t.Fatalf("cancelled tick submitted %q", req.Gem)
+	}
+	if target, ok := fixed.Claim(time.Now()); !ok || target.Gem != trade.FixedTargetLens60Outcome {
+		t.Fatalf("after a cancelled tick the next claim = %q (%v), want the lens still unclaimed", target.Gem, ok)
 	}
 }
