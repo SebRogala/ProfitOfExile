@@ -126,3 +126,11 @@ describe('SettingsPage blocked proxy', () => {
 		expect(proxyBlock(renderSettingsPage())).not.toMatch(/class="setting-error[^"]*" role="alert"/);
 	});
 });
+
+describe('SettingsPage About section', () => {
+	it('shows the GGG non-affiliation sentence verbatim', () => {
+		expect(renderSettingsPage()).toContain(
+			"This product isn't affiliated with or endorsed by Grinding Gear Games in any way."
+		);
+	});
+});

@@ -490,6 +490,8 @@
 					<Button onclick={updateController.checkForUpdates}>Check for Updates</Button>
 				{/if}
 			</div>
+
+			<p class="disclaimer">This product isn't affiliated with or endorsed by Grinding Gear Games in any way.</p>
 		</section>
 
 		<!-- Overlays -->
@@ -1091,6 +1093,11 @@
 	.setting-value.muted {
 		color: var(--text-muted);
 		font-style: italic;
+	}
+
+	.disclaimer {
+		margin: 8px 0 0;
+		color: var(--text-muted);
 	}
 
 	.setting-edit {
