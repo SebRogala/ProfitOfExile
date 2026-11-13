@@ -56,14 +56,17 @@ describe('ReadHotkeySetting editor', () => {
 		expect(calls[0].args).toEqual({ settings: { shortcut: stored.shortcut, delayMs: 250 } });
 	});
 
-	it('accepts the longest delay and refuses one past it without sending', async () => {
-		const ok = editor();
-		await ok.e.setDelay(2000);
-		expect(ok.calls[0].args).toEqual({ settings: { shortcut: stored.shortcut, delayMs: 2000 } });
-		const over = editor();
-		await over.e.setDelay(2001);
-		expect(over.calls).toEqual([]);
-		expect(over.e.error).toBe('Delay must be 0–2000 ms');
+	it('sends the longest delay', async () => {
+		const { e, calls } = editor();
+		await e.setDelay(2000);
+		expect(calls[0].args).toEqual({ settings: { shortcut: stored.shortcut, delayMs: 2000 } });
+	});
+
+	it('refuses a delay past the longest without sending', async () => {
+		const { e, calls } = editor();
+		await e.setDelay(2001);
+		expect(calls).toEqual([]);
+		expect(e.error).toBe('Delay must be 0–2000 ms');
 	});
 
 	it('refuses a negative delay without sending', async () => {
