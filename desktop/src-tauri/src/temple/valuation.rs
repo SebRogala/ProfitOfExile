@@ -290,7 +290,7 @@ pub struct Driver {
     pub chaos: Option<f64>,
     /// Whether this term rests on somebody's estimate rather than on measured
     /// data — a [`Basis::Guess`](super::drops::Basis::Guess) count, one of the
-    /// two unmeasured bonus rates, or the grade ladder.
+    /// the unmeasured rarity rate, or the grade ladder.
     pub guessed: bool,
     /// POE-131's thin-market flag on the price behind this term.
     pub low_confidence: bool,
