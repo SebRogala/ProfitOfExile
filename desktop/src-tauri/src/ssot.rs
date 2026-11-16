@@ -3778,6 +3778,22 @@ mod tests {
             &contract_snapshot(None),
         );
     }
+
+    #[test]
+    fn ssot_snapshot_contract_default_read_prompt() {
+        let state = crate::settings::tests::test_app_state();
+        let wire = serde_json::to_value(build_snapshot(&state)).unwrap();
+        assert_eq!(wire["readPrompt"], serde_json::json!({ "mechanic": null, "noMatch": false, "seq": 0 }));
+    }
+
+    #[test]
+    fn ssot_snapshot_contract_projects_completed_no_match() {
+        let state = crate::settings::tests::test_app_state();
+        let stamp = crate::read_prompt::accept_press_in(&state);
+        crate::read_prompt::finish_read_in(&state, stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
+        let wire = serde_json::to_value(build_snapshot(&state)).unwrap();
+        assert_eq!(wire["readPrompt"], serde_json::json!({ "mechanic": null, "noMatch": true, "seq": 1 }));
+    }
 }
 
 #[cfg(test)]
