@@ -188,7 +188,7 @@ mod tests {
         let readers: &[&dyn ScreenReader<World>] = &[&TEMPLE_READER];
         let (queue, presses) = mpsc::channel();
         let mut samples = samples.into_iter();
-        run_sampler(world, readers, &mut || samples.next(), &mut || None, &queue, &mut |_| 0);
+        run_sampler(world, readers, &mut || samples.next(), &mut || None, &queue, &mut || None, &mut |_| 0);
         drop(queue);
         let mut grabs = 0;
         run_dispatcher(world, presses, &mut |_| {}, &mut || {

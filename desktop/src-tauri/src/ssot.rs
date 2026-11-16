@@ -3731,6 +3731,7 @@ mod tests {
         };
         snapshot.read_prompt = crate::read_prompt::ReadPromptSnapshot {
             mechanic: Some(crate::read_prompt::Mechanic::DivineFont),
+            no_match: false,
             seq: 3,
         };
         snapshot

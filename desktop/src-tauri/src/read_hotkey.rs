@@ -197,7 +197,10 @@ pub struct PreparedPress<C> {
     pub delay: std::time::Duration,
     pub pendings: Vec<(ReaderId, Box<dyn PendingRead<C>>)>,
     pub dismissed: Vec<u64>,
+    pub finish: Option<FinishedRead>,
 }
+
+pub type FinishedRead = Box<dyn FnOnce(DispatchOutcome) + Send>;
 
 pub fn prepare_press<C>(
     press: Press,
@@ -213,7 +216,7 @@ pub fn prepare_press<C>(
         if let Some(pending) = reader.prepare(ctx, &press) { pendings.push((id, pending)); }
     }
     pendings.sort_by_key(|(id, _)| if *id == ReaderId::Font { 0 } else if Some(id.mechanic()) == recent { 1 } else { 2 });
-    PreparedPress { delay, pendings, dismissed: Vec::new() }
+    PreparedPress { delay, pendings, dismissed: Vec::new(), finish: None }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -285,6 +288,7 @@ pub fn run_sampler<C>(
     sample: &mut dyn FnMut() -> Option<Sample>,
     cursor: &mut dyn FnMut() -> Option<(i32, i32)>,
     queue: &std::sync::mpsc::Sender<PreparedPress<C>>,
+    on_accept: &mut dyn FnMut() -> Option<FinishedRead>,
     on_dismiss: &mut dyn FnMut(&Shortcut) -> u64,
 ) {
     let mut poll = ReadPoll::default();
@@ -292,9 +296,11 @@ pub fn run_sampler<C>(
     while let Some(s) = sample() {
         let dismissed = dismiss_poll.poll(&s, on_dismiss);
         if let Some(press) = poll.poll(&s.down, s.foreground, &s.settings.shortcut, cursor) {
+            let finish = on_accept();
             let delay = std::time::Duration::from_millis(u64::from(s.settings.delay_ms));
             let mut armed = prepare_press(press, delay, readers, ctx);
             armed.dismissed = dismissed;
+            armed.finish = finish;
             if queue.send(armed).is_err() {
                 return;
             }
@@ -310,8 +316,10 @@ pub fn run_dispatcher<C>(
     grab: &mut dyn FnMut() -> Result<crate::capture::Capture, crate::capture::CaptureError>,
     await_hidden: &mut dyn FnMut(&[u64]) -> bool,
 ) {
-    for armed in queue {
-        dispatch_press(armed, ctx, sleep, grab, await_hidden);
+    for mut armed in queue {
+        let finish = armed.finish.take();
+        let outcome = dispatch_press(armed, ctx, sleep, grab, await_hidden);
+        if let Some(finish) = finish { finish(outcome); }
     }
 }
 
@@ -337,7 +345,11 @@ pub fn spawn_read_hotkey(app: tauri::AppHandle, cancel: std::sync::Arc<std::sync
             }
             platform::sample(&app)
         };
-        run_sampler(&app, READERS, &mut sample, &mut platform::cursor, &tx, &mut |shortcut| crate::overlay_dismiss::publish(&app, shortcut));
+        run_sampler(&app, READERS, &mut sample, &mut platform::cursor, &tx, &mut || {
+            let stamp = crate::read_prompt::accept_press(&app);
+            let result_app = app.clone();
+            Some(Box::new(move |outcome| crate::read_prompt::finish_read(&result_app, stamp, outcome)))
+        }, &mut |shortcut| crate::overlay_dismiss::publish(&app, shortcut));
     });
 }
 
@@ -436,6 +448,59 @@ mod dispatch_tests {
     const IDLE: TestReader = TestReader { name: "idle", armed: false };
     const GEM: TestReader = TestReader { name: "g", armed: true };
     const FONT: TestReader = TestReader { name: "f", armed: true };
+
+    fn result_pipeline(selected: bool, handshake: bool, capture_error: Option<CaptureError>) -> (usize, crate::read_prompt::ReadPromptSnapshot) {
+        let world = Arc::new(World::default());
+        if !selected { world.misses.lock().unwrap().push("a"); }
+        let state = Arc::new(crate::settings::tests::test_app_state());
+        crate::read_prompt::apply_in(&state, crate::read_prompt::Change::Arm(crate::read_prompt::Mechanic::Incursion));
+        let (tx, rx) = mpsc::channel();
+        let mut shared = sample(PRESSED, true);
+        shared.dismiss = vec![shared.settings.shortcut.clone()];
+        let mut samples = vec![shared].into_iter();
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || {
+            let stamp = crate::read_prompt::accept_press_in(&state);
+            let result_state = state.clone();
+            Some(Box::new(move |outcome| { crate::read_prompt::finish_read_in(&result_state, stamp, outcome); }))
+        }, &mut |_| 1);
+        drop(tx);
+        let mut grabs = 0;
+        let mut error = capture_error;
+        run_dispatcher(&world, rx, &mut |_| {}, &mut || {
+            grabs += 1;
+            match error.take() { Some(error) => Err(error), None => Ok(capture(1)) }
+        }, &mut |gens| { assert_eq!(gens, &[1]); handshake });
+        let snapshot = state.read_prompt.lock().unwrap().snapshot();
+        (grabs, snapshot)
+    }
+
+    #[test]
+    fn dispatched_all_miss_frame_publishes_no_match_after_one_capture() {
+        let (grabs, snapshot) = result_pipeline(false, true, None);
+        assert_eq!(grabs, 1);
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2 });
+    }
+
+    #[test]
+    fn failed_hide_handshake_preserves_prompt_without_capture() {
+        let (grabs, snapshot) = result_pipeline(false, false, None);
+        assert_eq!(grabs, 0);
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Incursion), no_match: false, seq: 1 });
+    }
+
+    #[test]
+    fn dispatched_selected_frame_does_not_publish_no_match() {
+        let (grabs, snapshot) = result_pipeline(true, true, None);
+        assert_eq!(grabs, 1);
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Incursion), no_match: false, seq: 2 });
+    }
+
+    #[test]
+    fn dispatched_capture_failure_preserves_prompt() {
+        let (grabs, snapshot) = result_pipeline(false, true, Some(CaptureError::Failed("no monitor".into())));
+        assert_eq!(grabs, 1);
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Incursion), no_match: false, seq: 1 });
+    }
 
     fn route(world: &Arc<World>, readers: &[&dyn ScreenReader<Arc<World>>]) -> DispatchOutcome {
         let prepared = prepare_press(press(), Duration::ZERO, readers, world);
@@ -538,7 +603,7 @@ mod dispatch_tests {
         run_sampler(&world, &[&A], &mut || samples.next(), &mut || {
             assert_eq!(ledger.pending().len(), 1, "dismiss before evaluating the read edge");
             None
-        }, &tx, &mut |shortcut| {
+        }, &tx, &mut || None, &mut |shortcut| {
             assert!(world.armed_order.lock().unwrap().is_empty(), "dismiss before arming readers");
             let gen = ledger.publish(shortcut).gen;
             events.lock().unwrap().push(format!("dismiss({gen})"));
@@ -605,7 +670,7 @@ mod dispatch_tests {
             let esc = Sample { down: [27].into_iter().collect(), foreground: true, settings: f.settings.clone(), dismiss: f.dismiss.clone() };
             let (tx, rx) = mpsc::channel();
             let mut samples = vec![f, esc].into_iter();
-            run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut |s| ledger.publish(s).gen);
+            run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |s| ledger.publish(s).gen);
             drop(tx);
             ledger.ack("temple", 2);
             let elapsed = Cell::new(Duration::ZERO);
@@ -644,7 +709,7 @@ mod dispatch_tests {
         shared.dismiss = vec![shared.settings.shortcut.clone(), Shortcut { key: 71, ..shared.settings.shortcut.clone() }];
         let (tx, rx) = mpsc::channel();
         let mut samples = vec![shared].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut |s| ledger.publish(s).gen);
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |s| ledger.publish(s).gen);
         drop(tx);
         ledger.ack("temple", 2);
         let elapsed = Cell::new(Duration::ZERO);
@@ -672,7 +737,7 @@ mod dispatch_tests {
         let mut samples = vec![sample(&[27], false), sample(&[27], true), sample(&[], true), sample(&[27], true), sample(&[27], true)].into_iter();
         let (tx, rx) = mpsc::channel();
         let mut dismissed = Vec::new();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut |s| {
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |s| {
             dismissed.push(s.key);
             dismissed.len() as u64
         });
@@ -698,7 +763,7 @@ mod dispatch_tests {
     fn run_pipeline(world: &Arc<World>, readers: &[&dyn ScreenReader<Arc<World>>], samples: Vec<Sample>) -> usize {
         let (tx, rx) = mpsc::channel();
         let mut samples = samples.into_iter();
-        run_sampler(world, readers, &mut || samples.next(), &mut || None, &tx, &mut |_| panic!("no dismissal"));
+        run_sampler(world, readers, &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |_| panic!("no dismissal"));
         drop(tx);
         let mut grabs = 0;
         run_dispatcher(world, rx, &mut |_| {}, &mut || {
@@ -818,7 +883,7 @@ mod dispatch_tests {
             grabs
         });
         let mut samples = vec![sample(PRESSED, true), sample(&[], true), sample(PRESSED, true)].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut |_| panic!("no dismissal"));
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |_| panic!("no dismissal"));
         // The first grab is still blocked, yet both presses were armed.
         assert_eq!(world.armed_order.lock().unwrap().len(), 2);
         drop(tx);
@@ -855,7 +920,7 @@ mod dispatch_tests {
         let (tx, rx) = mpsc::channel();
         // The delay setting changes on the tick after the press, while it is queued.
         let mut samples = vec![with_delay(PRESSED, 300), with_delay(&[], 900)].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut |_| panic!("no dismissal"));
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |_| panic!("no dismissal"));
         drop(tx);
         let events = Mutex::new(Vec::new());
         run_dispatcher(
@@ -876,7 +941,7 @@ mod dispatch_tests {
         *world.context.lock().unwrap() = "x".into();
         let (tx, rx) = mpsc::channel();
         let mut samples = vec![sample(PRESSED, true)].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut |_| panic!("no dismissal"));
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |_| panic!("no dismissal"));
         drop(tx);
         *world.context.lock().unwrap() = "y".into();
         let mut grabs = 0;

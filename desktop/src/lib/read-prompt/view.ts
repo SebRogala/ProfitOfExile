@@ -15,6 +15,8 @@ export const MECHANIC_WORDS: Record<ReadPromptMechanic, string> = {
 	mercenary: 'Mercenary'
 };
 
+export const NO_MATCH_TEXT = 'Nothing detected. If a mechanic is open, check Settings → OCR Regions → Preview, and press Recalibrate if a region is off.';
+
 /**
  * `Detected <mechanic> - press <key> to read`, or null when nothing is armed
  * or the read key setting has not arrived yet.
@@ -23,6 +25,7 @@ export function readPromptText(source: {
 	readPrompt: ReadPromptSnapshot;
 	readHotkey: ReadHotkeySettings | null;
 }): string | null {
+	if (source.readPrompt.noMatch) return NO_MATCH_TEXT;
 	const mechanic = source.readPrompt.mechanic;
 	if (mechanic === null || source.readHotkey === null) return null;
 	return `Detected ${MECHANIC_WORDS[mechanic]} - press ${shortcutLabel(source.readHotkey.shortcut)} to read`;

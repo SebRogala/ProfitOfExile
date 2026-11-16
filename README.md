@@ -42,11 +42,12 @@ Beta modules are enabled per device. Ask in
 
 ## How It Works
 
-1. Events in Path of Exile's `Client.txt` arm the relevant module.
-2. Only when you press the read key, the app captures one frame of the
-   configured panel region and reads it with Windows' built-in OCR. Divine
-   Font gems are identified by comparing their icons locally; OCR reads only
-   the tooltip you hover.
+1. Events in Path of Exile's `Client.txt` suggest which mechanic to try first.
+2. The read key routes the screen to the first matching reader, including
+   without a prior log event, or shows no-match guidance. Divine Font gems
+   use local icon matching and hovered-tooltip OCR. Routing, capture guards
+   and the armed-only font-options exception are described in
+   [Screen reading](docs/OVERLAY-GUIDE.md#screen-reading-ggg-policy).
 3. Server-side analysis and market data price or rank the available choices.
 4. Click-through overlays place the result over the game without blocking it.
 

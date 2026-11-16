@@ -54,10 +54,28 @@ fetched 2026-11-13): *"Reading from the screen or clipboard may only be performe
 once per manual key press"*, and an app that reads the screen, the clipboard or
 logs must keep the user aware of what the data is used for.
 
-- **One press, one frame.** Every whole-screen capture goes through the global
-  read hotkey (POE-387, `read_hotkey.rs`): one press takes one `capture_screen`
-  frame and hands it to every armed reader. A press with no armed reader grabs
-  nothing.
+- **One accepted read, one frame (current, POE-409).** The global read hotkey
+  (`read_hotkey.rs`) captures a frame even with no Client.txt arm, while the game
+  is foreground and capture privacy consent permits it. Dismissal polling runs
+  first; all same-tick exact-generation hide acknowledgements must succeed
+  before the configured delay and capture. A failed hide handshake drops the
+  read with zero captures. Privacy refusal and capture failure produce no
+  no-match result and never retry.
+- **First matching reader.** Eligible readers probe that saved frame, with the
+  most recent Client.txt mechanic first, followed by the remaining readers.
+  An armed font-options reader is tried first; unarmed font options have no
+  route. The gem probe requires the Divine Font title plate and lit CONFIRM,
+  without a CRAFT probe. Only the first match consumes the saved frame; losing
+  probes publish nothing. Module switches and lifecycle identities still gate
+  selected work. Screen matches and read completion never update log recency.
+- **No match.** A successfully captured frame that matches no reader publishes
+  exactly: “Nothing detected. If a mechanic is open, check Settings → OCR
+  Regions → Preview, and press Recalibrate if a region is off.” It follows the
+  global dismissal timeout/key; the next completed result replaces it. Each
+  result has a fresh presentation identity, so unchanged polls cannot restore
+  dismissed content. Superseded completions cannot overwrite newer results or
+  Client.txt arms. Ordinary detected text remains
+  `Detected <mechanic> - press <key> to read`, outside timeout/key dismissal.
 - **No automatic capture.** No capture is triggered by Client.txt events,
   timers, loops, retries, cursor hover or panel polling. A fixed delay between
   the press and the grab is allowed; polling until a panel appears is not.
@@ -89,7 +107,7 @@ this table describes that registry and the existing lifecycle owners:
 | `lab.comparator` | Client.txt gem clear/area change | Neither |
 | `lab.compass`, `lab.pathstrip`, `lab.timer` | Lab context | Neither |
 | `loot.confirmation`, `loot.capture` | Loot capture/confirmation lifecycle | Neither |
-| `prompt.read` | Read success or prompt context end | Neither |
+| `prompt.read` | Read result or prompt context end | No-match only; global values |
 
 Settings → Game Integration places **Overlay dismissal** beside **Read screen**.
 Global timeout options are Off, 5, 10, 20 and 30 seconds; the Rust default is
@@ -113,6 +131,8 @@ For a press that both dismisses and reads, `read_hotkey.rs` queues dismissal
 before the read delay and capture. `createDismissalHost` registers Temple and
 Lab through `overlay_dismiss_host(window)`. Mercenary uses `ack: false` because
 its window is excluded from captures, so it neither registers nor acknowledges.
+The prompt host uses the same `ack: false` path. Its local dismissal-capable
+descriptor applies only to no-match content, without a registry flag or Settings row.
 Rust retains an ordered, bounded list of `{ gen, shortcut }` in
 `overlayDismiss.pending`, also delivered through `overlay-dismiss-key` events.
 Hosts union both delivery paths, deduplicate exact generations and process the
@@ -257,8 +277,9 @@ The read prompt (`prompt`, POE-388) is the one APP-LEVEL widget window
 ([ADR-021](adr/021-a-module-draws-one-window-on-the-game-monitor-and-widgets-inside-it.md)
 amendment): no module flag governs it, so its `createModuleWindows` row is
 always granted and enabled, and its route draws the single `prompt.read`
-widget only while `ssot.readPrompt.mechanic` is set. The text is exactly
-`Detected <mechanic> - press <key> to read` with the bound read key. It is
+widget through `createReadPromptPresentation`: detected text while
+`ssot.readPrompt.mechanic` is set, or the no-match result described in
+[Screen reading](#screen-reading-ggg-policy). It is
 display only, and it is in `capture.rs` `EXCLUDED_WHILE_GRABBING`
 ([ADR-023](adr/023-a-window-excluded-from-the-grab-may-cover-what-its-module-reads.md)
 amendment), so it is never in a read frame. The lab widget window is governed by `lab_overlays_enabled`; its compass, map

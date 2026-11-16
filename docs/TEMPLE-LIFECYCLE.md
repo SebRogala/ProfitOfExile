@@ -64,22 +64,25 @@ Related: [Overlay Guide](OVERLAY-GUIDE.md) (windows, click-through, smoke items)
 
 ## Per press
 
-Current since 2026-11-13 (POE-389). Homes: `temple/press.rs` (`TempleReader`, `press_reason`) and
+Current as amended 2026-11-16 (POE-409). Homes: `temple/press.rs` (`TempleReader`, `press_reason`) and
 `temple/run.rs` (`worker_loop`, `read_press`, `locate_on_miss`).
 
 - **Client.txt arms; it does not capture.** An Alva START line arms `AlvaStart`, entering The
   Temple of Atzoatl arms `TempleArea` (`temple/trigger.rs`). Neither grabs the screen.
-- **The reader runs only under Client.txt temple context.** On a read-key press,
-  `TempleReader::arm` declines unless the temple module is running and the arm holds `AlvaStart`
-  or `TempleArea`. Declined, it takes no frame on the temple's account.
-- **One frame per press.** An accepted press hands its one frame (or the grab error) to the temple
-  worker thread; `worker_loop` reads each received frame once, in order, and captures nothing
-  itself.
+- **Recognition needs no log arm.** With the module running, `TempleReader::prepare`
+  snapshots worker/lifecycle identity and optional `AlvaStart` or `TempleArea` reason.
+  Its probe asks the temple worker to recognize the routed frame without publishing.
+  The global routing and capture guards live in
+  [Screen reading](OVERLAY-GUIDE.md#screen-reading-ggg-policy).
+- **Selection reuses evidence.** Only a matching selected reader hands recognition
+  evidence to the worker's read transaction. A losing probe publishes nothing;
+  no synthetic Client.txt reason is created for an unarmed read.
 - **The read.** A placed-origin recheck on that frame first. On a miss, the full-frame locate
   (`anchor::anchor_for_loop`) runs on the same frame only when the slice is null or has no
   anchored Entrance origin (`locate_on_miss`); a placed miss publishes no-panel with no search.
-- **A full read follows**, with no retry rounds and no merge with an earlier read. A press that
-  finds no panel publishes no-panel. A partial read stays published until the next press.
+- **A full selected read follows**, with no retry rounds and no merge with an earlier read.
+  A partial read stays published until the next selected read. A routing miss leaves
+  temple state unchanged; global no-match presentation belongs to the prompt owner.
 - **Geometry.** Only a located anchor that fills or contradicts the placement is remembered, and
   only after the read has published (`run::finish`, ADR-025). Recalibrate is the manual fix for a
   wrong placement.

@@ -2,7 +2,7 @@
 
 **Status:** current implemented behavior.
 
-**Last verified:** 2026-11-13 at `9a12ce5c`.
+**Last verified:** 2026-11-16 (POE-409 routing and no-match prompt).
 
 **Amended 2026-11-13 (POE-390):** the merc module reads the screen only on a
 press of the read key; see [Per press](#per-press). The arming, probe and
@@ -21,15 +21,18 @@ and the work/page boundary remains in
 
 ## Per press
 
-Shipped: `4cd237b9`, `9a12ce5c` (POE-390).
+Current: POE-390 per-press worker, amended by POE-409 selection.
 
-- Client.txt: a known Inspect text is matched and logged as heard; it arms
-  nothing and publishes nothing. An area change goes to the worker as
+- Client.txt: a known Inspect text updates global prompt/reader recency and is
+  logged as heard; it starts no capture. An area change goes to the worker as
   `MercInbox::AreaChanged`.
-- A press of the read key with the module on (worker inbox installed: module
-  on, session open, OCR available) hands that press's one frame and the cursor
-  to the merc worker (`press::MercReader`).
-- The worker (`run::read_press`) reads the panel on that frame, then, when the
+- With the module on (worker inbox installed: module on, session open, OCR
+  available), `press::MercReader` snapshots identity and asks its worker to
+  recognize the routed frame. The losing probe neither retires the held
+  capture nor registers, persists or publishes anything. Global selection
+  and capture guards follow [Screen reading](OVERLAY-GUIDE.md#screen-reading-ggg-policy).
+- A selected match reuses recognition evidence in the worker transaction,
+  then, when the
   cursor is on a held cell, the hovered tooltip on the same frame.
 - The full-screen locate runs only with no placement or a pending Recalibrate.
   A placed miss is a miss; Recalibrate is the manual fix.
@@ -42,10 +45,9 @@ Shipped: `4cd237b9`, `9a12ce5c` (POE-390).
   REMATCH, header fold) and the tooltip read, but no pass 2 or icon walk.
 - Two tooltip reads that agree within 10 s (`PENDING_CONFIRM_TTL`), from two
   presses, learn a support.
-- A press that finds no panel with the cursor off it, or an area change,
-  retires the live capture. A press that finds no panel with the cursor inside
-  the held panel is occluded and holds the capture, however long since the
-  last press; a panel that is found is read normally wherever the cursor is.
+- An area change retires the live capture. A routing miss leaves it unchanged;
+  old held state alone cannot win recognition of an unrelated frame. Selected
+  reads retain the existing held-panel/tooltip handling.
 - `Scanning` shows only while a press read runs. Each press logs one
   `Merc: read on press — <outcome>` line. Nothing reads between presses.
 

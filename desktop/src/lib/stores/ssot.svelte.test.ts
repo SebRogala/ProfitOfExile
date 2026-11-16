@@ -1665,15 +1665,22 @@ describe('the overlayDismiss slice', () => {
 describe('the readPrompt slice', () => {
 	it('shows no prompt before Rust answers', async () => {
 		const mod = await import('./ssot.svelte');
-		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, seq: 0 });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: false, seq: 0 });
 	});
 
 	it('takes the armed mechanic and its seq from a snapshot, and its clear', async () => {
 		const mod = await import('./ssot.svelte');
-		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: 'incursion', seq: 4 } });
-		expect(mod.ssot.readPrompt).toEqual({ mechanic: 'incursion', seq: 4 });
-		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, seq: 4 } });
-		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, seq: 4 });
+		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: 'incursion', noMatch: false, seq: 4 } });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: 'incursion', noMatch: false, seq: 4 });
+		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, noMatch: false, seq: 4 } });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: false, seq: 4 });
+	});
+
+	it('applies a no-match result and retains it across partial snapshots', async () => {
+		const mod = await import('./ssot.svelte');
+		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, noMatch: true, seq: 5 } });
+		mod.applySnapshot({ league: { name: null } });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: true, seq: 5 });
 	});
 });
 

@@ -57,6 +57,7 @@ const overlayDismissKeys: Record<keyof DismissSnapshot, true> = {
 
 const readPromptKeys: Record<keyof ReadPromptSnapshot, true> = {
 	mechanic: true,
+	noMatch: true,
 	seq: true
 };
 
@@ -183,6 +184,12 @@ describe('ssot-snapshot.json golden matches SsotSnapshot', () => {
 
 	it('names the prompt mechanic in the camelCase spelling the view keys on', () => {
 		expect((wire.readPrompt as ReadPromptSnapshot).mechanic).toBe('divineFont');
+	});
+
+	it('carries the default no-match flag in both native goldens', () => {
+		for (const snapshot of [golden, unmeasuredGolden]) {
+			expect(snapshot.readPrompt.noMatch).toBe(false);
+		}
 	});
 
 	it('carries exactly the screen.anchors keys', () => {

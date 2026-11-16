@@ -1,4 +1,4 @@
-//! The "Detected <mechanic> - press <key> to read" prompt's state (POE-388).
+//! The detected-mechanic and completed no-match prompt's state.
 //!
 //! Client.txt seams arm a mechanic, a successful read or the context's end
 //! clears it, and the SSOT carries the most recently armed active one. Display
@@ -26,29 +26,41 @@ pub enum Change {
     End(Mechanic),
 }
 
-/// The SSOT's `readPrompt`: the mechanic to name, and the arm count, so a
-/// re-arm of the same mechanic (each Gift-lab font round) is a new prompt.
+/// The SSOT presentation; each arm or completed result has a fresh identity.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadPromptSnapshot {
     pub mechanic: Option<Mechanic>,
+    pub no_match: bool,
     pub seq: u64,
 }
 
-/// The active mechanics in arm order, each with the `seq` it was armed at,
-/// and the arm count.
+/// A queued press's result order and the Client.txt arm generation it saw.
+#[derive(Debug, Clone, Copy)]
+pub struct PressStamp {
+    id: u64,
+    arm_generation: u64,
+}
+
+/// Active arms retain their immutable identities beneath the presentation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReadPromptState {
     active: Vec<(Mechanic, u64)>,
     seq: u64,
     lab_context: u64,
     last_client_mechanic: Option<Mechanic>,
+    no_match: bool,
+    arm_generation: u64,
+    accepted: u64,
+    finished: u64,
 }
 
 impl ReadPromptState {
     /// Shows `mechanic` as a new prompt, even when it was already active.
     pub fn arm(&mut self, mechanic: Mechanic) {
         self.last_client_mechanic = Some(mechanic);
+        self.arm_generation += 1;
+        self.no_match = false;
         self.seq += 1;
         self.active.retain(|(m, _)| *m != mechanic);
         self.active.push((mechanic, self.seq));
@@ -83,9 +95,26 @@ impl ReadPromptState {
     }
     pub fn snapshot(&self) -> ReadPromptSnapshot {
         ReadPromptSnapshot {
-            mechanic: self.active.last().map(|(m, _)| *m),
+            mechanic: if self.no_match { None } else { self.active.last().map(|(m, _)| *m) },
+            no_match: self.no_match,
             seq: self.seq,
         }
+    }
+    pub fn accept_press(&mut self) -> PressStamp {
+        self.accepted += 1;
+        PressStamp { id: self.accepted, arm_generation: self.arm_generation }
+    }
+    pub fn finish_read(&mut self, stamp: PressStamp, outcome: crate::read_hotkey::DispatchOutcome) {
+        use crate::read_hotkey::DispatchOutcome;
+        if stamp.id <= self.finished { return; }
+        self.finished = stamp.id;
+        if stamp.arm_generation != self.arm_generation { return; }
+        match outcome {
+            DispatchOutcome::NoMatch => self.no_match = true,
+            DispatchOutcome::Selected(_) => self.no_match = false,
+            DispatchOutcome::Failed(_) | DispatchOutcome::Suppressed => return,
+        }
+        self.seq += 1;
     }
     pub fn last_client_mechanic(&self) -> Option<Mechanic> {
         self.last_client_mechanic
@@ -202,6 +231,18 @@ pub fn modules_changed_in(state: &crate::AppState) -> bool {
 pub fn read_done_in(state: &crate::AppState, mechanic: Mechanic, id: u64) -> bool {
     edit_in(state, |p| p.read_done(mechanic, id))
 }
+pub fn accept_press_in(state: &crate::AppState) -> PressStamp {
+    state.read_prompt.lock().unwrap_or_else(|e| e.into_inner()).accept_press()
+}
+pub fn finish_read_in(state: &crate::AppState, stamp: PressStamp, outcome: crate::read_hotkey::DispatchOutcome) -> bool {
+    edit_in(state, |p| p.finish_read(stamp, outcome))
+}
+pub fn accept_press(app: &AppHandle) -> PressStamp {
+    accept_press_in(&app.state::<crate::AppState>())
+}
+pub fn finish_read(app: &AppHandle, stamp: PressStamp, outcome: crate::read_hotkey::DispatchOutcome) {
+    emit_if(app, finish_read_in(&app.state::<crate::AppState>(), stamp, outcome));
+}
 pub fn armed_id_in(state: &crate::AppState, mechanic: Mechanic) -> Option<u64> {
     state.read_prompt.lock().unwrap_or_else(|e| e.into_inner()).armed_id(mechanic)
 }
@@ -245,6 +286,93 @@ mod tests {
     use crate::temple::trigger::{apply_line, classify, ArmReason, ArmState, Transition};
 
     const NOW: u64 = 1_756_800_000_000;
+
+    #[test]
+    fn no_match_projects_a_result_over_retained_arms() {
+        let mut prompt = ReadPromptState::default();
+        prompt.arm(Mechanic::Incursion);
+        let arm = prompt.armed_id(Mechanic::Incursion);
+        let stamp = prompt.accept_press();
+        prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2 });
+        assert_eq!(prompt.armed_id(Mechanic::Incursion), arm);
+        assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Incursion));
+    }
+
+    #[test]
+    fn successive_no_matches_have_fresh_presentation_identities() {
+        let mut prompt = ReadPromptState::default();
+        let first = prompt.accept_press();
+        prompt.finish_read(first, crate::read_hotkey::DispatchOutcome::NoMatch);
+        let second = prompt.accept_press();
+        prompt.finish_read(second, crate::read_hotkey::DispatchOutcome::NoMatch);
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2 });
+    }
+
+    #[test]
+    fn selected_result_replaces_no_match_without_clearing_retained_arms() {
+        let mut prompt = ReadPromptState::default();
+        prompt.arm(Mechanic::Incursion);
+        let stamp = prompt.accept_press();
+        prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
+        let stamp = prompt.accept_press();
+        prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Mercenary));
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Incursion), no_match: false, seq: 3 });
+        assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Incursion));
+    }
+
+    #[test]
+    fn failed_or_suppressed_reads_leave_the_presentation_unchanged() {
+        for outcome in [crate::read_hotkey::DispatchOutcome::Failed("capture failed".into()), crate::read_hotkey::DispatchOutcome::Suppressed] {
+            let mut prompt = ReadPromptState::default();
+            prompt.arm(Mechanic::Mercenary);
+            let before = prompt.snapshot();
+            let stamp = prompt.accept_press();
+            prompt.finish_read(stamp, outcome);
+            assert_eq!(prompt.snapshot(), before);
+        }
+    }
+
+    #[test]
+    fn older_queued_result_cannot_replace_a_newer_finished_result() {
+        let mut prompt = ReadPromptState::default();
+        let older = prompt.accept_press();
+        let newer = prompt.accept_press();
+        prompt.finish_read(newer, crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Temple));
+        prompt.finish_read(older, crate::read_hotkey::DispatchOutcome::NoMatch);
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: false, seq: 1 });
+    }
+
+    #[test]
+    fn a_new_client_arm_supersedes_an_older_no_match_completion() {
+        let mut prompt = ReadPromptState::default();
+        let stamp = prompt.accept_press();
+        prompt.arm(Mechanic::Mercenary);
+        prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, seq: 1 });
+    }
+
+    #[test]
+    fn an_old_selected_completion_preserves_a_newer_arm_of_the_same_mechanic() {
+        let mut prompt = ReadPromptState::default();
+        prompt.arm(Mechanic::Incursion);
+        let arm = prompt.armed_id(Mechanic::Incursion).unwrap();
+        let stamp = prompt.accept_press();
+        prompt.arm(Mechanic::Incursion);
+        prompt.read_done(Mechanic::Incursion, arm);
+        prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Temple));
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Incursion), no_match: false, seq: 2 });
+        assert_eq!(prompt.armed_id(Mechanic::Incursion), Some(2));
+    }
+
+    #[test]
+    fn a_new_client_arm_replaces_no_match() {
+        let mut prompt = ReadPromptState::default();
+        let stamp = prompt.accept_press();
+        prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
+        prompt.arm(Mechanic::Mercenary);
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, seq: 2 });
+    }
 
     #[test]
     fn completion_preserves_client_recency() {

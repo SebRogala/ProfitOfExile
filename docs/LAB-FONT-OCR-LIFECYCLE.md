@@ -2,7 +2,7 @@
 
 **Status:** current implemented behavior.
 
-**Last verified:** 2026-11-13 at POE-397 WI-4 (`lanethird`, parent `bd765a01`).
+**Last verified:** 2026-11-16 (POE-409 routing and no-match prompt).
 
 **Canonical for:** Lab font OCR, round ledger and gem read transitions.
 
@@ -11,17 +11,20 @@
 The game wording and craft-count semantics live in [Game facts](GAME-FACTS.md#divine-font).
 Screen geometry follows [ADR-020](adr/020-one-shared-screen-scale-a-module-corroborates-or-withholds.md)
 and [ADR-024](adr/024-module-ocr-positions-are-placed-from-the-screen-slice-not-located.md).
-Every read follows [Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy):
-one frame per read key press, nothing read without one.
+Every read follows [Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy),
+including its capture guards and armed-only font-options exception.
 
 ## Reader ownership
 
 Two readers are registered on the read key (`read_hotkey::READERS`):
 `LabFontReader` reads the options panel (`lab.font`) and `LabGemReader` reads
 the gem-choice screen: the three slot icons (`lab.gem_slots`) and, for the
-hovered slot only, the gem tooltip band (`lab.gem`). Client.txt events arm and disarm a context
-for each; a press grabs one frame only when at least one context is armed, and
-each armed reader consumes that frame once. There is no lab capture loop.
+hovered slot only, the gem tooltip band (`lab.gem`). Client.txt events arm and
+disarm their contexts. The router tries an armed font reader first; it wins only
+when its existing OCR parses an active options panel. The gem probe instead
+matches the title plate plus lit CONFIRM without OCR. A selected gem read may
+prepare a missing context under the existing lifecycle fence; losing probes
+create no context. There is no lab capture loop.
 
 `lab_scan::LabScanState` holds the state: `read_token_seq` (the one token
 issuer, never reset), `font_context` and `gem_context` (the armed tokens, 0 =
@@ -35,8 +38,8 @@ so a press captured before a disarm can never write into a later context.
 | --- | --- |
 | Final Izaro / LabFinished | Reset the parity counter; arm a fresh font context (session reset, alerts cleared), start its idle timer and the gem vocabulary preload. |
 | FontOpened | Increment monotonic `font_opened_seq`; clear the font alerts; arm or disarm the gem context by parity; re-arm the font context when none is armed (portal return). |
-| Read key press, font context armed | Crop `lab.font` from the one frame, parse the panel, replace the alert set; an active panel bumps the idle seq and passes nonempty options to the ledger. |
-| Read key press, gem context armed | See [Gem read](#gem-read). |
+| Selected font read, font context armed | Reuse the active options parsed from `lab.font`; replace alerts, bump the idle seq and pass nonempty options to the ledger. |
+| Selected gem read | See [Gem read](#gem-read). |
 | No font read that saw the panel for ten minutes | The idle timer finalizes the session (seal, send, reset) if its seq is still current. |
 | ZoneChanged | Disarm the gem context (clearing comparator gems) and finalize the font context: seal leftover, submit, reset. |
 | LabExited | Disarm the font context; nothing is sent. |
@@ -75,7 +78,13 @@ an even count (CONFIRM). This is the implemented CRAFT/CONFIRM guess; opening,
 closing and reopening the Font can disturb the parity. The font context instead
 re-arms on an explicit token, and the craft ledger uses accepted panel counts.
 
-A press while the gem context is armed reads that one frame (POE-397):
+A positively selected gem read reuses or prepares the current gem context, waits
+for the existing vocabulary/icon loader, then reads its saved frame (POE-409).
+No font session or craft accounting is created by this preparation. Mode, zone,
+CONFIRM, close and disable invalidate stale preparation/commits. Ordinary gem
+commits preserve the lifecycle fence, so later queued reads remain valid.
+
+The selected frame follows the POE-397 icon/tooltip flow:
 
 1. **Icons.** The three `lab.gem_slots` are cropped, resized to the 48 px
    canonical icon size and matched against the preloaded reference icons of
@@ -110,10 +119,11 @@ ends on CONFIRM, FontClosed or ZoneChanged.
 The vocabulary preload (`lab::gem_vocab`) installs the tooltip matcher as soon
 as the dictionary arrives; the icon references follow once their art is in
 `<app_data>/gem-art/` (cache first, then `/api/icon/gems/{name}`). Without
-them the icon step is skipped and logged once per context, and hover reads
-still work. With no vocabulary current the read is skipped and logged once. A
-lab-mode change bumps the vocabulary generation and clears an armed context's
-gems and `last_gem_read`.
+them a selected read waits for the loader's icon stage, including when the
+tooltip matcher is already installed. Loader failure logs unavailable resources
+without recapturing. A lab-mode change bumps the vocabulary generation and
+clears an armed context's gems and `last_gem_read`. Certain names still use the
+normal paired-comparator relay for initially armed and unarmed reads alike.
 
 **Open question:** gem-read start/stop is under discussion with the Operator.
 The parity behavior above records the current implementation and resolves no

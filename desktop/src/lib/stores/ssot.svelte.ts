@@ -299,10 +299,10 @@ export interface DismissSnapshot extends DismissSettings {
 /** A mechanic the read key reads; `read_prompt::Mechanic` on the Rust side. */
 export type ReadPromptMechanic = 'divineFont' | 'incursion' | 'mercenary';
 
-/** `AppSsotSnapshot.readPrompt` (POE-388): the mechanic the "press <key> to
- *  read" prompt names, `null` when none is armed; `seq` changes on every arm. */
+/** Rust-owned prompt presentation; `seq` changes on each arm or finished result. */
 export interface ReadPromptSnapshot {
 	mechanic: ReadPromptMechanic | null;
+	noMatch: boolean;
 	seq: number;
 }
 
@@ -420,7 +420,7 @@ export const ssot = $state({
 	readHotkey: null as ReadHotkeySettings | null,
 	overlayDismiss: null as DismissSnapshot | null,
 	/** No prompt until Rust answers. */
-	readPrompt: { mechanic: null, seq: 0 } as ReadPromptSnapshot,
+	readPrompt: { mechanic: null, noMatch: false, seq: 0 } as ReadPromptSnapshot,
 });
 
 /** The three market fields, which share the write-through + poll-guard machinery. */

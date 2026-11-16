@@ -1,8 +1,7 @@
 <script lang="ts">
 	/**
-	 * The global read prompt (POE-388): one line, `Detected <mechanic> - press
-	 * <key> to read`, and nothing else on the overlay (Coordinator ruling,
-	 * 2026-11-13). Content of `prompt.read`, a PLACEABLE widget in the app-level
+	 * The global read prompt: detected mechanic/key or completed no-match guidance.
+	 * Content of `prompt.read`, a PLACEABLE widget in the app-level
 	 * `prompt` window, so `WidgetHost` positions it and this file has no
 	 * placement logic. The window is excluded from the grab (ADR-023), so the
 	 * box never lands in a frame a module reads.
@@ -12,10 +11,10 @@
 	 * both are VERDICTS, and this is the absence of one, so it is the neutral
 	 * text colour in a dark box with a muted 1 px border.
 	 */
-	let { text }: { text: string } = $props();
+	let { text, noMatch = false }: { text: string; noMatch?: boolean } = $props();
 </script>
 
-<p class="prompt">{text}</p>
+<p class="prompt" class:no-match={noMatch}>{text}</p>
 
 <style>
 	/* The offer boxes' dark ground and radius, in the neutral palette. */
@@ -28,5 +27,8 @@
 		border-radius: 6px;
 		white-space: nowrap;
 		pointer-events: none;
+	}
+	.no-match {
+		white-space: normal;
 	}
 </style>
