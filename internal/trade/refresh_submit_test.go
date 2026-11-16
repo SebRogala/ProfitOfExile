@@ -39,7 +39,7 @@ func TestBackgroundRefresh_PileupShedDuringUpstream(t *testing.T) {
 		w.Write([]byte(`{"id":"test","result":[],"total":0}`))
 	}))
 	defer upstream.Close()
-	g := newTestGate(t, upstream, nil, time.Second)
+	g := newTestGate(t, upstream, &mockPublisher{}, time.Second)
 	ctx, _ := runBackground(t, g)
 	b := NewBackgroundRefresh(g)
 	first := make(chan string, 1)
@@ -87,7 +87,7 @@ func TestBackgroundRefresh_ForegroundPreflightMakesNoClaim(t *testing.T) {
 		w.Write([]byte(`{"id":"test","result":[],"total":0}`))
 	}))
 	defer upstream.Close()
-	g := newTestGate(t, upstream, nil, time.Second)
+	g := newTestGate(t, upstream, &mockPublisher{}, time.Second)
 	ctx, _ := runBackground(t, g)
 	req := &GateRequest{Gem: "Foreground", Variant: "1", Priority: PriorityHigh, SubmittedAt: time.Now(), Result: make(chan *GateResponse, 1)}
 	g.Submit(req)
@@ -118,7 +118,7 @@ func TestBackgroundRefresh_RatePreflightMakesNoClaim(t *testing.T) {
 			var calls atomic.Int32
 			upstream := testGateServer(t, &calls)
 			defer upstream.Close()
-			g := newTestGate(t, upstream, nil, time.Second)
+			g := newTestGate(t, upstream, &mockPublisher{}, time.Second)
 			for range 5 {
 				g.limiter.Record(pool)
 			}
@@ -138,7 +138,7 @@ func TestBackgroundRefresh_CancellationStopsOwnedLookup(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer upstream.Close()
-	g := newTestGate(t, upstream, nil, time.Second)
+	g := newTestGate(t, upstream, &mockPublisher{}, time.Second)
 	ctx, cancel := runBackground(t, g)
 	result := make(chan string, 1)
 	go func() {
@@ -172,7 +172,7 @@ func TestBackgroundRefresh_FailureUsesExistingRetryPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tc.status); w.Write([]byte("upstream")) }))
 			defer upstream.Close()
-			g := newTestGate(t, upstream, nil, time.Second)
+			g := newTestGate(t, upstream, &mockPublisher{}, time.Second)
 			now := time.Now()
 			g.now = func() time.Time { return now }
 			ctx, _ := runBackground(t, g)
@@ -202,7 +202,7 @@ func TestBackgroundRefresh_FetchFailureIsNotCheck(t *testing.T) {
 		w.WriteHeader(500)
 	}))
 	defer upstream.Close()
-	g := newTestGate(t, upstream, nil, time.Second)
+	g := newTestGate(t, upstream, &mockPublisher{}, time.Second)
 	ctx, _ := runBackground(t, g)
 	outcome := NewBackgroundRefresh(g).Run(ctx, backgroundRequest, func(_ *GateRequest, r *GateResponse, _ time.Time) {
 		if r.Error == nil || r.Data != nil {
