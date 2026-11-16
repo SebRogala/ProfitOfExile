@@ -7,6 +7,53 @@ import (
 	"time"
 )
 
+func TestExpectedBestOf3_RankedValues(t *testing.T) {
+	if got := expectedBestOf3([]float64{100, 80, 60, 40, 20}); got != 90 {
+		t.Fatalf("EV = %g, want 90", got)
+	}
+}
+
+func TestExpectedBestOf3_SmallPools(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		values []float64
+		want   float64
+	}{
+		{"empty", nil, 0},
+		{"one", []float64{100}, 100},
+		{"two", []float64{100, 80}, 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := expectedBestOf3(tc.values); got != tc.want {
+				t.Fatalf("EV = %g, want %g", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFontPickProbability_Ranks(t *testing.T) {
+	for rank, want := range []float64{0.6, 0.3, 0.1, 0, 0} {
+		if got := fontPickProbability(rank, 5); got != want {
+			t.Errorf("rank %d probability = %g, want %g", rank, got, want)
+		}
+	}
+}
+
+func TestFontPickProbability_SmallPools(t *testing.T) {
+	for _, tc := range []struct {
+		rank, total int
+		want        float64
+	}{
+		{0, 0, 0}, {0, 1, 1}, {0, 2, 1}, {1, 2, 0}, {-1, 5, 0}, {5, 5, 0},
+	} {
+		t.Run(fmt.Sprintf("rank%d_pool%d", tc.rank, tc.total), func(t *testing.T) {
+			if got := fontPickProbability(tc.rank, tc.total); got != tc.want {
+				t.Fatalf("probability = %g, want %g", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPWin3Picks_Basic(t *testing.T) {
 	// 5 winners out of 50: P(at least one win in 3 picks)
 	p := pWin3Picks(5, 50)

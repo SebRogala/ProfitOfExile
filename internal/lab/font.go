@@ -120,28 +120,39 @@ func expectedBestOf3(values []float64) float64 {
 	// = C(n-i-1, 2) / C(n, 3)  (choose 2 companions from the n-i-1 gems ranked worse)
 	//
 	// values are sorted descending: values[0] is the most valuable.
-	total := float64(n*(n-1)*(n-2)) / 6.0 // C(n, 3)
-
 	var ev float64
 	for i := 0; i < n; i++ {
 		if values[i] == 0 {
 			break // all remaining are 0, no point continuing
 		}
-		worse := n - i - 1 // gems ranked worse than i
-		if worse < 2 {
-			// Gem i is among the bottom 2 — it can still be "best" if the other 2 are also bottom
-			if worse == 1 {
-				// Only 1 gem worse — need that 1 gem + gem i + 1 gem from above (impossible for "best")
-				continue
-			}
-			continue
+		prob := fontPickProbability(i, n)
+		if prob > 0 {
+			ev += values[i] * prob
 		}
-		companions := float64(worse*(worse-1)) / 2.0 // C(worse, 2)
-		prob := companions / total
-		ev += values[i] * prob
 	}
 
 	return ev
+}
+
+// fontPickProbability uses zero-based rank, with ties ordered by market key.
+// Pools smaller than three preserve expectedBestOf3's best-available choice.
+func fontPickProbability(rank, total int) float64 {
+	if rank < 0 || rank >= total {
+		return 0
+	}
+	if total < 3 {
+		if rank == 0 {
+			return 1
+		}
+		return 0
+	}
+	worse := total - rank - 1
+	if worse < 2 {
+		return 0
+	}
+	companions := float64(worse*(worse-1)) / 2.0
+	triples := float64(total*(total-1)*(total-2)) / 6.0
+	return companions / triples
 }
 
 // isSafeTierWinner returns true if the tier qualifies as a winner in Safe mode (LOW+).
