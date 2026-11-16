@@ -533,8 +533,11 @@ pub(crate) async fn send_test_gems(app: AppHandle) -> Result<String, String> {
 /// view only knows its OWN mode's markets, so a market from the other mode fails
 /// its check and — before this — was dropped without a word.
 fn current_lab_mode_tag(state: &AppState) -> &'static str {
-    let lab_mode = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).lab_mode.clone();
-    if lab_mode == "Dedication" { "dedication" } else { "normal" }
+    lab_mode_tag(&state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+fn lab_mode_tag(lab: &crate::settings::LabSettings) -> &'static str {
+    if lab.lab_mode == "Dedication" { "dedication" } else { "normal" }
 }
 
 /// The market OCR'd gems are priced against, and the single source of truth for
@@ -547,6 +550,10 @@ fn current_lab_mode_tag(state: &AppState) -> &'static str {
 /// corrupted gems against the uncorrupted market.
 pub(super) fn current_gem_variant(state: &AppState) -> String {
     let lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner());
+    gem_variant(&lab)
+}
+
+fn gem_variant(lab: &crate::settings::LabSettings) -> String {
     if lab.lab_mode == "Dedication" {
         lab.dedication_variant.clone()
     } else {
@@ -556,26 +563,48 @@ pub(super) fn current_gem_variant(state: &AppState) -> String {
 
 pub(crate) fn gem_publication_payload(state: &AppState, gems: &[String]) -> serde_json::Value {
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner());
+    gem_payload_for_lab(&pair, gems, &lab)
+}
+
+fn gem_payload_for_lab(pair: &str, gems: &[String], lab: &crate::settings::LabSettings) -> serde_json::Value {
     serde_json::json!({
         "pair": pair,
         "gems": gems,
-        "variant": current_gem_variant(state),
-        "mode": current_lab_mode_tag(state)
+        "variant": gem_variant(lab),
+        "mode": lab_mode_tag(lab)
     })
 }
 
+pub(super) fn selected_gem_publication_payload(
+    state: &AppState, token: u64, generation: u64, gems: &[String],
+) -> Option<serde_json::Value> {
+    // build_status holds pair_code while taking the lab lifecycle guards.
+    let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    // Disarm/rearm owns detected_gems; change_lab_mode owns lab_settings and
+    // the vocabulary generation. Keep both guards through payload assembly so
+    // the deferred relay cannot label an old read with a newer mode.
+    let _gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+    let lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner());
+    let enabled = state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner());
+    if token == 0 || state.lab_scan.gem_context.load(Ordering::SeqCst) != token
+        || state.lab_scan.gem_vocab_generation.load(Ordering::SeqCst) != generation
+        || !*enabled { return None; }
+    Some(gem_payload_for_lab(&pair, gems, &lab))
+}
+
 pub(crate) async fn send_gems_to_server(app: &AppHandle, gems: Vec<String>) {
+    let payload = gem_publication_payload(&app.state::<AppState>(), &gems);
+    send_gem_payload(app, payload).await;
+}
+
+pub(super) async fn send_gem_payload(app: &AppHandle, payload: serde_json::Value) {
     let state = app.state::<AppState>();
     let server = crate::settings::server_base(&state);
     let url = format!("{}/api/desktop/gems", server);
     let http = state.server_http.clone();
 
-    // The web view picks its market from this field. A hardcoded 20/20 does not
-    // exist in Dedication mode, so its comparator silently fell back to the
-    // first Dedication market (21/20) whatever the player had selected.
-    let payload = gem_publication_payload(&state, &gems);
-
-    app_log(app, format!("Sending {} gems to server", gems.len()));
+    app_log(app, format!("Sending {} gems to server", payload["gems"].as_array().map_or(0, Vec::len)));
 
     match http
         .post(&url)
@@ -660,7 +689,7 @@ pub(crate) async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<St
             drop(gems);
             let app_clone = app.clone();
             tauri::async_runtime::spawn(async move {
-                send_gems_to_server(&app_clone, all_gems).await;
+                crate::send_gems_to_server(&app_clone, all_gems).await;
             });
             app_log(&app, format!("Sent {} to comparator", m.name));
         }

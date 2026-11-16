@@ -468,14 +468,24 @@ pub(crate) fn publish_gem_commit(app: &AppHandle, commit: GemCommit) {
             log::warn!("emit gem-detected failed: {}", e);
         }
     }
-    if let Err(e) = app.emit("status-changed", commit.status) {
+    if let Err(e) = app.emit("status-changed", &commit.status) {
         log::warn!("emit status-changed failed: {}", e);
     }
-    let names = commit.names;
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
-        crate::send_gems_to_server(&app_clone, names).await;
+        deferred_gem_relay(&app_clone.state::<AppState>(), commit, |payload| {
+            super::commands::send_gem_payload(&app_clone, payload)
+        }).await;
     });
+}
+
+async fn deferred_gem_relay<F: std::future::Future<Output = ()>>(
+    state: &AppState, commit: GemCommit, send: impl FnOnce(serde_json::Value) -> F,
+) {
+    let Some(payload) = super::commands::selected_gem_publication_payload(
+        state, commit.read.token, commit.generation, &commit.names,
+    ) else { return; };
+    send(payload).await;
 }
 
 fn gem_publication_current(state: &AppState, commit: &GemCommit) -> bool {
@@ -776,6 +786,78 @@ mod tests {
         assert_eq!(second.names, vec!["Reave of Ruin", "Blade Vortex of the Scythe"]);
         assert_eq!(super::super::commands::gem_publication_payload(&state, &second.names)["gems"],
             serde_json::json!(["Reave of Ruin", "Blade Vortex of the Scythe"]));
+    }
+
+    #[test]
+    fn deferred_relay_suppresses_reads_invalidated_after_scheduling() {
+        for change in ["close", "confirm", "zone", "disable", "mode", "rearm"] {
+            let state = Arc::new(test_app_state());
+            with_vocab(&state);
+            let token = arm_gem_context(&state);
+            let commit = committed(press(&state, token, &blank(), centre_of(0), &["Reave of Ruin"])).unwrap();
+            assert!(gem_publication_current(&state, &commit));
+            let (task, release, requests) = queue_relay(state.clone(), commit);
+            match change {
+                "close" => { disarm_gem_context(&state, false); }
+                "confirm" | "zone" => { disarm_gem_context(&state, true); }
+                "disable" => { super::super::commands::set_lab_overlays_enabled_in(&state, false); }
+                "mode" => { crate::apply_manual_lab_mode(&state, "Dedication", |_| {}); }
+                _ => { arm_gem_context(&state); }
+            }
+            release.send(()).unwrap();
+            tauri::async_runtime::block_on(task).unwrap();
+            assert_eq!(requests.try_iter().collect::<Vec<_>>(), Vec::<serde_json::Value>::new(),
+                "{change} must suppress the already scheduled request");
+        }
+    }
+
+    fn queue_relay(state: Arc<AppState>, commit: GemCommit) -> (
+        tauri::async_runtime::JoinHandle<()>, tokio::sync::oneshot::Sender<()>,
+        std::sync::mpsc::Receiver<serde_json::Value>,
+    ) {
+        let (release, gate) = tokio::sync::oneshot::channel();
+        let (send, requests) = std::sync::mpsc::channel();
+        let task = tauri::async_runtime::spawn(async move {
+            gate.await.unwrap();
+            deferred_gem_relay(&state, commit, |payload| {
+                // The transport may acquire these owners: snapshot guards must be gone.
+                assert!(state.lab_scan.detected_gems.try_lock().is_ok());
+                assert!(state.lab_settings.try_lock().is_ok());
+                assert!(state.lab_overlays_enabled.try_lock().is_ok());
+                async move { send.send(payload).unwrap(); }
+            }).await;
+        });
+        (task, release, requests)
+    }
+
+    #[test]
+    fn deferred_relay_delivers_concrete_paired_payloads_for_subsequent_valid_reads() {
+        for (mode, variant) in [("Normal", "1/20"), ("Dedication", "21/20")] {
+            let state = Arc::new(test_app_state());
+            crate::apply_manual_lab_mode(&state, mode, |_| {});
+            {
+                let mut lab = state.lab_settings.lock().unwrap();
+                lab.normal_variant = "1/20".into();
+                lab.dedication_variant = "21/20".into();
+            }
+            *state.pair_code.lock().unwrap() = "fixture-pair".into();
+            with_vocab(&state);
+            let token = arm_gem_context(&state);
+            for (slot, name, expected) in [
+                (0, "Reave of Ruin", vec!["Reave of Ruin"]),
+                (1, "Blade Vortex of the Scythe", vec!["Reave of Ruin", "Blade Vortex of the Scythe"]),
+            ] {
+                let commit = committed(press(&state, token, &blank(), centre_of(slot), &[name])).unwrap();
+                let (task, release, requests) = queue_relay(state.clone(), commit);
+                assert!(requests.try_recv().is_err());
+                release.send(()).unwrap();
+                tauri::async_runtime::block_on(task).unwrap();
+                assert_eq!(requests.try_iter().collect::<Vec<_>>(), vec![serde_json::json!({
+                    "pair": "fixture-pair", "gems": expected, "variant": variant,
+                    "mode": if mode == "Normal" { "normal" } else { "dedication" }
+                })]);
+            }
+        }
     }
 
     #[test]
