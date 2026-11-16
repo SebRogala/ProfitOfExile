@@ -1,8 +1,8 @@
 //! The detected-mechanic and completed no-match prompt's state.
 //!
 //! Client.txt seams arm a mechanic, a successful read or the context's end
-//! clears it, and the SSOT carries the most recently armed active one. Display
-//! only: nothing here grabs the screen; a read happens only on the read key
+//! clears it, and the SSOT carries the most recent active arm or no-match
+//! presentation. Nothing here grabs the screen; a read happens only on the read key
 //! (`crate::read_hotkey`). Policy: docs/OVERLAY-GUIDE.md § "Screen reading
 //! (GGG policy)".
 use serde::Serialize;

@@ -1125,10 +1125,9 @@ touching the named path.
 - **Merc read on press** (POE-390): open a recruit window and press the read key
   once → exactly one `Merc: read on press — …` line in `app.log`. Hover a
   support the widget marks `?` and press twice within 10 s → the cell confirms.
-  Close the window, move the cursor outside where the panel was, and press
-  again → `Merc: window gone` (with the cursor still inside the held panel the
-  press is occluded and holds the capture). Between presses no
-  merc capture line appears.
+  Close the window and press again → the router's no-match guidance when no
+  other mechanic matches; a losing merc probe leaves the held capture alone
+  (POE-409). Between presses no merc capture line appears.
 - **Merc header, across re-detects** — **historical (superseded 2026-11-13,
   POE-390)** (added after the 2026-08-25 smoke, where
   the header blinked between the mercenary's name and its class every two
@@ -1280,10 +1279,11 @@ touching the named path.
   `app.log` must carry exactly one `Temple: read on press (Alva's start line) — read`
   line (or `— read, unclean`), and no further `Temple:` capture or read line until
   the next press — leave the sheet open for a minute to check. Close the sheet and
-  press again: one `— no panel` line, and the sheet-bound overlays go. Inside The
-  Temple of Atzoatl the reason reads `(the temple)`. In a map with no incursion
-  running, a press writes no `Temple: read on press` line at all: the reader runs
-  only under Client.txt temple context.
+  press again: no-match guidance when no other mechanic matches, with the losing
+  temple probe publishing nothing (POE-409). Inside The Temple of Atzoatl the
+  reason reads `(the temple)`. Repeat with no Client.txt temple context: a matching
+  panel must still read, without an invented log reason. Routing and guards:
+  [Screen reading](#screen-reading-ggg-policy).
 - **The panel and diamond crops land on the real panel** (POE-230): the check the
   fixtures cannot make, because the repository has exactly one full-frame temple
   capture and the bug was a property of a frame's SIZE. With a layout panel open,
@@ -1424,7 +1424,7 @@ touching the named path.
   no second notice ever came and the widgets stayed on the primary for the rest
   of the session.
 
-  **The open questions this item exists to answer.** Three reads, in this order:
+  **Historical open questions (superseded 2026-11-16, POE-409 unarmed routing).** Three reads, in this order:
 
   1. **The decision read — the one that decides the design.** Open Alva's
      dialogue and the layout panel BEFORE clicking *Enter Incursion*. Does the
