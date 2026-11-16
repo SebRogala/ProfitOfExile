@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"profitofexile/internal/league"
+	"profitofexile/internal/price/book"
 	"profitofexile/internal/price/resolve"
 )
 
@@ -142,5 +144,38 @@ func TestObservations_storedConvertedFloorIsNotUsed(t *testing.T) {
 	want := []resolve.Money{{Amount: 40, Currency: "chaos"}, {Amount: 50, Currency: "chaos"}, {Amount: 55, Currency: "chaos"}}
 	if !reflect.DeepEqual(obs[0].Prices, want) {
 		t.Fatalf("prices = %v, want %v", obs[0].Prices, want)
+	}
+}
+
+func TestObservations_EmptyDesktopAliasSuppressesSchedulerRevisit(t *testing.T) {
+	key := resolve.GemKey(observationLeague, "Siege Ballista", "1")
+	demand := book.Demand{Key: key, SnapshotTime: observationT0,
+		Ninja:           resolve.Observation{Key: key, Source: resolve.SourceNinja, At: observationT0},
+		PickProbability: 1}
+	s, err := book.NewScheduler(league.Historical(observationLeague), resolve.Policy{
+		ListingCount: 3, MaxRevisitAge: 6 * time.Hour}, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := []TradeLookupResult{
+		{Gem: key.Name, Variant: "1", FetchedAt: observationT0.Add(-8 * time.Hour), Listings: []TradeListingDetail{chaosListing(30, 1, 0, false)}},
+		{Gem: key.Name, Variant: "1/0", FetchedAt: observationT0},
+	}
+	if err := s.Reconcile([]book.Demand{demand}, Observations(observationLeague, rows)); err != nil {
+		t.Fatal(err)
+	}
+	// A later database read may lag the desktop submission already reconciled.
+	if err := s.Reconcile([]book.Demand{demand}, Observations(observationLeague, rows[:1])); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := s.Take(observationT0, resolve.Rate{}); ok {
+		t.Fatalf("fresh empty alias selected %v", got.Key)
+	}
+	if got := s.Stats(observationT0); got.NeverChecked != 0 || got.Overdue != 0 {
+		t.Fatalf("desktop check stats = %+v", got)
+	}
+	got, ok := s.Take(observationT0.Add(6*time.Hour), resolve.Rate{})
+	if !ok || got.Key != key {
+		t.Fatalf("at deadline selected %v, %v; want canonical %v", got.Key, ok, key)
 	}
 }
