@@ -7,41 +7,28 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { formatPrice, setDivineRate } from '$lib/price.svelte';
 	import {
-		alertPanels,
 		exceptionalView,
 		type AlertPanel,
 		type ExceptionalSupportsPayload,
 	} from '$lib/compass/font-alerts-view';
 	import GemIcon from '../../routes/(app)/components/GemIcon.svelte';
 
-	let { configMode, label, dismissed, onAlerts }: {
+	let { configMode, label, dismissed, panels }: {
 		configMode: boolean;
 		label: string;
 		dismissed: boolean;
-		onAlerts(panels: AlertPanel[], readSeq: number): void;
+		panels: AlertPanel[];
 	} = $props();
 
-	const ALERTS_POLL_MS = 500;
 	const PRICES_POLL_MS = 5000;
 
-	let panels = $state<AlertPanel[]>([]);
 	let prices = $state<ExceptionalSupportsPayload | null>(null);
 	let nowMs = $state(Date.now());
 
 	const view = $derived(exceptionalView(prices, nowMs, formatPrice));
 
-	async function pollAlerts() {
-		nowMs = Date.now();
-		try {
-			const read = await invoke<{ alerts: string[]; readSeq: number }>('get_font_alerts');
-			panels = alertPanels(read.alerts);
-			onAlerts(panels, read.readSeq);
-		} catch (e) {
-			console.warn('[overlay] get_font_alerts failed:', e);
-		}
-	}
-
 	async function pollPrices() {
+		nowMs = Date.now();
 		try {
 			prices = await invoke<ExceptionalSupportsPayload | null>('get_exceptional_support_prices');
 			// Separate WebView: the rate rides the payload (only the comparator feeds it otherwise).
@@ -53,12 +40,11 @@
 
 	// Overlay onMount is unreliable; poll from an effect with cleanup.
 	$effect(() => {
-		pollAlerts();
 		pollPrices();
-		const alerts = setInterval(pollAlerts, ALERTS_POLL_MS);
+		const clock = setInterval(() => { nowMs = Date.now(); }, 500);
 		const priceTimer = setInterval(pollPrices, PRICES_POLL_MS);
 		return () => {
-			clearInterval(alerts);
+			clearInterval(clock);
 			clearInterval(priceTimer);
 		};
 	});

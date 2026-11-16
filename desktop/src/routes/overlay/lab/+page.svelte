@@ -15,7 +15,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { createDismissal, createDismissalHost } from '$lib/overlay/widgets/widget-dismissal.svelte';
 	import { widgetsFor } from '$lib/overlay/widgets/widget-registry';
-	import type { AlertPanel } from '$lib/compass/font-alerts-view';
+	import { alertPanels, type AlertPanel } from '$lib/compass/font-alerts-view';
 	import LabCompassWidget from '$lib/compass/LabCompassWidget.svelte';
 	import LabPathstripWidget from '$lib/compass/LabPathstripWidget.svelte';
 	import LabTimerWidget from '$lib/compass/LabTimerWidget.svelte';
@@ -34,11 +34,13 @@
 	setContext(LAB_SESSION, labSession);
 	let panels = $state<AlertPanel[]>([]);
 	let readSeq = $state(0);
+	let alertsReady = $state(false);
 	const alertsDismissal = createDismissal({
 		spec: widgetsFor(LAB_WINDOW_LABEL).find((spec) => spec.id === 'lab.fontalerts')!,
 		shown: () => panels.length > 0,
 		contentKey: () => readSeq,
-		settings: () => ssot.overlayDismiss
+		settings: () => ssot.overlayDismiss,
+		contentReady: () => alertsReady
 	});
 	createDismissalHost({
 		window: LAB_WINDOW_LABEL,
@@ -47,10 +49,29 @@
 		listen, invoke,
 		frame: () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
 	});
-	function onAlerts(next: AlertPanel[], seq: number) {
-		panels = next;
-		readSeq = seq;
-	}
+	// Load independently of WidgetHost placement so an unplaced/empty stack can still acknowledge.
+	$effect(() => {
+		let disposed = false;
+		let loading = false;
+		async function pollAlerts() {
+			if (loading) return;
+			loading = true;
+			try {
+				const read = await invoke<{ alerts: string[]; readSeq: number }>('get_font_alerts');
+				if (disposed) return;
+				panels = alertPanels(read.alerts);
+				readSeq = read.readSeq;
+				alertsReady = true;
+			} catch (e) {
+				console.warn('[overlay] get_font_alerts failed:', e);
+			} finally {
+				loading = false;
+			}
+		}
+		void pollAlerts();
+		const timer = setInterval(pollAlerts, 500);
+		return () => { disposed = true; clearInterval(timer); };
+	});
 
 	/**
 	 * Where the font alert stack ships for a player who has not placed it:
@@ -84,7 +105,7 @@
 		{:else if spec.id === 'lab.comparator'}
 			<LabComparatorWidget {configMode} label={spec.label} />
 		{:else if spec.id === 'lab.fontalerts'}
-			<LabFontAlertsWidget {configMode} label={spec.label} dismissed={alertsDismissal.hidden} {onAlerts} />
+			<LabFontAlertsWidget {configMode} label={spec.label} dismissed={alertsDismissal.hidden} {panels} />
 		{/if}
 	{/snippet}
 </WidgetHost>

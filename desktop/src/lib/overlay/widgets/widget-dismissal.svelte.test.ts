@@ -26,13 +26,14 @@ afterEach(() => { cleanups.splice(0).forEach((stop) => stop()); vi.useRealTimers
 const settle = async () => { flushSync(); await tick(); await Promise.resolve(); flushSync(); };
 function root(run: () => void) { cleanups.push(client.effect_root(run)); flushSync(); }
 function setup(id = 'temple.offers', loaded = true) {
-	const input = client.proxy({ shown: true, key: 1, settings: loaded ? {
+	const input = client.proxy({ shown: true, key: 1, contentReady: true, settings: loaded ? {
 		timeoutSeconds: 10, shortcut: esc, overlays: {}
 	} as DismissSettings : null });
 	let dismissal!: ReturnType<typeof createDismissal>;
 	root(() => { dismissal = createDismissal({
 		spec: WIDGETS.find((spec) => spec.id === id)!,
-		shown: () => input.shown, contentKey: () => input.key, settings: () => input.settings
+		shown: () => input.shown, contentKey: () => input.key, settings: () => input.settings,
+		contentReady: () => input.contentReady
 	}); });
 	return { input, dismissal };
 }
@@ -122,7 +123,10 @@ function host(ack = true, loaded = true, id = 'temple.offers') {
 	const frames: (() => void)[] = [];
 	let deliver!: (event: { payload: PendingDismiss }) => void;
 	const unlisten = vi.fn();
-	const invoke = vi.fn(async (_command: string, _args: Record<string, unknown>) => {});
+	const atAck: { gen: unknown; shown: boolean; hidden: boolean }[] = [];
+	const invoke = vi.fn(async (command: string, args: Record<string, unknown>) => {
+		if (command === 'overlay_dismiss_ack') atAck.push({ gen: args.gen, shown: input.shown, hidden: dismissal.hidden });
+	});
 	root(() => createDismissalHost({
 		window: id.split('.')[0], dismissals: [dismissal], ack,
 		pending: () => state.pending,
@@ -131,10 +135,48 @@ function host(ack = true, loaded = true, id = 'temple.offers') {
 	}));
 	const advanceFrame = async () => { expect(frames.length).toBe(1); frames.shift()!(); await settle(); };
 	const acks = () => invoke.mock.calls.filter(([cmd]) => cmd === 'overlay_dismiss_ack').map(([, args]) => args.gen);
-	return { input, dismissal, state, deliver: (gen: number, shortcut = esc) => deliver({ payload: { gen, shortcut } }), invoke, frames, advanceFrame, acks, unlisten };
+	return { input, dismissal, state, deliver: (gen: number, shortcut = esc) => deliver({ payload: { gen, shortcut } }), invoke, frames, advanceFrame, acks, atAck, unlisten };
 }
 
 describe('dismissal host', () => {
+	it.each([0, 1])('hides initial lab content arriving after %s repaint frames before acknowledging', async (elapsed) => {
+		const h = host(true, true, 'lab.fontalerts');
+		h.input.shown = false; h.input.key = 0; h.input.settings!.timeoutSeconds = 0;
+		await settle(); h.deliver(1); await settle();
+		if (elapsed) await h.advanceFrame();
+		h.input.shown = true; h.input.key = 7; await settle();
+		for (let n = elapsed; n < 2; n++) await h.advanceFrame();
+		expect(h.dismissal.hidden).toBe(true); expect(h.acks()).toEqual([]);
+		await h.advanceFrame(); expect(h.acks()).toEqual([]);
+		await h.advanceFrame();
+		expect(h.atAck).toEqual([{ gen: 1, shown: true, hidden: true }]);
+		h.deliver(1); await settle(); expect(h.frames).toHaveLength(0);
+		h.input.key = 8; await settle(); expect(h.dismissal.hidden).toBe(false);
+	});
+	it.each([false, true])('waits for initial lab content to resolve (shown=%s)', async (shown) => {
+		const h = host(true, true, 'lab.fontalerts');
+		h.input.shown = false; h.input.contentReady = false;
+		await settle(); h.deliver(1); await settle();
+		expect(h.acks()).toEqual([]); expect(h.frames).toHaveLength(0);
+		h.input.shown = shown; h.input.key = 7; h.input.contentReady = true;
+		await settle(); expect(h.acks()).toEqual([]);
+		await h.advanceFrame(); expect(h.acks()).toEqual([]);
+		await h.advanceFrame();
+		expect(h.atAck).toEqual([{ gen: 1, shown, hidden: shown }]);
+	});
+	it('acknowledges genuinely empty lab content', async () => {
+		const h = host(true, true, 'lab.fontalerts'); h.input.shown = false;
+		await settle(); h.deliver(1); await settle();
+		await h.advanceFrame(); await h.advanceFrame();
+		expect(h.atAck).toEqual([{ gen: 1, shown: false, hidden: false }]);
+	});
+	it('acknowledges a nonmatching shortcut while delayed lab content remains visible', async () => {
+		const h = host(true, true, 'lab.fontalerts'); h.input.shown = false;
+		await settle(); h.deliver(1, f); await settle();
+		h.input.shown = true; h.input.key = 7; await settle();
+		await h.advanceFrame(); await h.advanceFrame();
+		expect(h.atAck).toEqual([{ gen: 1, shown: true, hidden: false }]);
+	});
 	it('registers the temple host on mount', async () => {
 		const h = host(); await settle();
 		expect(h.invoke).toHaveBeenCalledWith('overlay_dismiss_host', { window: 'temple' });

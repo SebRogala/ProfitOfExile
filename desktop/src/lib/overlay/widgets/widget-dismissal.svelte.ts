@@ -2,11 +2,12 @@ import { tick, untrack } from 'svelte';
 import type { BossLootShortcut, DismissSettings, PendingDismiss } from '$lib/stores/ssot.svelte';
 import type { WidgetSpec } from './widget-registry';
 
-export function createDismissal({ spec, shown, contentKey, settings }: {
+export function createDismissal({ spec, shown, contentKey, settings, contentReady = () => true }: {
 	spec: WidgetSpec;
 	shown(): boolean;
 	contentKey(): unknown;
 	settings(): DismissSettings | null;
+	contentReady?(): boolean;
 }) {
 	let hidden = $state(false);
 	let startedAt = $state<number | null>(null);
@@ -41,14 +42,18 @@ export function createDismissal({ spec, shown, contentKey, settings }: {
 
 	return {
 		get hidden() { return hidden; },
-		get ready() { return settings() !== null; },
+		get ready() { return settings() !== null && contentReady(); },
 		applyKey(pressed: BossLootShortcut) {
 			const configured = settings();
-			if (!configured || !spec.dismiss?.key || !shown()) return;
+			if (!configured || !spec.dismiss?.key || !shown() || hidden) return false;
 			const value = Object.hasOwn(configured.overlays, spec.id) ? configured.overlays[spec.id].shortcut : 'inherit';
 			const effective = value === 'inherit' ? configured.shortcut : value.override;
 			if (pressed.key === effective.key && pressed.shift === effective.shift &&
-				pressed.ctrl === effective.ctrl && pressed.alt === effective.alt) hidden = true;
+				pressed.ctrl === effective.ctrl && pressed.alt === effective.alt) {
+				hidden = true;
+				return true;
+			}
+			return false;
 		}
 	};
 }
@@ -84,13 +89,20 @@ export function createDismissalHost({ window, dismissals, pending, listen, invok
 				await tick();
 				if (disposed || !dismissals.every((dismissal) => dismissal.ready)) break;
 				const next = [...queued.values()].sort((a, b) => a.gen - b.gen)[0];
-				for (const dismissal of dismissals) dismissal.applyKey(next.shortcut);
-				await tick();
-				if (disposed) break;
-				await frame();
-				if (disposed) break;
-				await frame();
-				if (disposed) break;
+				let changed: boolean;
+				do {
+					for (const dismissal of dismissals) dismissal.applyKey(next.shortcut);
+					await tick();
+					if (disposed) return;
+					await frame();
+					if (disposed) return;
+					await frame();
+					await tick();
+					if (disposed || !dismissals.every((dismissal) => dismissal.ready)) return;
+					// A read arriving during repaint can restore content; its hide needs two fresh frames.
+					changed = false;
+					for (const dismissal of dismissals) changed = dismissal.applyKey(next.shortcut) || changed;
+				} while (changed);
 				if (ack) await invoke('overlay_dismiss_ack', { window, gen: next.gen });
 				applied.add(next.gen);
 				queued.delete(next.gen);
