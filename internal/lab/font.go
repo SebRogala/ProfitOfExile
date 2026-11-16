@@ -11,7 +11,7 @@ type FontResult struct {
 	Time              time.Time
 	Color             string  // RED, GREEN, BLUE
 	Variant           string  // "1", "1/20", "20", "20/20"
-	Pool              int     // total unique transfigured gem names of that color
+	Pool              int     // distinct eligible transfigured names of this color in the raw snapshot, priced or not
 	PricedGems        int     // how many of Pool carry a price at THIS variant (Pool counts every possible outcome, priced or not)
 	Winners           int     // count of tier-qualifying gems (LOW+ for safe, MID-HIGH+ for premium, TOP for jackpot)
 	PWin              float64 // probability of seeing at least 1 winner in 3 picks
@@ -180,11 +180,8 @@ func computeLiquidityRisk(thinCount, winnerCount int) string {
 // Safe (LOW+ tier winners), Premium (MID-HIGH+ tier winners), and Jackpot (TOP only).
 // Winner contributions are risk-adjusted using SellProbabilityFactor and StabilityDiscount.
 // Pool size = count of distinct transfigured gem NAMES per color (across all variants).
-func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
+func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) FontAnalysis {
 	// Build feature lookup: "name|variant" -> *GemFeature
-	// Build pool and entries from features — single source of truth.
-	// ComputeGemFeatures has already applied isFontOutcome (eligibility.go) and
-	// its own chaos > 5 floor, so the eligibility rules are not restated here.
 	type featureKey struct{ name, variant string }
 	featureLookup := make(map[featureKey]*GemFeature, len(features))
 	for i := range features {
@@ -197,6 +194,11 @@ func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
 		"RED":   {},
 		"GREEN": {},
 		"BLUE":  {},
+	}
+	for _, g := range gems {
+		if isFontOutcome(g) && hasAttributeColor(g) {
+			poolNames[g.GemColor][g.Name] = struct{}{}
+		}
 	}
 
 	// Variant-specific entries for winner evaluation.
@@ -219,7 +221,9 @@ func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
 			continue
 		}
 
-		poolNames[color][f.Name] = struct{}{}
+		if _, eligible := poolNames[color][f.Name]; !eligible || f.Chaos <= 5 {
+			continue
+		}
 
 		byColor[color][f.Variant] = append(byColor[color][f.Variant], gemEntry{
 			name:     f.Name,

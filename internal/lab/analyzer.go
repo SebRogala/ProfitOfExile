@@ -144,12 +144,7 @@ func (a *Analyzer) RunFont(ctx context.Context, scope league.Scope) error {
 			return err
 		}
 	}
-	if len(features) == 0 {
-		a.logger.Info("font: no gem features available yet, skipping (run v2 pipeline first)")
-		return nil
-	}
-
-	analysis := AnalyzeFont(snapTime, features)
+	analysis := AnalyzeFont(snapTime, gems, features)
 
 	// Combine all three modes for DB persistence.
 	allResults := make([]FontResult, 0, len(analysis.Safe)+len(analysis.Premium)+len(analysis.Jackpot))

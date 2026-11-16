@@ -1,6 +1,7 @@
 package lab
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -88,6 +89,15 @@ func makeFeatureColored(name, variant, color string, chaos float64, listings int
 	return f
 }
 
+func fontSnapshotFromFeatures(features []GemFeature) []GemPrice {
+	gems := make([]GemPrice, 0, len(features))
+	for _, f := range features {
+		gems = append(gems, GemPrice{Name: f.Name, Variant: f.Variant, GemColor: f.GemColor,
+			IsTransfigured: true, Chaos: f.Chaos, Listings: f.Listings})
+	}
+	return gems
+}
+
 func TestAnalyzeFont_SafeMode_MIDPlusWinners(t *testing.T) {
 	now := time.Now()
 
@@ -98,7 +108,7 @@ func TestAnalyzeFont_SafeMode_MIDPlusWinners(t *testing.T) {
 		makeFeature("Bash of Nothing", "20/20", 10, 20, "LOW", 0.6, 0.8),
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 
 	var found *FontResult
 	for i := range analysis.Safe {
@@ -134,7 +144,7 @@ func TestAnalyzeFont_PremiumMode_MIDHIGHPlusWinners(t *testing.T) {
 		makeFeature("Bash of Nothing", "20/20", 10, 20, "LOW", 0.6, 0.8),
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 
 	var found *FontResult
 	for i := range analysis.Premium {
@@ -167,7 +177,7 @@ func TestAnalyzeFont_JackpotMode_TOPOnly(t *testing.T) {
 		makeFeature("Bash of Nothing", "20/20", 10, 20, "LOW", 0.6, 0.8),
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 
 	var found *FontResult
 	for i := range analysis.Jackpot {
@@ -205,7 +215,7 @@ func TestAnalyzeFont_RiskAdjustedAvgWin(t *testing.T) {
 		makeFeature("Gem B", "20/20", 200, 30, "TOP", 0.9, 0.95), // risk-adjusted: 200*0.9*0.95 = 171
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 
 	var found *FontResult
 	for i := range analysis.Safe {
@@ -283,13 +293,13 @@ func TestAnalyzeFont_AllModesProduceIndependentResults(t *testing.T) {
 		makeFeatureColored("Red Gem 1", "20/20", "RED", 80, 10, "MID-HIGH", 0.8, 0.9),
 		makeFeatureColored("Red Gem 2", "20/20", "RED", 40, 10, "MID", 0.8, 0.9),
 		makeFeatureColored("Red Gem 3", "20/20", "RED", 45, 10, "MID", 0.8, 0.9),
-		makeFeatureColored("Red Low", "20/20", "RED", 5, 10, "LOW", 0.6, 0.8),
+		makeFeatureColored("Red Low", "20/20", "RED", 6, 10, "LOW", 0.6, 0.8),
 		makeFeatureColored("Blue Top", "20/20", "BLUE", 300, 10, "TOP", 0.9, 0.95),
 		makeFeatureColored("Blue High", "20/20", "BLUE", 150, 10, "HIGH", 0.85, 0.95),
-		makeFeatureColored("Blue Low", "20/20", "BLUE", 5, 10, "LOW", 0.6, 0.8),
+		makeFeatureColored("Blue Low", "20/20", "BLUE", 6, 10, "LOW", 0.6, 0.8),
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 
 	// Verify safe mode: LOW+ winners
 	var redSafeWinners, blueSafeWinners int
@@ -356,7 +366,7 @@ func TestAnalyzeFont_PoolIsUniqueNamesAcrossVariants(t *testing.T) {
 		makeFeature("Slam of Force", "20/20", 50, 10, "MID", 0.7, 0.85),
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 
 	// Pool should be 2 unique names (Cleave of Rage + Slam of Force), not 3 rows
 	for _, r := range analysis.Safe {
@@ -376,7 +386,7 @@ func TestAnalyzeFont_ExcludesCorruptedAndTrarthus(t *testing.T) {
 		makeFeature("Cleave of Rage", "20/20", 100, 10, "HIGH", 0.8, 0.9),
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 	for _, r := range analysis.Safe {
 		if r.Color == "RED" && r.Variant == "20/20" {
 			if r.Pool != 1 {
@@ -388,7 +398,7 @@ func TestAnalyzeFont_ExcludesCorruptedAndTrarthus(t *testing.T) {
 }
 
 func TestAnalyzeFont_EmptyInput(t *testing.T) {
-	analysis := AnalyzeFont(time.Now(), nil)
+	analysis := AnalyzeFont(time.Now(), nil, nil)
 	if len(analysis.Safe) != 0 {
 		t.Errorf("got %d safe results, want 0", len(analysis.Safe))
 	}
@@ -399,7 +409,7 @@ func TestAnalyzeFont_EmptyInput(t *testing.T) {
 		t.Errorf("got %d jackpot results, want 0", len(analysis.Jackpot))
 	}
 
-	analysis = AnalyzeFont(time.Now(), []GemFeature{})
+	analysis = AnalyzeFont(time.Now(), []GemPrice{}, []GemFeature{})
 	if len(analysis.Safe) != 0 {
 		t.Errorf("got %d safe results, want 0", len(analysis.Safe))
 	}
@@ -420,7 +430,7 @@ func TestAnalyzeFont_PartialVariantCoverage(t *testing.T) {
 		makeFeature("Gem C", "1", 5, 10, "LOW", 0.5, 0.8),
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 	for _, r := range analysis.Safe {
 		if r.Color == "RED" && r.Variant == "20/20" {
 			// Pool should be 3 (all unique names), even though only 2 have 20/20 entries
@@ -446,7 +456,7 @@ func TestAnalyzeFont_ThinPoolGems(t *testing.T) {
 		makeFeature("Gem C", "20/20", 80, 15, "MID", 0.8, 0.9),
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 	for _, r := range analysis.Safe {
 		if r.Color == "RED" && r.Variant == "20/20" {
 			// All 3 are MID+ winners in safe mode, 2 have < 5 listings
@@ -470,7 +480,7 @@ func TestAnalyzeFont_GemsWithoutFeaturesSkipped(t *testing.T) {
 		makeFeature("Gem A", "20/20", 100, 10, "TOP", 0.8, 0.9),
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 	for _, r := range analysis.Jackpot {
 		if r.Color == "RED" && r.Variant == "20/20" {
 			// Only Gem A has features. With 1 gem, tier detection is trivial.
@@ -505,7 +515,7 @@ func TestAnalyzeFont_PWin3PicksStillWorksWithTierBasedCounts(t *testing.T) {
 		features[i] = makeFeature(name, "20/20", chaos, 10, tier, 0.8, 0.9)
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, gems, features)
 	for _, r := range analysis.Safe {
 		if r.Color == "RED" && r.Variant == "20/20" {
 			if r.Pool != 10 {
@@ -539,7 +549,7 @@ func TestAnalyzeFont_LowConfidenceExcludedFromEV(t *testing.T) {
 		makeFeature("Normal B", "20/20", 100, 60, "MID", 0.8, 0.9),
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 
 	var found *FontResult
 	for i := range analysis.Safe {
@@ -584,7 +594,7 @@ func TestAnalyzeFont_PricedGemsCountsOnlyThisVariantWhilePoolStaysWhole(t *testi
 		makeFeature("Cleave of Rage", "20/20", 250, 15, "TOP", 0.9, 0.95),
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 
 	byVariant := make(map[string]FontResult, len(analysis.Safe))
 	for _, r := range analysis.Safe {
@@ -626,7 +636,7 @@ func TestAnalyzeFont_PricedGemsExcludesLowConfidenceGems(t *testing.T) {
 		lowConf,
 	}
 
-	analysis := AnalyzeFont(now, features)
+	analysis := AnalyzeFont(now, fontSnapshotFromFeatures(features), features)
 
 	var got *FontResult
 	for i := range analysis.Safe {
@@ -667,5 +677,113 @@ func TestLensCraftEV_MissingEitherPriceHasNoEV(t *testing.T) {
 	}
 	if ev := LensCraftEV(&price, nil); ev != nil {
 		t.Errorf("missing support: ev = %v, want nil", *ev)
+	}
+}
+
+func TestAnalyzeFont_CompleteSnapshotPool(t *testing.T) {
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	gems := []GemPrice{
+		{Name: "Valuable", Variant: "20/20", GemColor: "RED", IsTransfigured: true, Chaos: 100, Listings: 50},
+		{Name: "Boundary", Variant: "20/20", GemColor: "RED", IsTransfigured: true, Chaos: 5, Listings: 50},
+		{Name: "Cheap", Variant: "20/20", GemColor: "RED", IsTransfigured: true, Chaos: 4, Listings: 50},
+		{Name: "Unpriced", Variant: "1", GemColor: "RED", IsTransfigured: true},
+	}
+	features := ComputeGemFeatures(now, gems, nil, MarketContext{}, nil, nil)
+	analysis := AnalyzeFont(now, gems, features)
+	for mode, results := range map[string][]FontResult{"safe": analysis.Safe, "premium": analysis.Premium, "jackpot": analysis.Jackpot} {
+		if len(results) != 4 {
+			t.Errorf("%s rows = %d, want 4", mode, len(results))
+		}
+		for _, r := range results {
+			if r.Pool != 4 {
+				t.Errorf("%s/%s pool = %d, want 4", mode, r.Variant, r.Pool)
+			}
+			wantEV := 0.0
+			if r.Variant == "20/20" {
+				// Three of the four equally likely triples contain Valuable.
+				wantEV = 75
+			}
+			if math.Abs(r.EVRaw-wantEV) > 1e-9 {
+				t.Errorf("%s/%s EVRaw = %g, want %g", mode, r.Variant, r.EVRaw, wantEV)
+			}
+		}
+	}
+}
+
+func TestAnalyzeFont_PoolIgnoresSnapshotPrices(t *testing.T) {
+	now := time.Now()
+	gems := []GemPrice{}
+	for _, color := range []string{"RED", "GREEN", "BLUE"} {
+		for _, name := range []string{"A", "B", "C", "D"} {
+			gems = append(gems, GemPrice{Name: color + name, Variant: "1", GemColor: color, IsTransfigured: true})
+		}
+		// Another variant of A must not grow the pool.
+		gems = append(gems, GemPrice{Name: color + "A", Variant: "20/20", GemColor: color, IsTransfigured: true})
+	}
+	for _, price := range []float64{0, 5, 100} {
+		t.Run(fmt.Sprint(price), func(t *testing.T) {
+			for i := range gems {
+				gems[i].Chaos = price
+				gems[i].Listings = 50
+			}
+			features := ComputeGemFeatures(now, gems, nil, MarketContext{}, nil, nil)
+			analysis := AnalyzeFont(now, gems, features)
+			for _, results := range [][]FontResult{analysis.Safe, analysis.Premium, analysis.Jackpot} {
+				if len(results) != 12 {
+					t.Fatalf("rows = %d, want 12", len(results))
+				}
+				for _, r := range results {
+					if r.Pool != 4 {
+						t.Errorf("%s/%s/%s pool = %d, want 4", r.Mode, r.Color, r.Variant, r.Pool)
+					}
+					wantEV := 0.0
+					if price > 5 {
+						if r.Variant == "1" {
+							wantEV = 100
+						} else if r.Variant == "20/20" {
+							wantEV = 75
+						}
+					}
+					if math.Abs(r.EVRaw-wantEV) > 1e-9 {
+						t.Errorf("%s/%s/%s EVRaw = %g, want %g", r.Mode, r.Color, r.Variant, r.EVRaw, wantEV)
+					}
+					if price <= 5 && (r.EV != 0 || r.PricedGems != 0 || r.Winners != 0 || r.PWin != 0 || r.FontsToHit != 0) {
+						t.Errorf("zero-valued pool has valued outcomes: %+v", r)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestAnalyzeFont_SnapshotEligibility(t *testing.T) {
+	eligible := GemPrice{Name: "Eligible", Variant: "20/20", GemColor: "RED", IsTransfigured: true, Chaos: 100, Listings: 50}
+	for _, excluded := range []GemPrice{
+		{Name: "Corrupted", IsTransfigured: true, IsCorrupted: true, GemColor: "RED"},
+		{Name: "Normal", GemColor: "RED"},
+		{Name: "Gem of Trarthus", IsTransfigured: true, GemColor: "RED"},
+		{Name: "Excluded Support", IsTransfigured: true, GemColor: "RED"},
+		{Name: "White", IsTransfigured: true, GemColor: "WHITE"},
+		{Name: "Unresolved", IsTransfigured: true},
+	} {
+		t.Run(excluded.Name, func(t *testing.T) {
+			excluded.Variant, excluded.Chaos, excluded.Listings = "20/20", 1000, 50
+			gems := []GemPrice{eligible, excluded}
+			features := ComputeGemFeatures(time.Now(), gems, nil, MarketContext{}, nil, nil)
+			analysis := AnalyzeFont(time.Now(), gems, features)
+			for _, results := range [][]FontResult{analysis.Safe, analysis.Premium, analysis.Jackpot} {
+				if len(results) != 4 {
+					t.Fatalf("rows = %d, want 4", len(results))
+				}
+				for _, r := range results {
+					if r.Pool != 1 || r.Color != "RED" {
+						t.Errorf("unexpected pool: %+v", r)
+					}
+					if r.Variant == "20/20" && r.EVRaw != 100 {
+						t.Errorf("EVRaw = %g, want 100", r.EVRaw)
+					}
+				}
+			}
+		})
 	}
 }
