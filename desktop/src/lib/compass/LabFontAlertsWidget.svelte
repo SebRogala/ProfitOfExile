@@ -14,7 +14,12 @@
 	} from '$lib/compass/font-alerts-view';
 	import GemIcon from '../../routes/(app)/components/GemIcon.svelte';
 
-	let { configMode, label }: { configMode: boolean; label: string } = $props();
+	let { configMode, label, dismissed, onAlerts }: {
+		configMode: boolean;
+		label: string;
+		dismissed: boolean;
+		onAlerts(panels: AlertPanel[], readSeq: number): void;
+	} = $props();
 
 	const ALERTS_POLL_MS = 500;
 	const PRICES_POLL_MS = 5000;
@@ -28,7 +33,9 @@
 	async function pollAlerts() {
 		nowMs = Date.now();
 		try {
-			panels = alertPanels(await invoke<string[]>('get_font_alerts'));
+			const read = await invoke<{ alerts: string[]; readSeq: number }>('get_font_alerts');
+			panels = alertPanels(read.alerts);
+			onAlerts(panels, read.readSeq);
 		} catch (e) {
 			console.warn('[overlay] get_font_alerts failed:', e);
 		}
@@ -58,7 +65,7 @@
 </script>
 
 <div class="root">
-	{#if panels.length > 0}
+	{#if panels.length > 0 && !dismissed}
 		<div class="stack">
 			{#each panels as panel (panel)}
 				{#if panel === 'exceptional'}
@@ -106,7 +113,7 @@
 				{/if}
 			{/each}
 		</div>
-	{:else if configMode}
+	{:else if configMode && !dismissed}
 		<p class="placeholder">{label}</p>
 	{/if}
 </div>

@@ -70,6 +70,10 @@
 	 * what makes the page and this strip agree (POE-199 L5).
 	 */
 	import { untrack } from 'svelte';
+	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
+	import { createDismissal, createDismissalHost } from '$lib/overlay/widgets/widget-dismissal.svelte';
+	import { widgetsFor } from '$lib/overlay/widgets/widget-registry';
 	import { ssot } from '$lib/stores/ssot.svelte';
 	import { MERCENARY_WINDOW_LABEL } from '$lib/overlay/manager';
 	import WidgetHost from '$lib/overlay/widgets/WidgetHost.svelte';
@@ -133,6 +137,19 @@
 	});
 
 	const shown = $derived(overlayShown(merc, linger, nowMs));
+	const verdictDismissal = createDismissal({
+		spec: widgetsFor(MERCENARY_WINDOW_LABEL).find((spec) => spec.id === 'mercenary.verdict')!,
+		shown: () => shown,
+		contentKey: () => capture?.capturedAtMs,
+		settings: () => ssot.overlayDismiss
+	});
+	createDismissalHost({
+		window: MERCENARY_WINDOW_LABEL, ack: false,
+		dismissals: [verdictDismissal],
+		pending: () => ssot.overlayDismiss?.pending ?? [],
+		listen, invoke,
+		frame: () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
+	});
 	const showsVerdict = $derived(overlayShowsVerdict(merc));
 	const status = $derived(statusLine(merc));
 	const enabled = $derived(enabledSources(merc.sourcesOff));
@@ -175,7 +192,7 @@
 
 <WidgetHost module={MERCENARY_WINDOW_LABEL}>
 	{#snippet content(spec, configMode)}
-		{#if spec.id === 'mercenary.verdict' && shown}
+		{#if spec.id === 'mercenary.verdict' && shown && !verdictDismissal.hidden}
 			<div class="overlay-root side-{side}" bind:this={wrapperEl}>
 			<div class="panel">
 			{#if showsVerdict && capture}

@@ -11,6 +11,11 @@
 	 * widget's normal content is currently hidden.
 	 */
 	import WidgetHost from '$lib/overlay/widgets/WidgetHost.svelte';
+	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
+	import { createDismissal, createDismissalHost } from '$lib/overlay/widgets/widget-dismissal.svelte';
+	import { widgetsFor } from '$lib/overlay/widgets/widget-registry';
+	import type { AlertPanel } from '$lib/compass/font-alerts-view';
 	import LabCompassWidget from '$lib/compass/LabCompassWidget.svelte';
 	import LabPathstripWidget from '$lib/compass/LabPathstripWidget.svelte';
 	import LabTimerWidget from '$lib/compass/LabTimerWidget.svelte';
@@ -27,6 +32,25 @@
 
 	const labSession = createLabSession();
 	setContext(LAB_SESSION, labSession);
+	let panels = $state<AlertPanel[]>([]);
+	let readSeq = $state(0);
+	const alertsDismissal = createDismissal({
+		spec: widgetsFor(LAB_WINDOW_LABEL).find((spec) => spec.id === 'lab.fontalerts')!,
+		shown: () => panels.length > 0,
+		contentKey: () => readSeq,
+		settings: () => ssot.overlayDismiss
+	});
+	createDismissalHost({
+		window: LAB_WINDOW_LABEL,
+		dismissals: [alertsDismissal],
+		pending: () => ssot.overlayDismiss?.pending ?? [],
+		listen, invoke,
+		frame: () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
+	});
+	function onAlerts(next: AlertPanel[], seq: number) {
+		panels = next;
+		readSeq = seq;
+	}
 
 	/**
 	 * Where the font alert stack ships for a player who has not placed it:
@@ -60,7 +84,7 @@
 		{:else if spec.id === 'lab.comparator'}
 			<LabComparatorWidget {configMode} label={spec.label} />
 		{:else if spec.id === 'lab.fontalerts'}
-			<LabFontAlertsWidget {configMode} label={spec.label} />
+			<LabFontAlertsWidget {configMode} label={spec.label} dismissed={alertsDismissal.hidden} {onAlerts} />
 		{/if}
 	{/snippet}
 </WidgetHost>

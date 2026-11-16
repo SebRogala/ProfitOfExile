@@ -24,6 +24,13 @@ import {
 import { placementFor, type WidgetGeometry } from './widget-geometry';
 
 describe('every declared widget', () => {
+	it('enables timeout and key dismissal on exactly the three widgets that lost screen hiding', () => {
+		expect(WIDGETS.filter((widget) => widget.dismiss).map((widget) => [widget.id, widget.dismiss])).toEqual([
+			['temple.offers', { timeout: true, key: true }],
+			['mercenary.verdict', { timeout: true, key: true }],
+			['lab.fontalerts', { timeout: true, key: true }]
+		]);
+	});
 	// The whole registry, not the temple filter below it: a widget added to
 	// another module — or a third temple one — is a row in Settings, a
 	// persisted rectangle and a snippet branch the host will not find, so it has

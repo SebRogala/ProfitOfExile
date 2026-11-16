@@ -97,6 +97,9 @@
 	 * it.
 	 */
 	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
+	import { createDismissal, createDismissalHost } from '$lib/overlay/widgets/widget-dismissal.svelte';
+	import { widgetsFor } from '$lib/overlay/widgets/widget-registry';
 	import TempleDoorDiamond from '$lib/temple/TempleDoorDiamond.svelte';
 	import TempleOfferBoxes from '$lib/temple/TempleOfferBoxes.svelte';
 	import WidgetHost from '$lib/overlay/widgets/WidgetHost.svelte';
@@ -165,6 +168,19 @@
 	 *  so the leave-the-map banner inside this same snippet survives a read that
 	 *  produced a map verdict and no ranking, which is what it is gated on. */
 	const offersVisible = $derived(overlayShowsBoard(temple.status));
+	const offersDismissal = createDismissal({
+		spec: widgetsFor(TEMPLE_WINDOW_LABEL).find((spec) => spec.id === 'temple.offers')!,
+		shown: () => offersVisible,
+		contentKey: () => temple.lastReadAt,
+		settings: () => ssot.overlayDismiss
+	});
+	createDismissalHost({
+		window: TEMPLE_WINDOW_LABEL,
+		dismissals: [offersDismissal],
+		pending: () => ssot.overlayDismiss?.pending ?? [],
+		listen, invoke,
+		frame: () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
+	});
 	/** The room widget's gate and content, null for nothing to draw. Its
 	 *  DIAMOND is deliberately not a status rule (POE-248): there is a move to
 	 *  make and a room to draw it on — the offer boxes live with the PANEL, this
@@ -322,7 +338,7 @@
 	{/snippet}
 
 	{#snippet anchored(spec, frame)}
-		{#if spec.id === 'temple.offers' && offersVisible}
+		{#if spec.id === 'temple.offers' && offersVisible && !offersDismissal.hidden}
 			{@const obstacles = neverCoverRects(temple.layout, frame.scaleFactor)}
 			{#if leaveBanner}
 				{@const at = bannerPlacement({

@@ -165,6 +165,7 @@ pub const ALERT_CRAFT_TYPES: [&str; 2] = ["exchange_exceptional", "transform_dir
 pub struct AlertSeen {
     exceptional: bool,
     transfigure: bool,
+    read_seq: u64,
 }
 
 /// An active read replaces the set with the alert crafts it lists; an inactive
@@ -174,6 +175,7 @@ pub(crate) fn note_alert_read(seen: &mut AlertSeen, font_active: bool, options: 
     *seen = AlertSeen {
         exceptional: lists(ALERT_CRAFT_TYPES[0]),
         transfigure: lists(ALERT_CRAFT_TYPES[1]),
+        read_seq: seen.read_seq + 1,
     };
 }
 
@@ -205,20 +207,34 @@ pub fn alert_crafts(seen: &AlertSeen) -> Vec<&'static str> {
 /// Called on `FontOpened` and wherever the font session data is reset, so a
 /// new panel or lifecycle starts with no alert standing.
 pub(crate) fn clear_alert_reads(slot: &Mutex<AlertSeen>) {
-    *slot.lock().unwrap_or_else(|e| e.into_inner()) = AlertSeen::default();
+    let mut seen = slot.lock().unwrap_or_else(|e| e.into_inner());
+    *seen = AlertSeen { read_seq: seen.read_seq + 1, ..AlertSeen::default() };
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FontAlerts {
+    pub alerts: Vec<String>,
+    pub read_seq: u64,
+}
+
+impl From<&AlertSeen> for FontAlerts {
+    fn from(seen: &AlertSeen) -> Self {
+        Self {
+            alerts: alert_crafts(seen).into_iter().map(String::from).collect(),
+            read_seq: seen.read_seq,
+        }
+    }
 }
 
 #[tauri::command]
-pub fn get_font_alerts(state: tauri::State<AppState>) -> Vec<String> {
+pub fn get_font_alerts(state: tauri::State<AppState>) -> FontAlerts {
     let seen = *state
         .lab_scan
         .font_alert_seen
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    alert_crafts(&seen)
-        .into_iter()
-        .map(String::from)
-        .collect()
+    FontAlerts::from(&seen)
 }
 
 #[tauri::command]
@@ -259,6 +275,53 @@ mod tests {
         let mut seen = AlertSeen::default();
         note_alert_read(&mut seen, true, options);
         alert_crafts(&seen)
+    }
+
+    #[test]
+    fn identical_alert_reads_have_distinct_read_identities() {
+        let mut seen = AlertSeen::default();
+        note_alert_read(&mut seen, true, &[opt("exchange_exceptional")]);
+        let first = FontAlerts::from(&seen);
+        note_alert_read(&mut seen, true, &[opt("exchange_exceptional")]);
+        let second = FontAlerts::from(&seen);
+        assert_eq!(first.alerts, vec!["exchange_exceptional"]);
+        assert_eq!(second.alerts, first.alerts);
+        assert!(second.read_seq > first.read_seq);
+    }
+
+    #[test]
+    fn a_reset_never_reuses_a_read_identity() {
+        let slot = Mutex::new(AlertSeen::default());
+        note_alert_read(&mut slot.lock().unwrap(), true, &[opt("transform_direct")]);
+        let first = FontAlerts::from(&*slot.lock().unwrap());
+        clear_alert_reads(&slot);
+        let reset = FontAlerts::from(&*slot.lock().unwrap());
+        assert!(reset.alerts.is_empty());
+        assert!(reset.read_seq > first.read_seq);
+        note_alert_read(&mut slot.lock().unwrap(), true, &[opt("transform_direct")]);
+        let next = FontAlerts::from(&*slot.lock().unwrap());
+        assert_eq!(next.alerts, first.alerts);
+        assert!(next.read_seq > reset.read_seq);
+    }
+
+    #[test]
+    fn an_inactive_read_advances_the_read_identity() {
+        let mut seen = AlertSeen::default();
+        note_alert_read(&mut seen, true, &[opt("exchange_exceptional")]);
+        let first = FontAlerts::from(&seen);
+        note_alert_read(&mut seen, false, &[]);
+        let inactive = FontAlerts::from(&seen);
+        assert!(inactive.alerts.is_empty());
+        assert!(inactive.read_seq > first.read_seq);
+    }
+
+    #[test]
+    fn the_alert_payload_exposes_alerts_and_camel_case_read_identity() {
+        let mut seen = AlertSeen::default();
+        note_alert_read(&mut seen, true, &[opt("transform_direct")]);
+        assert_eq!(serde_json::to_value(FontAlerts::from(&seen)).unwrap(), serde_json::json!({
+            "alerts": ["transform_direct"], "readSeq": 1
+        }));
     }
 
     #[test]
@@ -346,7 +409,7 @@ mod tests {
         // check when the slot is free then, otherwise after the read's write.
         let check = || {
             if let Ok(mut seen) = slot.try_lock() {
-                *seen = AlertSeen::default();
+                *seen = AlertSeen { read_seq: seen.read_seq + 1, ..AlertSeen::default() };
                 ended.set(true);
                 return true; // the token read before the end
             }

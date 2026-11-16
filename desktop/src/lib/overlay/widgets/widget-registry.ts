@@ -8,6 +8,19 @@
  * absolutely-positioned container per entry, Rust persists its rectangle under
  * the entry's `id`, and Settings (POE-226) draws one row per entry.
  *
+ * Current dismissal table (POE-398 C7); Client.txt/own signals stay in their owners:
+ * temple.offers: timeout + key; POE-389 removed the panel detect loop and its screen hide.
+ * mercenary.verdict: timeout + key; POE-390 removed liveness reads that reached Idle/linger.
+ * lab.fontalerts: timeout + key; POE-391 replaced frame aging with the last press's alert set.
+ * temple.door: existing Client.txt advice end.
+ * lab.comparator: existing Client.txt gems-cleared.
+ * lab.compass: existing in-lab visibility.
+ * lab.pathstrip: existing in-lab visibility.
+ * lab.timer: existing in-lab visibility.
+ * loot.confirmation: existing native deadline.
+ * loot.capture: existing native deadline.
+ * prompt.read: existing read/context end.
+ *
  * # Why the shipped numbers are CSS pixels
  *
  * Persisted geometry is PHYSICAL, window-relative pixels — the unit Rust's
@@ -32,6 +45,8 @@ import { MERC_OVERLAY_DEFAULTS } from '../overlay-defaults';
 
 /** One widget a module's overlay draws. */
 export interface WidgetSpec {
+	/** Visual dismissal only; never clears the module's read context. */
+	dismiss?: { timeout?: true; key?: true };
 	/**
 	 * `"<module>.<widget>"` — the key Rust persists the placement under.
 	 *
@@ -174,6 +189,7 @@ export const WIDGETS: readonly WidgetSpec[] = [
 	},
 	{
 		id: 'temple.offers',
+		dismiss: { timeout: true, key: true },
 		module: 'temple',
 		label: 'Temple offer boxes',
 		// ANCHORED: only `w` is read, and since POE-260 it is the box's ACTUAL
@@ -224,6 +240,7 @@ export const WIDGETS: readonly WidgetSpec[] = [
 	},
 	{
 		id: 'mercenary.verdict',
+		dismiss: { timeout: true, key: true },
 		module: 'mercenary',
 		label: 'Merc Verdict',
 		// The strip's shipped placement lives in `../overlay-defaults.ts`, one
@@ -270,6 +287,7 @@ export const WIDGETS: readonly WidgetSpec[] = [
 	},
 	{
 		id: 'lab.fontalerts',
+		dismiss: { timeout: true, key: true },
 		module: 'lab',
 		label: 'Font alerts',
 		// The 1080p answer of `fontAlertsDefaultPlacement`, and only the
