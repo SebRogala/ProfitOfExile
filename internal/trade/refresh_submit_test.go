@@ -133,11 +133,16 @@ func TestBackgroundRefresh_RatePreflightMakesNoClaim(t *testing.T) {
 
 func TestBackgroundRefresh_CancellationStopsOwnedLookup(t *testing.T) {
 	entered := make(chan struct{})
+	release := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
-		<-r.Context().Done()
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
 	}))
 	defer upstream.Close()
+	defer close(release)
 	g := newTestGate(t, upstream, &mockPublisher{}, time.Second)
 	ctx, cancel := runBackground(t, g)
 	result := make(chan string, 1)
