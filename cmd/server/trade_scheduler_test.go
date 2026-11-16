@@ -119,11 +119,11 @@ func TestTradeScheduler_MissingCacheCoversFourMarkets(t *testing.T) {
 
 func TestTradeScheduler_ChaoticSelectable(t *testing.T) {
 	input := &schedulerInputs{stamp: time.Now(), gems: []lab.GemPrice{schedulerGem("Siege Ballista of Splintering", "20")}}
-	input.gems[0].Chaos = 1000
-	for _, name := range []string{"A of Test", "B of Test", "C of Test", "D of Test", "E of Test"} {
+	input.gems[0].Chaos = 5000
+	for i, name := range []string{"A of Test", "B of Test", "C of Test", "D of Test", "E of Test", "F of Test", "G of Test", "H of Test", "I of Test"} {
 		g := schedulerGem(name, "20")
-		g.Chaos = 100
-		g.Listings = 100
+		g.Chaos = float64(200 - i*15)
+		g.Listings = 20
 		input.gems = append(input.gems, g)
 	}
 	if got := lab.ComputeGemClassification(input.gems).Gems[lab.GemClassificationKey{Name: input.gems[0].Name, Variant: "20"}].Tier; got != "CHAOTIC" {

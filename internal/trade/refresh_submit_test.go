@@ -191,10 +191,120 @@ func TestBackgroundRefresh_FailureUsesExistingRetryPolicy(t *testing.T) {
 			if outcome != "failed" || retry.Before(now.Add(tc.delay)) {
 				t.Fatalf("outcome %s retry %s want >= %s", outcome, retry, now.Add(tc.delay))
 			}
+			if tc.status != 429 && !retry.Equal(now.Add(tc.delay)) {
+				t.Fatalf("retry %s want exactly %s", retry, now.Add(tc.delay))
+			}
 			if _, ok := g.cache.Get(CacheKey("Arc of Surging", "1")); ok {
 				t.Fatal("failure manufactured check")
 			}
 		})
+	}
+}
+
+func TestBackgroundRefresh_ReconciliationShedsOverlap(t *testing.T) {
+	var calls atomic.Int32
+	upstream := testGateServer(t, &calls)
+	defer upstream.Close()
+	g := newTestGate(t, upstream, &mockPublisher{}, time.Second)
+	ctx, _ := runBackground(t, g)
+	b := NewBackgroundRefresh(g)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan string, 1)
+	go func() {
+		done <- b.Run(ctx, func(context.Context) (*GateRequest, error) {
+			close(entered)
+			<-release
+			return nil, errors.New("snapshot unavailable")
+		}, nil)
+	}()
+	<-entered
+	outcome := b.Run(ctx, func(context.Context) (*GateRequest, error) { t.Error("overlap reconciled"); return nil, nil }, nil)
+	close(release)
+	if outcome != "busy" {
+		t.Fatalf("overlap outcome=%s", outcome)
+	}
+	if got := <-done; got != "input-error" {
+		t.Fatal(got)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("failed reconciliation submitted %d searches", calls.Load())
+	}
+}
+
+func TestBackgroundRefresh_RacingForegroundOvertakesAdmittedWork(t *testing.T) {
+	order := make(chan string, 2)
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query map[string]interface{} `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		name, _ := body.Query["type"].(string)
+		if name == "" {
+			name, _ = body.Query["term"].(string)
+		}
+		order <- name
+		if name == "Foreground" {
+			<-release
+		}
+		w.Write([]byte(`{"id":"test","result":[],"total":0}`))
+	}))
+	defer upstream.Close()
+	g := newTestGate(t, upstream, &mockPublisher{}, time.Second)
+	b := NewBackgroundRefresh(g)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	foreground := &GateRequest{Gem: "Foreground", Variant: "1", Priority: PriorityHigh, SubmittedAt: time.Now(), Result: make(chan *GateResponse, 1)}
+	outcome := make(chan string, 1)
+	go func() {
+		outcome <- b.Run(ctx, func(ctx context.Context) (*GateRequest, error) { g.Submit(foreground); return backgroundRequest(ctx) }, nil)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		g.mu.Lock()
+		queued := len(g.low) == 1
+		g.mu.Unlock()
+		if queued {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("admitted background not queued")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	runDone := make(chan struct{})
+	go func() { defer close(runDone); g.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-runDone })
+	select {
+	case got := <-order:
+		if got != "Foreground" {
+			t.Fatalf("race chose %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("foreground did not start")
+	}
+	if got := b.Run(ctx, func(context.Context) (*GateRequest, error) { t.Error("overlap claimed"); return nil, nil }, nil); got != "busy" {
+		t.Fatalf("race pileup=%s", got)
+	}
+	close(release)
+	select {
+	case got := <-order:
+		if got != "Arc of Surging" {
+			t.Fatalf("background selected %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("background did not start")
+	}
+	select {
+	case got := <-outcome:
+		if got != "success" {
+			t.Fatal(got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("background did not finish")
 	}
 }
 
