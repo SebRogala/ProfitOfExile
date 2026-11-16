@@ -1,8 +1,8 @@
 /**
  * The text of the global "press <key> to read" prompt (POE-388).
  *
- * Rust decides WHICH mechanic is armed (`read_prompt.rs`, `ssot.readPrompt`);
- * this file only words it, with the key the player actually bound
+ * Rust owns the detected/no-match presentation (`read_prompt.rs`, `ssot.readPrompt`);
+ * this file words it, with the key the player actually bound
  * (`ssot.readHotkey`). Display only: nothing here can start a read.
  */
 import { shortcutLabel } from '$lib/boss-loot/native-adapters';
@@ -18,8 +18,8 @@ export const MECHANIC_WORDS: Record<ReadPromptMechanic, string> = {
 export const NO_MATCH_TEXT = 'Nothing detected. If a mechanic is open, check Settings → OCR Regions → Preview, and press Recalibrate if a region is off.';
 
 /**
- * `Detected <mechanic> - press <key> to read`, or null when nothing is armed
- * or the read key setting has not arrived yet.
+ * No-match guidance, detected mechanic/key, or null while neither is present
+ * (detected text also waits for the bound read key).
  */
 export function readPromptText(source: {
 	readPrompt: ReadPromptSnapshot;

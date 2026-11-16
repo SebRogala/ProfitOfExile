@@ -8,6 +8,7 @@ import {
 } from './ssot.svelte';
 import type { MercenarySlice } from '../mercenaries/capture';
 import { templeSliceDefault, type TempleCustom, type TempleSlice } from '../temple/slice';
+import golden from '../../../contracts/ssot-snapshot.json';
 
 // The store reaches Rust through `invoke` only; the real core module cannot load
 // outside a webview. Same shape as desktop/src/lib/compass/layout-loader.test.ts:13.
@@ -1681,6 +1682,13 @@ describe('the readPrompt slice', () => {
 		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, noMatch: true, seq: 5 } });
 		mod.applySnapshot({ league: { name: null } });
 		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: true, seq: 5 });
+	});
+
+	it('takes the default no-match flag from the native wire fixture', async () => {
+		const mod = await import('./ssot.svelte');
+		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, noMatch: true, seq: 5 } });
+		mod.applySnapshot({ league: { name: null }, readPrompt: golden.readPrompt as SsotSnapshot['readPrompt'] });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: 'divineFont', noMatch: false, seq: 3 });
 	});
 });
 

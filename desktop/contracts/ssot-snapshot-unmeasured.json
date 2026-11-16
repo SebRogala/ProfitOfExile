@@ -407,6 +407,7 @@
   },
   "readPrompt": {
     "mechanic": "divineFont",
+    "noMatch": false,
     "seq": 3
   }
 }

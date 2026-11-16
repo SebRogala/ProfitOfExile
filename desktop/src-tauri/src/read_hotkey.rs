@@ -453,6 +453,7 @@ mod dispatch_tests {
         let world = Arc::new(World::default());
         if !selected { world.misses.lock().unwrap().push("a"); }
         let state = Arc::new(crate::settings::tests::test_app_state());
+        state.modules_enabled.lock().unwrap().insert("temple".into(), true);
         crate::read_prompt::apply_in(&state, crate::read_prompt::Change::Arm(crate::read_prompt::Mechanic::Incursion));
         let (tx, rx) = mpsc::channel();
         let mut shared = sample(PRESSED, true);
