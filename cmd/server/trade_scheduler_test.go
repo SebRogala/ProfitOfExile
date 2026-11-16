@@ -100,6 +100,9 @@ func TestTradeScheduler_MissingCacheCoversFourMarkets(t *testing.T) {
 	for _, variant := range []string{"1", "1/20", "20", "20/20"} {
 		input.gems = append(input.gems, schedulerGem("Siege Ballista of Splintering", variant))
 	}
+	other := schedulerGem("Other of Test", "1")
+	other.Chaos = 0
+	input.gems = append(input.gems, other)
 	s, cache, _, requests := schedulerHarness(t, input)
 	for range 4 {
 		server.HandleTradeTick(context.Background(), s.scope, []byte(`{"league":"Test","variant":"20/20","minTier":"MID"}`), s.Tick)
@@ -110,6 +113,8 @@ func TestTradeScheduler_MissingCacheCoversFourMarkets(t *testing.T) {
 			t.Fatalf("market %s not checked", variant)
 		}
 	}
+	s.Tick(context.Background())
+	expectSchedulerRequest(t, requests, "Other of Test")
 	s.Tick(context.Background())
 	noSchedulerRequest(t, requests)
 	if got := s.queue.Stats(time.Now()); got.NeverChecked != 0 {
