@@ -136,17 +136,17 @@ struct DismissPoll {
 }
 
 impl DismissPoll {
-    fn poll(&mut self, sample: &Sample, on_dismiss: &mut dyn FnMut(&Shortcut) -> u64) -> Option<u64> {
+    fn poll(&mut self, sample: &Sample, on_dismiss: &mut dyn FnMut(&Shortcut) -> u64) -> Vec<u64> {
         self.shortcuts.retain(|(shortcut, _)| sample.dismiss.contains(shortcut));
         for shortcut in &sample.dismiss {
             if !self.shortcuts.iter().any(|(known, _)| known == shortcut) {
                 self.shortcuts.push((shortcut.clone(), ReadPoll::default()));
             }
         }
-        let mut dismissed = None;
+        let mut dismissed = Vec::new();
         for (shortcut, poll) in &mut self.shortcuts {
             if poll.poll(&sample.down, sample.foreground, shortcut, &mut || None).is_some() {
-                dismissed = Some(on_dismiss(shortcut));
+                dismissed.push(on_dismiss(shortcut));
             }
         }
         dismissed
@@ -182,7 +182,7 @@ pub const READERS: &[&dyn ScreenReader<tauri::AppHandle>] = &[
 pub struct ArmedPress<C> {
     pub delay: std::time::Duration,
     pub pendings: Vec<Box<dyn PendingRead<C>>>,
-    pub dismissed: Option<u64>,
+    pub dismissed: Vec<u64>,
 }
 
 pub fn arm_all<C>(
@@ -192,7 +192,7 @@ pub fn arm_all<C>(
     ctx: &C,
 ) -> ArmedPress<C> {
     let pendings = readers.iter().filter_map(|r| r.arm(ctx, &press)).collect();
-    ArmedPress { delay, pendings, dismissed: None }
+    ArmedPress { delay, pendings, dismissed: Vec::new() }
 }
 
 /// Wait for this press's dismissal, then delay and hand one grab to every
@@ -202,12 +202,12 @@ pub fn run_armed<C>(
     ctx: &C,
     sleep: &mut dyn FnMut(std::time::Duration),
     grab: &mut dyn FnMut() -> Result<crate::capture::Capture, crate::capture::CaptureError>,
-    await_hidden: &mut dyn FnMut(u64) -> bool,
+    await_hidden: &mut dyn FnMut(&[u64]) -> bool,
 ) {
     if armed.pendings.is_empty() {
         return;
     }
-    if armed.dismissed.is_some_and(|gen| !await_hidden(gen)) { return; }
+    if !armed.dismissed.is_empty() && !await_hidden(&armed.dismissed) { return; }
     sleep(armed.delay);
     let frame = match grab() {
         // Nothing grabbed and already logged by capture; the press is a no-op.
@@ -275,7 +275,7 @@ pub fn run_dispatcher<C>(
     queue: std::sync::mpsc::Receiver<ArmedPress<C>>,
     sleep: &mut dyn FnMut(std::time::Duration),
     grab: &mut dyn FnMut() -> Result<crate::capture::Capture, crate::capture::CaptureError>,
-    await_hidden: &mut dyn FnMut(u64) -> bool,
+    await_hidden: &mut dyn FnMut(&[u64]) -> bool,
 ) {
     for armed in queue {
         run_armed(armed, ctx, sleep, grab, await_hidden);
@@ -432,7 +432,9 @@ mod dispatch_tests {
         run_dispatcher(&world, rx, &mut |_| events.lock().unwrap().push("sleep".into()), &mut || {
             events.lock().unwrap().push("grab".into());
             Ok(capture(1))
-        }, &mut |gen| {
+        }, &mut |generations| {
+            assert_eq!(generations, &[1]);
+            let gen = generations[0];
             events.lock().unwrap().push(format!("await_hidden({gen}) starts"));
             assert_eq!(ledger.ready(gen, &mut |_| true), None);
             ledger.ack("temple", gen);
@@ -449,9 +451,9 @@ mod dispatch_tests {
     fn a_shared_press_without_an_acknowledgement_in_time_takes_no_grab_and_reads_nothing() {
         let world = Arc::new(World::default());
         let mut armed = arm_all(press(), Duration::ZERO, &[&A], &world);
-        armed.dismissed = Some(1);
-        run_armed(armed, &world, &mut |_| panic!("must not sleep"), &mut || panic!("must not grab"), &mut |gen| {
-            assert_eq!(gen, 1);
+        armed.dismissed = vec![1];
+        run_armed(armed, &world, &mut |_| panic!("must not sleep"), &mut || panic!("must not grab"), &mut |generations| {
+            assert_eq!(generations, &[1]);
             false
         });
         assert!(world.consumed.lock().unwrap().is_empty());
@@ -486,6 +488,44 @@ mod dispatch_tests {
             assert_eq!(grabs, usize::from(acknowledge_earlier));
             assert_eq!(world.consumed.lock().unwrap().len(), usize::from(acknowledge_earlier));
         }
+    }
+
+    #[test]
+    fn same_tick_dismissals_with_only_the_later_ack_take_no_grab() {
+        same_tick_dismissals(false);
+    }
+
+    #[test]
+    fn same_tick_dismissals_grab_once_when_the_earlier_ack_arrives_before_the_deadline() {
+        same_tick_dismissals(true);
+    }
+
+    fn same_tick_dismissals(acknowledge_earlier: bool) {
+        use std::cell::Cell;
+        let world = Arc::new(World::default());
+        let ledger = crate::overlay_dismiss::DismissLedger::default();
+        ledger.register("temple".into());
+        let mut shared = sample(&[70, 71], true);
+        shared.settings.shortcut = Shortcut { key: 70, shift: false, ctrl: false, alt: false };
+        shared.dismiss = vec![shared.settings.shortcut.clone(), Shortcut { key: 71, ..shared.settings.shortcut.clone() }];
+        let (tx, rx) = mpsc::channel();
+        let mut samples = vec![shared].into_iter();
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut |s| ledger.publish(s).gen);
+        drop(tx);
+        ledger.ack("temple", 2);
+        let elapsed = Cell::new(Duration::ZERO);
+        let mut grabs = 0;
+        run_dispatcher(&world, rx, &mut |_| {}, &mut || {
+            assert_eq!(ledger.ready(1, &mut |_| true), Some(true), "F dismissal must be applied before capture");
+            grabs += 1;
+            Ok(capture(1))
+        }, &mut |gen| ledger.await_with(gen, &mut |_| true, &mut || elapsed.get(), &mut |remaining| {
+            if acknowledge_earlier { ledger.ack("temple", 1); }
+            elapsed.set(if acknowledge_earlier { Duration::from_millis(20) } else { remaining });
+        }));
+        assert_eq!(grabs, usize::from(acknowledge_earlier));
+        assert_eq!(world.consumed.lock().unwrap().len(), usize::from(acknowledge_earlier));
+        assert_eq!(elapsed.get(), Duration::from_millis(if acknowledge_earlier { 20 } else { 500 }));
     }
 
     #[test]

@@ -136,9 +136,9 @@ struct LedgerState {
 }
 
 impl LedgerState {
-    fn ready(&self, gen: u64, exists: &mut dyn FnMut(&str) -> bool) -> Option<bool> {
-        if !self.pending.iter().any(|pending| pending.gen == gen) { return Some(false); }
-        self.hosts.iter().all(|(host, acks)| !exists(host) || acks.contains(&gen)).then_some(true)
+    fn ready(&self, generations: &[u64], exists: &mut dyn FnMut(&str) -> bool) -> Option<bool> {
+        if generations.iter().any(|gen| !self.pending.iter().any(|pending| pending.gen == *gen)) { return Some(false); }
+        self.hosts.iter().all(|(host, acks)| !exists(host) || generations.iter().all(|gen| acks.contains(gen))).then_some(true)
     }
 }
 
@@ -178,13 +178,14 @@ impl DismissLedger {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).pending.iter().cloned().collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn ready(&self, gen: u64, exists: &mut dyn FnMut(&str) -> bool) -> Option<bool> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).ready(gen, exists)
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).ready(&[gen], exists)
     }
 
     pub(crate) fn await_with(
         &self,
-        gen: u64,
+        generations: &[u64],
         exists: &mut dyn FnMut(&str) -> bool,
         elapsed: &mut dyn FnMut() -> Duration,
         wait: &mut dyn FnMut(Duration),
@@ -193,18 +194,18 @@ impl DismissLedger {
         loop {
             let remaining = bound.saturating_sub(elapsed());
             if remaining.is_zero() { return false; }
-            if let Some(ready) = self.ready(gen, exists) { return ready; }
+            if let Some(ready) = self.state.lock().unwrap_or_else(|e| e.into_inner()).ready(generations, exists) { return ready; }
             wait(remaining);
         }
     }
 
-    fn await_hidden(&self, app: &tauri::AppHandle, gen: u64) -> bool {
+    fn await_hidden(&self, app: &tauri::AppHandle, generations: &[u64]) -> bool {
         let start = Instant::now();
-        let ready = self.await_with(gen, &mut |host| app.get_webview_window(host).is_some(), &mut || start.elapsed(), &mut |remaining| {
+        let ready = self.await_with(generations, &mut |host| app.get_webview_window(host).is_some(), &mut || start.elapsed(), &mut |remaining| {
             let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
             // Recheck under the wait lock so an acknowledgement between the
             // outer check and the condvar wait cannot lose its notification.
-            if guard.ready(gen, &mut |host| app.get_webview_window(host).is_some()).is_none() {
+            if guard.ready(generations, &mut |host| app.get_webview_window(host).is_some()).is_none() {
                 drop(self.changed.wait_timeout(guard, remaining).unwrap_or_else(|e| e.into_inner()));
             }
         });
@@ -242,8 +243,8 @@ pub(crate) fn publish(app: &tauri::AppHandle, shortcut: &Shortcut) -> u64 {
     pending.gen
 }
 
-pub(crate) fn await_hidden(app: &tauri::AppHandle, gen: u64) -> bool {
-    app.state::<crate::AppState>().dismiss_ledger.await_hidden(app, gen)
+pub(crate) fn await_hidden(app: &tauri::AppHandle, generations: &[u64]) -> bool {
+    app.state::<crate::AppState>().dismiss_ledger.await_hidden(app, generations)
 }
 
 #[cfg(test)]
@@ -286,9 +287,9 @@ mod tests {
     fn absent_hosts_return_without_waiting() {
         let ledger = DismissLedger::default();
         let gen = ledger.publish(&escape()).gen;
-        assert!(ledger.await_with(gen, &mut |_| true, &mut || std::time::Duration::ZERO, &mut |_| panic!("no hosts")));
+        assert!(ledger.await_with(&[gen], &mut |_| true, &mut || std::time::Duration::ZERO, &mut |_| panic!("no hosts")));
         ledger.register("temple".into());
-        assert!(ledger.await_with(gen, &mut |_| false, &mut || std::time::Duration::ZERO, &mut |_| panic!("window gone")));
+        assert!(ledger.await_with(&[gen], &mut |_| false, &mut || std::time::Duration::ZERO, &mut |_| panic!("window gone")));
     }
 
     #[test]
@@ -299,7 +300,7 @@ mod tests {
         ledger.register("temple".into());
         let gen = ledger.publish(&escape()).gen;
         let elapsed = Cell::new(Duration::ZERO);
-        assert!(!ledger.await_with(gen, &mut |_| true, &mut || elapsed.get(), &mut |remaining| {
+        assert!(!ledger.await_with(&[gen], &mut |_| true, &mut || elapsed.get(), &mut |remaining| {
             assert_eq!(remaining, Duration::from_millis(500));
             elapsed.set(remaining);
         }));
@@ -314,10 +315,43 @@ mod tests {
         ledger.register("temple".into());
         let gen = ledger.publish(&escape()).gen;
         let elapsed = Cell::new(Duration::ZERO);
-        assert!(!ledger.await_with(gen, &mut |_| true, &mut || elapsed.get(), &mut |remaining| {
+        assert!(!ledger.await_with(&[gen], &mut |_| true, &mut || elapsed.get(), &mut |remaining| {
             elapsed.set(remaining);
             ledger.ack("temple", gen);
         }));
+    }
+
+    #[test]
+    fn dismissal_generations_share_one_timeout_budget() {
+        use std::cell::Cell;
+        let ledger = DismissLedger::default();
+        ledger.register("temple".into());
+        let first = ledger.publish(&escape()).gen;
+        let second = ledger.publish(&Shortcut { key: 70, ..escape() }).gen;
+        let elapsed = Cell::new(Duration::ZERO);
+        let mut waits = Vec::new();
+        assert!(!ledger.await_with(&[first, second], &mut |_| true, &mut || elapsed.get(), &mut |remaining| {
+            waits.push(remaining);
+            if waits.len() == 1 {
+                ledger.ack("temple", first);
+                elapsed.set(Duration::from_millis(300));
+            } else {
+                elapsed.set(elapsed.get() + remaining);
+            }
+        }));
+        assert_eq!(waits, vec![Duration::from_millis(500), Duration::from_millis(200)]);
+        assert_eq!(elapsed.get(), Duration::from_millis(500));
+    }
+
+    #[test]
+    fn an_evicted_required_generation_drops_the_batch_even_if_the_other_is_acknowledged() {
+        let ledger = DismissLedger::default();
+        ledger.register("temple".into());
+        let first = ledger.publish(&escape()).gen;
+        let second = ledger.publish(&escape()).gen;
+        for _ in 0..PENDING_CAP - 1 { ledger.publish(&escape()); }
+        ledger.ack("temple", second);
+        assert!(!ledger.await_with(&[first, second], &mut |_| true, &mut || Duration::ZERO, &mut |_| panic!("lost generation must drop immediately")));
     }
 
     #[test]
