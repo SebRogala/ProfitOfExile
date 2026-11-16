@@ -80,6 +80,7 @@ type recomputeRuntime struct {
 	temple                recomputeService
 	harvest               recomputeService
 	tradeTick             func(context.Context, []byte)
+	seedTrade             func(context.Context)
 	updateRate            func(context.Context)
 	refreshOfferingTiming func(context.Context)
 	latestSnapshotTimes   func(context.Context, league.Scope) (time.Time, time.Time, error)
@@ -266,6 +267,9 @@ func (r *recomputeRuntime) Close() {
 }
 
 func (r *recomputeRuntime) startup() {
+	if r.seedTrade != nil {
+		go r.seedTrade(r.ctx)
+	}
 	if r.pool != nil && r.labCache != nil {
 		go r.seedCaches()
 	}

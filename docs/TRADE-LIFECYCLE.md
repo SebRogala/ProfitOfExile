@@ -1,6 +1,6 @@
 # Trade and Market Data Lifecycles
 
-> **Status: Public architecture guide.** Current behavior and proposed reliability targets are labeled separately. Last code-grounded review: 2026-07-21; server gate hardening reviewed 2026-10-23 (POE-297).
+> **Status: Public architecture guide.** Current behavior and proposed reliability targets are labeled separately. Demand scheduler reviewed 2026-11-16 (POE-309); server gate hardening reviewed 2026-10-23 (POE-297).
 
 This document explains how ProfitOfExile obtains market data, performs optional live trade lookups, shares desktop-contributed results, and uses Mercure notifications. It is intentionally safe for a public repository: it documents trust boundaries and behavior without deployment credentials or private infrastructure identifiers.
 
@@ -246,21 +246,12 @@ collector trade-tick stale age. Resetting an ancient stamp to receipt, rather
 than merely to the stale cutoff, prevents it immediately becoming the oldest
 refresh candidate. Future stamps cannot keep a contributed key fresh indefinitely.
 
-Collector ticks choose existing cache keys, not a gem name from the tick
-payload. New contributions pass the same input guard before entering that pool.
-On refresh selection, `HandleTradeTick` calls the same `KnownTradeGem` helper
-used by `validateTradeInput`. With a warm dictionary, unknown stale keys are
-skipped for that tick and the next known stale key can be refreshed, including
-when the unknown key was restored from persisted history. Name checks run
-outside the cache lock; a membership query error abandons the tick without
-sending. Exclusions are per tick so later dictionary growth can admit a name.
-Cold/empty dictionaries or an absent checker skip no names, preserving startup
-behavior. Cache entries and rows are retained unchanged.
-
-The live callback in `cmd/server` passes `trade.Repository.KnownGem` to the tick
-handler as it does to the HTTP routes. `Refresher` has no production constructor
-call and remains unchanged. Native desktop lookups still use the user's own
-limiter/IP; only their server contribution passes the server input guard.
+Collector ticks carry cadence and scope; current snapshot demand owns background
+selection ([§ 5](#5-collector-cadence-for-the-optional-trade-gate)). Restored
+cache-only names do not create demand, and selection performs no per-name
+membership queries. HTTP lookup and contribution retain the input guard above.
+Native desktop lookups still use the user's own limiter/IP; their server
+contribution passes the server input guard.
 
 Known residuals: names present in `gem_colors` or `gem_snapshots` can still be
 rejected by GGG and contribute to the breaker. Each warm OCR dictionary miss
@@ -314,8 +305,8 @@ it becomes eligible again at the normal refresh age. Empty listings mean no
 quote, not a 0c price. Analysis falls back to ninja, and comparison clients show
 no listings. A restart warms the empty result instead of reviving an older quote.
 
-A failed upstream search or fetch postpones only that cached key's stale
-selection. Request-scoped 4xx rejections (all 4xx except 401/403/429) receive six
+A failed upstream search or fetch postpones that key's background
+selection, including keys without cached quotes. Request-scoped 4xx rejections (all 4xx except 401/403/429) receive six
 hours; retrying an unchanged query every five minutes can repeat a rejection
 such as an unknown gem name. Transport, decode and 5xx failures retain five
 minutes, as do 401/403/429 responses. These are local retry policies, not upstream
@@ -346,25 +337,63 @@ The browser must subscribe to its request-capability-scoped result topic only wh
 
 ## 5. Collector cadence for the optional Trade Gate
 
-**Current behavior:** Implemented at the cadence and selection rules below. Explicit suppression while the server gate is disabled is proposed.
+**Current behavior (POE-309, verified 2026-11-16):** The collector publishes
+scope-stamped cadence events at the existing default interval of 45 seconds.
+Explicit suppression while the server gate is disabled remains proposed.
 
 The collector currently provides timing, while the server chooses and performs the optional lookup.
 
-At the current default cadence of 45 seconds, ticks alternate between:
+At boot and before an admitted tick, the server batch-reads the latest gem
+snapshot and durable successful checks through `LookupsAsOf`. Demand covers
+actual eligible Font keys in the four uncorrupted markets returned by
+`lab.FontTradeVariants`. Named FLOOR classifications are excluded after the
+full Font draw pool supplies probabilities; untiered cheap or unpriced keys and
+CHAOTIC keys remain eligible. Empty snapshots remove demand. Read failures skip
+work and preserve previous diagnostic state; later eligible ticks retry boot
+failures. Historical checks count beyond the cache warm window. Desktop aliases
+such as `1/0` count for canonical `1`, and older durable rows cannot undo a
+newer immediate server completion.
 
-1. The oldest sufficiently stale cached transfigured `20/20` gem whose tier is MID or higher.
-2. The oldest sufficiently stale cached transfigured `20/20` gem from the full cached pool.
+One nonwaiting busy token covers reconciliation, claims, gate submission and
+completion accounting for fixed targets and gems. Idle-gate and shared
+search/fetch limiter preflight shed blocked ticks before reads or claims.
+Due fixed craft targets retain their existing claim/quote policy and precedence
+(POE-329). Otherwise the gem scheduler selects never-checked keys by potential
+Font contribution, due keys by oldest deadline, then opportunistic risk using
+native ninja/trade values, disagreement and check age. The existing five-minute
+minimum applies to opportunistic repeats. The single force queue has no
+production enqueue caller. Active policy and acceptance remain in tracker
+POE-309; `lab.GemPricePolicy` owns the shared revisit value.
 
-The current minimum age is five minutes. The filtered selection uses `>= MID`, so “MID+” means MID, MID-HIGH, HIGH, or TOP.
+Admission is best effort: foreground work can race or overtake one admitted
+background request inside the existing gate. Later ticks are shed until that
+operation finishes or service cancellation releases it. Successful empty
+lookups advance check time without supplying a price; failed fetches do not.
+The final six-hour revisit target is no deadline guarantee under foreground
+load, outages, failures or excess demand, and cannot guarantee one-hour
+freshness. Structured tick logs retain demand, never-checked and overdue counts
+and oldest age, including limiter pauses. No live price-book republishing is
+performed.
 
-The fixed craft targets (the Facetor's Lens and its feeder support, POE-329) ride the same tick: when one is due, the tick submits it instead of the gem pick, regardless of the tier filter. A target is due when both its cached quote and its last claim are at least 30 minutes old; never-checked targets go first, ties in registry order (lens first). The claim is recorded before submitting, so overlapping ticks never pick the same target and a failed lookup waits 30 minutes before retrying.
+Distinct successful revisits retain separate timestamped history rows through
+the existing persistence owner: exact league/market/source, native amounts and
+currencies, indexed times, listing array/count, total listings, seller count,
+converted summaries and fetch-time rate. Successful empty rows stay separate
+from positive evidence and failures. This enables later evidence assessment
+without adding qualification, seller identities, minimum spacing or a floor-price
+switch. Retention follows ADR-034.
+
+Selection changes the distribution of fetched data across four markets; new
+results can enrich existing cache/compare responses and trade-based signals.
+This change does not switch pricing consumers, medians, Font EV, links or UI.
 
 Important boundaries:
 
 - A tick contains no trade result.
 - The collector does not call GGG for this workflow.
-- The server chooses at most one candidate from its existing cache.
-- If the cache has no eligible entry, no lookup is made.
+- The server chooses at most one target from current snapshot demand or due fixed targets.
+- An empty trade cache does not prevent a demanded key from being checked.
+- Legacy well-formed variant/tier payloads are cadence hints and do not filter demand.
 - If the optional server Trade Gate is disabled, no GGG request is made.
 - Tick publication should itself be disabled when the gate is intentionally unavailable to avoid unnecessary hub traffic.
 
@@ -513,7 +542,7 @@ The desktop app calls GGG trade from each user's own machine and IP, with that u
 
 ### Cadence budget
 
-- Server: the refresher's default 45 s cadence ([§ 5](#5-collector-cadence-for-the-optional-trade-gate)) makes about 480 searches per 6 h, against GGG's tightest observed search tier of 600 per 21600 s. Observed 2026-11-13 from a dev machine and from the production host: `x-rate-limit-ip: 5:10:60,15:60:300,30:300:1800,600:21600:3600`.
+- Server: the default 45 s cadence ([§ 5](#5-collector-cadence-for-the-optional-trade-gate)) permits at most 480 starts per six hours before fixed targets, foreground use, failures, HTTP duration and limiter pauses. This is inferred arithmetic, not measured capacity or a coverage guarantee. Historical header observations are not throughput headroom.
 - The limits are dynamic; the rate limiter follows the response headers rather than these numbers.
 - Desktop: one trade search per user click. (2026-11-13: the desktop doc that owns this rule will be linked here once the auto-trade change lands.)
 

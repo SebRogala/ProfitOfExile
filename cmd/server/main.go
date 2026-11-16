@@ -20,6 +20,7 @@ import (
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 	"profitofexile/internal/mercure"
+	"profitofexile/internal/price/resolve"
 	"profitofexile/internal/retention"
 	"profitofexile/internal/server"
 	"profitofexile/internal/temple"
@@ -326,8 +327,10 @@ func main() {
 	}
 	if tradeGate != nil {
 		fixedTargets := trade.NewFixedTargetScheduler(tradeCache, scope)
+		tradeScheduler := newTradeScheduler(scope, tradeGate, fixedTargets, labRepo, tradeRepo, func() resolve.Rate { return bookRate(divineRate) })
+		runtime.seedTrade = tradeScheduler.Seed
 		runtime.tradeTick = func(eventCtx context.Context, raw []byte) {
-			server.HandleTradeTick(eventCtx, tradeGate, tradeCache, fixedTargets, labCache, scope, raw, deps.KnownGem)
+			server.HandleTradeTick(eventCtx, scope, raw, tradeScheduler.Tick)
 		}
 	}
 	runtime.divineRate = divineRate

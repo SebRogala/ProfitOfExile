@@ -4,24 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"strings"
 	"time"
 
-	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
-	"profitofexile/internal/server/handlers"
-	"profitofexile/internal/trade"
+	"profitofexile/internal/price/tier"
 )
 
-// TradeTickPayload is the wire format for poe/collector/trade-tick events.
-// Variant defaults to "20/20"; MinAge defaults to 5 minutes; MinTier is
-// optional and limits the pick to gems classified at or above the named tier.
-//
-// League and Revision carry the collector's process-active league stamp so the
-// tick's origin travels end to end. The subscriber validates them against the
-// server's active scope (via LeagueEventGuard) before dispatching a tick, so a
-// tick published for a different league or a bumped revision is dropped rather
-// than driving a live GGG lookup under the wrong league.
+// TradeTickPayload retains legacy cadence hints for rolling deployments.
+// LeagueEventGuard owns revision admission before runtime dispatch.
 type TradeTickPayload struct {
 	Variant  string `json:"variant"`
 	MinTier  string `json:"minTier"`
@@ -30,119 +20,37 @@ type TradeTickPayload struct {
 	Revision int64  `json:"leagueRevision"`
 }
 
-// tradeTickTierRank maps tier names to numeric rank for >= comparison.
-var tradeTickTierRank = map[string]int{
-	"TOP": 6, "HIGH": 5, "MID-HIGH": 4, "MID": 3, "LOW": 2, "FLOOR": 1,
-}
-
-// HandleTradeTick processes a single poe/collector/trade-tick event:
-// pick the oldest stale transfigured gem matching the variant + tier
-// filter and submit it to the trade gate. The submit outcome is logged
-// inside trade.SubmitRefresh; there is no reply path here since Mercure
-// is fire-and-forget.
-//
-// A due fixed craft target from fixed (nil disables them) takes the tick
-// instead of the gem pick, whatever the tier filter.
-func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCache, fixed *trade.FixedTargetScheduler, labCache *lab.Cache, scope league.Scope, raw []byte, checker func(context.Context, league.Scope, string) (bool, error)) {
+// HandleTradeTick validates cadence input; snapshot demand owns selection.
+func HandleTradeTick(ctx context.Context, scope league.Scope, raw []byte, tick func(context.Context)) {
 	var p TradeTickPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		slog.Warn("trade tick: invalid payload", "error", err)
 		return
 	}
-
-	if p.Variant == "" {
-		p.Variant = "20/20"
-	}
-	minAge := 5 * time.Minute
-	if p.MinAge != "" {
-		d, err := time.ParseDuration(p.MinAge)
-		if err != nil {
-			slog.Warn("trade tick: invalid minAge", "minAge", p.MinAge, "error", err)
-			return
-		}
-		minAge = d
-	}
-
-	minTierRank := 0
-	if p.MinTier != "" {
-		r, ok := tradeTickTierRank[p.MinTier]
-		if !ok {
-			slog.Warn("trade tick: unknown minTier", "minTier", p.MinTier)
-			return
-		}
-		minTierRank = r
-	}
-
-	if ctx.Err() != nil {
+	if err := scope.Admit(p.League); err != nil {
 		return
 	}
-	if fixed != nil {
-		if target, ok := fixed.Claim(time.Now()); ok {
-			trade.SubmitFixedTargetRefresh(ctx, gate, target)
+	if p.Revision != 0 && p.Revision != scope.Revision() {
+		return
+	}
+	if p.MinAge != "" {
+		if d, err := time.ParseDuration(p.MinAge); err != nil || d < 0 {
 			return
 		}
 	}
-
-	var tierSet map[string]bool
-	if minTierRank > 0 {
-		tierSet = make(map[string]bool)
-		signals, warm := labCache.For(scope).GemSignals()
-		for _, s := range signals {
-			if s.Variant != p.Variant {
-				continue
+	if p.MinTier != "" {
+		known := p.MinTier == tier.Chaotic
+		for _, name := range tier.Order {
+			if p.MinTier == name {
+				known = true
+				break
 			}
-			if tradeTickTierRank[s.Tier] >= minTierRank {
-				tierSet[s.Name] = true
-			}
-		}
-		if len(tierSet) == 0 {
-			// The tick is skipped either way — there is no repository fallback
-			// here — but the two reasons are worth telling apart when
-			// investigating why trade ticks aren't refreshing anything: a cold
-			// cache says no RunV2 has stored signals yet, a warm one says no gem
-			// at this variant currently meets the requested tier.
-			slog.Debug("trade tick: no gems at or above tier",
-				"variant", p.Variant,
-				"minTier", p.MinTier,
-				"cache_warm", warm,
-				"signal_count", len(signals),
-			)
-			return
-		}
-	}
-
-	// Keep validation outside OldestStale's cache lock: the shared checker can
-	// query PostgreSQL on an OCR-dictionary miss. Exclusions last for this tick
-	// only, so dictionary growth can admit a previously unknown name later.
-	excluded := make(map[string]bool)
-	for {
-		key, found := cache.For(scope).OldestStale(minAge, func(key string, _ *trade.TradeLookupResult) bool {
-			gem, variant := trade.ParseCacheKey(key)
-			if excluded[key] || variant != p.Variant || !strings.Contains(gem, " of ") {
-				return false
-			}
-			return tierSet == nil || tierSet[gem]
-		})
-		if !found {
-			slog.Debug("trade tick: no stale entry to refresh",
-				"variant", p.Variant,
-				"minTier", p.MinTier,
-				"minAge", minAge,
-			)
-			return
-		}
-
-		gem, variant := trade.ParseCacheKey(key)
-		known, err := handlers.KnownTradeGem(ctx, labCache, checker, scope, gem)
-		if err != nil {
-			slog.Warn("trade tick: gem dictionary query failed", "error", err)
-			return
 		}
 		if !known {
-			excluded[key] = true
-			continue
+			return
 		}
-		trade.SubmitRefresh(ctx, gate, gem, variant)
-		return
+	}
+	if ctx.Err() == nil && tick != nil {
+		tick(ctx)
 	}
 }

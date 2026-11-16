@@ -26,6 +26,26 @@ type fakeRuntimeAnalyzer struct {
 	startHooks map[string]func()
 }
 
+func TestRecomputeRuntime_StartSeedsTradeDemand(t *testing.T) {
+	input := &schedulerInputs{stamp: time.Now(), gems: []lab.GemPrice{schedulerGem("Siege Ballista of Splintering", "1")}}
+	scheduler, _, _, requests := schedulerHarness(t, input)
+	r := newRecomputeRuntime(context.Background(), scheduler.scope)
+	seeded := make(chan struct{})
+	r.seedTrade = func(ctx context.Context) { scheduler.Seed(ctx); close(seeded) }
+	r.Start()
+	defer r.Close()
+	select {
+	case <-seeded:
+	case <-time.After(time.Second):
+		t.Fatal("runtime did not seed trade")
+	}
+	if stats := scheduler.queue.Stats(time.Now()); stats.Demand != 1 || stats.NeverChecked != 1 {
+		t.Fatalf("boot demand: %+v", stats)
+	}
+	scheduler.Tick(context.Background())
+	expectSchedulerRequest(t, requests, "Siege Ballista of Splintering")
+}
+
 func (f *fakeRuntimeAnalyzer) record(name string) error {
 	if gate := f.startGates[name]; gate != nil {
 		<-gate

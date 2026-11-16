@@ -504,8 +504,6 @@ func runLayoutResetTicker(ctx context.Context, scope league.Scope, mercureURL, m
 
 // runTradeRefresher periodically publishes poe/collector/trade-tick Mercure
 // events. The server subscribes and performs the gem-pick + GGG lookup.
-// Alternates between tier-filtered (MID+ for 20/20) and any-gem refreshes —
-// the server interprets the payload to know which mode is requested.
 //
 // Outcomes (gem chosen, lookup result) are logged on the server side. The
 // collector is fire-and-forget here; it just drives the cadence.
@@ -515,37 +513,20 @@ func runLayoutResetTicker(ctx context.Context, scope league.Scope, mercureURL, m
 // at Error so monitoring can page on a sustained Mercure outage; the level
 // drops back to Warn once a publish succeeds.
 func runTradeRefresher(ctx context.Context, scope league.Scope, mercureURL, mercureSecret string, interval time.Duration) {
-	const publishErrorEscalateAfter = 3
-
-	// Precompute both payload variants — scope is constant for the process, so
-	// stamp league + leagueRevision once. The server validates these against its
-	// own resolved scope and rejects cross-league ticks (POE-121 Chunk 3).
-	tierPayloadBytes, err := json.Marshal(collector.StampScope(map[string]any{
-		"topic":   "poe/collector/trade-tick",
-		"variant": "20/20",
-		"minTier": "MID",
-		"minAge":  "5m",
-	}, scope))
-	if err != nil {
-		slog.Error("trade tick: marshal tier payload failed, refresher disabled", "error", err)
-		return
-	}
-	anyPayloadBytes, err := json.Marshal(collector.StampScope(map[string]any{
-		"topic":   "poe/collector/trade-tick",
-		"variant": "20/20",
-		"minAge":  "5m",
-	}, scope))
-	if err != nil {
-		slog.Error("trade tick: marshal any payload failed, refresher disabled", "error", err)
-		return
-	}
-	tierPayload := string(tierPayloadBytes)
-	anyPayload := string(anyPayloadBytes)
-
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	runTradeRefresherTicks(ctx, scope, mercureURL, mercureSecret, ticker.C)
+}
 
-	tierTick := true
+func runTradeRefresherTicks(ctx context.Context, scope league.Scope, mercureURL, mercureSecret string, ticks <-chan time.Time) {
+	const publishErrorEscalateAfter = 3
+	payloadBytes, err := json.Marshal(collector.StampScope(map[string]any{"topic": "poe/collector/trade-tick"}, scope))
+	if err != nil {
+		slog.Error("trade tick: marshal payload failed", "error", err)
+		return
+	}
+	payload := string(payloadBytes)
+
 	consecFailures := 0
 	escalated := false
 
@@ -553,12 +534,7 @@ func runTradeRefresher(ctx context.Context, scope league.Scope, mercureURL, merc
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			payload := anyPayload
-			if tierTick {
-				payload = tierPayload
-			}
-			tierTick = !tierTick
+		case <-ticks:
 
 			if err := collector.PublishMercureEvent(ctx, mercureURL, mercureSecret, "poe/collector/trade-tick", payload); err != nil {
 				if ctx.Err() != nil {
