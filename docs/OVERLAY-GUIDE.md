@@ -71,6 +71,84 @@ logs must keep the user aware of what the data is used for.
 - **No clipboard, no input.** The app reads no clipboard and sends no input to
   the game.
 
+## Dismissal
+
+**Current implementation, verified against code 2026-11-16 (POE-398).**
+Temporary widgets retain their existing Client.txt/context-end signals and own
+lifecycle. Registry-enabled widgets also hide on a timeout or an observed
+shortcut, whichever applies first. The static applicability owner is
+[`WidgetSpec.dismiss` in widget-registry.ts](../desktop/src/lib/overlay/widgets/widget-registry.ts);
+this table describes that registry and the existing lifecycle owners:
+
+| Widget | Existing lifecycle | Timeout + shortcut |
+|---|---|---|
+| `temple.offers` | Temple context/advice end | Both |
+| `mercenary.verdict` | Mercenary context and existing linger | Both |
+| `lab.fontalerts` | Font round/context reset and read result | Both |
+| `temple.door` | Temple advice end/area change | Neither |
+| `lab.comparator` | Client.txt gem clear/area change | Neither |
+| `lab.compass`, `lab.pathstrip`, `lab.timer` | Lab context | Neither |
+| `loot.confirmation`, `loot.capture` | Loot capture/confirmation lifecycle | Neither |
+| `prompt.read` | Read success or prompt context end | Neither |
+
+Settings → Game Integration places **Overlay dismissal** beside **Read screen**.
+Global timeout options are Off, 5, 10, 20 and 30 seconds; the Rust default is
+10 seconds. The global shortcut defaults to Esc. Each applicable widget has
+independent timeout and shortcut inheritance or override controls. Inherited
+controls display the current global value. Esc is bindable; **Cancel** ends
+listening without saving and **Reset to Esc** restores the global binding.
+Settings remain unknown/disabled until SSOT loads. Saves use
+`overlay_dismiss_set_settings`, then fetch the accepted SSOT echo; refusals show
+the native error and retain the saved values. The transient SSOT `pending` list
+is never persisted by this editor.
+
+`createDismissal` in `widget-dismissal.svelte.ts` hides view content without
+writing reader/module state. A show edge or changed content identity restores
+the widget and starts its timeout; repeated polls of the same read do neither.
+Off is zero. Timeout changes resolve from the original show/read time.
+Shortcuts are observed by the native sampler only while the game is foreground;
+they are never swallowed or sent to the game.
+
+For a press that both dismisses and reads, `read_hotkey.rs` queues dismissal
+before the read delay and capture. `createDismissalHost` registers Temple and
+Lab through `overlay_dismiss_host(window)`. Mercenary uses `ack: false` because
+its window is excluded from captures, so it neither registers nor acknowledges.
+Rust retains an ordered, bounded list of `{ gen, shortcut }` in
+`overlayDismiss.pending`, also delivered through `overlay-dismiss-key` events.
+Hosts union both delivery paths, deduplicate exact generations and process the
+available batch in ascending generation order. A late earlier generation still
+applies; acknowledging a later generation never acknowledges an earlier one.
+
+The host waits for settings and content readiness, settles Svelte effects,
+applies the matching hide, then waits for `tick()` and two animation frames
+before `overlay_dismiss_ack(window, gen)`. Content restored during that repaint
+is hidden again with two fresh frames before the acknowledgement. In particular,
+Lab waits for its alert payload before acknowledging; an unloaded widget cannot
+claim it has hidden content it has not received.
+
+Rust waits for every still-existing registered host to acknowledge **every
+dismissal generation from the read's sampling tick**, within **one overall
+500 ms budget** for that set. A timeout or a generation evicted from the bounded
+pending list drops the press without capturing or consuming reader work. A
+later acknowledgement cannot revive that read. Debug logs record successful
+acknowledgement waits; dropped presses log the missing-hide timeout.
+
+**Residual Windows compositor gap:** Svelte hide plus two animation frames
+proves webview progress, not that Windows has presented that surface to the
+capture API. The 500 ms bound is an accepted interim, not a measured compositor
+guarantee. **C1 runtime smoke remains OPEN** and blocks overall POE-398 Done:
+
+1. Bind read and dismissal to the same key. With debug frame dumps enabled,
+   take ten presses with Temple offers visible and another ten with Lab font
+   alerts visible. Every dump must omit the respective widget and every press
+   must log its Temple/Lab acknowledgement wait.
+2. With Esc configured, verify Esc reaches the game (opens its menu) while
+   hiding Temple offers; repeat independently for Lab font alerts.
+3. With the game in the background, verify Esc hides neither Temple offers nor
+   Lab font alerts.
+
+Linux READBACK and Windows cross-compilation do not close this runtime gate.
+
 ## Overlay types
 
 EVERY overlay calls `set_overlay_clickthrough(label)`, and that call does two

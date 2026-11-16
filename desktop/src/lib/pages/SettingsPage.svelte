@@ -8,6 +8,7 @@
 	import { ssot, fetchSsot, setBossLootSettings } from '$lib/stores/ssot.svelte';
 	import { nav } from '$lib/stores/navigation.svelte';
 	import ReadHotkeySetting from '$lib/components/ReadHotkeySetting.svelte';
+	import OverlayDismissSetting from '$lib/components/OverlayDismissSetting.svelte';
 	import { untrack } from 'svelte';
 	import { ocrRectsKey, screenGeometryView } from '$lib/geometry/view';
 	import { createOcrPreviewOwner } from '$lib/overlay/ocr-preview';
@@ -892,6 +893,7 @@
 				{/if}
 			</div>
 			<ReadHotkeySetting />
+			<OverlayDismissSetting />
 
 		</section>
 
