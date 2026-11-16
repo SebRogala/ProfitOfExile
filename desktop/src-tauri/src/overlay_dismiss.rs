@@ -89,6 +89,14 @@ pub(crate) fn store_settings(state: &crate::AppState, settings: DismissSettings)
     Ok(())
 }
 
+pub(crate) fn with_settings(
+    state: &crate::AppState,
+    mut snapshot: crate::ssot::AppSsotSnapshot,
+) -> crate::ssot::AppSsotSnapshot {
+    snapshot.overlay_dismiss = state.overlay_dismiss.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    snapshot
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

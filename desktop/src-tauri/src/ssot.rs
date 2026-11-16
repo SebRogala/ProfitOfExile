@@ -710,9 +710,8 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     );
     snapshot.server = server;
     snapshot.read_hotkey = read_hotkey;
-    snapshot.overlay_dismiss = state.overlay_dismiss.lock().unwrap_or_else(|e| e.into_inner()).clone();
     snapshot.read_prompt = read_prompt;
-    snapshot
+    crate::overlay_dismiss::with_settings(state, snapshot)
 }
 
 /// Whether `consecutive_failures` failed fetch attempts should flip the SSOT to
