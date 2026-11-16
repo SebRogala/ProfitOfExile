@@ -15,7 +15,7 @@ import type {
 	BossLootSlice,
 	Placements,
 	ReadHotkeySettings,
-	DismissSettings,
+	DismissSnapshot,
 	ReadPromptSnapshot,
 	ScreenSlice,
 	ServerSlice,
@@ -48,10 +48,11 @@ const readHotkeyKeys: Record<keyof ReadHotkeySettings, true> = {
 	delayMs: true
 };
 
-const overlayDismissKeys: Record<keyof DismissSettings, true> = {
+const overlayDismissKeys: Record<keyof DismissSnapshot, true> = {
 	timeoutSeconds: true,
 	shortcut: true,
-	overlays: true
+	overlays: true,
+	pending: true
 };
 
 const readPromptKeys: Record<keyof ReadPromptSnapshot, true> = {
@@ -171,6 +172,13 @@ describe('ssot-snapshot.json golden matches SsotSnapshot', () => {
 	it('carries exactly the readPrompt keys in the unmeasured golden too', () => {
 		const unmeasured = unmeasuredGolden as Record<string, unknown>;
 		expect(keysOf(unmeasured.readPrompt)).toEqual(Object.keys(readPromptKeys).sort());
+	});
+
+	it('carries an empty dismissal ledger in both golden snapshots', () => {
+		for (const snapshot of [golden, unmeasuredGolden]) {
+			expect(Object.keys(snapshot.overlayDismiss).sort()).toEqual(Object.keys(overlayDismissKeys).sort());
+			expect((snapshot.overlayDismiss as DismissSnapshot).pending).toEqual([]);
+		}
 	});
 
 	it('names the prompt mechanic in the camelCase spelling the view keys on', () => {

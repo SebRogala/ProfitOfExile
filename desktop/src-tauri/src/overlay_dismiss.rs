@@ -1,6 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use crate::read_hotkey::Shortcut;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -60,6 +62,16 @@ fn validate_shortcut(shortcut: &Shortcut) -> Result<(), String> {
 }
 
 impl DismissSettings {
+    #[cfg(any(windows, test))]
+    pub fn shortcuts(&self) -> Vec<Shortcut> {
+        let mut shortcuts = vec![self.shortcut.clone()];
+        for overlay in self.overlays.values() {
+            let shortcut = overlay.shortcut.resolve(&self.shortcut);
+            if !shortcuts.contains(shortcut) { shortcuts.push(shortcut.clone()); }
+        }
+        shortcuts
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         validate_timeout(self.timeout_seconds)?;
         validate_shortcut(&self.shortcut)?;
@@ -93,13 +105,233 @@ pub(crate) fn with_settings(
     state: &crate::AppState,
     mut snapshot: crate::ssot::AppSsotSnapshot,
 ) -> crate::ssot::AppSsotSnapshot {
-    snapshot.overlay_dismiss = state.overlay_dismiss.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    snapshot.overlay_dismiss = DismissSnapshot {
+        settings: state.overlay_dismiss.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        pending: state.dismiss_ledger.pending(),
+    };
     snapshot
+}
+
+pub const PENDING_CAP: usize = 16;
+pub const DISMISS_ACK_TIMEOUT_MS: u64 = 500;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingDismiss {
+    pub gen: u64,
+    pub shortcut: Shortcut,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DismissSnapshot {
+    #[serde(flatten)]
+    pub settings: DismissSettings,
+    pub pending: Vec<PendingDismiss>,
+}
+
+#[derive(Default)]
+struct LedgerState {
+    gen: u64,
+    pending: VecDeque<PendingDismiss>,
+    hosts: BTreeMap<String, BTreeSet<u64>>,
+}
+
+impl LedgerState {
+    fn ready(&self, gen: u64, exists: &mut dyn FnMut(&str) -> bool) -> Option<bool> {
+        if !self.pending.iter().any(|pending| pending.gen == gen) { return Some(false); }
+        self.hosts.iter().all(|(host, acks)| !exists(host) || acks.contains(&gen)).then_some(true)
+    }
+}
+
+#[derive(Default)]
+pub struct DismissLedger {
+    state: Mutex<LedgerState>,
+    changed: Condvar,
+}
+
+impl DismissLedger {
+    pub fn register(&self, window: String) {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).hosts.insert(window, BTreeSet::new());
+        self.changed.notify_all();
+    }
+
+    pub fn publish(&self, shortcut: &Shortcut) -> PendingDismiss {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.gen += 1;
+        let pending = PendingDismiss { gen: state.gen, shortcut: shortcut.clone() };
+        state.pending.push_back(pending.clone());
+        if state.pending.len() > PENDING_CAP { state.pending.pop_front(); }
+        let oldest = state.pending.front().unwrap().gen;
+        for acks in state.hosts.values_mut() { acks.retain(|gen| *gen >= oldest); }
+        self.changed.notify_all();
+        pending
+    }
+
+    pub fn ack(&self, window: &str, gen: u64) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.pending.iter().any(|pending| pending.gen == gen) {
+            if let Some(acks) = state.hosts.get_mut(window) { acks.insert(gen); }
+        }
+        self.changed.notify_all();
+    }
+
+    pub fn pending(&self) -> Vec<PendingDismiss> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).pending.iter().cloned().collect()
+    }
+
+    pub(crate) fn ready(&self, gen: u64, exists: &mut dyn FnMut(&str) -> bool) -> Option<bool> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).ready(gen, exists)
+    }
+
+    pub(crate) fn await_with(
+        &self,
+        gen: u64,
+        exists: &mut dyn FnMut(&str) -> bool,
+        elapsed: &mut dyn FnMut() -> Duration,
+        wait: &mut dyn FnMut(Duration),
+    ) -> bool {
+        let bound = Duration::from_millis(DISMISS_ACK_TIMEOUT_MS);
+        loop {
+            let remaining = bound.saturating_sub(elapsed());
+            if remaining.is_zero() { return false; }
+            if let Some(ready) = self.ready(gen, exists) { return ready; }
+            wait(remaining);
+        }
+    }
+
+    fn await_hidden(&self, app: &tauri::AppHandle, gen: u64) -> bool {
+        let start = Instant::now();
+        let ready = self.await_with(gen, &mut |host| app.get_webview_window(host).is_some(), &mut || start.elapsed(), &mut |remaining| {
+            let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            // Recheck under the wait lock so an acknowledgement between the
+            // outer check and the condvar wait cannot lose its notification.
+            if guard.ready(gen, &mut |host| app.get_webview_window(host).is_some()).is_none() {
+                drop(self.changed.wait_timeout(guard, remaining).unwrap_or_else(|e| e.into_inner()));
+            }
+        });
+        let hosts: Vec<_> = self.state.lock().unwrap_or_else(|e| e.into_inner()).hosts.keys()
+            .filter(|host| app.get_webview_window(host).is_some()).cloned().collect();
+        if ready {
+            let state = app.state::<crate::AppState>();
+            let debug = *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
+            if debug {
+                crate::app_log(app, format!("read hotkey: overlay hide acknowledged after {} ms (hosts: {})", start.elapsed().as_millis(), hosts.join(", ")));
+            }
+        } else {
+            crate::app_log(app, format!("read hotkey: press dropped — overlay hide not acknowledged in 500 ms (hosts: {})", hosts.join(", ")));
+        }
+        ready
+    }
+}
+
+#[tauri::command]
+pub fn overlay_dismiss_host(app: tauri::AppHandle, window: String) {
+    app.state::<crate::AppState>().dismiss_ledger.register(window);
+}
+
+#[tauri::command]
+pub fn overlay_dismiss_ack(app: tauri::AppHandle, window: String, gen: u64) {
+    app.state::<crate::AppState>().dismiss_ledger.ack(&window, gen);
+}
+
+pub(crate) fn publish(app: &tauri::AppHandle, shortcut: &Shortcut) -> u64 {
+    let pending = app.state::<crate::AppState>().dismiss_ledger.publish(shortcut);
+    if let Err(error) = app.emit("overlay-dismiss-key", &pending) {
+        crate::app_log(app, format!("overlay dismissal: failed to emit key: {error}"));
+    }
+    crate::ssot::emit_ssot(app);
+    pending.gen
+}
+
+pub(crate) fn await_hidden(app: &tauri::AppHandle, gen: u64) -> bool {
+    app.state::<crate::AppState>().dismiss_ledger.await_hidden(app, gen)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn escape() -> Shortcut {
+        DismissSettings::default().shortcut
+    }
+
+    #[test]
+    fn only_the_exact_generation_releases_all_existing_hosts() {
+        let ledger = DismissLedger::default();
+        ledger.register("temple".into());
+        ledger.register("lab".into());
+        let older = ledger.publish(&escape()).gen;
+        let gen = ledger.publish(&escape()).gen;
+        let later = ledger.publish(&escape()).gen;
+        ledger.ack("temple", older);
+        ledger.ack("temple", later);
+        assert_eq!(ledger.ready(gen, &mut |_| true), None);
+        ledger.ack("temple", gen);
+        assert_eq!(ledger.ready(gen, &mut |_| true), None);
+        ledger.ack("lab", gen);
+        assert_eq!(ledger.ready(gen, &mut |_| true), Some(true));
+    }
+
+    #[test]
+    fn evicted_generation_is_lost_even_after_a_late_ack() {
+        let ledger = DismissLedger::default();
+        ledger.register("temple".into());
+        let gen = ledger.publish(&escape()).gen;
+        for _ in 0..PENDING_CAP { ledger.publish(&escape()); }
+        ledger.ack("temple", gen);
+        assert_eq!(ledger.ready(gen, &mut |_| true), Some(false));
+        assert_eq!(ledger.pending().len(), PENDING_CAP);
+    }
+
+    #[test]
+    fn absent_hosts_return_without_waiting() {
+        let ledger = DismissLedger::default();
+        let gen = ledger.publish(&escape()).gen;
+        assert!(ledger.await_with(gen, &mut |_| true, &mut || std::time::Duration::ZERO, &mut |_| panic!("no hosts")));
+        ledger.register("temple".into());
+        assert!(ledger.await_with(gen, &mut |_| false, &mut || std::time::Duration::ZERO, &mut |_| panic!("window gone")));
+    }
+
+    #[test]
+    fn unacknowledged_generation_expires_at_the_bound() {
+        use std::cell::Cell;
+        use std::time::Duration;
+        let ledger = DismissLedger::default();
+        ledger.register("temple".into());
+        let gen = ledger.publish(&escape()).gen;
+        let elapsed = Cell::new(Duration::ZERO);
+        assert!(!ledger.await_with(gen, &mut |_| true, &mut || elapsed.get(), &mut |remaining| {
+            assert_eq!(remaining, Duration::from_millis(500));
+            elapsed.set(remaining);
+        }));
+        assert_eq!(elapsed.get(), Duration::from_millis(500));
+    }
+
+    #[test]
+    fn an_ack_arriving_at_the_deadline_cannot_revive_the_press() {
+        use std::cell::Cell;
+        use std::time::Duration;
+        let ledger = DismissLedger::default();
+        ledger.register("temple".into());
+        let gen = ledger.publish(&escape()).gen;
+        let elapsed = Cell::new(Duration::ZERO);
+        assert!(!ledger.await_with(gen, &mut |_| true, &mut || elapsed.get(), &mut |remaining| {
+            elapsed.set(remaining);
+            ledger.ack("temple", gen);
+        }));
+    }
+
+    #[test]
+    fn ssot_preserves_pending_order_and_each_shortcut() {
+        let state = crate::settings::tests::test_app_state();
+        let f = Shortcut { key: 70, ..escape() };
+        state.dismiss_ledger.publish(&f);
+        state.dismiss_ledger.publish(&escape());
+        let snapshot = crate::ssot::build_snapshot(&state);
+        assert_eq!(serde_json::to_value(snapshot).unwrap()["overlayDismiss"]["pending"], serde_json::json!([
+            {"gen":1,"shortcut":{"key":70,"shift":false,"ctrl":false,"alt":false}},
+            {"gen":2,"shortcut":{"key":27,"shift":false,"ctrl":false,"alt":false}}
+        ]));
+    }
 
     #[test]
     fn defaults_are_ten_seconds_and_escape() {

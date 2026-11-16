@@ -563,7 +563,7 @@ pub struct AppSsotSnapshot {
     /// The "Read screen" shortcut and delay (POE-387), read from the owner
     /// `AppState.read_hotkey` at snapshot time — not stored in `AppState.ssot`.
     pub read_hotkey: crate::read_hotkey::ReadHotkeySettings,
-    pub overlay_dismiss: crate::overlay_dismiss::DismissSettings,
+    pub overlay_dismiss: crate::overlay_dismiss::DismissSnapshot,
     /// The "press <key> to read" prompt (POE-388), read from the owner
     /// `AppState.read_prompt` at snapshot time — not stored in `AppState.ssot`.
     pub read_prompt: crate::read_prompt::ReadPromptSnapshot,

@@ -132,7 +132,7 @@ mod tests {
         *world.prompt.lock().unwrap() = Some(4);
         let armed = crate::read_hotkey::arm_all(Press { cursor: None }, Default::default(), &[&TEMPLE_READER], &world);
         *world.prompt.lock().unwrap() = Some(5);
-        crate::read_hotkey::run_armed(armed, &world, &mut |_| {}, &mut || Ok(capture(1)));
+        crate::read_hotkey::run_armed(armed, &world, &mut |_| {}, &mut || Ok(capture(1)), &mut |_| true);
         assert_eq!(rx.try_recv().unwrap().prompt, Some(4));
     }
 
@@ -147,7 +147,7 @@ mod tests {
     }
 
     fn sample(keys: &[u16]) -> Sample {
-        Sample { down: keys.iter().copied().collect(), foreground: true, settings: ReadHotkeySettings::default() }
+        Sample { down: keys.iter().copied().collect(), foreground: true, settings: ReadHotkeySettings::default(), dismiss: Vec::new() }
     }
     /// Ctrl+A, the default read key.
     const PRESSED: &[u16] = &[17, 65];
@@ -158,13 +158,13 @@ mod tests {
         let readers: &[&dyn ScreenReader<World>] = &[&TEMPLE_READER];
         let (queue, presses) = mpsc::channel();
         let mut samples = samples.into_iter();
-        run_sampler(world, readers, &mut || samples.next(), &mut || None, &queue);
+        run_sampler(world, readers, &mut || samples.next(), &mut || None, &queue, &mut |_| 0);
         drop(queue);
         let mut grabs = 0;
         run_dispatcher(world, presses, &mut |_| {}, &mut || {
             grabs += 1;
             Ok(capture(grabs))
-        });
+        }, &mut |_| true);
         grabs
     }
 

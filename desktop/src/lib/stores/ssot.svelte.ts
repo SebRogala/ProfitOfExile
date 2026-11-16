@@ -286,6 +286,16 @@ export interface DismissSettings {
 	overlays: Record<string, OverlayDismiss>;
 }
 
+export interface PendingDismiss {
+	gen: number;
+	shortcut: BossLootShortcut;
+}
+
+export interface DismissSnapshot extends DismissSettings {
+	/** Optional for partial test snapshots, like SsotSnapshot.screen; Rust always sends it. */
+	pending?: PendingDismiss[];
+}
+
 /** A mechanic the read key reads; `read_prompt::Mechanic` on the Rust side. */
 export type ReadPromptMechanic = 'divineFont' | 'incursion' | 'mercenary';
 
@@ -342,7 +352,7 @@ export interface SsotSnapshot {
 	server?: ServerSlice;
 	/** The "Read screen" shortcut and press-to-grab delay, Rust-owned. */
 	readHotkey?: ReadHotkeySettings;
-	overlayDismiss?: DismissSettings;
+	overlayDismiss?: DismissSnapshot;
 	/** The read prompt, Rust-owned by `read_prompt.rs`. */
 	readPrompt?: ReadPromptSnapshot;
 }
@@ -408,7 +418,7 @@ export const ssot = $state({
 	placements: null as Placements | null,
 	/** Unknown until Rust answers; the default lives in `read_hotkey.rs`. */
 	readHotkey: null as ReadHotkeySettings | null,
-	overlayDismiss: null as DismissSettings | null,
+	overlayDismiss: null as DismissSnapshot | null,
 	/** No prompt until Rust answers. */
 	readPrompt: { mechanic: null, seq: 0 } as ReadPromptSnapshot,
 });

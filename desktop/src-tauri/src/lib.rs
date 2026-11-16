@@ -372,6 +372,7 @@ pub struct AppState {
     /// The "Read screen" shortcut and press-to-grab delay. Taken alone.
     pub read_hotkey: Mutex<read_hotkey::ReadHotkeySettings>,
     pub overlay_dismiss: Mutex<overlay_dismiss::DismissSettings>,
+    pub dismiss_ledger: overlay_dismiss::DismissLedger,
     /// The "press <key> to read" prompt (POE-388). Taken alone.
     pub read_prompt: Mutex<read_prompt::ReadPromptState>,
     /// Hardware-based device fingerprint — computed once at startup, immutable.
@@ -1838,6 +1839,7 @@ pub fn run() {
         loot: loot_capture::LootState::new(),
         read_hotkey: Mutex::new(read_hotkey::ReadHotkeySettings::default()),
         overlay_dismiss: Mutex::new(overlay_dismiss::DismissSettings::default()),
+        dismiss_ledger: overlay_dismiss::DismissLedger::default(),
         read_prompt: Mutex::new(read_prompt::ReadPromptState::default()),
         device_id: device_id.clone(),
         pair_code: Mutex::new(pair_code),
@@ -1908,6 +1910,8 @@ pub fn run() {
             loot_capture::boss_loot_rebind,
             read_hotkey::read_hotkey_set_settings,
             overlay_dismiss::overlay_dismiss_set_settings,
+            overlay_dismiss::overlay_dismiss_host,
+            overlay_dismiss::overlay_dismiss_ack,
             loot_api::boss_loot_stats,
             loot_api::boss_loot_runs,
             loot_api::boss_loot_edit,

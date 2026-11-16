@@ -123,7 +123,7 @@ mod tests {
         *world.prompt.lock().unwrap() = Some(4);
         let armed = crate::read_hotkey::arm_all(Press { cursor: None }, Default::default(), &[&MERC_READER], &world);
         *world.prompt.lock().unwrap() = Some(5);
-        crate::read_hotkey::run_armed(armed, &world, &mut |_| {}, &mut || Ok(capture(1)));
+        crate::read_hotkey::run_armed(armed, &world, &mut |_| {}, &mut || Ok(capture(1)), &mut |_| true);
         let MercInbox::Press(pressed) = rx.try_recv().unwrap() else { panic!("expected press") };
         assert_eq!(pressed.prompt, Some(4));
     }
@@ -139,7 +139,7 @@ mod tests {
     }
 
     fn sample(keys: &[u16]) -> Sample {
-        Sample { down: keys.iter().copied().collect(), foreground: true, settings: ReadHotkeySettings::default() }
+        Sample { down: keys.iter().copied().collect(), foreground: true, settings: ReadHotkeySettings::default(), dismiss: Vec::new() }
     }
     /// Ctrl+A, the default read key.
     const PRESSED: &[u16] = &[17, 65];
@@ -152,13 +152,13 @@ mod tests {
         let (queue, presses) = mpsc::channel();
         let mut samples = samples.into_iter();
         let mut cursors = cursors.iter().copied();
-        run_sampler(world, readers, &mut || samples.next(), &mut || cursors.next(), &queue);
+        run_sampler(world, readers, &mut || samples.next(), &mut || cursors.next(), &queue, &mut |_| 0);
         drop(queue);
         let mut grabs = 0;
         run_dispatcher(world, presses, &mut |_| {}, &mut || {
             grabs += 1;
             Ok(capture(grabs))
-        });
+        }, &mut |_| true);
         grabs
     }
 
@@ -271,13 +271,13 @@ mod tests {
             &[&crate::temple::press::TEMPLE_READER, &MERC_READER];
         let (queue, presses) = mpsc::channel();
         let mut samples = vec![sample(PRESSED)].into_iter();
-        run_sampler(&world, readers, &mut || samples.next(), &mut || Some((5, 5)), &queue);
+        run_sampler(&world, readers, &mut || samples.next(), &mut || Some((5, 5)), &queue, &mut |_| 0);
         drop(queue);
         let mut grabs = 0;
         run_dispatcher(&world, presses, &mut |_| {}, &mut || {
             grabs += 1;
             Ok(capture(grabs))
-        });
+        }, &mut |_| true);
         drop(world);
 
         assert_eq!(grabs, 1);

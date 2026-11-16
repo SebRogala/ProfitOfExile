@@ -1502,7 +1502,9 @@ pub(crate) mod tests {
         assert_eq!(*after.overlay_dismiss.lock().unwrap(), custom);
         *after.sidebar_open.lock().unwrap() = false;
         assert_eq!(*from_state(&after).overlay_dismiss, custom);
-        assert_eq!(serde_json::to_value(crate::ssot::build_snapshot(&after)).unwrap()["overlayDismiss"], serde_json::to_value(custom).unwrap());
+        let mut dismiss = serde_json::to_value(crate::ssot::build_snapshot(&after)).unwrap()["overlayDismiss"].clone();
+        assert_eq!(dismiss.as_object_mut().unwrap().remove("pending"), Some(serde_json::json!([])));
+        assert_eq!(dismiss, serde_json::to_value(custom).unwrap());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1989,6 +1991,7 @@ pub(crate) mod tests {
             loot: crate::loot_capture::LootState::new(),
             read_hotkey: Mutex::new(crate::read_hotkey::ReadHotkeySettings::default()),
             overlay_dismiss: Mutex::new(crate::overlay_dismiss::DismissSettings::default()),
+            dismiss_ledger: crate::overlay_dismiss::DismissLedger::default(),
             read_prompt: Mutex::new(crate::read_prompt::ReadPromptState::default()),
             device_id: String::new(),
             game_monitor: Mutex::new(None),

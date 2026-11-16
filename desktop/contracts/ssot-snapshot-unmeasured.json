@@ -402,7 +402,8 @@
       "ctrl": false,
       "alt": false
     },
-    "overlays": {}
+    "overlays": {},
+    "pending": []
   },
   "readPrompt": {
     "mechanic": "divineFont",
