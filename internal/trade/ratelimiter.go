@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -170,6 +171,22 @@ func (rl *RateLimiter) SyncFromHeaders(poolName string, headers http.Header) {
 // are request-specific unless five headerless non-429 4xx arrive within ten
 // minutes. Parsed upstream restrictions are honoured on every response.
 func (rl *RateLimiter) ObserveResponse(poolName string, headers http.Header, responseErr error) {
+	if poolName == "search" {
+		names := make([]string, 0, len(headers))
+		for name := range headers {
+			if strings.HasPrefix(strings.ToLower(name), "x-rate-limit-") {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		fields := make([]any, 0, len(names))
+		for _, name := range names {
+			fields = append(fields, slog.Any(name, headers[name]))
+		}
+		slog.Info("trade limiter: search rate-limit headers",
+			"headersPresent", len(names) > 0, slog.Group("headers", fields...))
+	}
+
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 

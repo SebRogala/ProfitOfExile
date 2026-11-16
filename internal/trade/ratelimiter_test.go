@@ -1,13 +1,124 @@
 package trade
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func captureRateLimiterLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &output
+}
+
+func searchHeaderRecords(t *testing.T, output *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var records []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("invalid structured log: %v", err)
+		}
+		if record["msg"] == "trade limiter: search rate-limit headers" {
+			records = append(records, record)
+		}
+	}
+	return records
+}
+
+func TestRateLimiter_SearchHeadersReceivedValues(t *testing.T) {
+	for _, responseErr := range []error{nil, ErrRateLimited, errors.New("decode failed")} {
+		t.Run(fmt.Sprint(responseErr), func(t *testing.T) {
+			output := captureRateLimiterLogs(t)
+			headers := http.Header{
+				"X-Rate-Limit-Rules":         {"account, ip"},
+				"X-Rate-Limit-Account":       {"5:10:60,15:60:120"},
+				"X-Rate-Limit-Account-State": {"2:10:0,3:60:0"},
+				"x-rate-limit-custom":        {"raw value", " second value "},
+			}
+			NewRateLimiter(testConfig()).ObserveResponse("search", headers, responseErr)
+			records := searchHeaderRecords(t, output)
+			if len(records) != 1 {
+				t.Fatalf("search evidence records = %d, want 1", len(records))
+			}
+			want := map[string]any{
+				"X-Rate-Limit-Rules":         []any{"account, ip"},
+				"X-Rate-Limit-Account":       []any{"5:10:60,15:60:120"},
+				"X-Rate-Limit-Account-State": []any{"2:10:0,3:60:0"},
+				"x-rate-limit-custom":        []any{"raw value", " second value "},
+			}
+			if records[0]["headersPresent"] != true || !reflect.DeepEqual(records[0]["headers"], want) {
+				t.Fatalf("search evidence = %#v, want received headers %#v", records[0], want)
+			}
+			previous := -1
+			for _, name := range []string{"X-Rate-Limit-Account", "X-Rate-Limit-Account-State", "X-Rate-Limit-Rules", "x-rate-limit-custom"} {
+				position := strings.Index(output.String(), `"`+name+`":`)
+				if position <= previous {
+					t.Fatalf("header %s out of deterministic order: %s", name, output)
+				}
+				previous = position
+			}
+		})
+	}
+}
+
+func TestRateLimiter_SearchHeadersExcludeUnrelatedData(t *testing.T) {
+	output := captureRateLimiterLogs(t)
+	headers := http.Header{}
+	for _, name := range []string{"Authorization", "Cookie", "Set-Cookie", "X-Listing-Id", "X-Unrelated", "Retry-After"} {
+		headers.Set(name, "sensitive-unrelated-sentinel")
+	}
+	NewRateLimiter(testConfig()).ObserveResponse("search", headers, errors.New("sensitive-error-sentinel"))
+	if strings.Contains(output.String(), "sentinel") {
+		t.Fatalf("search evidence leaked unrelated data: %s", output)
+	}
+	records := searchHeaderRecords(t, output)
+	if len(records) != 1 || records[0]["headersPresent"] != false || records[0]["headers"] != nil {
+		t.Fatalf("unrelated headers produced rate-limit evidence: %#v", records)
+	}
+}
+
+func TestRateLimiter_SearchHeadersNilRecordsAbsence(t *testing.T) {
+	for _, responseErr := range []error{nil, ErrRateLimited} {
+		t.Run(fmt.Sprint(responseErr), func(t *testing.T) {
+			output := captureRateLimiterLogs(t)
+			NewRateLimiter(testConfig()).ObserveResponse("search", nil, responseErr)
+			records := searchHeaderRecords(t, output)
+			if len(records) != 1 || records[0]["headersPresent"] != false || records[0]["headers"] != nil {
+				t.Fatalf("headerless search evidence = %#v, want absence without tiers", records)
+			}
+		})
+	}
+}
+
+func TestRateLimiter_SearchHeadersFetchEmitsNoSearchRecord(t *testing.T) {
+	for _, responseErr := range []error{nil, ErrRateLimited} {
+		t.Run(fmt.Sprint(responseErr), func(t *testing.T) {
+			output := captureRateLimiterLogs(t)
+			NewRateLimiter(testConfig()).ObserveResponse("fetch", http.Header{
+				"X-Rate-Limit-Rules": {"account"},
+			}, responseErr)
+			if records := searchHeaderRecords(t, output); len(records) != 0 {
+				t.Fatalf("fetch emitted search evidence: %#v", records)
+			}
+		})
+	}
+}
 
 // testConfig returns a TradeConfig with sensible test defaults.
 func testConfig() TradeConfig {
