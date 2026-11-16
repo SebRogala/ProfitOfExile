@@ -33,6 +33,8 @@ pub struct LabScanState {
     /// `detected_gems` guard is held, the guard `commit_gem_read` checks it
     /// under.
     pub gem_context: AtomicU64,
+    /// Lifecycle fence under `detected_gems`; ordinary commits leave queued reads valid.
+    pub gem_lifecycle: AtomicU64,
     /// Bumped under the `detected_gems` guard by every gem arm and every gem
     /// commit; never reset. A manual mode change compares it across its
     /// generation bump to tell a choice that changed meanwhile from one
@@ -46,6 +48,7 @@ pub struct LabScanState {
     /// The tooltip vocabulary for the gem reader, installed by the background
     /// preload (`lab::gem_vocab`). Acquired alone.
     pub gem_vocab: Mutex<Option<crate::lab::gem_vocab::GemVocab>>,
+    pub(crate) gem_vocab_load: tokio::sync::Mutex<()>,
     /// Bumped by every lab-mode change, under the `lab_settings` guard. A
     /// vocabulary or a gem commit carrying an older value is rejected.
     pub gem_vocab_generation: AtomicU64,
@@ -74,9 +77,11 @@ impl LabScanState {
             font_context: AtomicU64::new(0),
             font_idle_seq: AtomicU64::new(0),
             gem_context: AtomicU64::new(0),
+            gem_lifecycle: AtomicU64::new(0),
             choice_seq: AtomicU64::new(0),
             last_gem_read: Mutex::new(None),
             gem_vocab: Mutex::new(None),
+            gem_vocab_load: tokio::sync::Mutex::new(()),
             gem_vocab_generation: AtomicU64::new(0),
             font_opened_seq: AtomicU64::new(0),
             font_session: Mutex::new(FontSessionData::default()),

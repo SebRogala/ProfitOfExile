@@ -158,15 +158,29 @@ pub fn polled_keys(read: &Shortcut, dismiss: &[Shortcut]) -> std::collections::B
     [16, 17, 18, read.key].into_iter().chain(dismiss.iter().map(|shortcut| shortcut.key)).collect()
 }
 
-/// A screen reader the read key serves. `arm` runs at press time, before the
-/// delay and the grab, and must not block; it fixes whatever context the read
-/// needs and returns `None` when the reader has nothing to read now.
-pub trait ScreenReader<C> {
-    fn arm(&self, ctx: &C, press: &Press) -> Option<Box<dyn PendingRead<C>>>;
+/// A reader identity used for first-match ordering and dispatch results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReaderId { Temple, Font, Gem, Mercenary }
+
+impl ReaderId {
+    fn mechanic(self) -> crate::read_prompt::Mechanic {
+        use crate::read_prompt::Mechanic;
+        match self {
+            Self::Temple => Mechanic::Incursion,
+            Self::Font | Self::Gem => Mechanic::DivineFont,
+            Self::Mercenary => Mechanic::Mercenary,
+        }
+    }
 }
-/// An armed read: receives the press's one grab, or the grab's error. It
-/// reports nothing-found itself and never asks for another grab.
+
+pub trait ScreenReader<C> {
+    fn id(&self) -> ReaderId;
+    fn recent(&self, _ctx: &C) -> Option<crate::read_prompt::Mechanic> { None }
+    fn prepare(&self, ctx: &C, press: &Press) -> Option<Box<dyn PendingRead<C>>>;
+}
+/// Prepared context; probing retains evidence without publishing module state.
 pub trait PendingRead<C>: Send {
+    fn probe(&mut self, frame: &std::sync::Arc<crate::capture::Capture>, ctx: &C) -> Result<bool, String>;
     fn consume(self: Box<Self>, frame: Result<&std::sync::Arc<crate::capture::Capture>, &str>, ctx: &C);
 }
 
@@ -178,49 +192,68 @@ pub const READERS: &[&dyn ScreenReader<tauri::AppHandle>] = &[
     &crate::mercenary::press::MERC_READER,
 ];
 
-/// A press with its readers already armed, waiting for its grab.
-pub struct ArmedPress<C> {
+/// A press with its eligible candidates prepared, waiting for its grab.
+pub struct PreparedPress<C> {
     pub delay: std::time::Duration,
-    pub pendings: Vec<Box<dyn PendingRead<C>>>,
+    pub pendings: Vec<(ReaderId, Box<dyn PendingRead<C>>)>,
     pub dismissed: Vec<u64>,
 }
 
-pub fn arm_all<C>(
+pub fn prepare_press<C>(
     press: Press,
     delay: std::time::Duration,
     readers: &[&dyn ScreenReader<C>],
     ctx: &C,
-) -> ArmedPress<C> {
-    let pendings = readers.iter().filter_map(|r| r.arm(ctx, &press)).collect();
-    ArmedPress { delay, pendings, dismissed: Vec::new() }
+) -> PreparedPress<C> {
+    let recent = readers.iter().find_map(|r| r.recent(ctx));
+    let mut pendings = Vec::new();
+    for reader in readers {
+        let id = reader.id();
+        if pendings.iter().any(|(existing, _)| *existing == id) { continue; }
+        if let Some(pending) = reader.prepare(ctx, &press) { pendings.push((id, pending)); }
+    }
+    pendings.sort_by_key(|(id, _)| if *id == ReaderId::Font { 0 } else if Some(id.mechanic()) == recent { 1 } else { 2 });
+    PreparedPress { delay, pendings, dismissed: Vec::new() }
 }
 
-/// Wait for this press's dismissal, then delay and hand one grab to every
-/// armed read; an unacknowledged dismissal or no armed reader takes no grab.
-pub fn run_armed<C>(
-    armed: ArmedPress<C>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DispatchOutcome { Selected(ReaderId), NoMatch, Failed(String), Suppressed }
+
+/// Await all same-tick dismissals, then delay, capture once and select the first match.
+pub fn dispatch_press<C>(
+    armed: PreparedPress<C>,
     ctx: &C,
     sleep: &mut dyn FnMut(std::time::Duration),
     grab: &mut dyn FnMut() -> Result<crate::capture::Capture, crate::capture::CaptureError>,
     await_hidden: &mut dyn FnMut(&[u64]) -> bool,
-) {
-    if armed.pendings.is_empty() {
-        return;
+) -> DispatchOutcome {
+    if !armed.dismissed.is_empty() && !await_hidden(&armed.dismissed) {
+        return DispatchOutcome::Suppressed;
     }
-    if !armed.dismissed.is_empty() && !await_hidden(&armed.dismissed) { return; }
     sleep(armed.delay);
     let frame = match grab() {
         // Nothing grabbed and already logged by capture; the press is a no-op.
-        Err(crate::capture::CaptureError::NotAccepted) => return,
+        Err(crate::capture::CaptureError::NotAccepted) => return DispatchOutcome::Suppressed,
         Err(crate::capture::CaptureError::Failed(e)) => {
             log::warn!("read hotkey: screen grab failed: {e}");
-            Err(e)
+            return DispatchOutcome::Failed(e);
         }
-        Ok(capture) => Ok(std::sync::Arc::new(capture)),
+        Ok(capture) => std::sync::Arc::new(capture),
     };
-    for pending in armed.pendings {
-        pending.consume(frame.as_ref().map_err(String::as_str), ctx);
+    for (id, mut pending) in armed.pendings {
+        match pending.probe(&frame, ctx) {
+            Ok(true) => {
+                pending.consume(Ok(&frame), ctx);
+                return DispatchOutcome::Selected(id);
+            }
+            Ok(false) => {}
+            Err(error) => {
+                log::warn!("read hotkey: probe failed: {error}");
+                return DispatchOutcome::Failed(error);
+            }
+        }
     }
+    DispatchOutcome::NoMatch
 }
 
 /// Arm, delay and grab in one call; the threads split it at the queue.
@@ -233,7 +266,7 @@ pub fn dispatch<C>(
     sleep: &mut dyn FnMut(std::time::Duration),
     grab: &mut dyn FnMut() -> Result<crate::capture::Capture, crate::capture::CaptureError>,
 ) {
-    run_armed(arm_all(press, delay, readers, ctx), ctx, sleep, grab, &mut |_| panic!("read-only press must not wait"));
+    dispatch_press(prepare_press(press, delay, readers, ctx), ctx, sleep, grab, &mut |_| panic!("read-only press must not wait"));
 }
 
 /// One key-sampling tick's inputs; `None` from the sampler ends the loop.
@@ -251,7 +284,7 @@ pub fn run_sampler<C>(
     readers: &[&dyn ScreenReader<C>],
     sample: &mut dyn FnMut() -> Option<Sample>,
     cursor: &mut dyn FnMut() -> Option<(i32, i32)>,
-    queue: &std::sync::mpsc::Sender<ArmedPress<C>>,
+    queue: &std::sync::mpsc::Sender<PreparedPress<C>>,
     on_dismiss: &mut dyn FnMut(&Shortcut) -> u64,
 ) {
     let mut poll = ReadPoll::default();
@@ -260,7 +293,7 @@ pub fn run_sampler<C>(
         let dismissed = dismiss_poll.poll(&s, on_dismiss);
         if let Some(press) = poll.poll(&s.down, s.foreground, &s.settings.shortcut, cursor) {
             let delay = std::time::Duration::from_millis(u64::from(s.settings.delay_ms));
-            let mut armed = arm_all(press, delay, readers, ctx);
+            let mut armed = prepare_press(press, delay, readers, ctx);
             armed.dismissed = dismissed;
             if queue.send(armed).is_err() {
                 return;
@@ -272,13 +305,13 @@ pub fn run_sampler<C>(
 /// The dispatch side: each queued press in order gets its own delay and grab.
 pub fn run_dispatcher<C>(
     ctx: &C,
-    queue: std::sync::mpsc::Receiver<ArmedPress<C>>,
+    queue: std::sync::mpsc::Receiver<PreparedPress<C>>,
     sleep: &mut dyn FnMut(std::time::Duration),
     grab: &mut dyn FnMut() -> Result<crate::capture::Capture, crate::capture::CaptureError>,
     await_hidden: &mut dyn FnMut(&[u64]) -> bool,
 ) {
     for armed in queue {
-        run_armed(armed, ctx, sleep, grab, await_hidden);
+        dispatch_press(armed, ctx, sleep, grab, await_hidden);
     }
 }
 
@@ -357,6 +390,10 @@ mod dispatch_tests {
         context: Mutex<String>,
         armed_order: Mutex<Vec<&'static str>>,
         consumed: Mutex<Vec<(&'static str, String, Result<u32, String>)>>,
+        recent: Mutex<Option<crate::read_prompt::Mechanic>>,
+        misses: Mutex<Vec<&'static str>>,
+        probes: Mutex<Vec<(&'static str, u32)>>,
+        probe_error: Mutex<bool>,
     }
     struct TestReader {
         name: &'static str,
@@ -367,7 +404,11 @@ mod dispatch_tests {
         context: String,
     }
     impl ScreenReader<Arc<World>> for TestReader {
-        fn arm(&self, ctx: &Arc<World>, _press: &Press) -> Option<Box<dyn PendingRead<Arc<World>>>> {
+        fn id(&self) -> ReaderId {
+            match self.name { "b" => ReaderId::Mercenary, "g" => ReaderId::Gem, "f" => ReaderId::Font, _ => ReaderId::Temple }
+        }
+        fn recent(&self, ctx: &Arc<World>) -> Option<crate::read_prompt::Mechanic> { *ctx.recent.lock().unwrap() }
+        fn prepare(&self, ctx: &Arc<World>, _press: &Press) -> Option<Box<dyn PendingRead<Arc<World>>>> {
             if !self.armed {
                 return None;
             }
@@ -377,6 +418,11 @@ mod dispatch_tests {
         }
     }
     impl PendingRead<Arc<World>> for TestPending {
+        fn probe(&mut self, frame: &Arc<Capture>, ctx: &Arc<World>) -> Result<bool, String> {
+            ctx.probes.lock().unwrap().push((self.name, frame.monitor_id));
+            if *ctx.probe_error.lock().unwrap() { return Err("recognition failed".into()); }
+            Ok(!ctx.misses.lock().unwrap().contains(&self.name))
+        }
         fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, ctx: &Arc<World>) {
             let frame = frame.map(|c| c.monitor_id).map_err(str::to_string);
             ctx.consumed.lock().unwrap().push((self.name, self.context, frame));
@@ -385,6 +431,65 @@ mod dispatch_tests {
     const A: TestReader = TestReader { name: "a", armed: true };
     const B: TestReader = TestReader { name: "b", armed: true };
     const IDLE: TestReader = TestReader { name: "idle", armed: false };
+    const GEM: TestReader = TestReader { name: "g", armed: true };
+    const FONT: TestReader = TestReader { name: "f", armed: true };
+
+    fn route(world: &Arc<World>, readers: &[&dyn ScreenReader<Arc<World>>]) -> DispatchOutcome {
+        let prepared = prepare_press(press(), Duration::ZERO, readers, world);
+        dispatch_press(prepared, world, &mut |_| {}, &mut || Ok(capture(42)), &mut |_| panic!("no dismissal to await"))
+    }
+
+    #[test]
+    fn latest_client_mechanic_wins_before_registry_order() {
+        let world = Arc::new(World::default());
+        *world.recent.lock().unwrap() = Some(crate::read_prompt::Mechanic::Mercenary);
+        assert_eq!(route(&world, &[&A, &GEM, &B]), DispatchOutcome::Selected(ReaderId::Mercenary));
+        assert_eq!(*world.probes.lock().unwrap(), vec![("b", 42)]);
+        assert_eq!(*world.consumed.lock().unwrap(), vec![("b", String::new(), Ok(42))]);
+    }
+    #[test]
+    fn armed_font_wins_before_client_recency() {
+        let world = Arc::new(World::default());
+        *world.recent.lock().unwrap() = Some(crate::read_prompt::Mechanic::Mercenary);
+        assert_eq!(route(&world, &[&A, &FONT, &GEM, &B]), DispatchOutcome::Selected(ReaderId::Font));
+        assert_eq!(*world.probes.lock().unwrap(), vec![("f", 42)]);
+    }
+    #[test]
+    fn font_miss_falls_through_to_recent_mechanic() {
+        let world = Arc::new(World::default());
+        *world.recent.lock().unwrap() = Some(crate::read_prompt::Mechanic::Mercenary);
+        *world.misses.lock().unwrap() = vec!["f"];
+        assert_eq!(route(&world, &[&A, &FONT, &GEM, &B]), DispatchOutcome::Selected(ReaderId::Mercenary));
+        assert_eq!(*world.probes.lock().unwrap(), vec![("f", 42), ("b", 42)]);
+        assert_eq!(*world.consumed.lock().unwrap(), vec![("b", String::new(), Ok(42))]);
+    }
+    #[test]
+    fn all_misses_return_no_match_after_one_capture() {
+        let world = Arc::new(World::default());
+        *world.misses.lock().unwrap() = vec!["a", "g", "b"];
+        let prepared = prepare_press(press(), Duration::ZERO, &[&A, &GEM, &B], &world);
+        let mut captures = 0;
+        let result = dispatch_press(prepared, &world, &mut |_| {}, &mut || { captures += 1; Ok(capture(7)) }, &mut |_| panic!("no dismissal to await"));
+        assert_eq!((captures, result), (1, DispatchOutcome::NoMatch));
+        assert_eq!(*world.probes.lock().unwrap(), vec![("a", 7), ("g", 7), ("b", 7)]);
+        assert!(world.consumed.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn no_candidates_return_no_match_after_one_capture() {
+        let world = Arc::new(World::default());
+        let prepared = prepare_press(press(), Duration::ZERO, &[], &world);
+        let mut captures = 0;
+        let result = dispatch_press(prepared, &world, &mut |_| {}, &mut || { captures += 1; Ok(capture(7)) }, &mut |_| panic!("no dismissal to await"));
+        assert_eq!((captures, result), (1, DispatchOutcome::NoMatch));
+    }
+    #[test]
+    fn probe_error_stops_routing_without_no_match_or_consumption() {
+        let world = Arc::new(World::default());
+        *world.probe_error.lock().unwrap() = true;
+        assert_eq!(route(&world, &[&A, &B]), DispatchOutcome::Failed("recognition failed".into()));
+        assert_eq!(*world.probes.lock().unwrap(), vec![("a", 42)]);
+        assert!(world.consumed.lock().unwrap().is_empty());
+    }
 
     fn capture(monitor_id: u32) -> Capture {
         Capture {
@@ -430,10 +535,12 @@ mod dispatch_tests {
         });
         drop(tx);
         run_dispatcher(&world, rx, &mut |_| events.lock().unwrap().push("sleep".into()), &mut || {
+            assert!(world.probes.lock().unwrap().is_empty(), "capture before probing");
             events.lock().unwrap().push("grab".into());
             Ok(capture(1))
         }, &mut |generations| {
             assert_eq!(generations, &[1]);
+            assert!(world.probes.lock().unwrap().is_empty(), "hide acknowledgement before probing");
             let gen = generations[0];
             events.lock().unwrap().push(format!("await_hidden({gen}) starts"));
             assert_eq!(ledger.ready(gen, &mut |_| true), None);
@@ -445,17 +552,20 @@ mod dispatch_tests {
         });
         assert_eq!(*events.lock().unwrap(), vec!["dismiss(1)", "await_hidden(1) starts", "ack(temple, 1)", "await_hidden returns true", "sleep", "grab"]);
         assert_eq!(world.consumed.lock().unwrap().len(), 1);
+        assert_eq!(*world.probes.lock().unwrap(), vec![("a", 1)]);
     }
 
     #[test]
     fn a_shared_press_without_an_acknowledgement_in_time_takes_no_grab_and_reads_nothing() {
         let world = Arc::new(World::default());
-        let mut armed = arm_all(press(), Duration::ZERO, &[&A], &world);
+        let mut armed = prepare_press(press(), Duration::ZERO, &[&A], &world);
         armed.dismissed = vec![1];
-        run_armed(armed, &world, &mut |_| panic!("must not sleep"), &mut || panic!("must not grab"), &mut |generations| {
+        let outcome = dispatch_press(armed, &world, &mut |_| panic!("must not sleep"), &mut || panic!("must not grab"), &mut |generations| {
             assert_eq!(generations, &[1]);
             false
         });
+        assert_eq!(outcome, DispatchOutcome::Suppressed);
+        assert!(world.probes.lock().unwrap().is_empty());
         assert!(world.consumed.lock().unwrap().is_empty());
     }
 
@@ -486,6 +596,7 @@ mod dispatch_tests {
                 elapsed.set(if acknowledge_earlier { Duration::from_millis(20) } else { remaining });
             }));
             assert_eq!(grabs, usize::from(acknowledge_earlier));
+            assert_eq!(world.probes.lock().unwrap().len(), usize::from(acknowledge_earlier));
             assert_eq!(world.consumed.lock().unwrap().len(), usize::from(acknowledge_earlier));
         }
     }
@@ -519,11 +630,15 @@ mod dispatch_tests {
             assert_eq!(ledger.ready(1, &mut |_| true), Some(true), "F dismissal must be applied before capture");
             grabs += 1;
             Ok(capture(1))
-        }, &mut |gen| ledger.await_with(gen, &mut |_| true, &mut || elapsed.get(), &mut |remaining| {
-            if acknowledge_earlier { ledger.ack("temple", 1); }
-            elapsed.set(if acknowledge_earlier { Duration::from_millis(20) } else { remaining });
-        }));
+        }, &mut |gen| {
+            assert_eq!(gen, &[1, 2], "all same-tick dismissals must be acknowledged");
+            ledger.await_with(gen, &mut |_| true, &mut || elapsed.get(), &mut |remaining| {
+                if acknowledge_earlier { ledger.ack("temple", 1); }
+                elapsed.set(if acknowledge_earlier { Duration::from_millis(20) } else { remaining });
+            })
+        });
         assert_eq!(grabs, usize::from(acknowledge_earlier));
+        assert_eq!(world.probes.lock().unwrap().len(), usize::from(acknowledge_earlier));
         assert_eq!(world.consumed.lock().unwrap().len(), usize::from(acknowledge_earlier));
         assert_eq!(elapsed.get(), Duration::from_millis(if acknowledge_earlier { 20 } else { 500 }));
     }
@@ -603,7 +718,7 @@ mod dispatch_tests {
         assert_eq!(got, Some(Press { cursor: Some((7, 8)) }));
     }
     #[test]
-    fn two_armed_readers_share_one_grab_per_press() {
+    fn two_matching_readers_select_only_the_first_after_one_capture() {
         let world = Arc::new(World::default());
         let mut grabs = 0;
         dispatch(press(), &[&A, &B], Duration::ZERO, &world, &mut |_| {}, &mut || {
@@ -612,7 +727,7 @@ mod dispatch_tests {
         });
         assert_eq!(grabs, 1);
         let consumed = world.consumed.lock().unwrap().clone();
-        assert_eq!(consumed, vec![("a", String::new(), Ok(9)), ("b", String::new(), Ok(9))]);
+        assert_eq!(consumed, vec![("a", String::new(), Ok(9))]);
     }
     #[test]
     fn unarmed_reader_never_consumes() {
@@ -640,7 +755,7 @@ mod dispatch_tests {
         assert_eq!(*events.lock().unwrap(), vec!["sleep after 2 armed 250ms", "grab after 2 armed"]);
     }
     #[test]
-    fn grab_error_reaches_every_armed_read_after_one_attempt() {
+    fn grab_error_consumes_no_reader_after_one_attempt() {
         let world = Arc::new(World::default());
         let mut attempts = 0;
         dispatch(press(), &[&A, &B], Duration::ZERO, &world, &mut |_| {}, &mut || {
@@ -649,8 +764,7 @@ mod dispatch_tests {
         });
         assert_eq!(attempts, 1);
         let consumed = world.consumed.lock().unwrap().clone();
-        let err = || Err("no monitor".to_string());
-        assert_eq!(consumed, vec![("a", String::new(), err()), ("b", String::new(), err())]);
+        assert!(consumed.is_empty());
     }
     /// The privacy refusal is no frame for any reader (and no warn, which only
     /// the `Failed` arm emits): no armed read is consumed, so none reports.
@@ -690,10 +804,10 @@ mod dispatch_tests {
         assert_eq!(dispatcher.join().unwrap(), 2);
     }
     #[test]
-    fn presses_grab_no_frame_with_no_reader_registered() {
+    fn presses_capture_once_each_with_no_reader_registered() {
         let world = Arc::new(World::default());
         let grabs = run_pipeline(&world, &[], vec![sample(PRESSED, true), sample(&[], true), sample(PRESSED, true)]);
-        assert_eq!(grabs, 0);
+        assert_eq!(grabs, 2);
     }
     #[test]
     fn no_press_grabs_no_frame_with_no_reader_registered() {
@@ -702,10 +816,10 @@ mod dispatch_tests {
         assert_eq!(grabs, 0);
     }
     #[test]
-    fn presses_grab_no_frame_when_every_reader_declines() {
+    fn presses_capture_once_each_when_every_reader_declines() {
         let world = Arc::new(World::default());
         let grabs = run_pipeline(&world, &[&IDLE, &IDLE], vec![sample(PRESSED, true), sample(&[], true), sample(PRESSED, true)]);
-        assert_eq!(grabs, 0);
+        assert_eq!(grabs, 2);
         assert!(world.consumed.lock().unwrap().is_empty());
     }
     #[test]

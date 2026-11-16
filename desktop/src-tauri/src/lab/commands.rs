@@ -76,6 +76,7 @@ pub(crate) fn arm_gem_context(state: &AppState) -> u64 {
     let mut gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
     let token = font_session::next_scan_generation(&state.lab_scan.read_token_seq);
     state.lab_scan.gem_context.store(token, Ordering::SeqCst);
+    state.lab_scan.gem_lifecycle.fetch_add(1, Ordering::SeqCst);
     state.lab_scan.choice_seq.fetch_add(1, Ordering::SeqCst);
     gems.clear();
     *state.lab_scan.last_gem_read.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -88,11 +89,40 @@ pub(crate) fn arm_gem_context(state: &AppState) -> u64 {
 pub(crate) fn disarm_gem_context(state: &AppState, clear: bool) -> bool {
     let mut gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
     let was_armed = state.lab_scan.gem_context.swap(0, Ordering::SeqCst) != 0;
+    state.lab_scan.gem_lifecycle.fetch_add(1, Ordering::SeqCst);
     if clear {
         gems.clear();
         *state.lab_scan.last_gem_read.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
     was_armed
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GemReadIdentity {
+    lifecycle: u64,
+    generation: u64,
+}
+
+pub(crate) fn gem_read_identity(state: &AppState) -> GemReadIdentity {
+    let _gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+    GemReadIdentity {
+        lifecycle: state.lab_scan.gem_lifecycle.load(Ordering::SeqCst),
+        generation: state.lab_scan.gem_vocab_generation.load(Ordering::SeqCst),
+    }
+}
+
+pub(crate) fn prepare_gem_context(state: &AppState, expected: GemReadIdentity) -> Option<u64> {
+    let mut gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+    if state.lab_scan.gem_lifecycle.load(Ordering::SeqCst) != expected.lifecycle
+        || state.lab_scan.gem_vocab_generation.load(Ordering::SeqCst) != expected.generation
+        || !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return None; }
+    let current = super::gem_reader::armed_token(&state.lab_scan).unwrap_or(0);
+    if current != 0 { return Some(current); }
+    let token = font_session::next_scan_generation(&state.lab_scan.read_token_seq);
+    state.lab_scan.gem_context.store(token, Ordering::SeqCst);
+    gems.clear();
+    *state.lab_scan.last_gem_read.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    Some(token)
 }
 
 /// The CRAFT adapter: arm, then (no lab guard held) `PickingGems`,
@@ -140,6 +170,10 @@ pub(crate) fn set_lab_overlays_enabled(enabled: bool, app: AppHandle) {
 
 fn set_lab_overlays_enabled_in(state: &AppState, enabled: bool) -> bool {
     *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) = enabled;
+    if !enabled {
+        disarm_gem_context(state, false);
+        super::font_context::disarm_font_context(state);
+    }
     crate::read_prompt::modules_changed_in(state)
 }
 
@@ -147,6 +181,48 @@ fn set_lab_overlays_enabled_in(state: &AppState, enabled: bool) -> bool {
 mod prompt_tests {
     use super::*;
     use crate::read_prompt::{self, Change, Mechanic};
+
+    #[test]
+    fn tokenless_press_is_invalidated_by_close() {
+        let state = crate::settings::tests::test_app_state();
+        let identity = gem_read_identity(&state);
+        disarm_gem_context(&state, false);
+        assert_eq!(prepare_gem_context(&state, identity), None);
+        assert_eq!(state.lab_scan.gem_context.load(Ordering::SeqCst), 0);
+    }
+    #[test]
+    fn tokenless_press_is_invalidated_by_confirm_or_zone_clear() {
+        let state = crate::settings::tests::test_app_state();
+        let identity = gem_read_identity(&state);
+        disarm_gem_context(&state, true);
+        assert_eq!(prepare_gem_context(&state, identity), None);
+    }
+    #[test]
+    fn tokenless_press_is_invalidated_by_disable_and_reenable() {
+        let state = crate::settings::tests::test_app_state();
+        let identity = gem_read_identity(&state);
+        set_lab_overlays_enabled_in(&state, false);
+        set_lab_overlays_enabled_in(&state, true);
+        assert_eq!(prepare_gem_context(&state, identity), None);
+    }
+    #[test]
+    fn tokenless_press_is_invalidated_by_a_mode_change() {
+        let state = crate::settings::tests::test_app_state();
+        let identity = gem_read_identity(&state);
+        change_lab_mode(&state, "Dedication");
+        assert_eq!(prepare_gem_context(&state, identity), None);
+    }
+    #[test]
+    fn repeated_screen_preparation_reuses_the_live_context() {
+        let state = crate::settings::tests::test_app_state();
+        let identity = gem_read_identity(&state);
+        let token = prepare_gem_context(&state, identity).unwrap();
+        *state.lab_scan.detected_gems.lock().unwrap() = vec!["Reave of Ruin".into()];
+        assert_eq!(prepare_gem_context(&state, identity), Some(token));
+        assert_eq!(*state.lab_scan.detected_gems.lock().unwrap(), vec!["Reave of Ruin"]);
+        assert_eq!(state.lab_scan.font_context.load(Ordering::SeqCst), 0);
+        assert!(state.lab_scan.font_session.lock().unwrap().current_options.is_none());
+    }
 
     #[test]
     fn disabling_lab_overlays_hides_the_shown_font_prompt() {
@@ -478,9 +554,18 @@ pub(super) fn current_gem_variant(state: &AppState) -> String {
     }
 }
 
+pub(crate) fn gem_publication_payload(state: &AppState, gems: &[String]) -> serde_json::Value {
+    let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    serde_json::json!({
+        "pair": pair,
+        "gems": gems,
+        "variant": current_gem_variant(state),
+        "mode": current_lab_mode_tag(state)
+    })
+}
+
 pub(crate) async fn send_gems_to_server(app: &AppHandle, gems: Vec<String>) {
     let state = app.state::<AppState>();
-    let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let server = crate::settings::server_base(&state);
     let url = format!("{}/api/desktop/gems", server);
     let http = state.server_http.clone();
@@ -488,19 +573,13 @@ pub(crate) async fn send_gems_to_server(app: &AppHandle, gems: Vec<String>) {
     // The web view picks its market from this field. A hardcoded 20/20 does not
     // exist in Dedication mode, so its comparator silently fell back to the
     // first Dedication market (21/20) whatever the player had selected.
-    let variant = current_gem_variant(&state);
-    let mode = current_lab_mode_tag(&state);
+    let payload = gem_publication_payload(&state, &gems);
 
     app_log(app, format!("Sending {} gems to server", gems.len()));
 
     match http
         .post(&url)
-        .json(&serde_json::json!({
-            "pair": pair,
-            "gems": gems,
-            "variant": variant,
-            "mode": mode
-        }))
+        .json(&payload)
         .send()
         .await
     {

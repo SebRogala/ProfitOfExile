@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::font_context::{self, FontReadRecord};
-use super::{once_per_context, report_engine_once, LogOnce};
+use super::report_engine_once;
 use crate::capture::Capture;
 use crate::font_parser::FontPanelState;
 use crate::lab_scan::LabScanState;
@@ -23,11 +23,14 @@ pub(crate) fn armed_token(lab: &LabScanState) -> Option<u64> {
 }
 
 impl ScreenReader<AppHandle> for LabFontReader {
-    fn arm(&self, app: &AppHandle, _press: &Press) -> Option<Box<dyn PendingRead<AppHandle>>> {
+    fn id(&self) -> crate::read_hotkey::ReaderId { crate::read_hotkey::ReaderId::Font }
+    fn prepare(&self, app: &AppHandle, _press: &Press) -> Option<Box<dyn PendingRead<AppHandle>>> {
         let state = app.state::<AppState>();
+        if !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return None; }
         armed_token(&state.lab_scan).map(|token| Box::new(PendingFontRead {
             token,
             prompt: crate::read_prompt::armed_id_in(&state, crate::read_prompt::Mechanic::DivineFont),
+            lines: Vec::new(),
         }) as _)
     }
 }
@@ -35,59 +38,28 @@ impl ScreenReader<AppHandle> for LabFontReader {
 struct PendingFontRead {
     token: u64,
     prompt: Option<u64>,
+    lines: Vec<String>,
 }
 
 impl PendingRead<AppHandle> for PendingFontRead {
+    fn probe(&mut self, frame: &Arc<Capture>, app: &AppHandle) -> Result<bool, String> {
+        let state = app.state::<AppState>();
+        if armed_token(&state.lab_scan) != Some(self.token)
+            || !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return Ok(false); }
+        let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
+        let [x, y, w, h] = crate::ssot::placements_for(screen.as_ref()).lab.font;
+        if x < 0 || y < 0 || w <= 0 || h <= 0 || x as u32 + w as u32 > frame.image.width() || y as u32 + h as u32 > frame.image.height() { return Ok(false); }
+        let crop = frame.image.crop_imm(x as u32, y as u32, w as u32, h as u32);
+        self.lines = crate::ocr::recognize_text(&crate::capture::preprocess_for_ocr(&crop))?;
+        Ok(crate::font_parser::parse_font_panel(&self.lines).font_active)
+    }
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, app: &AppHandle) {
-        consume(app, self.token, self.prompt, frame);
-    }
-}
-
-thread_local! {
-    static LOGGED: std::cell::Cell<(u64, u8)> = const { std::cell::Cell::new((0, 0)) };
-}
-
-fn consume(app: &AppHandle, token: u64, prompt: Option<u64>, frame: Result<&Arc<Capture>, &str>) {
-    report_engine_once(app);
-    let state = app.state::<AppState>();
-    let once = |what: LogOnce| once_per_context(&LOGGED, token, what);
-    let grab = match frame {
-        Ok(grab) => grab,
-        Err(e) => {
-            if once(LogOnce::FrameError) {
-                app_log(app, format!("Font read: screen grab failed: {}", e));
-            }
-            return;
-        }
-    };
-    let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
-    let region = crate::capture_region(crate::ssot::placements_for(screen.as_ref()).lab.font);
-    if screen.is_none() && once(LogOnce::Unscaled) {
-        app_log(
-            app,
-            format!(
-                "lab OCR regions unscaled: no screen measured yet — the font panel region assumes 1080p ({}, {}) {}x{}",
-                region.x, region.y, region.w, region.h,
-            ),
-        );
-    }
-    let cropped = grab.image.crop_imm(region.x.max(0) as u32, region.y.max(0) as u32, region.w, region.h);
-    if let Some(line) = crate::crop_shortfall(&region, cropped.width(), cropped.height()) {
-        if once(LogOnce::ShortCrop) {
-            app_log(app, line);
-        }
-    }
-    let processed = crate::capture::preprocess_for_ocr(&cropped);
-    match crate::ocr::recognize_text(&processed) {
-        Ok(lines) => {
-            let read = read_font_lines(&state, token, &lines);
-            publish_font_read(app, &lines, read, prompt);
-        }
-        Err(e) => {
-            if once(LogOnce::FrameError) {
-                app_log(app, format!("Font read: OCR failed: {}", e));
-            }
-        }
+        if frame.is_err() { return; }
+        report_engine_once(app);
+        let state = app.state::<AppState>();
+        if !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return; }
+        let read = read_font_lines(&state, self.token, &self.lines);
+        publish_font_read(app, &self.lines, read, self.prompt);
     }
 }
 
@@ -102,6 +74,9 @@ pub(crate) struct FontLinesRead {
 /// (re-checking the token there), then record an active panel in the session.
 pub(crate) fn read_font_lines(state: &AppState, captured: u64, lines: &[String]) -> FontLinesRead {
     let panel = crate::font_parser::parse_font_panel(lines);
+    if !panel.font_active || captured == 0 || state.lab_scan.font_context.load(Ordering::SeqCst) != captured {
+        return FontLinesRead { panel, record: None };
+    }
     crate::font_alerts::record_current_alert_read(
         &state.lab_scan.font_alert_seen,
         || state.lab_scan.font_context.load(Ordering::SeqCst) == captured,
@@ -233,6 +208,23 @@ mod tests {
 
         assert!(read.record.is_none());
         assert!(state.lab_scan.font_session.lock().unwrap().current_options.is_none());
+    }
+
+    #[test]
+    fn inactive_font_probe_preserves_the_last_alerts_and_timer() {
+        let state = test_app_state();
+        let arm = font_context::arm_font_context(&state);
+        read_font_lines(&state, arm.token, &lines(&[
+            "Transform a non-Transfigured Skill Gem to a Transfigured version",
+        ]));
+        let alerts = *state.lab_scan.font_alert_seen.lock().unwrap();
+        let idle = state.lab_scan.font_idle_seq.load(Ordering::SeqCst);
+        let options = state.lab_scan.font_session.lock().unwrap().current_options.clone();
+        let read = read_font_lines(&state, arm.token, &lines(&["Inventory"]));
+        assert!(!read.panel.font_active);
+        assert_eq!(*state.lab_scan.font_alert_seen.lock().unwrap(), alerts);
+        assert_eq!(state.lab_scan.font_idle_seq.load(Ordering::SeqCst), idle);
+        assert_eq!(state.lab_scan.font_session.lock().unwrap().current_options, options);
     }
 
     #[test]

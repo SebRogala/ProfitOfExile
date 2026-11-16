@@ -42,11 +42,13 @@ pub struct ReadPromptState {
     active: Vec<(Mechanic, u64)>,
     seq: u64,
     lab_context: u64,
+    last_client_mechanic: Option<Mechanic>,
 }
 
 impl ReadPromptState {
     /// Shows `mechanic` as a new prompt, even when it was already active.
     pub fn arm(&mut self, mechanic: Mechanic) {
+        self.last_client_mechanic = Some(mechanic);
         self.seq += 1;
         self.active.retain(|(m, _)| *m != mechanic);
         self.active.push((mechanic, self.seq));
@@ -84,6 +86,9 @@ impl ReadPromptState {
             mechanic: self.active.last().map(|(m, _)| *m),
             seq: self.seq,
         }
+    }
+    pub fn last_client_mechanic(&self) -> Option<Mechanic> {
+        self.last_client_mechanic
     }
 }
 
@@ -160,6 +165,7 @@ pub fn apply_in(state: &crate::AppState, change: Change) -> bool {
 /// prompt edit, where a concurrent module toggle can land.
 fn apply_paused_in(state: &crate::AppState, change: Change, pause: &mut dyn FnMut()) -> bool {
     if let Change::Arm(mechanic) = change {
+        state.read_prompt.lock().unwrap_or_else(|e| e.into_inner()).last_client_mechanic = Some(mechanic);
         if !module_on(state, mechanic) {
             return false;
         }
@@ -199,6 +205,9 @@ pub fn read_done_in(state: &crate::AppState, mechanic: Mechanic, id: u64) -> boo
 pub fn armed_id_in(state: &crate::AppState, mechanic: Mechanic) -> Option<u64> {
     state.read_prompt.lock().unwrap_or_else(|e| e.into_inner()).armed_id(mechanic)
 }
+pub fn last_client_mechanic_in(state: &crate::AppState) -> Option<Mechanic> {
+    state.read_prompt.lock().unwrap_or_else(|e| e.into_inner()).last_client_mechanic()
+}
 pub fn area_changed_in(state: &crate::AppState) -> bool {
     edit_in(state, ReadPromptState::area_changed)
 }
@@ -236,6 +245,31 @@ mod tests {
     use crate::temple::trigger::{apply_line, classify, ArmReason, ArmState, Transition};
 
     const NOW: u64 = 1_756_800_000_000;
+
+    #[test]
+    fn completion_preserves_client_recency() {
+        let mut prompt = ReadPromptState::default();
+        prompt.apply(Change::Arm(Mechanic::Incursion));
+        prompt.apply(Change::Arm(Mechanic::Mercenary));
+        prompt.read_done(Mechanic::Mercenary, prompt.armed_id(Mechanic::Mercenary).unwrap());
+        assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Mercenary));
+        assert_eq!(prompt.snapshot().mechanic, Some(Mechanic::Incursion));
+    }
+    #[test]
+    fn context_end_preserves_client_recency() {
+        let mut prompt = ReadPromptState::default();
+        prompt.apply(Change::Arm(Mechanic::Mercenary));
+        prompt.area_changed();
+        assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Mercenary));
+        assert_eq!(prompt.snapshot().mechanic, None);
+    }
+    #[test]
+    fn font_without_context_still_updates_client_recency() {
+        let state = crate::settings::tests::test_app_state();
+        assert!(!apply_in(&state, Change::Arm(Mechanic::DivineFont)));
+        assert_eq!(last_client_mechanic_in(&state), Some(Mechanic::DivineFont));
+        assert_eq!(shown_in(&state), None);
+    }
 
     const FONT_OPEN: &str = "[INFO Client 1] InstanceClientLabyrinthCraftResultOptionsList recieved";
 

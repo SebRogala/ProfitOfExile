@@ -1564,6 +1564,40 @@ pub fn apply_anchored(slice: &mut TempleSlice, retry: bool) {
 /// [`TickOutcome::NoPanel`]. A located anchor that fills or contradicts the
 /// placement is remembered only after the read has published (ADR-025 cl. 4),
 /// through [`finish`].
+#[derive(Debug, Clone, Copy)]
+pub struct TempleProbe {
+    found: anchor::Anchor,
+    located: bool,
+    hint: Option<anchor::AnchorCalibration>,
+    placed_origin: Option<(i32, i32)>,
+}
+
+pub fn probe_frame(
+    grab: &crate::capture::Capture,
+    screen: Option<crate::ssot::ScreenSlice>,
+    stop: &dyn Fn() -> bool,
+) -> Result<Option<TempleProbe>, super::ReadError> {
+    let size = (grab.image.width(), grab.image.height());
+    let screen = screen.filter(|s| crate::ssot::screen_matches(&Some(*s), size, grab.origin, grab.client));
+    let cheap_hint = cheap_hint_from_screen(screen.as_ref(), size, grab.origin, grab.client);
+    let hint = cheap_hint.map(|h| h.calibration);
+    let placed_origin = cheap_hint.map(|h| h.origin);
+    let anchored = screen.and_then(|s| s.anchors).and_then(|a| a.temple_entrance);
+    let cheap = anchor::detect_cheap(&grab.image, cheap_hint.as_ref());
+    let _ncc = cheap.ncc();
+    let (found, located) = match cheap {
+        anchor::CheapDetect::Anchored(found) => (found, false),
+        anchor::CheapDetect::Nothing { .. } if locate_on_miss(screen.is_some(), anchored) => {
+            match anchor::anchor_for_loop(&grab.image, hint.as_ref(), stop) {
+                Ok(found) => (found, true),
+                Err(super::ReadError::AnchorNotFound { .. }) => return Ok(None),
+            }
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(TempleProbe { found, located, hint, placed_origin }))
+}
+
 fn read_press(
     app: &AppHandle,
     session: &mut Session,
@@ -1571,7 +1605,9 @@ fn read_press(
     pressed: PressedFrame,
 ) {
     let started = Instant::now();
-    let reason = pressed.reason.label();
+    let epoch_current = || app.state::<AppState>().temple_state.epoch.load(std::sync::atomic::Ordering::SeqCst) == pressed.epoch;
+    if *cancel.borrow() || !epoch_current() { return; }
+    let reason = pressed.reason.map_or("screen", |reason| reason.label());
     let said = |outcome: &str| {
         crate::app_log(app, format!("Temple: read on press ({reason}) — {outcome}"));
     };
@@ -1593,50 +1629,19 @@ fn read_press(
     crate::ssot::drop_if_mismatched(app, capture, origin, client);
 
     let settings = settings_snapshot(app);
-    let (cheap_hint, hint_source, screen_present, anchored_origin) =
-        hint_from_slice(app, capture, origin, client);
-    let hint = cheap_hint.map(|hint| hint.calibration);
-    if let Some(line) = hint_line(&mut session.hint_said, hint, hint_source) {
-        crate::app_log(app, line);
-    }
-
-    let probing = Instant::now();
-    let cheap = anchor::detect_cheap(img, cheap_hint.as_ref());
-    tick_stages.cheap = probing.elapsed();
-    if !session.placed_recheck_said && matches!(cheap, anchor::CheapDetect::Anchored(_)) {
-        session.placed_recheck_said = true;
-        crate::app_log(
-            app,
-            format!(
-                "Temple: placed-origin recheck — NCC {:.3}, {} ms",
-                cheap.ncc(),
-                ms(tick_stages.cheap)
-            ),
-        );
-    }
-    let stop = || *cancel.borrow();
-    let (found, located) = match cheap {
-        anchor::CheapDetect::Anchored(found) => (found, false),
-        anchor::CheapDetect::Nothing { .. } => {
-            let searched = locate_on_miss(screen_present, anchored_origin).then(|| {
-                let locating = Instant::now();
-                let found = anchor::anchor_for_loop(img, hint.as_ref(), &stop);
-                tick_stages.anchor = locating.elapsed();
-                found
-            });
-            match searched {
-                Some(Ok(found)) => (found, true),
-                _ => {
-                    publish(app, |slice| apply_status(slice, TickOutcome::NoPanel));
-                    return said("no panel");
-                }
-            }
-        }
+    let Some(TempleProbe { found, located, hint, placed_origin }) = pressed.probe else {
+        publish(app, |slice| apply_status(slice, TickOutcome::NoPanel)); return;
     };
+    let (_, hint_source, _, _) = hint_from_slice(app, capture, origin, client);
+    if let Some(line) = hint_line(&mut session.hint_said, hint, hint_source) { crate::app_log(app, line); }
+    if !located && !session.placed_recheck_said {
+        session.placed_recheck_said = true;
+        crate::app_log(app, format!("Temple: placed-origin recheck — NCC {:.3}", found.ncc));
+    }
+    let stop = || *cancel.borrow() || !epoch_current();
 
     // Only a LOCATED anchor may replace the placement (ADR-025 cl. 4), and only
     // after the read below has published — `finish` owns that.
-    let placed_origin = cheap_hint.as_ref().map(|hint| hint.origin);
     let fallback_origin = located
         .then(|| {
             if let Some(line) = placed_origin_contradiction_line(placed_origin, found.origin) {
@@ -1699,6 +1704,7 @@ fn read_press(
         unclean = slice::unclean(&read, &clipped_names);
         projected
     });
+    if stop() { return said("cancelled"); }
     let cancelled = result.is_err() && stop();
     let done = finish(result, fallback_origin);
     let read_at = match done.publish {

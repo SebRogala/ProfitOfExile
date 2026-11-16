@@ -19,7 +19,7 @@ type PlacedReadData = (
     Result<geometry::MercLayout, geometry::DetectMiss>,
 );
 
-struct CaptureLocation {
+pub(crate) struct CaptureLocation {
     started: Instant,
     image: image::DynamicImage,
     cropped: Option<image::DynamicImage>,
@@ -305,18 +305,36 @@ fn signature_merge_inputs(
 ///
 /// `press_seq` is the worker's press counter: each press opens a new
 /// full-screen locate opportunity ([`FallbackKey`], [`locate_decision`]).
-pub(super) fn detect_tick(
+pub(super) fn detect_selected(
     app: &AppHandle,
     session: &mut Session,
     cursor: Option<(i32, i32)>,
     cancel: &watch::Receiver<bool>,
-    frame: &crate::capture::Capture,
-    press_seq: u64,
+    evidence: MercProbe,
 ) -> DetectTick {
-    let location = match capture_location(app, session, cursor, frame, press_seq) {
-        Ok(location) => location,
-        Err(tick) => return tick,
+    let location = match evidence {
+        MercProbe::Panel(location) => *location,
+        MercProbe::Tooltip { column_key } => {
+            if let Some(key) = column_key {
+                if let Some(line) = column_trusted_line(&mut session.column_trusted_said, key) { crate::app_log(app, line.into()); }
+            }
+            let outcome = match judge_no_layout(session, None, cursor, Instant::now()) {
+                NoLayout::Occluded { announce } => {
+                    if announce { crate::app_log(app, "Merc: panel occluded (cursor over it) — holding the capture".into()); }
+                    DetectOutcome::Occluded
+                }
+                NoLayout::Counted(outcome) => { miss_effects(app, outcome); outcome }
+            };
+            return detect_report(Some(outcome), false);
+        }
     };
+    if let Some(line) = admit_oversize_frame(&mut session.errors, location.screen[0], location.screen[1], crate::ocr::max_image_dimension()) { crate::app_log(app, line); }
+    if location.used_fallback { session.fallback.take(location.key); }
+    if let Some(origin) = location.remember_origin {
+        if location.placement.is_some_and(|(placed, _)| [placed[0], placed[1]] != origin) {
+            crate::app_log(app, MERC_GEOMETRY_NOTICE_LINE.to_string());
+        }
+    }
     let full_frame = location.full_frame;
     let mut effects = AppDetectionEffects::new(app);
     let Some(read) = registered_read(&mut effects, session, cursor, cancel, location) else {
@@ -325,13 +343,18 @@ pub(super) fn detect_tick(
     reconcile_and_publish(app, session, cursor, read)
 }
 
-fn capture_location(
+pub(crate) enum MercProbe {
+    Panel(Box<CaptureLocation>),
+    Tooltip { column_key: Option<FallbackKey> },
+}
+
+pub(super) fn probe_frame(
     app: &AppHandle,
-    session: &mut Session,
+    session: &Session,
     cursor: Option<(i32, i32)>,
     grab: &crate::capture::Capture,
     press_seq: u64,
-) -> Result<CaptureLocation, DetectTick> {
+) -> Result<Option<MercProbe>, String> {
     let started = Instant::now();
     // The display travels with the pixels (POE-237): both halves come off one
     // `Capture`, so the id published below always names the monitor the scale
@@ -344,17 +367,12 @@ fn capture_location(
         img.dimensions()
     };
     let screen = [iw, ih];
-    if let Some(line) = admit_oversize_frame(&mut session.errors, iw, ih, crate::ocr::max_image_dimension()) {
-        crate::app_log(app, line);
-    }
     // Before ANY remembered geometry is read (POE-227). `iw`/`ih` are the whole
     // grab's dimensions even on a cropped tick — the platform layer captures a
     // monitor, and only the OCR view is narrowed below — so this is the screen's
     // real size on every path. A scale remembered from another monitor is
     // dropped here, which is the first moment anything in the app can tell.
-    crate::ssot::drop_if_mismatched(app, (iw, ih), grabbed_on.1, grabbed_on.2);
-
-    let placement = merc_placement(app);
+    let placement = merc_placement(app, grab);
     let crop = placement.map(|(panel, scale)| geometry::placed_panel_crop(panel, scale, screen));
     let mut full_frame = crop.is_none();
     let key = FallbackKey { refit: refit_counter(app), press: press_seq };
@@ -398,21 +416,21 @@ fn capture_location(
     ) {
         Ok(placed_read) => placed_read,
         Err(e) => {
-            fail(app, session, format!("Merc: OCR failed — {e}"));
-            return Err(detect_report(None, full_frame));
+            return Err(format!("Merc: OCR failed — {e}"));
         }
     };
 
     // Whether the full-screen locate runs is [`locate_decision`]'s call, the
     // whole rule in one place. When it does, it re-reads the SAME grab, so it
     // is one more OCR rather than a second screen capture.
+    let mut budget = session.fallback.clone();
     let decision = locate_decision(
         placed_read.as_ref().map(|(placed, _, layout)| (*placed, PlacedRead::of(layout))),
         manual,
-        &mut session.fallback,
+        &mut budget,
         key,
     );
-    let (located_by, lines, layout) = match (decision, placed_read) {
+    let (located_by, _lines, layout) = match (decision, placed_read) {
         (LocateDecision::Locate(reason), _) => {
             full_frame = true;
             view = &img;
@@ -420,8 +438,7 @@ fn capture_location(
             let lines = match crate::ocr::recognize_lines(view) {
                 Ok(lines) => frame.to_screen(lines),
                 Err(e) => {
-                    fail(app, session, format!("Merc: OCR failed — {e}"));
-                    return Err(detect_report(None, full_frame));
+                    return Err(format!("Merc: OCR failed — {e}"));
                 }
             };
             let layout =
@@ -429,9 +446,6 @@ fn capture_location(
             (Some(reason), lines, layout)
         }
         (LocateDecision::TrustPlacementOverColumn, Some((_, lines, layout))) => {
-            if let Some(line) = column_trusted_line(&mut session.column_trusted_said, key) {
-                crate::app_log(app, line.to_string());
-            }
             (None, lines, layout)
         }
         (LocateDecision::TrustPlacement, Some((_, lines, layout))) => (None, lines, layout),
@@ -439,7 +453,7 @@ fn capture_location(
         // counted miss costs no OCR. (`locate_decision` answers the two trust
         // arms only for a placed read, so `(_, None)` is this same case.)
         (LocateDecision::ColdStartSpent, _) | (_, None) => {
-            return Err(detect_report(Some(miss(app, session)), full_frame));
+            return Ok(None);
         }
     };
     let used_fallback = located_by.is_some();
@@ -453,10 +467,7 @@ fn capture_location(
             fallback_panel(reason, &layout, &session.geometry);
         located_panel = located_from_fallback;
         remember_origin = fallback_origin;
-        if let Some(line) = contradiction {
-            crate::app_log(app, line);
-            crate::app_log(app, MERC_GEOMETRY_NOTICE_LINE.to_string());
-        }
+        let _ = contradiction;
     }
 
     let took = started.elapsed().as_millis();
@@ -464,67 +475,23 @@ fn capture_location(
 
     let layout = match layout {
         Ok(layout) => layout,
-        Err(why) => {
+        Err(_why) => {
             // Every number the 2026-08-26 smoke wanted and did not have, on the
             // frame that lost the window: which rect the anchor was weighed
             // against, which frame the OCR ran on, how many skill names came back,
             // where their column sat, and which step of `detect_reason` returned.
             // Debug-gated because a miss is the ordinary state of a loop watching
             // an empty screen.
-            if debug_mode(app) {
-                crate::app_log(
-                    app,
-                    format!(
-                        "Merc: no layout on the {how} frame — {why}; placed panel {:?}, cursor {:?}",
-                        placement.map(|(panel, _)| panel).or(session.panel), cursor
-                    ),
-                );
-            }
             // A tooltip the player just opened sits ON the panel and hides the rows
             // the detect needs; the decision is [`judge_no_layout`]'s.
-            let outcome = match judge_no_layout(
-                session,
-                placement.map(|(panel, _)| panel),
-                cursor,
-                Instant::now(),
-            ) {
-                NoLayout::Occluded { announce } => {
-                    if announce {
-                        crate::app_log(
-                            app,
-                            "Merc: panel occluded (cursor over it) — holding the capture".to_string(),
-                        );
-                    }
-                    return Err(detect_report(Some(DetectOutcome::Occluded), full_frame));
-                }
-                NoLayout::Counted(outcome) => outcome,
-            };
             // Logged once per press: a press that finds nothing would otherwise
             // leave no trace of having looked at all.
-            if !session.miss_logged {
-                session.miss_logged = true;
-                let skills = lines
-                    .iter()
-                    .filter(|l| {
-                        session.vocab.match_skill(&l.text, &session.geometry.thresholds).state
-                            != ReadState::Unknown
-                    })
-                    .count();
-                crate::app_log(
-                    app,
-                    format!(
-                        "Merc: looked, no recruit window — {} OCR lines, {} skill candidates \
-                         ({how} frame, {took} ms)",
-                        lines.len(),
-                        skills
-                    ),
-                );
-            }
-            miss_effects(app, outcome);
-            return Err(detect_report(Some(outcome), full_frame));
+            return probe_tooltip(session, grab, cursor).map(|present| present.then_some(MercProbe::Tooltip {
+                column_key: (decision == LocateDecision::TrustPlacementOverColumn).then_some(key),
+            }));
         }
     };
-    Ok(CaptureLocation {
+    Ok(Some(MercProbe::Panel(Box::new(CaptureLocation {
         started,
         image: img,
         cropped,
@@ -541,7 +508,21 @@ fn capture_location(
         key,
         took,
         how,
-    })
+    }))))
+}
+
+fn probe_tooltip(session: &Session, grab: &crate::capture::Capture, cursor: Option<(i32, i32)>) -> Result<bool, String> {
+    let Some((capture, cursor)) = session.current.as_ref().zip(cursor) else { return Ok(false); };
+    let Some((ri, si)) = cell_at(capture, cursor) else { return Ok(false); };
+    let Some(region) = hover_region(cursor, capture.scale, &session.geometry.thresholds, capture.screen) else { return Ok(false); };
+    if region[0] < 0 || region[1] < 0 || region[2] <= 0 || region[3] <= 0
+        || (region[0] + region[2]) as u32 > grab.image.width() || (region[1] + region[3]) as u32 > grab.image.height() { return Ok(false); }
+    let crop = grab.image.crop_imm(region[0] as u32, region[1] as u32, region[2] as u32, region[3] as u32);
+    let processed = crate::capture::preprocess_for_ocr_fast(&crop);
+    let lines = crate::ocr::recognize_lines(&processed)?;
+    let scale = (processed.width() as f32 / crop.width() as f32, processed.height() as f32 / crop.height() as f32);
+    Ok(confirm_from_tooltip(&tooltip_lines(&lines, region, scale, cursor), capture.rows[ri].supports[si].tier,
+        &session.vocab, &session.geometry.thresholds).is_some())
 }
 
 fn register_geometry<E: DetectionEffects>(

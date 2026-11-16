@@ -39,12 +39,38 @@ pub(crate) fn preload_snapshot(state: &AppState) -> (u64, String) {
 /// Called with no lab guard held. A duplicate in-flight fetch for the same
 /// generation is harmless (same content).
 pub(crate) fn spawn_gem_vocab_preload(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let (generation, mode) = preload_snapshot(&state);
-    let server = crate::settings::server_base(&state);
-    let http = state.server_http.clone();
+    let generation = preload_snapshot(&app.state::<AppState>()).0;
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        if let Err(error) = ensure_gem_vocab(&app, generation).await {
+            app_log(&app, format!("Gem reader: {error}"));
+        }
+    });
+}
+
+pub(crate) async fn ensure_gem_vocab(app: &AppHandle, expected: u64) -> Result<GemVocab, String> {
+    let state = app.state::<AppState>();
+    await_gem_vocab(&state.lab_scan, expected, || load_gem_vocab(app, expected)).await
+}
+
+async fn await_gem_vocab<F, Fut>(lab: &LabScanState, expected: u64, load: F) -> Result<GemVocab, String>
+where F: FnOnce() -> Fut, Fut: std::future::Future<Output = Result<GemVocab, String>> {
+    let _loading = lab.gem_vocab_load.lock().await;
+    if lab.gem_vocab_generation.load(Ordering::SeqCst) != expected { return Err("lab mode changed before vocabulary loading".into()); }
+    if let Some(vocab) = current(lab).filter(|v| v.refs.as_ref().is_some_and(|refs| !refs.incomplete)) { return Ok(vocab); }
+    let vocab = load().await?;
+    if lab.gem_vocab_generation.load(Ordering::SeqCst) != expected || vocab.generation != expected || vocab.refs.is_none() {
+        return Err("gem icon stage unavailable or stale".into());
+    }
+    Ok(vocab)
+}
+
+async fn load_gem_vocab(app: &AppHandle, expected: u64) -> Result<GemVocab, String> {
+    let state = app.state::<AppState>();
+    let (generation, mode) = preload_snapshot(&state);
+    if generation != expected { return Err("lab mode changed before vocabulary loading".into()); }
+    let server = crate::settings::server_base(&state);
+    let http = state.server_http.clone();
         let dict = super::commands::fetch_gem_dictionary(&app, &server, &http, &mode).await;
         let names = dict.merged();
         let count = names.len();
@@ -55,11 +81,11 @@ pub(crate) fn spawn_gem_vocab_preload(app: &AppHandle) {
             if count == 0 {
                 app_log(&app, "Gem reader: the gem dictionary loaded 0 names, so no tooltip read can match; the next CRAFT retries. The preceding 'gem names' lines say why.".to_string());
             }
-            return;
+            return Err("gem dictionary unavailable or stale".into());
         }
         let Ok(dir) = app.path().app_data_dir().map(|d| d.join("gem-art")) else {
             app_log(&app, "Gem reader: no app data directory, so the gem icons are not loaded".to_string());
-            return;
+            return Err("no app data directory for gem icons".into());
         };
         let wanted: Vec<String> = dict.normal.iter().chain(&dict.transfigured).cloned().collect();
         let mut art = gem_icon_refs::load_art(&http, &server, &dir, &wanted).await;
@@ -71,7 +97,7 @@ pub(crate) fn spawn_gem_vocab_preload(app: &AppHandle) {
         .await;
         let Ok((refs, report)) = built else {
             app_log(&app, "Gem reader: building the gem icons failed".to_string());
-            return;
+            return Err("building gem icons failed".into());
         };
         for (name, why) in &report.failed {
             app_log(&app, format!("Gem reader: icon for {:?} not loaded: {}", name, why));
@@ -88,8 +114,9 @@ pub(crate) fn spawn_gem_vocab_preload(app: &AppHandle) {
         );
         if !install_gem_refs(&state.lab_scan, generation, Arc::new(refs)) {
             app_log(&app, "Gem reader: the lab mode changed while the gem icons loaded; discarded".to_string());
+            return Err("lab mode changed while icons loaded".into());
         }
-    });
+        current(&state.lab_scan).ok_or_else(|| "gem vocabulary became stale".into())
 }
 
 /// Set the icon references on the installed vocabulary if both it and the

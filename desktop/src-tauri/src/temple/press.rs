@@ -21,7 +21,9 @@ use crate::read_hotkey::{PendingRead, Press, ScreenReader};
 /// press was armed under.
 pub struct PressedFrame {
     pub frame: Result<Arc<Capture>, String>,
-    pub reason: ArmReason,
+    pub reason: Option<ArmReason>,
+    pub probe: Option<super::run::TempleProbe>,
+    pub epoch: u64,
     /// The Incursion prompt arm live when the press was accepted; its read
     /// clears only that arm.
     pub prompt: Option<u64>,
@@ -29,6 +31,9 @@ pub struct PressedFrame {
 
 /// What the temple reader needs from the app at press time.
 pub trait PressContext {
+    fn epoch(&self) -> u64 { 0 }
+    fn recent(&self) -> Option<crate::read_prompt::Mechanic> { None }
+    fn screen(&self) -> Option<crate::ssot::ScreenSlice> { None }
     /// The temple worker's inbox, `None` while the module is off or has no OCR
     /// engine.
     fn press_sender(&self) -> Option<Sender<PressedFrame>>;
@@ -41,6 +46,15 @@ pub trait PressContext {
 }
 
 impl PressContext for AppHandle {
+    fn epoch(&self) -> u64 {
+        self.state::<crate::AppState>().temple_state.epoch.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn recent(&self) -> Option<crate::read_prompt::Mechanic> {
+        crate::read_prompt::last_client_mechanic_in(&self.state::<crate::AppState>())
+    }
+    fn screen(&self) -> Option<crate::ssot::ScreenSlice> {
+        *self.state::<crate::AppState>().screen.lock().unwrap_or_else(|e| e.into_inner())
+    }
     fn press_sender(&self) -> Option<Sender<PressedFrame>> {
         let state = self.state::<crate::AppState>();
         let tx = state.temple_state.press.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -67,22 +81,31 @@ pub static TEMPLE_READER: TempleReader = TempleReader;
 /// An armed temple read: where its frame goes, and why it was armed.
 pub struct TemplePending {
     tx: Sender<PressedFrame>,
-    reason: ArmReason,
+    reason: Option<ArmReason>,
     prompt: Option<u64>,
+    screen: Option<crate::ssot::ScreenSlice>,
+    probe: Option<super::run::TempleProbe>,
+    epoch: u64,
 }
 
 impl<C: PressContext> ScreenReader<C> for TempleReader {
-    fn arm(&self, ctx: &C, _press: &Press) -> Option<Box<dyn PendingRead<C>>> {
+    fn id(&self) -> crate::read_hotkey::ReaderId { crate::read_hotkey::ReaderId::Temple }
+    fn recent(&self, ctx: &C) -> Option<crate::read_prompt::Mechanic> { ctx.recent() }
+    fn prepare(&self, ctx: &C, _press: &Press) -> Option<Box<dyn PendingRead<C>>> {
         let tx = ctx.press_sender()?;
-        let reason = press_reason(ctx.arm_state(), super::run::now_ms())?;
-        Some(Box::new(TemplePending { tx, reason, prompt: ctx.prompt_arm() }))
+        let reason = press_reason(ctx.arm_state(), super::run::now_ms());
+        Some(Box::new(TemplePending { tx, reason, prompt: ctx.prompt_arm(), screen: ctx.screen(), probe: None, epoch: ctx.epoch() }))
     }
 }
 
-impl<C> PendingRead<C> for TemplePending {
+impl<C: PressContext> PendingRead<C> for TemplePending {
+    fn probe(&mut self, frame: &Arc<Capture>, ctx: &C) -> Result<bool, String> {
+        self.probe = super::run::probe_frame(frame, self.screen, &|| ctx.epoch() != self.epoch || ctx.press_sender().is_none()).map_err(|e| format!("{e:?}"))?;
+        Ok(self.probe.is_some())
+    }
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, _ctx: &C) {
         let frame = frame.map(Arc::clone).map_err(str::to_string);
-        if self.tx.send(PressedFrame { frame, reason: self.reason, prompt: self.prompt }).is_err() {
+        if self.tx.send(PressedFrame { frame, reason: self.reason, prompt: self.prompt, probe: self.probe, epoch: self.epoch }).is_err() {
             log::warn!("temple: read worker gone, pressed frame dropped");
         }
     }
@@ -105,6 +128,13 @@ mod tests {
         prompt: Mutex<Option<u64>>,
     }
     impl PressContext for World {
+        fn screen(&self) -> Option<crate::ssot::ScreenSlice> {
+            Some(crate::ssot::ScreenSlice {
+                width: 1920, height: 1080, ui_scale: 0.90,
+                source: crate::ssot::ScreenScaleSource::Remembered, measured_at_ms: 0,
+                verified_this_session: false, monitor_id: 1, origin: (0,0), client: [0,0,1920,1080], anchors: None,
+            })
+        }
         fn press_sender(&self) -> Option<Sender<PressedFrame>> {
             self.sender.lock().unwrap().clone()
         }
@@ -130,18 +160,18 @@ mod tests {
     fn a_pressed_frame_carries_the_prompt_arm_live_at_the_press() {
         let (world, rx) = world(armed(ArmReason::AlvaStart));
         *world.prompt.lock().unwrap() = Some(4);
-        let armed = crate::read_hotkey::arm_all(Press { cursor: None }, Default::default(), &[&TEMPLE_READER], &world);
+        let armed = crate::read_hotkey::prepare_press(Press { cursor: None }, Default::default(), &[&TEMPLE_READER], &world);
         *world.prompt.lock().unwrap() = Some(5);
-        crate::read_hotkey::run_armed(armed, &world, &mut |_| {}, &mut || Ok(capture(1)), &mut |_| true);
+        crate::read_hotkey::dispatch_press(armed, &world, &mut |_| {}, &mut || Ok(capture(1)), &mut |_| true);
         assert_eq!(rx.try_recv().unwrap().prompt, Some(4));
     }
 
     fn capture(monitor_id: u32) -> Capture {
         Capture {
-            image: image::DynamicImage::new_rgb8(1, 1),
+            image: image::load_from_memory(include_bytes!("../../tests/fixtures/temple/screen-live-1920x1080.png")).unwrap(),
             monitor_id,
             origin: (0, 0),
-            client: [0, 0, 1, 1],
+            client: [0, 0, 1920, 1080],
             timing: GrabTiming::default(),
         }
     }
@@ -170,7 +200,7 @@ mod tests {
 
     /// Ends the world's inbox and drains it through the production receive
     /// path, recording each read's monitor id (or error) and reason.
-    fn read_by_the_worker(world: World, rx: Receiver<PressedFrame>) -> Vec<(Result<u32, String>, ArmReason)> {
+    fn read_by_the_worker(world: World, rx: Receiver<PressedFrame>) -> Vec<(Result<u32, String>, Option<ArmReason>)> {
         drop(world);
         let mut reads = Vec::new();
         worker_loop(&rx, &|| false, &mut |pressed| {
@@ -202,36 +232,36 @@ mod tests {
         let grabs = press_through_the_read_key(&world, three_presses());
 
         assert_eq!(grabs, 3);
-        let reasons = ArmReason::AlvaStart;
+        let reasons = Some(ArmReason::AlvaStart);
         assert_eq!(read_by_the_worker(world, rx), vec![(Ok(1), reasons), (Ok(2), reasons), (Ok(3), reasons)]);
     }
 
     #[test]
-    fn a_press_with_the_module_off_grabs_nothing() {
+    fn a_press_with_the_module_off_captures_without_consuming() {
         let (world, _rx) = world(armed(ArmReason::TempleArea));
         *world.sender.lock().unwrap() = None;
 
-        assert_eq!(press_through_the_read_key(&world, vec![sample(PRESSED)]), 0);
+        assert_eq!(press_through_the_read_key(&world, vec![sample(PRESSED)]), 1);
     }
 
     #[test]
-    fn a_press_with_no_client_txt_temple_arm_grabs_nothing_and_reads_nothing() {
+    fn an_unarmed_temple_frame_is_read_with_no_invented_client_reason() {
         let (world, rx) = world(ArmState::default());
 
         let grabs = press_through_the_read_key(&world, vec![sample(PRESSED)]);
 
-        assert_eq!(grabs, 0);
-        assert!(read_by_the_worker(world, rx).is_empty());
+        assert_eq!(grabs, 1);
+        assert_eq!(read_by_the_worker(world, rx), vec![(Ok(1), None)]);
     }
 
     /// An arm whose deadline has passed is no temple context. Fails if
     /// `press_reason` drops its `is_armed` check.
     #[test]
-    fn a_press_under_an_expired_arm_grabs_nothing() {
+    fn a_press_under_an_expired_arm_still_captures() {
         let expired = TempleArm::Armed { until_ms: Some(1), reason: ArmReason::AlvaStart };
         let (world, _rx) = world(ArmState { arm: expired, ..ArmState::default() });
 
-        assert_eq!(press_through_the_read_key(&world, vec![sample(PRESSED)]), 0);
+        assert_eq!(press_through_the_read_key(&world, vec![sample(PRESSED)]), 1);
     }
 
     #[test]
@@ -241,7 +271,7 @@ mod tests {
         let grabs = press_through_the_read_key(&world, vec![sample(PRESSED)]);
 
         assert_eq!(grabs, 1);
-        assert_eq!(read_by_the_worker(world, rx), vec![(Ok(1), ArmReason::TempleArea)]);
+        assert_eq!(read_by_the_worker(world, rx), vec![(Ok(1), Some(ArmReason::TempleArea))]);
     }
 
     #[test]
@@ -256,7 +286,7 @@ mod tests {
     // ------------------------------------------------- the worker's receive --
 
     fn frame(monitor_id: u32) -> PressedFrame {
-        PressedFrame { frame: Ok(Arc::new(capture(monitor_id))), reason: ArmReason::AlvaStart, prompt: None }
+        PressedFrame { frame: Ok(Arc::new(capture(monitor_id))), reason: Some(ArmReason::AlvaStart), prompt: None, probe: None, epoch: 0 }
     }
 
     fn drain(rx: &Receiver<PressedFrame>, stop: &dyn Fn() -> bool) -> Vec<Result<u32, String>> {
@@ -287,7 +317,7 @@ mod tests {
     #[test]
     fn a_grab_error_is_read_once_as_the_error() {
         let (tx, rx) = mpsc::channel();
-        tx.send(PressedFrame { frame: Err("no monitor".to_string()), reason: ArmReason::AlvaStart, prompt: None }).unwrap();
+        tx.send(PressedFrame { frame: Err("no monitor".to_string()), reason: Some(ArmReason::AlvaStart), prompt: None, probe: None, epoch: 0 }).unwrap();
         drop(tx);
 
         assert_eq!(drain(&rx, &|| false), vec![Err("no monitor".to_string())]);

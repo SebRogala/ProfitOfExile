@@ -22,10 +22,14 @@ pub struct PressedMercFrame {
     pub cursor: Option<(i32, i32)>,
     /// The Mercenary prompt arm live when this press was accepted.
     pub prompt: Option<u64>,
+    pub probe: Option<super::run::MercProbe>,
+    pub identity: u64,
 }
 
 /// What the merc worker receives.
 pub enum MercInbox {
+    Identity(Sender<u64>),
+    Probe { identity: u64, frame: Arc<Capture>, cursor: Option<(i32, i32)>, reply: Sender<Result<Option<super::run::MercProbe>, String>> },
     /// A press of the read key, with its one frame.
     Press(PressedMercFrame),
     /// Client.txt says the player entered another area: the recruit window is
@@ -53,6 +57,7 @@ impl PressContext for AppHandle {
 /// The installed inbox, cloned out under one lock.
 pub(crate) fn installed_inbox(app: &AppHandle) -> Option<Sender<MercInbox>> {
     let state = app.state::<crate::AppState>();
+    if state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get(super::MODULE_ID) != Some(&true) { return None; }
     let tx = state.merc.inbox.lock().unwrap_or_else(|e| e.into_inner()).clone();
     tx
 }
@@ -72,19 +77,32 @@ pub struct MercPending {
     tx: Sender<MercInbox>,
     cursor: Option<(i32, i32)>,
     prompt: Option<u64>,
+    probe: Option<super::run::MercProbe>,
+    identity: std::sync::mpsc::Receiver<u64>,
+    accepted_identity: u64,
 }
 
 impl<C: PressContext> ScreenReader<C> for MercReader {
-    fn arm(&self, ctx: &C, press: &Press) -> Option<Box<dyn PendingRead<C>>> {
+    fn id(&self) -> crate::read_hotkey::ReaderId { crate::read_hotkey::ReaderId::Mercenary }
+    fn prepare(&self, ctx: &C, press: &Press) -> Option<Box<dyn PendingRead<C>>> {
         let tx = ctx.inbox()?;
-        Some(Box::new(MercPending { tx, cursor: press.cursor, prompt: ctx.prompt_arm() }))
+        let (reply, identity) = std::sync::mpsc::channel();
+        tx.send(MercInbox::Identity(reply)).ok()?;
+        Some(Box::new(MercPending { tx, cursor: press.cursor, prompt: ctx.prompt_arm(), probe: None, identity, accepted_identity: 0 }))
     }
 }
 
 impl<C> PendingRead<C> for MercPending {
+    fn probe(&mut self, frame: &Arc<Capture>, _ctx: &C) -> Result<bool, String> {
+        let (reply, rx) = std::sync::mpsc::channel();
+        self.accepted_identity = self.identity.recv().map_err(|_| "merc preparation cancelled")?;
+        self.tx.send(MercInbox::Probe { identity: self.accepted_identity, frame: frame.clone(), cursor: self.cursor, reply }).map_err(|_| "merc worker disconnected")?;
+        self.probe = rx.recv().map_err(|_| "merc probe cancelled")??;
+        Ok(self.probe.is_some())
+    }
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, _ctx: &C) {
         let frame = frame.map(Arc::clone).map_err(str::to_string);
-        let pressed = PressedMercFrame { frame, cursor: self.cursor, prompt: self.prompt };
+        let pressed = PressedMercFrame { frame, cursor: self.cursor, prompt: self.prompt, probe: self.probe, identity: self.accepted_identity };
         if self.tx.send(MercInbox::Press(pressed)).is_err() {
             log::warn!("merc: read worker gone, pressed frame dropped");
         }
@@ -114,16 +132,26 @@ mod tests {
 
     fn world() -> (World, Receiver<MercInbox>) {
         let (tx, rx) = mpsc::channel();
-        (World { inbox: Mutex::new(Some(tx)), prompt: Mutex::new(None) }, rx)
+        let (forward, messages) = mpsc::channel();
+        std::thread::spawn(move || {
+            for message in rx {
+                match message {
+                    MercInbox::Identity(reply) => { let _ = reply.send(0); }
+                    MercInbox::Probe { reply, .. } => { let _ = reply.send(Ok(Some(super::super::run::MercProbe::Tooltip { column_key: None }))); }
+                    other => { if forward.send(other).is_err() { break; } }
+                }
+            }
+        });
+        (World { inbox: Mutex::new(Some(tx)), prompt: Mutex::new(None) }, messages)
     }
 
     #[test]
     fn a_pressed_frame_keeps_the_prompt_arm_from_acceptance() {
         let (world, rx) = world();
         *world.prompt.lock().unwrap() = Some(4);
-        let armed = crate::read_hotkey::arm_all(Press { cursor: None }, Default::default(), &[&MERC_READER], &world);
+        let armed = crate::read_hotkey::prepare_press(Press { cursor: None }, Default::default(), &[&MERC_READER], &world);
         *world.prompt.lock().unwrap() = Some(5);
-        crate::read_hotkey::run_armed(armed, &world, &mut |_| {}, &mut || Ok(capture(1)), &mut |_| true);
+        crate::read_hotkey::dispatch_press(armed, &world, &mut |_| {}, &mut || Ok(capture(1)), &mut |_| true);
         let MercInbox::Press(pressed) = rx.try_recv().unwrap() else { panic!("expected press") };
         assert_eq!(pressed.prompt, Some(4));
     }
@@ -175,6 +203,8 @@ mod tests {
             WorkerEvent::Idle => Seen::Idle,
             WorkerEvent::Message(MercInbox::Press(p)) => Seen::Press(p.frame.map(|c| c.monitor_id), p.cursor),
             WorkerEvent::Message(MercInbox::AreaChanged) => Seen::AreaChanged,
+            WorkerEvent::Message(MercInbox::Probe { .. }) => panic!("probe was not handled by worker"),
+            WorkerEvent::Message(MercInbox::Identity(_)) => panic!("identity was not handled by worker"),
         }
     }
 
@@ -207,11 +237,11 @@ mod tests {
     }
 
     #[test]
-    fn a_press_with_no_inbox_installed_grabs_nothing() {
+    fn a_press_with_no_inbox_installed_still_captures() {
         let (world, _rx) = world();
         *world.inbox.lock().unwrap() = None;
 
-        assert_eq!(press_through_the_read_key(&world, vec![sample(PRESSED)], &[(1, 1)]), 0);
+        assert_eq!(press_through_the_read_key(&world, vec![sample(PRESSED)], &[(1, 1)]), 1);
     }
 
     #[test]
@@ -263,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn one_press_with_temple_and_merc_armed_grabs_once_and_hands_both_the_same_frame() {
+    fn first_matching_reader_alone_consumes_the_captured_frame() {
         let (temple_tx, temple_rx) = mpsc::channel();
         let (merc_tx, merc_rx) = mpsc::channel();
         let world = BothWorld { temple: temple_tx, merc: merc_tx };
@@ -276,23 +306,20 @@ mod tests {
         let mut grabs = 0;
         run_dispatcher(&world, presses, &mut |_| {}, &mut || {
             grabs += 1;
-            Ok(capture(grabs))
+            Ok(Capture { image: image::load_from_memory(include_bytes!("../../tests/fixtures/temple/screen-live-1920x1080.png")).unwrap(), client: [0,0,1920,1080], ..capture(grabs) })
         }, &mut |_| true);
         drop(world);
 
         assert_eq!(grabs, 1);
-        let temple_frame = temple_rx.recv().unwrap().frame.unwrap();
-        let Ok(MercInbox::Press(merc)) = merc_rx.recv() else {
-            panic!("the merc worker got no press");
-        };
-        assert!(Arc::ptr_eq(&temple_frame, &merc.frame.unwrap()));
+        assert_eq!(temple_rx.recv().unwrap().frame.unwrap().monitor_id, 1);
+        assert!(matches!(merc_rx.recv(), Ok(MercInbox::Identity(_))), "preparation snapshots the worker identity");
         assert!(temple_rx.recv().is_err() && merc_rx.recv().is_err(), "one message each");
     }
 
     // ------------------------------------------------- the worker's receive --
 
     fn press(monitor_id: u32) -> MercInbox {
-        MercInbox::Press(PressedMercFrame { frame: Ok(Arc::new(capture(monitor_id))), cursor: None, prompt: None })
+        MercInbox::Press(PressedMercFrame { frame: Ok(Arc::new(capture(monitor_id))), cursor: None, prompt: None, probe: None, identity: 0 })
     }
 
     #[test]
@@ -320,7 +347,7 @@ mod tests {
     #[test]
     fn a_grab_error_is_received_once_as_the_error() {
         let (tx, rx) = mpsc::channel();
-        tx.send(MercInbox::Press(PressedMercFrame { frame: Err("no monitor".to_string()), cursor: None, prompt: None }))
+        tx.send(MercInbox::Press(PressedMercFrame { frame: Err("no monitor".to_string()), cursor: None, prompt: None, probe: None, identity: 0 }))
             .unwrap();
         drop(tx);
 

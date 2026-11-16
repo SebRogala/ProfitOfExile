@@ -60,6 +60,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::watch;
 
 mod detect;
+pub(crate) use detect::MercProbe;
 mod session_open;
 
 use crate::modules::ModuleJoin;
@@ -1491,7 +1492,7 @@ struct Retained {
 /// Recalibrate (`merc.refit`) or a new press (the worker's press counter)
 /// opens a new one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FallbackKey {
+pub(crate) struct FallbackKey {
     refit: u64,
     press: u64,
 }
@@ -1504,7 +1505,7 @@ struct FallbackKey {
 /// A successful merc read has no genuinely withheld SSOT measurement to repay:
 /// the only `accepted == false` path is `MercOcr` drift refusal, which is an
 /// intentional rejection of a restatement inside the drift band.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct FallbackBudget {
     key: Option<FallbackKey>,
     uses: u8,
@@ -1854,21 +1855,30 @@ fn run_worker(app: AppHandle, cancel: watch::Receiver<bool>) {
     super::press::install_inbox(&app, Some(tx));
 
     let mut press_seq: u64 = 0;
+    let mut identity: u64 = 0;
     worker_loop(&rx, &|| *cancel.borrow(), &mut |event| match event {
         WorkerEvent::Idle => trade_tick(&app, &mut session),
+        WorkerEvent::Message(MercInbox::Identity(reply)) => { let _ = reply.send(identity); }
+        WorkerEvent::Message(MercInbox::Probe { identity: expected, frame, cursor, reply }) => {
+            if expected != identity { let _ = reply.send(Ok(None)); return; }
+            let evidence = detect::probe_frame(&app, &session, cursor, &frame, press_seq + 1);
+            if !*cancel.borrow() { let _ = reply.send(evidence); }
+        }
         WorkerEvent::Message(MercInbox::Press(pressed)) => {
+            if pressed.identity != identity || *cancel.borrow() { return; }
             press_seq += 1;
             let mut effects = AppPressEffects {
                 app: &app,
                 session: &mut session,
                 cancel: &cancel,
-                press_seq,
                 outcome: None,
                 tooltip: false,
+                probe: pressed.probe,
             };
-            read_press(&mut effects, pressed);
+            read_press(&mut effects, PressedMercFrame { probe: None, ..pressed });
         }
         WorkerEvent::Message(MercInbox::AreaChanged) => {
+            identity += 1;
             if session.state.live {
                 retire_now(&app, &mut session, "area changed");
             }
@@ -1952,9 +1962,9 @@ struct AppPressEffects<'a> {
     app: &'a AppHandle,
     session: &'a mut Session,
     cancel: &'a watch::Receiver<bool>,
-    press_seq: u64,
     outcome: Option<DetectOutcome>,
     tooltip: bool,
+    probe: Option<MercProbe>,
 }
 
 impl PressEffects for AppPressEffects<'_> {
@@ -1977,7 +1987,10 @@ impl PressEffects for AppPressEffects<'_> {
     }
 
     fn panel_read(&mut self, frame: &crate::capture::Capture, cursor: Option<(i32, i32)>) -> Option<DetectOutcome> {
-        let tick = detect::detect_tick(self.app, self.session, cursor, self.cancel, frame, self.press_seq);
+        if *self.cancel.borrow() { return None; }
+        crate::ssot::drop_if_mismatched(self.app, (frame.image.width(), frame.image.height()), frame.origin, frame.client);
+        let evidence = self.probe.take()?;
+        let tick = detect::detect_selected(self.app, self.session, cursor, self.cancel, evidence);
         self.outcome = tick.outcome;
         tick.outcome
     }
@@ -2095,12 +2108,13 @@ pub(super) fn debug_mode(app: &AppHandle) -> bool {
 
 /// The current SSOT placement and scale, copied before capture work starts.
 /// A null slice is the cold-start case; no session rectangle fills that gap.
-fn merc_placement(app: &AppHandle) -> Option<([i32; 4], f32)> {
+fn merc_placement(app: &AppHandle, grab: &crate::capture::Capture) -> Option<([i32; 4], f32)> {
     let screen = {
         let state = app.state::<AppState>();
         let screen = state.screen.lock().unwrap_or_else(|e| e.into_inner()).clone();
         screen
     }?;
+    if !crate::ssot::screen_matches(&Some(screen), (grab.image.width(), grab.image.height()), grab.origin, grab.client) { return None; }
     let merc = crate::ssot::placements_for(Some(&screen)).merc?;
     Some((merc.panel, screen.ui_scale))
 }
@@ -2243,12 +2257,6 @@ fn retire_state(session: &mut Session) {
 }
 
 /// A press that produced no layout, counted.
-fn miss(app: &AppHandle, session: &mut Session) -> DetectOutcome {
-    let outcome = count_miss(session);
-    miss_effects(app, outcome);
-    outcome
-}
-
 /// The log and publish half of a counted miss.
 fn miss_effects(app: &AppHandle, outcome: DetectOutcome) {
     let retired = outcome == DetectOutcome::Retired;
@@ -6438,7 +6446,7 @@ mod tests {
     }
 
     fn pressed(monitor_id: u32, cursor: Option<(i32, i32)>) -> PressedMercFrame {
-        PressedMercFrame { frame: Ok(frame(monitor_id)), cursor, prompt: Some(4) }
+        PressedMercFrame { frame: Ok(frame(monitor_id)), cursor, prompt: Some(4), probe: None, identity: 0 }
     }
 
     #[derive(Debug, PartialEq)]
@@ -6568,7 +6576,7 @@ mod tests {
     /// D5: a failed grab reads nothing and counts no miss.
     #[test]
     fn a_failed_grab_only_fails() {
-        let press = PressedMercFrame { frame: Err("no monitor".to_string()), cursor: Some((5, 5)), prompt: Some(4) };
+        let press = PressedMercFrame { frame: Err("no monitor".to_string()), cursor: Some((5, 5)), prompt: Some(4), probe: None, identity: 0 };
 
         assert_eq!(read_one(RecordingPress::default(), press), vec![Call::Fail]);
     }

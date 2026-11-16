@@ -8,6 +8,7 @@ pub(crate) mod gem_icon_refs;
 pub(crate) mod gem_icons;
 pub(crate) mod gem_reader;
 pub(crate) mod gem_vocab;
+pub(crate) mod panel_probe;
 pub(crate) mod watch;
 
 pub(crate) use watch::{catch_up, on_area_change, on_client_line, on_trial_line, LabWatchState};

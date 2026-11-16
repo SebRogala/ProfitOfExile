@@ -30,25 +30,48 @@ pub(crate) fn armed_token(lab: &LabScanState) -> Option<u64> {
 }
 
 impl ScreenReader<AppHandle> for LabGemReader {
-    fn arm(&self, app: &AppHandle, press: &Press) -> Option<Box<dyn PendingRead<AppHandle>>> {
+    fn id(&self) -> crate::read_hotkey::ReaderId { crate::read_hotkey::ReaderId::Gem }
+    fn prepare(&self, app: &AppHandle, press: &Press) -> Option<Box<dyn PendingRead<AppHandle>>> {
         let state = app.state::<AppState>();
-        armed_token(&state.lab_scan).map(|token| Box::new(PendingGemRead {
-            token,
+        if !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return None; }
+        Some(Box::new(PendingGemRead {
+            identity: super::commands::gem_read_identity(&state),
+            generation: gem_vocab::preload_snapshot(&state).0,
             cursor: press.cursor,
             prompt: crate::read_prompt::armed_id_in(&state, crate::read_prompt::Mechanic::DivineFont),
+            lab: None,
         }) as _)
     }
 }
 
 struct PendingGemRead {
-    token: u64,
+    identity: super::commands::GemReadIdentity,
+    generation: u64,
     cursor: Option<(i32, i32)>,
     prompt: Option<u64>,
+    lab: Option<LabPlacements>,
 }
 
 impl PendingRead<AppHandle> for PendingGemRead {
+    fn probe(&mut self, frame: &Arc<Capture>, app: &AppHandle) -> Result<bool, String> {
+        let state = app.state::<AppState>();
+        if !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return Ok(false); }
+        let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
+        let lab = crate::ssot::placements_for(screen.as_ref()).lab;
+        if super::panel_probe::probe(frame, &lab).is_none() { return Ok(false); }
+        self.lab = Some(lab);
+        Ok(true)
+    }
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, app: &AppHandle) {
-        consume(app, self.token, self.cursor, self.prompt, frame);
+        let Ok(frame) = frame else { return; };
+        let Some(lab) = self.lab else { return; };
+        let vocab = match tauri::async_runtime::block_on(gem_vocab::ensure_gem_vocab(app, self.generation)) {
+            Ok(vocab) => vocab,
+            Err(error) => { app_log(app, format!("Gem read: {error}")); return; }
+        };
+        let state = app.state::<AppState>();
+        let Some(token) = super::commands::prepare_gem_context(&state, self.identity) else { return; };
+        consume(app, token, self.cursor, self.prompt, Ok(frame), &lab, &vocab);
     }
 }
 
@@ -76,7 +99,7 @@ fn with_context_log<R>(token: u64, f: impl FnOnce(&mut ContextLog) -> R) -> R {
     })
 }
 
-fn consume(app: &AppHandle, token: u64, cursor: Option<(i32, i32)>, prompt: Option<u64>, frame: Result<&Arc<Capture>, &str>) {
+fn consume(app: &AppHandle, token: u64, cursor: Option<(i32, i32)>, prompt: Option<u64>, frame: Result<&Arc<Capture>, &str>, lab: &LabPlacements, vocab: &gem_vocab::GemVocab) {
     report_engine_once(app);
     let state = app.state::<AppState>();
     let once = |what: LogOnce| once_per_context(&LOGGED, token, what);
@@ -84,6 +107,7 @@ fn consume(app: &AppHandle, token: u64, cursor: Option<(i32, i32)>, prompt: Opti
         if once(LogOnce::NoVocab) {
             app_log(app, "Gem read skipped: the gem dictionary has not loaded yet".to_string());
         }
+        publish_gem_frame(app, token, GemFrameRead::NoVocab, prompt);
         return;
     }
     let grab = match frame {
@@ -100,7 +124,6 @@ fn consume(app: &AppHandle, token: u64, cursor: Option<(i32, i32)>, prompt: Opti
         log.presses
     });
     let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
-    let lab = crate::ssot::placements_for(screen.as_ref()).lab;
     let region = crate::capture_region(lab.gem);
     if screen.is_none() && once(LogOnce::Unscaled) {
         app_log(
@@ -136,7 +159,7 @@ fn consume(app: &AppHandle, token: u64, cursor: Option<(i32, i32)>, prompt: Opti
         }
         lines
     };
-    let read = read_gem_frame(&state, token, &grab.image, grab.origin, cursor, &lab, tooltip_ocr);
+    let read = read_gem_frame_with_vocab(&state, token, &grab.image, grab.origin, cursor, lab, vocab, tooltip_ocr);
     publish_gem_frame(app, token, read, prompt);
 }
 
@@ -286,6 +309,7 @@ fn hovered_slot(lab: &LabPlacements, origin: (i32, i32), cursor: Option<(i32, i3
 /// The pure step of a press: match the icons, run `tooltip_ocr` on the gem
 /// band only when the cursor is on a slot, and commit under the captured token
 /// and the vocabulary's generation.
+#[cfg(test)]
 pub(crate) fn read_gem_frame(
     state: &AppState,
     captured: u64,
@@ -293,9 +317,16 @@ pub(crate) fn read_gem_frame(
     origin: (i32, i32),
     cursor: Option<(i32, i32)>,
     lab: &LabPlacements,
-    mut tooltip_ocr: impl FnMut(&DynamicImage) -> Vec<String>,
+    tooltip_ocr: impl FnMut(&DynamicImage) -> Vec<String>,
 ) -> GemFrameRead {
     let Some(vocab) = gem_vocab::current(&state.lab_scan) else { return GemFrameRead::NoVocab };
+    read_gem_frame_with_vocab(state, captured, image, origin, cursor, lab, &vocab, tooltip_ocr)
+}
+
+fn read_gem_frame_with_vocab(
+    state: &AppState, captured: u64, image: &DynamicImage, origin: (i32, i32), cursor: Option<(i32, i32)>,
+    lab: &LabPlacements, vocab: &gem_vocab::GemVocab, mut tooltip_ocr: impl FnMut(&DynamicImage) -> Vec<String>,
+) -> GemFrameRead {
     let mut read = LabGemRead { token: captured, set: None, slots: [GemSlot::Unread, GemSlot::Unread, GemSlot::Unread] };
     let mut icons_skipped = vocab.refs.is_none();
     if let Some(refs) = &vocab.refs {
@@ -339,8 +370,9 @@ pub(crate) fn commit_gem_read(state: &AppState, captured: u64, vocab_gen: u64, r
     let lab = &state.lab_scan;
     let (names, replaced, stored) = {
         let mut gems = lab.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
-        if lab.gem_context.load(Ordering::SeqCst) != captured
+        if captured == 0 || lab.gem_context.load(Ordering::SeqCst) != captured
             || lab.gem_vocab_generation.load(Ordering::SeqCst) != vocab_gen
+            || !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner())
         {
             return None;
         }
@@ -540,6 +572,47 @@ mod tests {
             GemFrameRead::Read { commit, .. } => commit,
             _ => None,
         }
+    }
+
+    #[test]
+    fn unarmed_selected_frame_produces_the_paired_gem_payload_without_font_accounting() {
+        let state = test_app_state();
+        *state.pair_code.lock().unwrap() = "fixture-pair".into();
+        let generation = with_refs(&state, fixture_refs());
+        let image = fixture_frame();
+        let capture = Capture { image, monitor_id: 7, origin: (0,0), client: [0,0,1920,1080], timing: Default::default() };
+        let identity = super::super::commands::gem_read_identity(&state);
+        assert!(super::super::panel_probe::probe(&capture, &lab_1080p()).is_some());
+        let token = super::super::commands::prepare_gem_context(&state, identity).unwrap();
+        let vocab = gem_vocab::current(&state.lab_scan).unwrap();
+        let commit = committed(read_gem_frame_with_vocab(&state, token, &capture.image, capture.origin, None, &lab_1080p(), &vocab, |_| Vec::new())).unwrap();
+        assert!(commit.replaced);
+        assert_eq!(held(&state), vec!["Blade Vortex of the Scythe", "Reave of Refraction", "Blade Flurry of Incision"]);
+        assert_eq!(super::super::commands::gem_publication_payload(&state, &commit.names), serde_json::json!({
+            "pair": "fixture-pair", "gems": ["Blade Vortex of the Scythe", "Reave of Refraction", "Blade Flurry of Incision"],
+            "variant": "20/20", "mode": "normal"
+        }));
+        assert_eq!(state.lab_scan.font_context.load(Ordering::SeqCst), 0);
+        assert_eq!(state.lab_scan.font_idle_seq.load(Ordering::SeqCst), 0);
+        assert!(state.lab_scan.font_session.lock().unwrap().current_options.is_none());
+        assert_eq!(state.lab_scan.gem_vocab_generation.load(Ordering::SeqCst), generation);
+    }
+
+    #[test]
+    fn ordinary_commit_keeps_a_later_queued_screen_read_valid() {
+        let state = test_app_state();
+        with_vocab(&state);
+        let first_identity = super::super::commands::gem_read_identity(&state);
+        let queued_identity = super::super::commands::gem_read_identity(&state);
+        let token = super::super::commands::prepare_gem_context(&state, first_identity).unwrap();
+        let first = committed(press(&state, token, &blank(), centre_of(0), &["Reave of Ruin"])).unwrap();
+        assert_eq!(first.names, vec!["Reave of Ruin"]);
+        assert_eq!(super::super::commands::prepare_gem_context(&state, queued_identity), Some(token));
+        let second = committed(press(&state, token, &blank(), centre_of(1), &["Blade Vortex of the Scythe"])).unwrap();
+        assert!(second.replaced);
+        assert_eq!(second.names, vec!["Reave of Ruin", "Blade Vortex of the Scythe"]);
+        assert_eq!(super::super::commands::gem_publication_payload(&state, &second.names)["gems"],
+            serde_json::json!(["Reave of Ruin", "Blade Vortex of the Scythe"]));
     }
 
     fn blank() -> DynamicImage {
