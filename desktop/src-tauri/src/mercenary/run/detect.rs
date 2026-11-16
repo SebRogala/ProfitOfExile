@@ -355,6 +355,19 @@ pub(super) fn probe_frame(
     grab: &crate::capture::Capture,
     press_seq: u64,
 ) -> Result<Option<MercProbe>, String> {
+    probe_frame_with(session, cursor, grab,
+        FallbackKey { refit: refit_counter(app), press: press_seq },
+        merc_placement(app, grab), &mut crate::ocr::recognize_lines)
+}
+
+fn probe_frame_with(
+    session: &Session,
+    cursor: Option<(i32, i32)>,
+    grab: &crate::capture::Capture,
+    key: FallbackKey,
+    placement: Option<([i32; 4], f32)>,
+    recognize: &mut impl FnMut(&image::DynamicImage) -> Result<Vec<OcrLineBox>, String>,
+) -> Result<Option<MercProbe>, String> {
     let started = Instant::now();
     // The display travels with the pixels (POE-237): both halves come off one
     // `Capture`, so the id published below always names the monitor the scale
@@ -367,15 +380,9 @@ pub(super) fn probe_frame(
         img.dimensions()
     };
     let screen = [iw, ih];
-    // Before ANY remembered geometry is read (POE-227). `iw`/`ih` are the whole
-    // grab's dimensions even on a cropped tick — the platform layer captures a
-    // monitor, and only the OCR view is narrowed below — so this is the screen's
-    // real size on every path. A scale remembered from another monitor is
-    // dropped here, which is the first moment anything in the app can tell.
-    let placement = merc_placement(app, grab);
+    // The caller withholds mismatched geometry; only selected work may forget it.
     let crop = placement.map(|(panel, scale)| geometry::placed_panel_crop(panel, scale, screen));
     let mut full_frame = crop.is_none();
-    let key = FallbackKey { refit: refit_counter(app), press: press_seq };
     // Off the key's own counter read, so the verdict and the budget it may
     // spend are about the same Recalibrate. A pending Recalibrate is the only
     // thing that makes a placed miss manual (ruling 2).
@@ -412,7 +419,7 @@ pub(super) fn probe_frame(
         &session.geometry,
         session.fitted.map(|fit| fit.scale),
         fitted_pitch,
-        crate::ocr::recognize_lines,
+        &mut *recognize,
     ) {
         Ok(placed_read) => placed_read,
         Err(e) => {
@@ -435,7 +442,7 @@ pub(super) fn probe_frame(
             full_frame = true;
             view = &img;
             frame = geometry::Frame::full(screen);
-            let lines = match crate::ocr::recognize_lines(view) {
+            let lines = match recognize(view) {
                 Ok(lines) => frame.to_screen(lines),
                 Err(e) => {
                     return Err(format!("Merc: OCR failed — {e}"));
@@ -463,11 +470,10 @@ pub(super) fn probe_frame(
     let mut located_panel = None;
     let mut remember_origin = None;
     if let Some(reason) = located_by {
-        let (located_from_fallback, fallback_origin, contradiction) =
+        let (located_from_fallback, fallback_origin, _) =
             fallback_panel(reason, &layout, &session.geometry);
         located_panel = located_from_fallback;
         remember_origin = fallback_origin;
-        let _ = contradiction;
     }
 
     let took = started.elapsed().as_millis();
@@ -476,17 +482,7 @@ pub(super) fn probe_frame(
     let layout = match layout {
         Ok(layout) => layout,
         Err(_why) => {
-            // Every number the 2026-08-26 smoke wanted and did not have, on the
-            // frame that lost the window: which rect the anchor was weighed
-            // against, which frame the OCR ran on, how many skill names came back,
-            // where their column sat, and which step of `detect_reason` returned.
-            // Debug-gated because a miss is the ordinary state of a loop watching
-            // an empty screen.
-            // A tooltip the player just opened sits ON the panel and hides the rows
-            // the detect needs; the decision is [`judge_no_layout`]'s.
-            // Logged once per press: a press that finds nothing would otherwise
-            // leave no trace of having looked at all.
-            return probe_tooltip(session, grab, cursor).map(|present| present.then_some(MercProbe::Tooltip {
+            return probe_tooltip(session, grab, cursor, recognize).map(|present| present.then_some(MercProbe::Tooltip {
                 column_key: (decision == LocateDecision::TrustPlacementOverColumn).then_some(key),
             }));
         }
@@ -511,7 +507,8 @@ pub(super) fn probe_frame(
     }))))
 }
 
-fn probe_tooltip(session: &Session, grab: &crate::capture::Capture, cursor: Option<(i32, i32)>) -> Result<bool, String> {
+fn probe_tooltip(session: &Session, grab: &crate::capture::Capture, cursor: Option<(i32, i32)>,
+    recognize: &mut impl FnMut(&image::DynamicImage) -> Result<Vec<OcrLineBox>, String>) -> Result<bool, String> {
     let Some((capture, cursor)) = session.current.as_ref().zip(cursor) else { return Ok(false); };
     let Some((ri, si)) = cell_at(capture, cursor) else { return Ok(false); };
     let Some(region) = hover_region(cursor, capture.scale, &session.geometry.thresholds, capture.screen) else { return Ok(false); };
@@ -519,7 +516,7 @@ fn probe_tooltip(session: &Session, grab: &crate::capture::Capture, cursor: Opti
         || (region[0] + region[2]) as u32 > grab.image.width() || (region[1] + region[3]) as u32 > grab.image.height() { return Ok(false); }
     let crop = grab.image.crop_imm(region[0] as u32, region[1] as u32, region[2] as u32, region[3] as u32);
     let processed = crate::capture::preprocess_for_ocr_fast(&crop);
-    let lines = crate::ocr::recognize_lines(&processed)?;
+    let lines = recognize(&processed)?;
     let scale = (processed.width() as f32 / crop.width() as f32, processed.height() as f32 / crop.height() as f32);
     Ok(confirm_from_tooltip(&tooltip_lines(&lines, region, scale, cursor), capture.rows[ri].supports[si].tier,
         &session.vocab, &session.geometry.thresholds).is_some())
@@ -1336,6 +1333,110 @@ mod tests {
             took: 4,
             how: "full",
         }
+    }
+
+    fn probe_capture() -> crate::capture::Capture {
+        let crop = image::load_from_memory(include_bytes!("../../../tests/fixtures/merc-recruit-pc-1080p.png")).unwrap();
+        // Derived full frame: the committed 500×280 crop at its documented origin.
+        let mut image = image::DynamicImage::new_rgb8(cellfit::PC_SCREEN[0], cellfit::PC_SCREEN[1]);
+        image::imageops::overlay(&mut image, &crop, cellfit::PC_ORIGIN.0 as i64, cellfit::PC_ORIGIN.1 as i64);
+        crate::capture::Capture {
+            image,
+            monitor_id: 9, origin: (0,0), client: [0,0,1920,1080], timing: Default::default(),
+        }
+    }
+
+    #[test]
+    fn cold_probe_recognizes_the_real_pc_ocr_fixture_without_spending_fallback() {
+        let mut session = test_session();
+        session.fitted = None;
+        let key = FallbackKey { refit: 0, press: 1 };
+        let mut ocrs = 0;
+        let probe = probe_frame_with(&session, None, &probe_capture(), key, None, &mut |_| {
+            ocrs += 1;
+            Ok(cellfit::pc_lines())
+        }).unwrap();
+        let Some(MercProbe::Panel(location)) = probe else { panic!("expected recognized merc panel"); };
+        assert_eq!(location.layout.rows.iter().map(|row| row.text.as_str()).collect::<Vec<_>>(),
+            vec!["Withering Step", "Chaotic Burst", "Chaotic Shot", "Caustic Arrow", "Trarthan Agility", "Grace"]);
+        assert_eq!(ocrs, 1);
+        assert_eq!(session.fallback.uses, 0);
+        assert!(!session.state.live);
+        let mut effects = RecordingDetection::default();
+        let (_tx, cancel) = watch::channel(false);
+        let read = registered_read(&mut effects, &mut session, None, &cancel, *location).unwrap();
+        assert_eq!(read.result.capture.rows[0].skill.name.as_deref(), Some("Withering Step"));
+        assert_eq!(ocrs, 1, "selected transaction reuses presence evidence");
+        assert_eq!(effects.publication.first_look_capture.unwrap().rows.len(), 6);
+    }
+
+    #[test]
+    fn losing_probe_preserves_the_held_capture_and_registration() {
+        let mut session = test_session();
+        let capture = test_capture([1920,1080]);
+        session.current = Some(capture.clone());
+        session.panel = capture.panel;
+        session.state.on_detect(true);
+        let fitted = session.fitted;
+        let before = (session.state.live,session.state.misses,session.state.complete,session.state.rounds);
+        let probe = probe_frame_with(&session, None, &probe_capture(), FallbackKey { refit: 1, press: 1 }, None,
+            &mut |_| Ok(vec![OcrLineBox { text: "Inventory".into(), x: 10,y:10,w:80,h:16 }])).unwrap();
+        assert!(probe.is_none());
+        assert_eq!(session.current, Some(capture));
+        assert_eq!((session.state.live,session.state.misses,session.state.complete,session.state.rounds), before);
+        assert_eq!(session.fitted, fitted);
+        assert_eq!(session.fallback.uses, 0);
+        assert_eq!(session.refit_located, 0);
+        assert_eq!(session.revision, 0);
+        assert!(session.retained.is_none());
+    }
+
+    #[test]
+    fn a_held_panel_with_cursor_on_it_needs_current_tooltip_pixels() {
+        let (session, cursor) = held_pc_session();
+        let mut ocrs = 0;
+        let probe = probe_frame_with(&session, Some(cursor), &probe_capture(), FallbackKey { refit: 0, press: 1 }, None,
+            &mut |_| { ocrs += 1; Ok(Vec::new()) }).unwrap();
+        assert!(probe.is_none());
+        assert_eq!(ocrs, 2, "the miss checks current tooltip evidence on the same frame");
+        assert!(session.state.live);
+        assert_eq!(session.state.misses, 0);
+    }
+
+    fn held_pc_session() -> (Session, (i32,i32)) {
+        let mut session = test_session();
+        let layout = geometry::detect_reason(&cellfit::pc_lines(), &session.geometry, &session.vocab, None).unwrap();
+        let mut capture = first_look(&layout, [1920,1080], 42, &session.geometry, &session.vocab);
+        // Pass 1 has no fitted support cells; this is a previously fitted cell
+        // inside the PC fixture's panel, retained while its tooltip covers it.
+        let rect = [1000,600,44,44];
+        capture.rows[0].supports.push(MercSupportRead {
+            slot:0, rect, family:None, tier:Some(2), ids:Vec::new(), name:None,
+            score:0.0, state:ReadState::Unknown, candidates:Vec::new(),
+        });
+        let cursor = (rect[0]+rect[2]/2,rect[1]+rect[3]/2);
+        capture.panel = Some([724,554,500,430]);
+        session.panel = capture.panel;
+        session.current = Some(capture);
+        session.state.on_detect(true);
+        (session,cursor)
+    }
+
+    #[test]
+    fn current_tooltip_evidence_selects_the_held_merc_panel_without_retirement() {
+        let (session,cursor) = held_pc_session();
+        let mut ocrs = 0;
+        let probe = probe_frame_with(&session, Some(cursor), &probe_capture(), FallbackKey { refit:0,press:1 }, None,
+            &mut |_| {
+                ocrs += 1;
+                Ok(if ocrs == 1 { Vec::new() } else {
+                    vec![OcrLineBox { text:"Chain (Tier 2)".into(), x:40,y:40,w:200,h:24 }]
+                })
+            }).unwrap();
+        assert!(matches!(probe, Some(MercProbe::Tooltip { .. })));
+        assert!(session.state.live);
+        assert_eq!(session.state.misses, 0);
+        assert!(session.pending_confirm.is_none(), "recognition does not confirm or learn a cell");
     }
 
     #[test]

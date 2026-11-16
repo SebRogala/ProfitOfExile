@@ -1555,21 +1555,16 @@ pub fn apply_anchored(slice: &mut TempleSlice, retry: bool) {
     slice.read_retry = retry && slice.status == TempleStatus::Reading;
 }
 
-/// One pressed frame read once (POE-389): the per-frame prefix the loop's tick
-/// ran, then the first-read body, on THIS frame only.
-///
-/// A grab error is reported through [`fail`] and nothing else. A placed recheck
-/// that misses searches the frame only when [`locate_on_miss`] says so;
-/// otherwise, or when the search finds nothing, the press publishes
-/// [`TickOutcome::NoPanel`]. A located anchor that fills or contradicts the
-/// placement is remembered only after the read has published (ADR-025 cl. 4),
-/// through [`finish`].
+/// Recognition evidence retained until the selected worker consumes this frame.
 #[derive(Debug, Clone, Copy)]
 pub struct TempleProbe {
     found: anchor::Anchor,
     located: bool,
     hint: Option<anchor::AnchorCalibration>,
     placed_origin: Option<(i32, i32)>,
+    cheap_ncc: f32,
+    cheap_time: Duration,
+    locate_time: Duration,
 }
 
 pub fn probe_frame(
@@ -1577,14 +1572,18 @@ pub fn probe_frame(
     screen: Option<crate::ssot::ScreenSlice>,
     stop: &dyn Fn() -> bool,
 ) -> Result<Option<TempleProbe>, super::ReadError> {
+    if stop() { return Ok(None); }
     let size = (grab.image.width(), grab.image.height());
     let screen = screen.filter(|s| crate::ssot::screen_matches(&Some(*s), size, grab.origin, grab.client));
     let cheap_hint = cheap_hint_from_screen(screen.as_ref(), size, grab.origin, grab.client);
     let hint = cheap_hint.map(|h| h.calibration);
     let placed_origin = cheap_hint.map(|h| h.origin);
     let anchored = screen.and_then(|s| s.anchors).and_then(|a| a.temple_entrance);
+    let started = Instant::now();
     let cheap = anchor::detect_cheap(&grab.image, cheap_hint.as_ref());
-    let _ncc = cheap.ncc();
+    let cheap_time = started.elapsed();
+    let cheap_ncc = cheap.ncc();
+    let locating = Instant::now();
     let (found, located) = match cheap {
         anchor::CheapDetect::Anchored(found) => (found, false),
         anchor::CheapDetect::Nothing { .. } if locate_on_miss(screen.is_some(), anchored) => {
@@ -1595,9 +1594,13 @@ pub fn probe_frame(
         }
         _ => return Ok(None),
     };
-    Ok(Some(TempleProbe { found, located, hint, placed_origin }))
+    if stop() { return Ok(None); }
+    Ok(Some(TempleProbe { found, located, hint, placed_origin, cheap_ncc, cheap_time,
+        locate_time: if located { locating.elapsed() } else { Duration::ZERO } }))
 }
 
+/// A selected anchor is read once; only a successful located read may persist
+/// its origin through `finish` (ADR-025). Presence recognition is already done.
 fn read_press(
     app: &AppHandle,
     session: &mut Session,
@@ -1629,14 +1632,16 @@ fn read_press(
     crate::ssot::drop_if_mismatched(app, capture, origin, client);
 
     let settings = settings_snapshot(app);
-    let Some(TempleProbe { found, located, hint, placed_origin }) = pressed.probe else {
+    let Some(TempleProbe { found, located, hint, placed_origin, cheap_ncc, cheap_time, locate_time }) = pressed.probe else {
         publish(app, |slice| apply_status(slice, TickOutcome::NoPanel)); return;
     };
+    tick_stages.cheap = cheap_time;
+    tick_stages.anchor = locate_time;
     let (_, hint_source, _, _) = hint_from_slice(app, capture, origin, client);
     if let Some(line) = hint_line(&mut session.hint_said, hint, hint_source) { crate::app_log(app, line); }
     if !located && !session.placed_recheck_said {
         session.placed_recheck_said = true;
-        crate::app_log(app, format!("Temple: placed-origin recheck — NCC {:.3}", found.ncc));
+        crate::app_log(app, format!("Temple: placed-origin recheck — NCC {:.3}, {} ms", cheap_ncc, ms(cheap_time)));
     }
     let stop = || *cancel.borrow() || !epoch_current();
 
@@ -3881,12 +3886,32 @@ mod tests {
     #[test]
     fn the_locate_finds_the_panel_on_the_live_frame() {
         let img = live_capture();
-        let found = anchor::anchor_for_loop(&img, None, &|| false).expect("the live sheet is found");
+        let frame = crate::capture::Capture { image: img, monitor_id: 1, origin:(0,0), client:[0,0,1920,1080], timing:Default::default() };
+        let proof = probe_frame(&frame, None, &|| false).unwrap().expect("the live sheet is found without a Client.txt arm or geometry");
+        assert!(proof.located);
+        let found = proof.found;
         let tol = slice::FRAME_ORIGIN_TOLERANCE;
         assert!(
             (found.origin.0 - 960).abs() <= tol && (found.origin.1 - 713).abs() <= tol,
             "found {:?}",
             found.origin,
         );
+        let layout = reader::read_layout_at(&frame.image, found);
+        assert_eq!(layout.origin, found.origin, "selected read consumes the proved anchor");
+    }
+
+    #[test]
+    fn a_cancelled_probe_cannot_select_a_visible_panel() {
+        let frame = crate::capture::Capture { image: live_capture(), monitor_id: 1, origin:(0,0), client:[0,0,1920,1080], timing:Default::default() };
+        assert!(probe_frame(&frame, None, &|| true).unwrap().is_none());
+    }
+
+    #[test]
+    fn placed_miss_does_not_relocate_to_the_visible_panel() {
+        let frame = crate::capture::Capture { image: live_capture(), monitor_id: 1, origin:(0,0), client:[0,0,1920,1080], timing:Default::default() };
+        let mut screen = crate::ssot::screen_from_geometry(1920,1080,1,(0,0),frame.client,0);
+        screen.anchors = Some(crate::ssot::Anchors { temple_entrance: Some([100,100]), merc_panel: None });
+        assert!(probe_frame(&frame, Some(screen), &|| false).unwrap().is_none());
+        assert_eq!(screen.anchors.unwrap().temple_entrance, Some([100,100]));
     }
 }

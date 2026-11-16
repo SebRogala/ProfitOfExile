@@ -1,6 +1,6 @@
-//! The Divine Font gem reader (POE-391, POE-397): per read key press while a
-//! gem context is armed (CRAFT until CONFIRM, FontClosed or ZoneChanged), the
-//! three slot icons are matched (`gem_icons`); when the cursor is on a slot,
+//! The Divine Font gem reader (POE-391, POE-397): a title-plus-lit-CONFIRM
+//! match selects the pressed frame, preparing a context if needed. The three
+//! slot icons are matched (`gem_icons`); when the cursor is on a slot,
 //! the tooltip band of the same frame is OCR'd and its name overrides that
 //! slot. Only certain slots reach the held gems and the server.
 
@@ -65,14 +65,31 @@ impl PendingRead<AppHandle> for PendingGemRead {
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, app: &AppHandle) {
         let Ok(frame) = frame else { return; };
         let Some(lab) = self.lab else { return; };
-        let vocab = match tauri::async_runtime::block_on(gem_vocab::ensure_gem_vocab(app, self.generation)) {
-            Ok(vocab) => vocab,
+        let state = app.state::<AppState>();
+        let ready = match tauri::async_runtime::block_on(ready_gem_frame(&state, self.identity, frame.clone(), gem_vocab::ensure_gem_vocab(app, self.generation))) {
+            Ok(Some(ready)) => ready,
+            Ok(None) => return,
             Err(error) => { app_log(app, format!("Gem read: {error}")); return; }
         };
-        let state = app.state::<AppState>();
-        let Some(token) = super::commands::prepare_gem_context(&state, self.identity) else { return; };
-        consume(app, token, self.cursor, self.prompt, Ok(frame), &lab, &vocab);
+        consume(app, ready.token, self.cursor, self.prompt, Ok(&ready.frame), &lab, &ready.vocab);
     }
+}
+
+struct ReadyGemFrame {
+    frame: Arc<Capture>,
+    token: u64,
+    vocab: gem_vocab::GemVocab,
+}
+
+async fn ready_gem_frame(
+    state: &AppState,
+    identity: super::commands::GemReadIdentity,
+    frame: Arc<Capture>,
+    load: impl std::future::Future<Output = Result<gem_vocab::GemVocab, String>>,
+) -> Result<Option<ReadyGemFrame>, String> {
+    let vocab = load.await?;
+    Ok(super::commands::prepare_gem_context(state, identity)
+        .map(|token| ReadyGemFrame { frame, token, vocab }))
 }
 
 /// Per-context log bookkeeping on the dispatcher thread.
@@ -107,7 +124,6 @@ fn consume(app: &AppHandle, token: u64, cursor: Option<(i32, i32)>, prompt: Opti
         if once(LogOnce::NoVocab) {
             app_log(app, "Gem read skipped: the gem dictionary has not loaded yet".to_string());
         }
-        publish_gem_frame(app, token, GemFrameRead::NoVocab, prompt);
         return;
     }
     let grab = match frame {
@@ -265,6 +281,7 @@ pub(crate) enum GemFrameRead {
 /// A committed read, as owned data built with no lab guard held.
 #[derive(Debug, Clone)]
 pub(crate) struct GemCommit {
+    generation: u64,
     /// The held gems after the commit.
     pub names: Vec<String>,
     /// Whether the held list changed.
@@ -327,6 +344,9 @@ fn read_gem_frame_with_vocab(
     state: &AppState, captured: u64, image: &DynamicImage, origin: (i32, i32), cursor: Option<(i32, i32)>,
     lab: &LabPlacements, vocab: &gem_vocab::GemVocab, mut tooltip_ocr: impl FnMut(&DynamicImage) -> Vec<String>,
 ) -> GemFrameRead {
+    if vocab.generation != state.lab_scan.gem_vocab_generation.load(Ordering::SeqCst) {
+        return GemFrameRead::NoVocab;
+    }
     let mut read = LabGemRead { token: captured, set: None, slots: [GemSlot::Unread, GemSlot::Unread, GemSlot::Unread] };
     let mut icons_skipped = vocab.refs.is_none();
     if let Some(refs) = &vocab.refs {
@@ -393,7 +413,7 @@ pub(crate) fn commit_gem_read(state: &AppState, captured: u64, vocab_gen: u64, r
         (names, replaced, stored)
     };
     let status = crate::build_status(state);
-    Some(GemCommit { names, replaced, status, read: stored })
+    Some(GemCommit { names, replaced, status, read: stored, generation: vocab_gen })
 }
 
 /// Test seam: runs inside `commit_gem_read` after its checks passed, while the
@@ -432,6 +452,7 @@ fn describe(read: &LabGemRead) -> String {
 
 /// The lock-free adapter: emit, send and log a commit.
 pub(crate) fn publish_gem_commit(app: &AppHandle, commit: GemCommit) {
+    if !gem_publication_current(&app.state::<AppState>(), &commit) { return; }
     app_log(
         app,
         format!("Gem read: {} — held {:?}{}", describe(&commit.read), commit.names, if commit.replaced { "" } else { " (unchanged)" }),
@@ -455,6 +476,13 @@ pub(crate) fn publish_gem_commit(app: &AppHandle, commit: GemCommit) {
     tauri::async_runtime::spawn(async move {
         crate::send_gems_to_server(&app_clone, names).await;
     });
+}
+
+fn gem_publication_current(state: &AppState, commit: &GemCommit) -> bool {
+    let _gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+    state.lab_scan.gem_context.load(Ordering::SeqCst) == commit.read.token
+        && state.lab_scan.gem_vocab_generation.load(Ordering::SeqCst) == commit.generation
+        && *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn publish_gem_frame(app: &AppHandle, token: u64, read: GemFrameRead, prompt: Option<u64>) {
@@ -574,11 +602,146 @@ mod tests {
         }
     }
 
+    type LoadedRefs = Result<Arc<gem_icons::GemIconRefs>, String>;
+    struct DeferredWorld {
+        state: AppState,
+        gate: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<LoadedRefs>>>,
+        started: std::sync::mpsc::Sender<()>,
+        result: std::sync::Mutex<Option<Result<Option<serde_json::Value>, String>>>,
+        captures: std::sync::atomic::AtomicUsize,
+        loads: std::sync::atomic::AtomicUsize,
+        negative: bool,
+    }
+    struct DeferredReader;
+    struct DeferredRead { identity: super::super::commands::GemReadIdentity }
+    impl ScreenReader<Arc<DeferredWorld>> for DeferredReader {
+        fn id(&self) -> crate::read_hotkey::ReaderId { crate::read_hotkey::ReaderId::Gem }
+        fn prepare(&self, world: &Arc<DeferredWorld>, _: &Press) -> Option<Box<dyn PendingRead<Arc<DeferredWorld>>>> {
+            Some(Box::new(DeferredRead { identity: super::super::commands::gem_read_identity(&world.state) }))
+        }
+    }
+    impl PendingRead<Arc<DeferredWorld>> for DeferredRead {
+        fn probe(&mut self, frame: &Arc<Capture>, _: &Arc<DeferredWorld>) -> Result<bool, String> {
+            Ok(super::super::panel_probe::probe(frame, &lab_1080p()).is_some())
+        }
+        fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, world: &Arc<DeferredWorld>) {
+            let frame = frame.unwrap();
+            let gate = world.gate.lock().unwrap().take().unwrap();
+            let generation = gem_vocab::preload_snapshot(&world.state).0;
+            let load = gem_vocab::await_gem_vocab(&world.state.lab_scan, generation, || async {
+                world.loads.fetch_add(1, Ordering::SeqCst);
+                if gem_vocab::current(&world.state.lab_scan).is_none() { with_vocab(&world.state); }
+                world.started.send(()).unwrap();
+                let refs = gate.await.map_err(|_| "loader disconnected".to_string())??;
+                if !gem_vocab::install_gem_refs(&world.state.lab_scan, generation, refs) { return Err("mode changed".into()); }
+                Ok(gem_vocab::current(&world.state.lab_scan).unwrap())
+            });
+            let ready = tauri::async_runtime::block_on(ready_gem_frame(&world.state, self.identity, frame.clone(), load));
+            let result = ready.map(|ready| ready.and_then(|ready| {
+                assert!(Arc::ptr_eq(frame, &ready.frame), "the selected read retains the captured Arc");
+                let read = read_gem_frame_with_vocab(&world.state, ready.token, &ready.frame.image, ready.frame.origin,
+                    None, &lab_1080p(), &ready.vocab, |_| panic!("no hovered slot"));
+                committed(read).map(|commit| super::super::commands::gem_publication_payload(&world.state, &commit.names))
+            }));
+            *world.result.lock().unwrap() = Some(result);
+        }
+    }
+
+    fn deferred_world(matcher_ready: bool, negative: bool) -> (Arc<DeferredWorld>, std::sync::mpsc::Receiver<()>, tokio::sync::oneshot::Sender<LoadedRefs>) {
+        let state = test_app_state();
+        *state.pair_code.lock().unwrap() = "fixture-pair".into();
+        if matcher_ready { with_vocab(&state); }
+        let (started, waiting) = std::sync::mpsc::channel();
+        let (release, gate) = tokio::sync::oneshot::channel();
+        (Arc::new(DeferredWorld { state, gate: std::sync::Mutex::new(Some(gate)), started,
+            result: std::sync::Mutex::new(None), captures: 0.into(), loads: 0.into(), negative }), waiting, release)
+    }
+
+    fn dispatch_deferred(world: Arc<DeferredWorld>) -> std::thread::JoinHandle<crate::read_hotkey::DispatchOutcome> {
+        std::thread::spawn(move || {
+            let press = crate::read_hotkey::prepare_press(Press { cursor: None }, Duration::ZERO, &[&DeferredReader], &world);
+            crate::read_hotkey::dispatch_press(press, &world, &mut |_| {}, &mut || {
+                world.captures.fetch_add(1, Ordering::SeqCst);
+                Ok(Capture { image: if world.negative { blank() } else { fixture_frame() }, monitor_id:41,
+                    origin:(0,0), client:[0,0,1920,1080], timing:Default::default() })
+            }, &mut |_| panic!("no dismissal"))
+        })
+    }
+
+    fn deferred_success(matcher_ready: bool) {
+        let (world, waiting, release) = deferred_world(matcher_ready, false);
+        let dispatch = dispatch_deferred(world.clone());
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(world.result.lock().unwrap().is_none(), "matcher alone cannot finish the read");
+        assert_eq!(world.captures.load(Ordering::SeqCst), 1);
+        release.send(Ok(fixture_refs().clone())).ok().unwrap();
+        assert_eq!(dispatch.join().unwrap(), crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Gem));
+        assert_eq!(*world.result.lock().unwrap(), Some(Ok(Some(serde_json::json!({
+            "pair":"fixture-pair", "gems":["Blade Vortex of the Scythe","Reave of Refraction","Blade Flurry of Incision"],
+            "variant":"20/20", "mode":"normal"
+        })))));
+        assert_eq!(world.captures.load(Ordering::SeqCst), 1);
+        assert_eq!(world.state.lab_scan.font_context.load(Ordering::SeqCst), 0);
+        assert_eq!(world.state.lab_scan.font_idle_seq.load(Ordering::SeqCst), 0);
+        assert!(world.state.lab_scan.detection.lock().unwrap().detected_type().is_none());
+    }
+
+    #[test]
+    fn initially_unloaded_selected_frame_waits_and_reads_without_recapture() { deferred_success(false); }
+
+    #[test]
+    fn installed_matcher_waits_for_icon_stage_before_reading_saved_frame() { deferred_success(true); }
+
+    #[test]
+    fn failed_loader_does_not_recapture_or_commit_gems() {
+        let (world, waiting, release) = deferred_world(false, false);
+        let dispatch = dispatch_deferred(world.clone());
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        release.send(Err("fixture loader failed".into())).ok().unwrap();
+        dispatch.join().unwrap();
+        assert_eq!(*world.result.lock().unwrap(), Some(Err("fixture loader failed".into())));
+        assert_eq!(world.captures.load(Ordering::SeqCst), 1);
+        assert_eq!(world.state.lab_scan.gem_context.load(Ordering::SeqCst), 0);
+        assert!(held(&world.state).is_empty());
+    }
+
+    #[test]
+    fn negative_probe_starts_no_loader_or_gem_context() {
+        let (world, _waiting, _release) = deferred_world(false, true);
+        assert_eq!(dispatch_deferred(world.clone()).join().unwrap(), crate::read_hotkey::DispatchOutcome::NoMatch);
+        assert_eq!(world.captures.load(Ordering::SeqCst), 1);
+        assert_eq!(world.loads.load(Ordering::SeqCst), 0);
+        assert!(world.result.lock().unwrap().is_none());
+        assert_eq!(world.state.lab_scan.gem_context.load(Ordering::SeqCst), 0);
+        assert!(held(&world.state).is_empty());
+    }
+
+    #[test]
+    fn lifecycle_change_while_loading_prevents_the_saved_frame_commit() {
+        for change in ["close", "confirm", "mode", "disable"] {
+            let (world, waiting, release) = deferred_world(false, false);
+            let dispatch = dispatch_deferred(world.clone());
+            waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+            match change {
+                "close" => { disarm_gem_context(&world.state, false); }
+                "confirm" => { disarm_gem_context(&world.state, true); }
+                "mode" => { crate::apply_manual_lab_mode(&world.state, "Dedication", |_| {}); }
+                _ => { super::super::commands::set_lab_overlays_enabled_in(&world.state, false); }
+            }
+            release.send(Ok(fixture_refs().clone())).ok().unwrap();
+            dispatch.join().unwrap();
+            let result = world.result.lock().unwrap();
+            assert!(!matches!(result.as_ref(), Some(Ok(Some(_)))), "{change} committed a stale frame");
+            assert_eq!(world.captures.load(Ordering::SeqCst), 1);
+            assert!(held(&world.state).is_empty());
+        }
+    }
+
     #[test]
     fn unarmed_selected_frame_produces_the_paired_gem_payload_without_font_accounting() {
         let state = test_app_state();
         *state.pair_code.lock().unwrap() = "fixture-pair".into();
-        let generation = with_refs(&state, fixture_refs());
+        let generation = with_refs(&state, fixture_refs().clone());
         let image = fixture_frame();
         let capture = Capture { image, monitor_id: 7, origin: (0,0), client: [0,0,1920,1080], timing: Default::default() };
         let identity = super::super::commands::gem_read_identity(&state);
@@ -613,6 +776,28 @@ mod tests {
         assert_eq!(second.names, vec!["Reave of Ruin", "Blade Vortex of the Scythe"]);
         assert_eq!(super::super::commands::gem_publication_payload(&state, &second.names)["gems"],
             serde_json::json!(["Reave of Ruin", "Blade Vortex of the Scythe"]));
+    }
+
+    #[test]
+    fn closed_context_cannot_publish_a_previously_committed_result() {
+        let state = test_app_state();
+        let token = arm_gem_context(&state);
+        with_vocab(&state);
+        let commit = committed(press(&state, token, &blank(), centre_of(0), &["Reave of Ruin"])).unwrap();
+        assert!(gem_publication_current(&state, &commit));
+        disarm_gem_context(&state, false);
+        assert!(!gem_publication_current(&state, &commit));
+        assert_eq!(held(&state), vec!["Reave of Ruin"]);
+    }
+
+    #[test]
+    fn mode_change_cannot_publish_a_previously_committed_result() {
+        let state = test_app_state();
+        let token = arm_gem_context(&state);
+        with_vocab(&state);
+        let commit = committed(press(&state, token, &blank(), centre_of(0), &["Reave of Ruin"])).unwrap();
+        crate::apply_manual_lab_mode(&state, "Dedication", |_| {});
+        assert!(!gem_publication_current(&state, &commit));
     }
 
     fn blank() -> DynamicImage {

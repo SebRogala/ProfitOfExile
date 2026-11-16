@@ -14,7 +14,7 @@
 //! grabs one frame on the dispatcher thread, and the merc reader
 //! (`super::press`) hands it, with the cursor at the press, to this worker's
 //! inbox. [`read_press`] then reads that one frame twice at most: the panel
-//! read ([`detect::detect_tick`]) and, when the cursor sits on a captured cell,
+//! read ([`detect::detect_selected`]) and, when the cursor sits on a captured cell,
 //! the hovered tooltip ([`hover_read`]). Policy: docs/OVERLAY-GUIDE.md
 //! § "Screen reading (GGG policy)".
 //!
@@ -93,7 +93,7 @@ use super::press::{MercInbox, PressedMercFrame};
 /// so a stop signal is honoured within one of them.
 const TICK: Duration = Duration::from_millis(100);
 /// A read slower than this always writes its stage-timing line
-/// ([`detect::detect_tick`]), debug mode or not.
+/// ([`detect::detect_selected`]), debug mode or not.
 const SLOW_TICK: Duration = Duration::from_millis(1500);
 /// How long the `unavailable` worker naps between stop checks.
 const UNFOCUSED_NAP: Duration = Duration::from_millis(1000);

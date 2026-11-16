@@ -30,7 +30,7 @@ impl ScreenReader<AppHandle> for LabFontReader {
         armed_token(&state.lab_scan).map(|token| Box::new(PendingFontRead {
             token,
             prompt: crate::read_prompt::armed_id_in(&state, crate::read_prompt::Mechanic::DivineFont),
-            lines: Vec::new(),
+            recognition: None,
         }) as _)
     }
 }
@@ -38,7 +38,22 @@ impl ScreenReader<AppHandle> for LabFontReader {
 struct PendingFontRead {
     token: u64,
     prompt: Option<u64>,
+    recognition: Option<FontRecognition>,
+}
+
+struct FontRecognition {
     lines: Vec<String>,
+    panel: FontPanelState,
+}
+
+fn probe_font_frame(frame: &Capture, region: [i32; 4],
+    recognize: impl FnOnce(&image::DynamicImage) -> Result<Vec<String>, String>) -> Result<Option<FontRecognition>, String> {
+    let [x,y,w,h] = region;
+    if x < 0 || y < 0 || w <= 0 || h <= 0 || x as u32 + w as u32 > frame.image.width() || y as u32 + h as u32 > frame.image.height() { return Ok(None); }
+    let crop = frame.image.crop_imm(x as u32, y as u32, w as u32, h as u32);
+    let lines = recognize(&crate::capture::preprocess_for_ocr(&crop))?;
+    let panel = crate::font_parser::parse_font_panel(&lines);
+    Ok((panel.font_active && !panel.options.is_empty()).then_some(FontRecognition { lines, panel }))
 }
 
 impl PendingRead<AppHandle> for PendingFontRead {
@@ -47,19 +62,17 @@ impl PendingRead<AppHandle> for PendingFontRead {
         if armed_token(&state.lab_scan) != Some(self.token)
             || !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return Ok(false); }
         let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
-        let [x, y, w, h] = crate::ssot::placements_for(screen.as_ref()).lab.font;
-        if x < 0 || y < 0 || w <= 0 || h <= 0 || x as u32 + w as u32 > frame.image.width() || y as u32 + h as u32 > frame.image.height() { return Ok(false); }
-        let crop = frame.image.crop_imm(x as u32, y as u32, w as u32, h as u32);
-        self.lines = crate::ocr::recognize_text(&crate::capture::preprocess_for_ocr(&crop))?;
-        Ok(crate::font_parser::parse_font_panel(&self.lines).font_active)
+        self.recognition = probe_font_frame(frame, crate::ssot::placements_for(screen.as_ref()).lab.font, crate::ocr::recognize_text)?;
+        Ok(self.recognition.is_some())
     }
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, app: &AppHandle) {
         if frame.is_err() { return; }
         report_engine_once(app);
         let state = app.state::<AppState>();
         if !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return; }
-        let read = read_font_lines(&state, self.token, &self.lines);
-        publish_font_read(app, &self.lines, read, self.prompt);
+        let Some(recognition) = self.recognition else { return; };
+        let read = read_font_panel(&state, self.token, recognition.panel);
+        publish_font_read(app, self.token, &recognition.lines, read, self.prompt);
     }
 }
 
@@ -72,8 +85,12 @@ pub(crate) struct FontLinesRead {
 
 /// The pure step of a font read: replace the alert set under its own lock
 /// (re-checking the token there), then record an active panel in the session.
+#[cfg(test)]
 pub(crate) fn read_font_lines(state: &AppState, captured: u64, lines: &[String]) -> FontLinesRead {
-    let panel = crate::font_parser::parse_font_panel(lines);
+    read_font_panel(state, captured, crate::font_parser::parse_font_panel(lines))
+}
+
+fn read_font_panel(state: &AppState, captured: u64, panel: FontPanelState) -> FontLinesRead {
     if !panel.font_active || captured == 0 || state.lab_scan.font_context.load(Ordering::SeqCst) != captured {
         return FontLinesRead { panel, record: None };
     }
@@ -92,7 +109,14 @@ pub(crate) fn read_font_lines(state: &AppState, captured: u64, lines: &[String])
     FontLinesRead { panel, record }
 }
 
-fn publish_font_read(app: &AppHandle, lines: &[String], read: FontLinesRead, prompt: Option<u64>) {
+fn publish_font_read(app: &AppHandle, captured: u64, lines: &[String], read: FontLinesRead, prompt: Option<u64>) {
+    let state = app.state::<AppState>();
+    let current = {
+        let _session = state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner());
+        captured != 0 && state.lab_scan.font_context.load(Ordering::SeqCst) == captured
+            && *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner())
+    };
+    if !current { return; }
     let FontLinesRead { panel, record } = read;
     if !panel.font_active {
         if !lines.is_empty() {
@@ -157,6 +181,56 @@ mod tests {
             "Sacrifice a Gem for Treasure Keys",
             "Crafts Remaining: 2",
         ])
+    }
+
+    fn probe_capture() -> Capture {
+        Capture { image: image::DynamicImage::new_rgb8(4,4), monitor_id: 7, origin:(0,0), client:[0,0,4,4], timing:Default::default() }
+    }
+
+    #[test]
+    fn selected_options_record_cached_recognition_with_one_ocr() {
+        let state = test_app_state();
+        let token = font_context::arm_font_context(&state).token;
+        let mut ocrs = 0;
+        let recognition = probe_font_frame(&probe_capture(), [0,0,4,4], |_| { ocrs += 1; Ok(options_panel()) }).unwrap().unwrap();
+        assert!(state.lab_scan.font_session.lock().unwrap().current_options.is_none(), "recognition has no recording effects");
+        let read = read_font_panel(&state, token, recognition.panel);
+        let outcome = read.record.unwrap().outcome.unwrap();
+        assert_eq!(outcome.buffer.iter().map(|o| o.option_type.as_str()).collect::<Vec<_>>(),
+            vec!["transform_random", "quality", "sacrifice_keys"]);
+        assert_eq!(ocrs, 1);
+    }
+
+    #[test]
+    fn inactive_recognition_cannot_clear_a_previous_alert() {
+        let state = test_app_state();
+        let token = font_context::arm_font_context(&state).token;
+        read_font_lines(&state, token, &lines(&["Transform a non-Transfigured Skill Gem to a Transfigured version"]));
+        let before = *state.lab_scan.font_alert_seen.lock().unwrap();
+        let recognition = probe_font_frame(&probe_capture(), [0,0,4,4], |_| Ok(lines(&["Inventory"]))).unwrap();
+        assert!(recognition.is_none());
+        assert_eq!(*state.lab_scan.font_alert_seen.lock().unwrap(), before);
+    }
+
+    #[test]
+    fn remaining_count_without_options_does_not_select_font() {
+        let recognition = probe_font_frame(&probe_capture(), [0,0,4,4], |_| Ok(lines(&["Crafts Remaining: 2"]))).unwrap();
+        assert!(recognition.is_none());
+    }
+
+    #[test]
+    fn expired_recognition_leaves_the_replacement_context_and_prompt_untouched() {
+        let state = test_app_state();
+        let old = font_context::arm_font_context(&state).token;
+        let recognition = probe_font_frame(&probe_capture(), [0,0,4,4], |_| Ok(options_panel())).unwrap().unwrap();
+        font_context::disarm_font_context(&state);
+        let current = font_context::arm_font_context(&state);
+        crate::read_prompt::apply_in(&state, crate::read_prompt::Change::Arm(crate::read_prompt::Mechanic::DivineFont));
+        let prompt = state.read_prompt.lock().unwrap().snapshot();
+        assert!(read_font_panel(&state, old, recognition.panel).record.is_none());
+        assert_eq!(state.read_prompt.lock().unwrap().snapshot(), prompt);
+        assert_eq!(state.lab_scan.font_idle_seq.load(Ordering::SeqCst), current.idle_seq);
+        assert!(state.lab_scan.font_session.lock().unwrap().current_options.is_none());
     }
 
     #[test]

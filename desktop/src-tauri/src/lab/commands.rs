@@ -168,7 +168,7 @@ pub(crate) fn set_lab_overlays_enabled(enabled: bool, app: AppHandle) {
     persist_settings(&app);
 }
 
-fn set_lab_overlays_enabled_in(state: &AppState, enabled: bool) -> bool {
+pub(super) fn set_lab_overlays_enabled_in(state: &AppState, enabled: bool) -> bool {
     *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) = enabled;
     if !enabled {
         disarm_gem_context(state, false);

@@ -12,7 +12,9 @@ ui_scale 0.90). Both PNGs are lossless crops at source scale, with no repainting
 `ffmpeg -i <source> -vf crop=<w>:<h>:<x>:<y> -frames:v 1 <asset>`
 produced the crops. The title's offset from the middle gem slot and the
 CONFIRM offset from the title are measured on this frame. The probe scales
-them from projected slot geometry and searches a small rounding margin.
+them from the projected outer-slot centre pitch (198 source pixels) and
+searches a small rounding margin. Templates use Lanczos3 resizing before the
+appearance comparison; rounded icon width is not used as a scale estimate.
 
 Evidence is limited to this one real frame. Masked/darkened negatives and
 resized 4K/16:10 frames in tests are derived evidence, not independent captures.

@@ -1,5 +1,5 @@
-//! The gem reader's tooltip vocabulary, preloaded in the background (POE-391
-//! M2): the reader never fetches on a press, it uses what is installed.
+//! The gem reader's vocabulary and icon stages: background preload and selected
+//! reads share one awaitable loader. A selected read retains its pressed frame.
 //!
 //! The vocabulary depends on the lab mode, so every mode change bumps
 //! `gem_vocab_generation` (under the `lab_settings` guard, see
@@ -36,8 +36,7 @@ pub(crate) fn preload_snapshot(state: &AppState) -> (u64, String) {
 }
 
 /// Fetch the dictionary for the current mode and install it when it arrives.
-/// Called with no lab guard held. A duplicate in-flight fetch for the same
-/// generation is harmless (same content).
+/// Called with no lab guard held; concurrent callers share the loader lock.
 pub(crate) fn spawn_gem_vocab_preload(app: &AppHandle) {
     let generation = preload_snapshot(&app.state::<AppState>()).0;
     let app = app.clone();
@@ -53,7 +52,7 @@ pub(crate) async fn ensure_gem_vocab(app: &AppHandle, expected: u64) -> Result<G
     await_gem_vocab(&state.lab_scan, expected, || load_gem_vocab(app, expected)).await
 }
 
-async fn await_gem_vocab<F, Fut>(lab: &LabScanState, expected: u64, load: F) -> Result<GemVocab, String>
+pub(super) async fn await_gem_vocab<F, Fut>(lab: &LabScanState, expected: u64, load: F) -> Result<GemVocab, String>
 where F: FnOnce() -> Fut, Fut: std::future::Future<Output = Result<GemVocab, String>> {
     let _loading = lab.gem_vocab_load.lock().await;
     if lab.gem_vocab_generation.load(Ordering::SeqCst) != expected { return Err("lab mode changed before vocabulary loading".into()); }
@@ -71,52 +70,52 @@ async fn load_gem_vocab(app: &AppHandle, expected: u64) -> Result<GemVocab, Stri
     if generation != expected { return Err("lab mode changed before vocabulary loading".into()); }
     let server = crate::settings::server_base(&state);
     let http = state.server_http.clone();
-        let dict = super::commands::fetch_gem_dictionary(&app, &server, &http, &mode).await;
-        let names = dict.merged();
-        let count = names.len();
-        let state = app.state::<AppState>();
-        if install_gem_matcher(&state.lab_scan, generation, names) {
-            app_log(&app, format!("Gem reader: loaded {} gem names ({})", count, mode));
-        } else {
-            if count == 0 {
-                app_log(&app, "Gem reader: the gem dictionary loaded 0 names, so no tooltip read can match; the next CRAFT retries. The preceding 'gem names' lines say why.".to_string());
-            }
-            return Err("gem dictionary unavailable or stale".into());
+    let dict = super::commands::fetch_gem_dictionary(&app, &server, &http, &mode).await;
+    let names = dict.merged();
+    let count = names.len();
+    let state = app.state::<AppState>();
+    if install_gem_matcher(&state.lab_scan, generation, names) {
+        app_log(&app, format!("Gem reader: loaded {} gem names ({})", count, mode));
+    } else {
+        if count == 0 {
+            app_log(&app, "Gem reader: the gem dictionary loaded 0 names, so no tooltip read can match; the next CRAFT retries. The preceding 'gem names' lines say why.".to_string());
         }
-        let Ok(dir) = app.path().app_data_dir().map(|d| d.join("gem-art")) else {
-            app_log(&app, "Gem reader: no app data directory, so the gem icons are not loaded".to_string());
-            return Err("no app data directory for gem icons".into());
-        };
-        let wanted: Vec<String> = dict.normal.iter().chain(&dict.transfigured).cloned().collect();
-        let mut art = gem_icon_refs::load_art(&http, &server, &dir, &wanted).await;
-        let built = tauri::async_runtime::spawn_blocking(move || {
-            gem_icon_refs::build_refs(&dict, |name| {
-                art.remove(name).unwrap_or(gem_icon_refs::ArtOutcome::Failed("not loaded".into()))
-            })
+        return Err("gem dictionary unavailable or stale".into());
+    }
+    let Ok(dir) = app.path().app_data_dir().map(|d| d.join("gem-art")) else {
+        app_log(&app, "Gem reader: no app data directory, so the gem icons are not loaded".to_string());
+        return Err("no app data directory for gem icons".into());
+    };
+    let wanted: Vec<String> = dict.normal.iter().chain(&dict.transfigured).cloned().collect();
+    let mut art = gem_icon_refs::load_art(&http, &server, &dir, &wanted).await;
+    let built = tauri::async_runtime::spawn_blocking(move || {
+        gem_icon_refs::build_refs(&dict, |name| {
+            art.remove(name).unwrap_or(gem_icon_refs::ArtOutcome::Failed("not loaded".into()))
         })
-        .await;
-        let Ok((refs, report)) = built else {
-            app_log(&app, "Gem reader: building the gem icons failed".to_string());
-            return Err("building gem icons failed".into());
-        };
-        for (name, why) in &report.failed {
-            app_log(&app, format!("Gem reader: icon for {:?} not loaded: {}", name, why));
-        }
-        app_log(
-            &app,
-            format!(
-                "Gem reader: {} normal + {} transfigured gem icons, {} dictionary names have no icon{}",
-                refs.normal.len(),
-                refs.transfigured.len(),
-                report.iconless.len(),
-                if refs.incomplete { "; some failed, so icon reads stay uncertain until the next preload" } else { "" },
-            ),
-        );
-        if !install_gem_refs(&state.lab_scan, generation, Arc::new(refs)) {
-            app_log(&app, "Gem reader: the lab mode changed while the gem icons loaded; discarded".to_string());
-            return Err("lab mode changed while icons loaded".into());
-        }
-        current(&state.lab_scan).ok_or_else(|| "gem vocabulary became stale".into())
+    })
+    .await;
+    let Ok((refs, report)) = built else {
+        app_log(&app, "Gem reader: building the gem icons failed".to_string());
+        return Err("building gem icons failed".into());
+    };
+    for (name, why) in &report.failed {
+        app_log(&app, format!("Gem reader: icon for {:?} not loaded: {}", name, why));
+    }
+    app_log(
+        &app,
+        format!(
+            "Gem reader: {} normal + {} transfigured gem icons, {} dictionary names have no icon{}",
+            refs.normal.len(),
+            refs.transfigured.len(),
+            report.iconless.len(),
+            if refs.incomplete { "; some failed, so icon reads stay uncertain until the next preload" } else { "" },
+        ),
+    );
+    if !install_gem_refs(&state.lab_scan, generation, Arc::new(refs)) {
+        app_log(&app, "Gem reader: the lab mode changed while the gem icons loaded; discarded".to_string());
+        return Err("lab mode changed while icons loaded".into());
+    }
+    current(&state.lab_scan).ok_or_else(|| "gem vocabulary became stale".into())
 }
 
 /// Set the icon references on the installed vocabulary if both it and the
@@ -138,7 +137,7 @@ pub(crate) fn install_gem_refs(lab: &LabScanState, generation: u64, refs: Arc<Ge
 /// Whether a CRAFT should start a preload: no current vocabulary, or icon refs
 /// that loaded incomplete (the preload retries the missing art).
 pub(crate) fn needs_preload(lab: &LabScanState) -> bool {
-    current(lab).map_or(true, |vocab| vocab.refs.is_some_and(|refs| refs.incomplete))
+    current(lab).map_or(true, |vocab| vocab.refs.as_ref().map_or(true, |refs| refs.incomplete))
 }
 
 /// Install a matcher built from `names` if `generation` is still current.
@@ -299,5 +298,13 @@ mod tests {
         assert!(install_gem_refs(&state.lab_scan, g, empty_refs()));
 
         assert!(!needs_preload(&state.lab_scan));
+    }
+
+    #[test]
+    fn matcher_without_icon_refs_still_needs_preload() {
+        let (state, _) = armed_in("Normal");
+        let generation = preload_snapshot(&state).0;
+        assert!(install_gem_matcher(&state.lab_scan, generation, normal_names()));
+        assert!(needs_preload(&state.lab_scan));
     }
 }

@@ -3,10 +3,9 @@
 //! [`MERC_READER`] is one entry of `crate::read_hotkey::READERS`. At a press it
 //! arms whenever the merc worker runs with an open session — its inbox is
 //! installed in `MercState.inbox` — with no Client.txt condition (ruling 1).
-//! Armed, it hands the press's one frame and the cursor at the press to that
-//! worker and does nothing else: the panel read and the hovered-tooltip read
-//! run on the module thread (`super::run::worker_loop`), never on the
-//! dispatcher. Policy: docs/OVERLAY-GUIDE.md § "Screen reading (GGG policy)".
+//! The worker answers an immutable recognition request before the router selects
+//! a consumer. Only selected evidence reaches panel/tooltip processing on that
+//! same worker. Policy: docs/OVERLAY-GUIDE.md § "Screen reading (GGG policy)".
 
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -152,7 +151,7 @@ mod tests {
         let armed = crate::read_hotkey::prepare_press(Press { cursor: None }, Default::default(), &[&MERC_READER], &world);
         *world.prompt.lock().unwrap() = Some(5);
         crate::read_hotkey::dispatch_press(armed, &world, &mut |_| {}, &mut || Ok(capture(1)), &mut |_| true);
-        let MercInbox::Press(pressed) = rx.try_recv().unwrap() else { panic!("expected press") };
+        let MercInbox::Press(pressed) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap() else { panic!("expected press") };
         assert_eq!(pressed.prompt, Some(4));
     }
 
@@ -164,6 +163,28 @@ mod tests {
             client: [0, 0, 1, 1],
             timing: GrabTiming::default(),
         }
+    }
+
+    #[test]
+    fn cancelled_probe_reply_releases_the_dispatcher_without_a_read() {
+        let (tx, rx) = mpsc::channel();
+        let world = World { inbox: Mutex::new(Some(tx)), prompt: Mutex::new(None) };
+        let worker = std::thread::spawn(move || {
+            let MercInbox::Identity(reply) = rx.recv().unwrap() else { panic!("identity first"); };
+            reply.send(0).unwrap();
+            let MercInbox::Probe { frame, reply, .. } = rx.recv().unwrap() else { panic!("probe next"); };
+            assert_eq!(frame.monitor_id, 9);
+            drop(reply);
+            assert!(rx.recv_timeout(std::time::Duration::from_millis(100)).is_err(), "cancelled recognition cannot consume");
+        });
+        let prepared = crate::read_hotkey::prepare_press(Press { cursor: None }, Default::default(), &[&MERC_READER], &world);
+        let mut captures = 0;
+        let outcome = crate::read_hotkey::dispatch_press(prepared, &world, &mut |_| {}, &mut || {
+            captures += 1; Ok(capture(9))
+        }, &mut |_| panic!("no dismissal"));
+        assert_eq!(outcome, crate::read_hotkey::DispatchOutcome::Failed("merc probe cancelled".into()));
+        assert_eq!(captures, 1);
+        worker.join().unwrap();
     }
 
     fn sample(keys: &[u16]) -> Sample {

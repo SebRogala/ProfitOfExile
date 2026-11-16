@@ -2,8 +2,8 @@
 //! (`lab::font_reader`, `lab::gem_reader`), the Client.txt event handlers
 //! that arm and disarm them, and the commands that read their results.
 //!
-//! Nothing here reads the screen: each read key press hands the readers one
-//! frame from `read_hotkey::spawn_read_hotkey`'s dispatcher thread
+//! Nothing here reads the screen: each read key press hands one frame to the
+//! selected reader from `read_hotkey::spawn_read_hotkey`'s dispatcher thread
 //! ([OVERLAY-GUIDE § Screen reading](../../../docs/OVERLAY-GUIDE.md#screen-reading-ggg-policy)).
 //! The rename of this module is deferred (POE-391 C9).
 

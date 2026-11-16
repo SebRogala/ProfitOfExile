@@ -1,12 +1,9 @@
 //! The temple's reader on the app-wide read key (POE-389).
 //!
-//! [`TEMPLE_READER`] is one entry of `crate::read_hotkey::READERS`. At a press
-//! it arms only under Client.txt temple context — Alva's START line or the
-//! temple area ([`press_reason`]) — and only while the temple worker runs with
-//! an OCR engine (its inbox is installed in `TempleState.press`). Armed, it
-//! hands the press's one frame to that worker and does nothing else: the read
-//! runs on the module thread (`super::run::worker_loop`), never on the
-//! dispatcher. Policy: docs/OVERLAY-GUIDE.md § "Screen reading (GGG policy)".
+//! The router prepares the installed worker and snapshots Client.txt context,
+//! geometry and epoch. Recognition retains an anchor from the pressed frame;
+//! only a selected match reaches the worker, with no invented Client.txt reason.
+//! Policy: docs/OVERLAY-GUIDE.md § "Screen reading (GGG policy)".
 
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -57,6 +54,9 @@ impl PressContext for AppHandle {
     }
     fn press_sender(&self) -> Option<Sender<PressedFrame>> {
         let state = self.state::<crate::AppState>();
+        if state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get("temple") != Some(&true) {
+            return None;
+        }
         let tx = state.temple_state.press.lock().unwrap_or_else(|e| e.into_inner()).clone();
         tx
     }
@@ -78,7 +78,7 @@ pub fn press_reason(arm: ArmState, now_ms: u64) -> Option<ArmReason> {
 pub struct TempleReader;
 pub static TEMPLE_READER: TempleReader = TempleReader;
 
-/// An armed temple read: where its frame goes, and why it was armed.
+/// Prepared temple context and its retained recognition evidence.
 pub struct TemplePending {
     tx: Sender<PressedFrame>,
     reason: Option<ArmReason>,

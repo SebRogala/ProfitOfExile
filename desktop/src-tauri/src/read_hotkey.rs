@@ -256,7 +256,7 @@ pub fn dispatch_press<C>(
     DispatchOutcome::NoMatch
 }
 
-/// Arm, delay and grab in one call; the threads split it at the queue.
+/// Prepare, delay and capture in one call; the threads split it at the queue.
 #[cfg(test)]
 pub fn dispatch<C>(
     press: Press,
@@ -277,7 +277,7 @@ pub struct Sample {
     pub dismiss: Vec<Shortcut>,
 }
 
-/// The key-sampling side: arms every reader at each press and queues it, so
+/// The key-sampling side: prepares eligible readers at each press and queues it, so
 /// delay, grab and reading never pause sampling.
 pub fn run_sampler<C>(
     ctx: &C,
@@ -394,6 +394,7 @@ mod dispatch_tests {
         misses: Mutex<Vec<&'static str>>,
         probes: Mutex<Vec<(&'static str, u32)>>,
         probe_error: Mutex<bool>,
+        trace: Mutex<Vec<String>>,
     }
     struct TestReader {
         name: &'static str,
@@ -419,11 +420,13 @@ mod dispatch_tests {
     }
     impl PendingRead<Arc<World>> for TestPending {
         fn probe(&mut self, frame: &Arc<Capture>, ctx: &Arc<World>) -> Result<bool, String> {
+            ctx.trace.lock().unwrap().push("probe".into());
             ctx.probes.lock().unwrap().push((self.name, frame.monitor_id));
             if *ctx.probe_error.lock().unwrap() { return Err("recognition failed".into()); }
             Ok(!ctx.misses.lock().unwrap().contains(&self.name))
         }
         fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, ctx: &Arc<World>) {
+            ctx.trace.lock().unwrap().push("consume".into());
             let frame = frame.map(|c| c.monitor_id).map_err(str::to_string);
             ctx.consumed.lock().unwrap().push((self.name, self.context, frame));
         }
@@ -491,6 +494,14 @@ mod dispatch_tests {
         assert!(world.consumed.lock().unwrap().is_empty());
     }
 
+    #[test]
+    fn unavailable_latest_mechanic_is_skipped() {
+        let world = Arc::new(World::default());
+        *world.recent.lock().unwrap() = Some(crate::read_prompt::Mechanic::Incursion);
+        assert_eq!(route(&world, &[&IDLE, &GEM, &B]), DispatchOutcome::Selected(ReaderId::Gem));
+        assert_eq!(*world.probes.lock().unwrap(), vec![("g",42)]);
+    }
+
     fn capture(monitor_id: u32) -> Capture {
         Capture {
             image: image::DynamicImage::new_rgb8(1, 1),
@@ -519,7 +530,7 @@ mod dispatch_tests {
         let world = Arc::new(World::default());
         let ledger = crate::overlay_dismiss::DismissLedger::default();
         ledger.register("temple".into());
-        let events = Mutex::new(Vec::new());
+        let events = &world.trace;
         let mut shared = sample(PRESSED, true);
         shared.dismiss = vec![shared.settings.shortcut.clone()];
         let (tx, rx) = mpsc::channel();
@@ -550,7 +561,7 @@ mod dispatch_tests {
             events.lock().unwrap().push(format!("await_hidden returns {ready}"));
             ready
         });
-        assert_eq!(*events.lock().unwrap(), vec!["dismiss(1)", "await_hidden(1) starts", "ack(temple, 1)", "await_hidden returns true", "sleep", "grab"]);
+        assert_eq!(*events.lock().unwrap(), vec!["dismiss(1)", "await_hidden(1) starts", "ack(temple, 1)", "await_hidden returns true", "sleep", "grab", "probe", "consume"]);
         assert_eq!(world.consumed.lock().unwrap().len(), 1);
         assert_eq!(*world.probes.lock().unwrap(), vec![("a", 1)]);
     }
@@ -564,6 +575,18 @@ mod dispatch_tests {
             assert_eq!(generations, &[1]);
             false
         });
+        assert_eq!(outcome, DispatchOutcome::Suppressed);
+        assert!(world.probes.lock().unwrap().is_empty());
+        assert!(world.consumed.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn empty_candidates_still_require_the_hide_barrier_before_capture() {
+        let world = Arc::new(World::default());
+        let mut press = prepare_press(press(), Duration::ZERO, &[], &world);
+        press.dismissed = vec![1,2];
+        let outcome = dispatch_press(press, &world, &mut |_| panic!("must not delay"),
+            &mut || panic!("must not capture"), &mut |generations| { assert_eq!(generations, &[1,2]); false });
         assert_eq!(outcome, DispatchOutcome::Suppressed);
         assert!(world.probes.lock().unwrap().is_empty());
         assert!(world.consumed.lock().unwrap().is_empty());
