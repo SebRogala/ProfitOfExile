@@ -142,3 +142,20 @@ encodes business rules.
 - [ADR-008](008-current-go-package-architecture.md) — the new package exists because a concrete dependency boundary requires it
 - [ADR-017](017-no-default-engine-floor-may-hide-a-live-market.md) — the zero `Policy` applies no default floor
 - [ADR-018](018-flags-mark-they-never-order.md) — tier labels are flags, not sort keys
+
+## Amendment — 2026-11-16 (POE-408)
+
+Status: accepted; current implementation.
+
+The unused legacy Lab tier algorithm and its tests in `internal/lab/tiers.go`
+and `internal/lab/tiers_test.go` were removed after confirming they had no
+production callers. The unused Lab tier-name and classification wrappers were
+removed with them. The original account above is preserved as historical
+context; its statements about retained legacy code and wrappers no longer
+describe the current implementation.
+
+Live classification remains in `internal/price/tier`, including its independent
+fallback. Lab's live percentile helper, eligibility and cutoff policy, and
+`TierBoundaries = tier.Boundaries` alias remain unchanged, as do the
+classification fixtures. With no production callers of the removed code,
+production behavior is inferred unchanged.
