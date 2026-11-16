@@ -78,9 +78,9 @@ func TestScheduler_NeverCheckedPrecedesOverdue(t *testing.T) {
 }
 
 func TestScheduler_DisagreementUsesMaximumSourcePrice(t *testing.T) {
-	a, b := schedulerDemand("Match", 100, 1), schedulerDemand("Disagree", 100, 1)
+	a, b := schedulerDemand("A-Match", 100, 1), schedulerDemand("B-Disagree", 100, 1)
 	s := schedulerFixture(t, 0, []Demand{a, b}, tradeObs(a.Key, t0.Add(-time.Hour), chaos(100)), tradeObs(b.Key, t0.Add(-time.Hour), chaos(10)))
-	takeName(t, s, t0, "Disagree")
+	takeName(t, s, t0, "B-Disagree")
 }
 
 func TestScheduler_TakeRecomputesNativePricesAtCurrentRate(t *testing.T) {
@@ -430,18 +430,27 @@ func TestScheduler_OverloadRetainsDeferredOverdueDiagnostics(t *testing.T) {
 	}
 }
 
-func TestScheduler_OwnsInputAndReturnedPrices(t *testing.T) {
+func TestScheduler_OwnsInputPrices(t *testing.T) {
 	a, b := schedulerDemand("A", 100, 1), schedulerDemand("B", 150, 1)
 	obs := tradeObs(a.Key, t0.Add(-time.Hour), chaos(100))
 	s := schedulerFixture(t, 0, []Demand{a, b}, obs, tradeObs(b.Key, t0.Add(-time.Hour), chaos(150)))
 	a.Ninja.Prices[0].Amount = 10000
 	obs.Prices[0].Amount = 10000
+	takeName(t, s, t0, "B")
+}
+
+func TestScheduler_OwnsReturnedPrices(t *testing.T) {
+	a, b := schedulerDemand("A", 100, 1), schedulerDemand("B", 150, 1)
+	s := schedulerFixture(t, 0, []Demand{a, b}, tradeObs(a.Key, t0.Add(-time.Hour), chaos(100)), tradeObs(b.Key, t0.Add(-time.Hour), chaos(150)))
 	d := takeName(t, s, t0, "B")
 	d.Ninja.Prices[0].Amount = 1
 	if err := s.Retry(d.Key, t0); err != nil {
 		t.Fatal(err)
 	}
-	takeName(t, s, t0, "B")
+	got := takeName(t, s, t0, "B")
+	if want := chaos(150); !reflect.DeepEqual(got.Ninja.Prices, want) {
+		t.Fatalf("second returned B ninja prices = %v, want %v after mutating the first return", got.Ninja.Prices, want)
+	}
 }
 
 func TestScheduler_ConcurrentReconciliationPreservesNewestSuccess(t *testing.T) {
