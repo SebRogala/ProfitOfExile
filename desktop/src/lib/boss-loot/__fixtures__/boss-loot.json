@@ -424,7 +424,7 @@
   "unknownLines": [
    "Spidersilk Robe"
   ],
-  "_note": "Spidersilk Robe: a magic item next to the drops in the owner's 2026-10-27 screenshot; exact-base matching leaves it unmatched → 'Not in table'.",
+  "_note": "Spidersilk Robe: a magic item next to the drops in the owner's 2026-10-27 screenshot; no profile label matches it, exactly or within the tolerant match threshold → 'Not in table'.",
   "refusedExample": {
    "area": "MapWorldsStrand",
    "level": 83,

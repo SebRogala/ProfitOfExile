@@ -91,6 +91,34 @@ pub struct GemMatcher {
     names_lower: Vec<String>,
 }
 
+/// Best and runner-up candidate of one scoring pass.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Ranking {
+    pub best_idx: usize,
+    pub best_score: f64,
+    pub second_score: f64,
+}
+
+/// Scores `query` against every candidate and keeps the best and the
+/// runner-up; `None` for an empty candidate list. Ties keep the earlier index.
+pub(crate) fn rank<S: AsRef<str>>(query: &str, candidates: &[S], scorer: fn(&str, &str) -> f64) -> Option<Ranking> {
+    if candidates.is_empty() {
+        return None;
+    }
+    let mut ranking = Ranking { best_idx: 0, best_score: 0.0, second_score: 0.0 };
+    for (i, name) in candidates.iter().enumerate() {
+        let score = scorer(query, name.as_ref());
+        if score > ranking.best_score {
+            ranking.second_score = ranking.best_score;
+            ranking.best_score = score;
+            ranking.best_idx = i;
+        } else if score > ranking.second_score {
+            ranking.second_score = score;
+        }
+    }
+    Some(ranking)
+}
+
 /// Whether OCR text has the shape of a support-gem name: its final token is
 /// "support", allowing for OCR noise in that token.
 ///
@@ -167,20 +195,11 @@ impl GemMatcher {
             return Err(GemReject::SupportShaped);
         }
 
-        let mut best_score = 0.0_f64;
-        let mut best_idx = 0;
-        let mut second_score = 0.0_f64;
-
-        for (i, name) in self.names_lower.iter().enumerate() {
-            let score = jaro_winkler(&query, name);
-            if score > best_score {
-                second_score = best_score;
-                best_score = score;
-                best_idx = i;
-            } else if score > second_score {
-                second_score = score;
-            }
-        }
+        let Some(Ranking { best_idx, best_score, second_score }) =
+            rank(&query, &self.names_lower, jaro_winkler)
+        else {
+            return Err(GemReject::NoVocabulary);
+        };
 
         // Transfigured-gem shape gate, keyed on the MATCHED name (not the mode):
         // a transfigured name always contains " of " (e.g. "Divine Ire of

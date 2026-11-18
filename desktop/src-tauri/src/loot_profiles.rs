@@ -44,7 +44,7 @@ pub struct LootProfile {
     pub categories: Vec<LootItem>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LineMatch {
     Item(String),
     /// Keep all candidates for confirmation; never choose the first one.
@@ -61,6 +61,14 @@ pub enum SelectionError {
 
 pub type Selection = BTreeMap<String, u32>;
 
+fn outcome_of(mut ids: Vec<String>) -> LineMatch {
+    match ids.len() {
+        0 => LineMatch::Unknown,
+        1 => LineMatch::Item(ids.remove(0)),
+        _ => LineMatch::Ambiguous(ids),
+    }
+}
+
 pub fn built_in_profiles() -> &'static [LootProfile] {
     static PROFILES: OnceLock<Vec<LootProfile>> = OnceLock::new();
     PROFILES.get_or_init(|| vec![catarina()])
@@ -74,8 +82,55 @@ pub fn profile_for_area(area: Option<&crate::client_log::AreaChange<'_>>) -> Opt
     built_in_profiles().iter().find(|profile| profile.area == area.area && profile.level == area.level)
 }
 
+/// Outcome of `LootProfile::match_line_scored`, with the detail the capture
+/// log names.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScoredLineMatch {
+    pub outcome: LineMatch,
+    /// True when the line equals a label after `normalize`.
+    pub exact: bool,
+    /// Normalized label behind `score`: the matched one, or for an unknown line
+    /// the closest one. `None` only for a profile without labels.
+    pub label: Option<String>,
+    /// 1.0 for an exact match, otherwise the label's Jaro score.
+    pub score: f64,
+}
+
+/// Jaro score a non-exact line needs against a profile label to resolve to it.
+///
+/// Plain `strsim::jaro`, not the gem matcher's Jaro-Winkler: strsim 0.11's
+/// prefix bonus is unbounded (`mercenary/mod.rs:662`), and loot labels share
+/// long prefixes (`ALLFLAME EMBER OF …`), so Jaro-Winkler scores every pair of
+/// Catarina Embers, and the fragments `ALLFLAME EMBER` / `ZORATHS EYE`, at 1.000.
+///
+/// MEASURED 2026-11-19 over the built-in Catarina profile (strsim 0.11, test
+/// `loot_tolerance_measurements`):
+///
+/// | read                            | best label                     | score | runner-up |
+/// |---------------------------------|--------------------------------|-------|-----------|
+/// | `LORATHS EYE OF THE ENDLESS` AC-1    | Zorath's Eye of the Endless    | 0.974 | 0.630 |
+/// | `LLFLAME EMBER OF THE ETHERE` AC-2   | Allflame Ember of the Ethereal | 0.942 | 0.759 |
+/// | `ALLFLAME EMBER OF THE ETHEREA` AC-2 | Allflame Ember of the Ethereal | 0.989 | 0.830 |
+/// | `ALLFLAME EMBER` fragment       | Allflame Ember of Kulemak      | 0.853 | 0.828 |
+/// | `ZORATHS EYE` fragment          | Zorath's Eye of the Endless    | 0.808 | 0.577 |
+/// | `TANIUM SPIRI` fragment         | Titanium Spirit Shield         | 0.710 | 0.629 |
+/// | `OTHER SERPENTINE STAFF` fragment | Serpentine Staff             | 0.805 | 0.695 |
+///
+/// Highest sibling-label pair: Allflame Ember of Kulemak / of the Ethereal,
+/// 0.831. 0.90 sits above it and above every fragment (highest 0.853).
+pub const LOOT_MATCH_THRESHOLD: f64 = 0.90;
+
+/// Lead the best label needs over the runner-up label. The single-wrong-letter
+/// sweep (`keep_critical_single_wrong_letter_never_resolves_to_another_item`)
+/// passes with it.
+pub const LOOT_MATCH_GAP: f64 = 0.05;
+
 impl LootProfile {
     pub fn match_line(&self, line: &str) -> LineMatch {
+        self.match_line_scored(line).outcome
+    }
+
+    pub fn match_line_scored(&self, line: &str) -> ScoredLineMatch {
         let normalized = normalize(line);
         let candidates: Vec<String> = self.groups.iter().flat_map(|group| &group.items)
             .filter(|item| normalize(&item.base) == normalized || normalize(&item.name) == normalized)
@@ -83,11 +138,43 @@ impl LootProfile {
             // their item names identify a drop. Manual categories never match OCR.
             .chain(self.extra.iter().filter(|item| normalize(&item.name) == normalized))
             .map(|item| item.id.clone()).collect();
-        match candidates.len() {
-            0 => LineMatch::Unknown,
-            1 => LineMatch::Item(candidates.into_iter().next().unwrap()),
-            _ => LineMatch::Ambiguous(candidates),
+        if !candidates.is_empty() {
+            return ScoredLineMatch { outcome: outcome_of(candidates), exact: true, label: Some(normalized), score: 1.0 };
         }
+        let labels = self.labels();
+        let names: Vec<&str> = labels.iter().map(|(label, _)| label.as_str()).collect();
+        let Some(ranking) = crate::gem_matcher::rank(&normalized, &names, strsim::jaro) else {
+            return ScoredLineMatch { outcome: LineMatch::Unknown, exact: false, label: None, score: 0.0 };
+        };
+        let (label, ids) = &labels[ranking.best_idx];
+        let accepted = ranking.best_score >= LOOT_MATCH_THRESHOLD
+            && ranking.best_score - ranking.second_score >= LOOT_MATCH_GAP;
+        ScoredLineMatch {
+            outcome: if accepted { outcome_of(ids.clone()) } else { LineMatch::Unknown },
+            exact: false,
+            label: Some(label.clone()),
+            score: ranking.best_score,
+        }
+    }
+
+    /// Distinct normalized labels with the ids that carry them: the label set
+    /// of the exact pass in `match_line_scored`.
+    fn labels(&self) -> Vec<(String, Vec<String>)> {
+        let mut labels: Vec<(String, Vec<String>)> = Vec::new();
+        let group_labels = self.groups.iter().flat_map(|group| &group.items)
+            .flat_map(|item| [(item, normalize(&item.base)), (item, normalize(&item.name))]);
+        let extra_labels = self.extra.iter().map(|item| (item, normalize(&item.name)));
+        for (item, label) in group_labels.chain(extra_labels) {
+            if label.is_empty() {
+                continue;
+            }
+            match labels.iter_mut().find(|(known, _)| *known == label) {
+                Some((_, ids)) if !ids.contains(&item.id) => ids.push(item.id.clone()),
+                Some(_) => {}
+                None => labels.push((label, vec![item.id.clone()])),
+            }
+        }
+        labels
     }
 
     pub fn validate_selection(&self, selection: &Selection) -> Result<(), SelectionError> {
@@ -424,7 +511,90 @@ mod tests {
             id: "unique".into(), min: 2, max: 3, selected: 4
         }));
     }
+
+    const ZORATH: &str = "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly";
+
+    #[test]
+    fn keep_regression_lorath_resolves_to_zoraths_eye() {
+        let scored = built_in_profiles()[0].match_line_scored("LORATH'S EYE OF THE ENDLESS");
+        assert_eq!(scored.outcome, LineMatch::Item(ZORATH.into()));
+        assert!(!scored.exact);
+    }
+
+    #[test]
+    fn keep_regression_clipped_ember_reads_resolve_to_ethereal() {
+        let profile = &built_in_profiles()[0];
+        for text in ["LLFLAME EMBER OF THE ETHERE", "ALLFLAME EMBER OF THE ETHEREA"] {
+            assert_eq!(profile.match_line(text), LineMatch::Item(ETHEREAL.into()), "{text}");
+        }
+    }
+
+    #[test]
+    fn unknown_line_reports_its_closest_label() {
+        let scored = built_in_profiles()[0].match_line_scored("ZORATHS EYE");
+        assert_eq!(scored.outcome, LineMatch::Unknown);
+        assert_eq!(scored.label.as_deref(), Some("ZORATHS EYE OF THE ENDLESS"));
+        assert!(scored.score < LOOT_MATCH_THRESHOLD, "{}", scored.score);
+    }
+
+    #[test]
+    fn exact_line_is_scored_as_exact() {
+        let scored = built_in_profiles()[0].match_line_scored("Silver Flask");
+        assert!(scored.exact);
+        assert_eq!(scored.score, 1.0);
+    }
+
+    // A wrong resolution is silent: a plausible wrong item is recorded in a run.
+    #[test]
+    fn keep_critical_single_wrong_letter_never_resolves_to_another_item() {
+        const CONFUSIONS: [char; 13] = ['I', 'L', '1', 'O', '0', 'Z', 'S', '5', 'B', '8', 'E', 'F', 'Q'];
+        let mut resolved = 0;
+        for profile in built_in_profiles() {
+            for (label, ids) in profile.labels() {
+                let chars: Vec<char> = label.chars().collect();
+                for i in 0..chars.len() {
+                    for c in CONFUSIONS.into_iter().filter(|c| *c != chars[i]) {
+                        let mut read = chars.clone();
+                        read[i] = c;
+                        let read: String = read.into_iter().collect();
+                        match profile.match_line(&read) {
+                            LineMatch::Unknown => {}
+                            LineMatch::Item(id) => {
+                                assert!(ids.contains(&id), "{read} resolved to {id}, label {label}");
+                                resolved += 1;
+                            }
+                            LineMatch::Ambiguous(got) => assert!(
+                                got.iter().any(|id| ids.contains(id)), "{read} ambiguous {got:?}, label {label}"),
+                        }
+                    }
+                }
+            }
+        }
+        assert!(resolved > 0, "the sweep resolved nothing; tolerance is off");
+    }
+
+    #[test]
+    #[ignore = "measurement table for LOOT_MATCH_THRESHOLD; run with --ignored --nocapture"]
+    fn loot_tolerance_measurements() {
+        let profile = &built_in_profiles()[0];
+        let labels = profile.labels();
+        let mut sibling = (0.0, String::new(), String::new());
+        for (a, _) in &labels {
+            for (b, _) in &labels {
+                let score = strsim::jaro(a, b);
+                if a != b && score > sibling.0 { sibling = (score, a.clone(), b.clone()); }
+            }
+        }
+        println!("highest sibling pair {:.3} {} / {}", sibling.0, sibling.1, sibling.2);
+        let names: Vec<&str> = labels.iter().map(|(l, _)| l.as_str()).collect();
+        for read in ["LORATHS EYE OF THE ENDLESS", "LLFLAME EMBER OF THE ETHERE", "ALLFLAME EMBER OF THE ETHEREA",
+            "ALLFLAME EMBER", "ZORATHS EYE", "TANIUM SPIRI", "OTHER SERPENTINE STAFF", "GRANITE FLASK", "SPIDERSILK ROBE"] {
+            let r = crate::gem_matcher::rank(read, &names, strsim::jaro).unwrap();
+            println!("{read}: {} {:.3} second {:.3}", names[r.best_idx], r.best_score, r.second_score);
+        }
+    }
 }
+
 
 fn item(name: &str, base: &str, wiki_rate: &str) -> LootItem {
     LootItem {
@@ -484,8 +654,9 @@ fn catarina() -> LootProfile {
     }
 }
 
-/// Mirrors loot_capture::normalize: case, whitespace, apostrophes,
-/// edge punctuation and Superior. Full normalized labels must still be equal.
+/// Normalizes an OCR line or a label: case, whitespace, apostrophes, edge
+/// punctuation and Superior. Labels compared after this are equal for an exact
+/// match and Jaro-scored otherwise (`match_line_scored`).
 fn normalize(line: &str) -> String {
     let upper = line.chars().filter(|c| !matches!(c, '\'' | '’' | '`' | '‘'))
         .collect::<String>().to_uppercase();
