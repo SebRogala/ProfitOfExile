@@ -235,6 +235,8 @@ export interface BossLootPending {
 	incoming: Record<string, number>;
 	items: RunItems;
 	readLines: string[];
+	/** Ids native OCR matched (exact or tolerant); edits never change them. */
+	readKeys: string[];
 	unknownLines: string[];
 	ambiguous: string[][];
 	phase: 'reading' | 'loading' | 'open' | 'saving' | 'saved' | 'unreachable' | 'rejected';

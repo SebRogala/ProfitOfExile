@@ -25,7 +25,7 @@ function pendingSlice(): BossLootSlice {
 	const { slice } = boundary()
 	slice.pending = { id: 81, attribution: { area: nativeProfile.area, level: 83, seed: '42', profile: ref }, league: 'Historical', profile: nativeProfile,
 		layout: 'list', rect: [10, 20, 900, 750], incoming: { 'Cinderswallow Urn': 1 }, items: { quantities: { 'Cinderswallow Urn': 1 }, counted: ['Cinderswallow Urn'] },
-		readLines: ['SILVER FLASK'], unknownLines: ['Spidersilk Robe'], ambiguous: [], phase: 'open', deadlineMs: 4500, closeAtMs: null,
+		readLines: ['SILVER FLASK'], readKeys: ['Cinderswallow Urn'], unknownLines: ['Spidersilk Robe'], ambiguous: [], phase: 'open', deadlineMs: 4500, closeAtMs: null,
 		target: row, forceNew: false, run: 31, nextRun: 32, mergeBlocked: false, droppedPositiveKeys: [], error: null }
 	return slice
 }
@@ -114,6 +114,12 @@ describe('native boss loot owners', () => {
 		const slice = pendingSlice()
 		Object.assign(slice.pending!, { target: null, incoming: {}, error: 'Check guaranteed groups', deadlineMs: null })
 		expect(mapNativeOverlay(slice, null, 'own')?.readSelection?.picks.unique).toEqual(['Cinderswallow Urn'])
+	})
+	it('keep_happy: a tolerantly read item keeps the read tag', () => {
+		const slice = pendingSlice()
+		const eye = 'Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly'
+		Object.assign(slice.pending!, { readLines: ['LORATH\'S EYE OF THE ENDLESS'], readKeys: [eye] })
+		expect(mapNativeOverlay(slice, null, 'own')?.readSelection?.extra[eye]).toBe(1)
 	})
 })
 

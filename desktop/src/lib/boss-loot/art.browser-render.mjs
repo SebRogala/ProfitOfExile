@@ -33,7 +33,7 @@ window.fetch=async()=>new Promise(()=>{});
 ssot.bossLoot={enabled:true,numberFormat:'comma',nowMs:1000,frame:null,rebind:null,
  settings:{layout:'grid',autoSaveSeconds:0,notCounted:['Communion Support'],captureShortcut:{key:2,shift:true},previewShortcut:{key:119,shift:true}},
  pending:{id:1,attribution:{area:profile.area,level:profile.level,seed:'fixture'},league:'fixture',profile,layout:'grid',rect:[0,0,900,750],
- incoming:{'Cinderswallow Urn':1},items:{quantities:{'Cinderswallow Urn':1},counted:items.filter(i=>i.id!=='Communion Support').map(i=>i.id)},readLines:['SILVER FLASK'],unknownLines:['Spidersilk Robe'],ambiguous:[],phase:'open',deadlineMs:null,closeAtMs:null,target:null,forceNew:false,run:1,nextRun:1,mergeBlocked:false,droppedPositiveKeys:[],error:null}};
+ incoming:{'Cinderswallow Urn':1},items:{quantities:{'Cinderswallow Urn':1},counted:items.filter(i=>i.id!=='Communion Support').map(i=>i.id)},readLines:['SILVER FLASK'],readKeys:['Cinderswallow Urn'],unknownLines:['Spidersilk Robe'],ambiguous:[],phase:'open',deadlineMs:null,closeAtMs:null,target:null,forceNew:false,run:1,nextRun:1,mergeBlocked:false,droppedPositiveKeys:[],error:null}};
 const app=mount(Loot,{target:document.body});await tick();
 window.renderResults=async()=>{
  const target=document.createElement('div');target.hidden=true;document.body.append(target);
