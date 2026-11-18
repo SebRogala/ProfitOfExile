@@ -3612,6 +3612,7 @@ mod tests {
                 incoming: items.quantities.clone(),
                 items: items.clone(),
                 read_lines: vec!["Cane of Kulemak".into()],
+                read_keys: vec!["Cane of Kulemak".into()],
                 unknown_lines: vec!["Unknown Line".into()],
                 ambiguous: vec![vec!["A".into(), "B".into()]],
                 phase: Phase::Open,

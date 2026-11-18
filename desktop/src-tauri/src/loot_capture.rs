@@ -2,7 +2,7 @@
 //! The screen and polled shortcuts are read-only towards the game.
 #![cfg_attr(not(windows), allow(dead_code))]
 use crate::loot_api::*;
-use crate::loot_profiles::{LineMatch, LootProfile, Selection};
+use crate::loot_profiles::{LineMatch, LootProfile, ScoredLineMatch, Selection};
 use crate::read_hotkey::Shortcut;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -152,6 +152,9 @@ pub struct PendingCapture {
     pub incoming: Selection,
     pub items: RunItems,
     pub read_lines: Vec<String>,
+    /// Distinct ids OCR lines resolved to (exact or tolerant); set once by
+    /// `finish_ocr`, never changed by edits.
+    pub read_keys: Vec<String>,
     pub unknown_lines: Vec<String>,
     pub ambiguous: Vec<Vec<String>>,
     pub phase: Phase,
@@ -164,6 +167,25 @@ pub struct PendingCapture {
     pub merge_blocked: bool,
     pub dropped_positive_keys: Vec<String>,
     pub error: Option<String>,
+}
+/// One app.log line naming each OCR line with its match outcome.
+fn ocr_match_log(outcomes: &[(&str, ScoredLineMatch)]) -> String {
+    if outcomes.is_empty() {
+        return "loot: OCR lines — none".into();
+    }
+    let lines: Vec<String> = outcomes.iter().map(|(line, scored)| {
+        let outcome = match (&scored.outcome, scored.exact) {
+            (LineMatch::Item(id), true) => format!("exact {id} ({:.3})", scored.score),
+            (LineMatch::Item(id), false) => format!("tolerant {id} ({:.3})", scored.score),
+            (LineMatch::Ambiguous(ids), _) => format!("ambiguous [{}]", ids.join(", ")),
+            (LineMatch::Unknown, _) => match &scored.label {
+                Some(label) => format!("unknown (closest \"{label}\" {:.3})", scored.score),
+                None => "unknown".into(),
+            },
+        };
+        format!("\"{line}\" → {outcome}")
+    }).collect();
+    format!("loot: OCR lines — {}", lines.join("; "))
 }
 impl PendingCapture {
     fn effective(&self, settings: &LootSettings) -> Result<RunItems, String> {
@@ -415,6 +437,7 @@ impl LootOwner {
                 counted: counted(profile, settings),
             },
             read_lines: Vec::new(),
+            read_keys: Vec::new(),
             unknown_lines: Vec::new(),
             ambiguous: Vec::new(),
             phase: Phase::Reading,
@@ -430,22 +453,26 @@ impl LootOwner {
         });
         Ok(self.sequence)
     }
-    pub fn finish_ocr(&mut self, id: u64, lines: Vec<String>, _: &LootSettings, _: u64) {
-        let Some(p) = self
+    /// Applies OCR lines to the reading capture `id` and returns the
+    /// per-line match log, or `None` when `id` is no longer reading.
+    pub fn finish_ocr(&mut self, id: u64, lines: Vec<String>, _: &LootSettings, _: u64) -> Option<String> {
+        let p = self
             .pending
             .as_mut()
-            .filter(|p| p.id == id && p.phase == Phase::Reading)
-        else {
-            return;
-        };
+            .filter(|p| p.id == id && p.phase == Phase::Reading)?;
+        let mut outcomes = Vec::with_capacity(lines.len());
         for line in &lines {
-            match p.profile.match_line(line) {
+            let scored = p.profile.match_line_scored(line);
+            match &scored.outcome {
                 LineMatch::Item(key) => {
-                    p.incoming.insert(key, 1);
+                    p.incoming.insert(key.clone(), 1);
+                    if !p.read_keys.contains(key) {
+                        p.read_keys.push(key.clone());
+                    }
                 }
                 LineMatch::Ambiguous(keys) => {
-                    if !p.ambiguous.contains(&keys) {
-                        p.ambiguous.push(keys);
+                    if !p.ambiguous.contains(keys) {
+                        p.ambiguous.push(keys.clone());
                     }
                 }
                 LineMatch::Unknown => {
@@ -454,10 +481,13 @@ impl LootOwner {
                     }
                 }
             }
+            outcomes.push((line.as_str(), scored));
         }
+        let log = ocr_match_log(&outcomes);
         p.read_lines = lines;
         p.phase = Phase::Loading;
         self.frame = None;
+        Some(log)
     }
     pub fn ready(
         &mut self,
@@ -1261,7 +1291,7 @@ mod platform {
         match result {
             Ok(None) => return,
             Ok(Some((rect, lines))) => {
-                {
+                let match_log = {
                     let mut owner = state.loot.boss.lock().unwrap_or_else(|e| e.into_inner());
                     if work_cancelled(cancel) {
                         return;
@@ -1269,7 +1299,10 @@ mod platform {
                     if let Some(p) = owner.pending.as_mut().filter(|p| p.id == id) {
                         p.rect = rect;
                     }
-                    owner.finish_ocr(id, lines, &settings, now_ms());
+                    owner.finish_ocr(id, lines, &settings, now_ms())
+                };
+                if let Some(log) = match_log {
+                    crate::app_log(app, log);
                 }
                 let app = app.clone();
                 let cancel = cancel.clone();
@@ -1448,6 +1481,10 @@ mod owner_tests {
         pending_with_ocr(settings, &["Serpentine Staff", "Allflame Ember of Kulemak"])
     }
     fn pending_with_ocr(settings: &LootSettings, lines: &[&str]) -> (Mutex<LootOwner>, u64) {
+        let (owner, id, _) = pending_with_ocr_log(settings, lines);
+        (owner, id)
+    }
+    fn pending_with_ocr_log(settings: &LootSettings, lines: &[&str]) -> (Mutex<LootOwner>, u64, Option<String>) {
         let mut owner = LootOwner::default();
         owner.observe_area(
             &crate::client_log::parse_area_change(
@@ -1458,14 +1495,14 @@ mod owner_tests {
         let id = owner
             .begin("test".into(), [0, 0, 900, 750], settings, 0)
             .unwrap();
-        owner.finish_ocr(
+        let log = owner.finish_ocr(
             id,
             lines.iter().map(|line| (*line).into()).collect(),
             settings,
             0,
         );
         owner.ready(id, None, 1, settings, 0);
-        (Mutex::new(owner), id)
+        (Mutex::new(owner), id, log)
     }
     #[test]
     fn saved_not_counted_ember_is_dropped_and_other_settings_kept() {
@@ -1481,6 +1518,73 @@ mod owner_tests {
         assert_eq!(
             saved.capture_shortcut,
             Shortcut { key: 3, shift: false, ctrl: true, alt: false }
+        );
+    }
+    // Owner capture 2026-11-18 (tests/fixtures/boss-loot/catarina-drops-2026-11-18.png):
+    // Windows OCR read the Eye with an L and clipped the orange Ember label.
+    const CATARINA_2026_11_18_LINES: [&str; 5] = [
+        "LORATH'S EYE OF THE ENDLESS",
+        "LLFLAME EMBER OF THE ETHERE",
+        "ALLFLAME EMBER OF THE ETHEREA",
+        "TITANIUM SPIRIT SHIELD :",
+        "VEILED EXALTED ORB",
+    ];
+    const ETHEREAL: &str = "Metadata/Items/MapFragments/CleansedAllflamePack";
+    const VEILED: &str = "Metadata/Items/Currency/CurrencyRerollRareVeiled";
+    #[test]
+    fn keep_regression_catarina_2026_11_18_capture_matches_all_four_drops() {
+        let s = LootSettings::default();
+        let (owner, _, _) = pending_with_ocr_log(&s, &CATARINA_2026_11_18_LINES);
+        let owner = owner.lock().unwrap();
+        let capture = owner.pending.as_ref().unwrap();
+        assert_eq!(
+            capture.incoming,
+            selection(&[(EYE, 1), (ETHEREAL, 1), ("Bitterbind Point", 1), (VEILED, 1)])
+        );
+        assert!(capture.unknown_lines.is_empty(), "{:?}", capture.unknown_lines);
+        assert!(capture.ambiguous.is_empty(), "{:?}", capture.ambiguous);
+    }
+    #[test]
+    fn keep_regression_catarina_2026_11_18_read_keys_hold_each_matched_id_once() {
+        let s = LootSettings::default();
+        let (owner, _, _) = pending_with_ocr_log(&s, &CATARINA_2026_11_18_LINES);
+        let owner = owner.lock().unwrap();
+        assert_eq!(
+            owner.pending.as_ref().unwrap().read_keys,
+            [EYE, ETHEREAL, "Bitterbind Point", VEILED]
+        );
+    }
+    #[test]
+    fn keep_regression_catarina_2026_11_18_log_names_each_line_with_its_outcome() {
+        let s = LootSettings::default();
+        let (_, _, log) = pending_with_ocr_log(&s, &CATARINA_2026_11_18_LINES);
+        assert_eq!(
+            log.as_deref(),
+            Some(concat!(
+                "loot: OCR lines — ",
+                "\"LORATH'S EYE OF THE ENDLESS\" → tolerant Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly (0.974); ",
+                "\"LLFLAME EMBER OF THE ETHERE\" → tolerant Metadata/Items/MapFragments/CleansedAllflamePack (0.942); ",
+                "\"ALLFLAME EMBER OF THE ETHEREA\" → tolerant Metadata/Items/MapFragments/CleansedAllflamePack (0.989); ",
+                "\"TITANIUM SPIRIT SHIELD :\" → exact Bitterbind Point (1.000); ",
+                "\"VEILED EXALTED ORB\" → exact Metadata/Items/Currency/CurrencyRerollRareVeiled (1.000)",
+            ))
+        );
+    }
+    #[test]
+    fn deselecting_an_ocr_item_keeps_its_read_key() {
+        let s = LootSettings::default();
+        let (owner, id) = pending(&s);
+        let mut o = owner.lock().unwrap();
+        o.select(id, "Cane of Kulemak", 0, &s, 1).unwrap();
+        assert_eq!(o.pending.as_ref().unwrap().read_keys, ["Cane of Kulemak", KULEMAK_EMBER]);
+    }
+    #[test]
+    fn unknown_line_is_logged_with_its_closest_label() {
+        let s = LootSettings::default();
+        let (_, _, log) = pending_with_ocr_log(&s, &["ZORATHS EYE"]);
+        assert_eq!(
+            log.as_deref(),
+            Some("loot: OCR lines — \"ZORATHS EYE\" → unknown (closest \"ZORATHS EYE OF THE ENDLESS\" 0.808)")
         );
     }
     #[test]
