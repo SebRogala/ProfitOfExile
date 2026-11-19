@@ -3701,13 +3701,38 @@ mod tests {
         }
 
         #[test]
-        fn a_moved_client_keeps_the_measured_scale_and_its_provenance() {
-            let (before, after) = (windowed_screen(), moved());
-            assert_eq!(
-                (after.ui_scale, after.source, after.verified_this_session, after.measured_at_ms),
-                (before.ui_scale, before.source, before.verified_this_session, before.measured_at_ms),
-            );
-            assert_eq!((after.width, after.height, after.origin), (before.width, before.height, before.origin));
+        fn a_moved_client_keeps_the_measured_scale() {
+            assert_eq!(moved().ui_scale, windowed_screen().ui_scale);
+        }
+
+        #[test]
+        fn a_moved_client_keeps_the_scale_source() {
+            assert_eq!(moved().source, windowed_screen().source);
+        }
+
+        #[test]
+        fn a_moved_client_keeps_the_verification_flag() {
+            assert_eq!(moved().verified_this_session, windowed_screen().verified_this_session);
+        }
+
+        #[test]
+        fn a_moved_client_keeps_the_measurement_time() {
+            assert_eq!(moved().measured_at_ms, windowed_screen().measured_at_ms);
+        }
+
+        #[test]
+        fn a_moved_client_keeps_the_capture_width() {
+            assert_eq!(moved().width, windowed_screen().width);
+        }
+
+        #[test]
+        fn a_moved_client_keeps_the_capture_height() {
+            assert_eq!(moved().height, windowed_screen().height);
+        }
+
+        #[test]
+        fn a_moved_client_keeps_the_display_origin() {
+            assert_eq!(moved().origin, windowed_screen().origin);
         }
 
         /// AC-2 placement probe: every Lab rect shifts by the move's delta.
