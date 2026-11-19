@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"profitofexile/internal/db"
 	"profitofexile/internal/lab"
@@ -137,7 +138,12 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 	fmt.Fprintf(os.Stderr, "Backfill complete: %d snapshots processed\n", len(times))
 }
 
-func loadGemsAtTime(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, t time.Time) ([]lab.GemPrice, error) {
+// querier is the slice of *pgxpool.Pool the snapshot loaders use.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+func loadGemsAtTime(ctx context.Context, pool querier, scope league.Scope, t time.Time) ([]lab.GemPrice, error) {
 	q := `SELECT name, variant, chaos, listings, is_transfigured, COALESCE(gem_color, '') as gem_color, is_corrupted
 	      FROM gem_snapshots WHERE league = $1 AND time = $2`
 	rows, err := pool.Query(ctx, q, scope.ID(), t)
@@ -157,7 +163,7 @@ func loadGemsAtTime(ctx context.Context, pool *pgxpool.Pool, scope league.Scope,
 	return gems, nil
 }
 
-func loadHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, upTo time.Time, hours int) ([]lab.GemPriceHistory, error) {
+func loadHistoryUpTo(ctx context.Context, pool querier, scope league.Scope, upTo time.Time, hours int) ([]lab.GemPriceHistory, error) {
 	cutoff := upTo.Add(-time.Duration(hours) * time.Hour)
 	q := `SELECT name, variant, COALESCE(gem_color, '') as gem_color, time, chaos, listings
 	      FROM gem_snapshots
