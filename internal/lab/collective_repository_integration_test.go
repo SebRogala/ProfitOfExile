@@ -640,9 +640,9 @@ func TestCollectivePage_RejectsInvalidScope(t *testing.T) {
 	}
 }
 
-// The page's statement budget: one ranking statement, one sparkline read per
-// distinct variant on the page (4), one GCP base lookup.
-const collectivePageStatementBudget = 1 + 4 + 1
+// The page's statement budget: one ranking statement, one bulk sparkline read
+// whatever the page's variant mix, one GCP base lookup.
+const collectivePageStatementBudget = 1 + 1 + 1
 
 func TestQueryCollective_StatementCountIsIndependentOfPageSize(t *testing.T) {
 	pool := labIntegrationPool(t)
