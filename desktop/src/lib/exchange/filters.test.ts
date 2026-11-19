@@ -632,10 +632,12 @@ describe('exchangePageParams', () => {
 		]).toEqual(['fastest', 'expected']);
 	});
 
-	it('sends noOffers=only when the no-offers chip is on, with the sort unchanged', () => {
-		const params = exchangePageParams(prefs({ sort: 'roi', noOffersOnly: 'true' }));
+	it('sends noOffers=only when the no-offers chip is on', () => {
+		expect(exchangePageParams(prefs({ noOffersOnly: 'true' })).noOffers).toBe('only');
+	});
 
-		expect([params.noOffers, params.sort]).toEqual(['only', 'roi']);
+	it('keeps the selected sort when the no-offers chip is on', () => {
+		expect(exchangePageParams(prefs({ sort: 'roi', noOffersOnly: 'true' })).sort).toBe('roi');
 	});
 
 	it('omits noOffers when the no-offers chip is off', () => {

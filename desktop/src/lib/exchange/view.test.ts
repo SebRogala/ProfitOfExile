@@ -2336,8 +2336,9 @@ describe('routeSlots', () => {
 		expect(route?.buy.depletedSide).toBe(false);
 	});
 
-	it('marks only the slot whose own book side had no offers, apart from depletedSide', () => {
-		const route = routeSlots(
+	/** A scarab whose buy leg is depleted and whose sell leg had no offers. */
+	const sellBlockedRoute = () =>
+		routeSlots(
 			chaosScarab({
 				legs: [
 					leg({ price: 19, priceItemQty: 1, priceQuoteQty: 19, depletedSide: true }),
@@ -2347,9 +2348,16 @@ describe('routeSlots', () => {
 			DIVINE_RATE
 		);
 
-		expect(route?.sell.noOffers).toBe(true);
-		expect(route?.buy.noOffers).toBe(false);
-		expect(route?.sell.depletedSide).toBe(false);
+	it('marks the slot whose own book side had no offers', () => {
+		expect(sellBlockedRoute()?.sell.noOffers).toBe(true);
+	});
+
+	it('leaves the other slot unmarked when one leg had no offers', () => {
+		expect(sellBlockedRoute()?.buy.noOffers).toBe(false);
+	});
+
+	it('keeps depletedSide apart from noOffers on the same slot', () => {
+		expect(sellBlockedRoute()?.sell.depletedSide).toBe(false);
 	});
 
 	it('reads a leg served without the noOffers flag as fillable', () => {
@@ -2359,14 +2367,16 @@ describe('routeSlots', () => {
 		expect(route?.sell.noOffers).toBe(false);
 	});
 
-	it('marks a noOffers convert leg on the convert slot', () => {
-		const route = routeSlots(
-			omen({ legs: [omenBuy(), omenSell(), omenConvert({ noOffers: true })] }),
-			DIVINE_RATE
-		);
+	/** An omen route whose convert leg had no offers. */
+	const convertBlockedRoute = () =>
+		routeSlots(omen({ legs: [omenBuy(), omenSell(), omenConvert({ noOffers: true })] }), DIVINE_RATE);
 
-		expect(route?.convert?.noOffers).toBe(true);
-		expect(route?.buy.noOffers).toBe(false);
+	it('marks a noOffers convert leg on the convert slot', () => {
+		expect(convertBlockedRoute()?.convert?.noOffers).toBe(true);
+	});
+
+	it('leaves the buy slot unmarked when only the convert leg had no offers', () => {
+		expect(convertBlockedRoute()?.buy.noOffers).toBe(false);
 	});
 
 	it('reports a gain when the row is expected to profit', () => {

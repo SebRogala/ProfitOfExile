@@ -93,8 +93,6 @@
 	} = $props();
 
 	const NO_OFFERS_LABEL = 'no offers - make your own';
-	const NO_OFFERS_TITLE =
-		'No offers - make your own: nobody stood on this side of the book in the hour, so post this order yourself and wait to be filled. The price is the hour\'s realized trade.';
 
 	const route = $derived(routeSlots(play, divineChaosRate));
 	const dense = $derived(density === 'dense');
@@ -146,7 +144,7 @@
      the convert step included. -->
 {#snippet step(slot: RouteStep, lowLiquidity: boolean = false)}
 	{@render tile(slot.icon, slot.suspect, slot.depletedSide, lowLiquidity)}
-	<span class="lines">
+	<span class="lines" class:marked={slot.noOffers}>
 		<!-- A step with no name is the convert step showing a total, whose line
 		     names both currencies already and whose tile carries the artwork of the
 		     one being converted; the name is on its `rateTitle`. -->
@@ -173,7 +171,7 @@
 		     to fill from — the reader posts the order and waits. A text mark, not a
 		     tile colour, so it never competes with the depleted border. -->
 		{#if slot.noOffers}
-			<span class="no-offers" title={NO_OFFERS_TITLE}>{NO_OFFERS_LABEL}</span>
+			<span class="no-offers" title={NO_OFFERS_LABEL}>{NO_OFFERS_LABEL}</span>
 		{/if}
 	</span>
 {/snippet}
@@ -601,9 +599,20 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		flex-shrink: 0;
+		min-width: 0;
 		font-size: 0.625rem;
 		color: var(--color-lab-yellow);
+	}
+
+	/* Dense: the mark takes a line of its own inside the fixed slot, so the
+	   name and rate keep the whole 115px budget of line one. */
+	.route.dense .lines.marked {
+		flex-wrap: wrap;
+		row-gap: 0;
+	}
+
+	.route.dense .no-offers {
+		flex-basis: 100%;
 	}
 
 	.not-used {

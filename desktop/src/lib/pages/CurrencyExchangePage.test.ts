@@ -219,20 +219,43 @@ function rowOf(html: string, name: string, next: string | null): string {
 	return html.slice(start, next === null ? undefined : html.indexOf(next, start));
 }
 
+/** The `names` each rendered table-body row carries, in row order. */
+function tableRowNames(html: string, names: string[]): string[] {
+	const body = html.slice(html.indexOf('<tbody'), html.indexOf('</tbody>'));
+	return body
+		.split('<tr')
+		.slice(1)
+		.map((row) => names.find((name) => row.includes(name)))
+		.filter((name): name is string => name !== undefined);
+}
+
 describe('CurrencyExchangePage no offers mark and chip', () => {
-	it('shows the no offers label on buy-blocked and sell-blocked rows and not on a two-sided row', async () => {
-		await settledOn([
+	const threeRows = () =>
+		settledOn([
 			flaggedPlay('BuyBlockedOrb', 'buy'),
 			flaggedPlay('SellBlockedOrb', 'sell'),
 			flaggedPlay('TwoSidedOrb', null)
 		]);
+
+	it('shows the no offers label on a buy-blocked row', async () => {
+		await threeRows();
 		const html = render(CurrencyExchangePage).body;
 
-		expect([
-			rowOf(html, 'BuyBlockedOrb', 'SellBlockedOrb').includes(NO_OFFERS_LABEL),
-			rowOf(html, 'SellBlockedOrb', 'TwoSidedOrb').includes(NO_OFFERS_LABEL),
-			rowOf(html, 'TwoSidedOrb', null).includes(NO_OFFERS_LABEL)
-		]).toEqual([true, true, false]);
+		expect(rowOf(html, 'BuyBlockedOrb', 'SellBlockedOrb')).toContain(NO_OFFERS_LABEL);
+	});
+
+	it('shows the no offers label on a sell-blocked row', async () => {
+		await threeRows();
+		const html = render(CurrencyExchangePage).body;
+
+		expect(rowOf(html, 'SellBlockedOrb', 'TwoSidedOrb')).toContain(NO_OFFERS_LABEL);
+	});
+
+	it('shows no no offers label on a two-sided row', async () => {
+		await threeRows();
+		const html = render(CurrencyExchangePage).body;
+
+		expect(rowOf(html, 'TwoSidedOrb', null)).not.toContain(NO_OFFERS_LABEL);
 	});
 
 	it('no offers chip on sends noOffers=only with the same sort', async () => {
@@ -250,6 +273,9 @@ describe('CurrencyExchangePage no offers mark and chip', () => {
 		await settledOn([flaggedPlay('SellBlockedOrb', 'sell'), flaggedPlay('BuyBlockedOrb', 'buy')]);
 		const html = render(CurrencyExchangePage).body;
 
-		expect(html.indexOf('SellBlockedOrb')).toBeLessThan(html.indexOf('BuyBlockedOrb'));
+		expect(tableRowNames(html, ['SellBlockedOrb', 'BuyBlockedOrb'])).toEqual([
+			'SellBlockedOrb',
+			'BuyBlockedOrb'
+		]);
 	});
 });

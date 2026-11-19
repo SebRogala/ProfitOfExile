@@ -695,7 +695,7 @@
 			class="no-offers-chip"
 			class:active={noOffersOnly}
 			aria-pressed={noOffersOnly}
-			title="Shows only the rows where one side of the book had no offers - make your own order there. The sort is unchanged."
+			title="no offers - make your own"
 			onclick={() => onnooffers(!noOffersOnly)}>no offers</button
 		>
 		<button
