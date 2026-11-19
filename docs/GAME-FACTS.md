@@ -109,8 +109,9 @@ is not mistaken for a fact.
 Vials were removed in 3.30.0 (POE-366). Patch notes: "The following Vials no
 longer drop: … Existing items will remain, but have no functionality." The
 table below is history. The eleven Base → Upgraded pairs survive without the
-vial column; their normative home is `internal/temple/upgrades.go`
-(`uniqueUpgrades`).
+vial column; their normative home is the chest uniques in
+`desktop/src-tauri/src/temple/drops.rs`, with
+`internal/temple/unique_upgrades.json` as the server's embedded projection.
 
 Before 3.30.0, a vial was consumed at the Altar of Sacrifice together with a
 **base** unique and transformed it into an **upgraded** unique. The vial's own
