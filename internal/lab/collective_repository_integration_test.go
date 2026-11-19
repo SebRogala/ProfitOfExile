@@ -5,12 +5,12 @@ package lab
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/league"
@@ -640,46 +640,6 @@ func TestCollectivePage_RejectsInvalidScope(t *testing.T) {
 	}
 }
 
-// statementCounter counts every SQL statement the pool sends, BEGIN and
-// COMMIT included.
-type statementCounter struct {
-	mu    sync.Mutex
-	count int
-}
-
-func (c *statementCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
-	c.mu.Lock()
-	c.count++
-	c.mu.Unlock()
-	return ctx
-}
-
-func (c *statementCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
-
-func (c *statementCounter) reset() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	n := c.count
-	c.count = 0
-	return n
-}
-
-func countingPool(t *testing.T, dbURL string) (*pgxpool.Pool, *statementCounter) {
-	t.Helper()
-	cfg, err := pgxpool.ParseConfig(dbURL)
-	if err != nil {
-		t.Fatalf("parse pool config: %v", err)
-	}
-	counter := &statementCounter{}
-	cfg.ConnConfig.Tracer = counter
-	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("open counting pool: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool, counter
-}
-
 // The page's statement budget: BEGIN + count + page + COMMIT, one sparkline
 // read per distinct variant on the page (4), one GCP base lookup.
 const collectivePageStatementBudget = 4 + 4 + 1
@@ -1200,5 +1160,375 @@ func TestDedicationCollectivePage_StatementCountIsIndependentOfPageSize(t *testi
 	}
 	if small != dedicationPageStatementBudget || large != dedicationPageStatementBudget {
 		t.Errorf("statements = %d (pageSize 5) and %d (pageSize 50), want %d for both", small, large, dedicationPageStatementBudget)
+	}
+}
+
+// --- POE-410: one statement per page, output unchanged --------------------
+
+// characterisedCorpusSize rows "Gem 000".. rank by descending ROI; ROI% rises
+// with the index, so the ROI% orders reverse it. Even rows carry a feature row.
+const characterisedCorpusSize = 100
+
+func characterisedCollectiveCorpus() ([]collectiveTransfigureRow, []collectiveFeatureRow) {
+	trs := make([]collectiveTransfigureRow, 0, characterisedCorpusSize)
+	feats := make([]collectiveFeatureRow, 0, characterisedCorpusSize/2)
+	for i := 0; i < characterisedCorpusSize; i++ {
+		name := fmt.Sprintf("Gem %03d", i)
+		trs = append(trs, collectiveTransfigureRow{name: name, base: fmt.Sprintf("Base %03d", i), roi: float64(1000 - i), roiPct: float64(i) * 1.5})
+		if i%2 == 0 {
+			v := float64(i) + 0.5
+			feats = append(feats, collectiveFeatureRow{name: name, velPrice: v, velListing: v + 1, cv: v + 2, hist: v + 3, low7d: v + 4, high7d: v + 5, depth: float64(i) / 100})
+		}
+	}
+	return trs, feats
+}
+
+// characterisedCollectiveRow is the served row for corpus index i.
+func characterisedCollectiveRow(i int) CollectiveResult {
+	roi, pct := float64(1000-i), float64(i)*1.5
+	r := CollectiveResult{
+		TransfiguredName: fmt.Sprintf("Gem %03d", i), BaseName: fmt.Sprintf("Base %03d", i), Variant: "20/20", GemColor: "BLUE",
+		ROI: roi, ROIPct: pct, WeightedROI: roi, WeightedROIPct: pct, BasePrice: 10, TransfiguredPrice: 10 + roi,
+		BaseListings: 20, TransfiguredListings: 20, Confidence: "OK",
+		Signal: "STABLE", TierAction: tierAction("STABLE", "", ""), Sellability: 100,
+	}
+	if i%2 == 0 {
+		v := float64(i) + 0.5
+		r.PriceVelocity, r.ListingVelocity, r.CV, r.HistPosition, r.Low7Days, r.High7Days = v, v+1, v+2, v+3, v+4, v+5
+		r.LiquidityTier = liquidityTier(float64(i) / 100)
+	}
+	return r
+}
+
+// indexRows maps corpus indexes to their served rows; no index gives a nil
+// slice, as an empty page is served.
+func indexRows(build func(int) CollectiveResult, idx ...int) []CollectiveResult {
+	var out []CollectiveResult
+	for _, i := range idx {
+		out = append(out, build(i))
+	}
+	return out
+}
+
+// span lists from..to inclusive, descending when from > to.
+func span(from, to int) []int {
+	out := []int{}
+	step := 1
+	if from > to {
+		step = -1
+	}
+	for i := from; ; i += step {
+		out = append(out, i)
+		if i == to {
+			return out
+		}
+	}
+}
+
+type collectiveCase struct {
+	name string
+	q    CollectiveQuery
+	want CollectivePage
+}
+
+// collectiveCases seeds the characterised corpora into fresh leagues and
+// returns every page the tests pin, with the scope each case reads.
+func collectiveCases(t *testing.T, pool *pgxpool.Pool) (map[string]league.Scope, []collectiveCase) {
+	t.Helper()
+	at := time.Now()
+	corpus := collectiveLeague(t, pool, "POE410-Collective-Corpus")
+	trs, feats := characterisedCollectiveCorpus()
+	seedCollective(t, pool, corpus, at, trs, fullSellability(trs), feats)
+
+	ties := collectiveLeague(t, pool, "POE410-Collective-Ties")
+	var tieRows []collectiveTransfigureRow
+	for _, name := range []string{"Bravo", "Alpha"} {
+		for _, variant := range []string{"20/20", "1/20", "20"} {
+			tieRows = append(tieRows, collectiveTransfigureRow{name: name, base: "Tie Base", variant: variant, roi: 5})
+		}
+	}
+	seedCollective(t, pool, ties, at, tieRows, fullSellability(tieRows), nil)
+
+	bare := collectiveLeague(t, pool, "POE410-Collective-Bare")
+	seedCollective(t, pool, bare, at, []collectiveTransfigureRow{{name: "Bare", base: "Bare Base", roi: 7}}, nil, nil)
+
+	capped := collectiveLeague(t, pool, "POE410-Collective-Cap")
+	seedRankedCorpus(t, pool, capped, CollectiveSearchLimit+1)
+
+	empty := collectiveLeague(t, pool, "POE410-Collective-Empty")
+
+	scopes := map[string]league.Scope{}
+	var cases []collectiveCase
+	add := func(scope league.Scope, c collectiveCase) {
+		scopes[c.name] = scope
+		cases = append(cases, c)
+	}
+	all := span(0, characterisedCorpusSize-1)
+	rev := span(characterisedCorpusSize-1, 0)
+	add(corpus, collectiveCase{"1 row", pagedQuery(1, 1, CollectiveSortPrice), CollectivePage{indexRows(characterisedCollectiveRow, 0), 100}})
+	add(corpus, collectiveCase{"50 rows", pagedQuery(1, 50, CollectiveSortPrice), CollectivePage{indexRows(characterisedCollectiveRow, span(0, 49)...), 100}})
+	add(corpus, collectiveCase{"50 rows page 2", pagedQuery(2, 50, CollectiveSortPrice), CollectivePage{indexRows(characterisedCollectiveRow, span(50, 99)...), 100}})
+	add(corpus, collectiveCase{"out of range", pagedQuery(3, 50, CollectiveSortPrice), CollectivePage{nil, 100}})
+	add(corpus, collectiveCase{"overflow offset", pagedQuery(4611686018427387905, 2, CollectiveSortPrice), CollectivePage{nil, 100}})
+	search := pagedQuery(3, 5, CollectiveSortPrice)
+	search.Search = "GEM 00"
+	add(corpus, collectiveCase{"search ignores page", search, CollectivePage{indexRows(characterisedCollectiveRow, span(0, 9)...), 10}})
+	escaped := pagedQuery(1, 10, CollectiveSortPrice)
+	escaped.Search = "_"
+	add(corpus, collectiveCase{"search escapes wildcards", escaped, CollectivePage{nil, 0}})
+	tieRow := func(name, variant string) CollectiveResult {
+		return CollectiveResult{
+			TransfiguredName: name, BaseName: "Tie Base", Variant: variant, GemColor: "BLUE", ROI: 5, WeightedROI: 5,
+			BasePrice: 10, TransfiguredPrice: 15, BaseListings: 20, TransfiguredListings: 20, Confidence: "OK",
+			Signal: "STABLE", TierAction: tierAction("STABLE", "", ""), Sellability: 100,
+		}
+	}
+	tieWant := []CollectiveResult{
+		tieRow("Alpha", "1/20"), tieRow("Alpha", "20"), tieRow("Alpha", "20/20"),
+		tieRow("Bravo", "1/20"), tieRow("Bravo", "20"), tieRow("Bravo", "20/20"),
+	}
+	for _, s := range []struct {
+		sort   CollectiveSort
+		legacy bool
+		order  []int
+	}{
+		{CollectiveSortPrice, false, all}, {CollectiveSortROI, false, all}, {CollectiveSortWeightedROI, false, all},
+		{CollectiveSortROIPct, false, rev}, {CollectiveSortLegacyWeightedChaos, true, all}, {CollectiveSortLegacyWeightedPct, true, rev},
+	} {
+		q := pagedQuery(1, 100, s.sort)
+		q.Legacy = s.legacy
+		add(corpus, collectiveCase{"100 rows by " + string(s.sort), q, CollectivePage{indexRows(characterisedCollectiveRow, s.order...), 100}})
+		tieQ := pagedQuery(1, 10, s.sort)
+		tieQ.Legacy = s.legacy
+		add(ties, collectiveCase{"ties by " + string(s.sort), tieQ, CollectivePage{tieWant, 6}})
+	}
+	legacySearch := CollectiveQuery{Page: 1, PageSize: 3, Sort: CollectiveSortLegacyWeightedChaos, Legacy: true, Search: "gem 01"}
+	add(corpus, collectiveCase{"legacy search", legacySearch, CollectivePage{indexRows(characterisedCollectiveRow, span(10, 19)...), 10}})
+	add(bare, collectiveCase{"no signal or feature maps to empty", pagedQuery(1, 10, CollectiveSortPrice), CollectivePage{[]CollectiveResult{{
+		TransfiguredName: "Bare", BaseName: "Bare Base", Variant: "20/20", GemColor: "BLUE", ROI: 7,
+		BasePrice: 10, TransfiguredPrice: 17, BaseListings: 20, TransfiguredListings: 20, Confidence: "OK", Signal: "STABLE",
+	}}, 1}})
+	capQ := pagedQuery(1, 20, CollectiveSortWeightedROI)
+	capQ.Search = "BULK"
+	capWant := make([]CollectiveResult, 0, CollectiveSearchLimit)
+	for i := 0; i < CollectiveSearchLimit; i++ {
+		roi := float64(5000 - i)
+		capWant = append(capWant, CollectiveResult{
+			TransfiguredName: fmt.Sprintf("Bulk %04d", i), BaseName: "Bulk Base", Variant: "20/20", GemColor: "BLUE",
+			ROI: roi, ROIPct: 100, WeightedROI: roi, WeightedROIPct: 100, BasePrice: 10, TransfiguredPrice: 10 + roi,
+			BaseListings: 20, TransfiguredListings: 20, Confidence: "OK",
+			// seedRankedCorpus leaves these signal columns at their table defaults.
+			Signal: "STABLE", WindowSignal: "CLOSED", PriceTier: "LOW", TierAction: tierAction("STABLE", "CLOSED", "LOW"),
+			Sellability: 100, SellabilityLabel: "MODERATE",
+		})
+	}
+	add(capped, collectiveCase{"search caps at the search limit", capQ, CollectivePage{capWant, CollectiveSearchLimit + 1}})
+	add(empty, collectiveCase{"empty corpus", pagedQuery(1, 10, CollectiveSortPrice), CollectivePage{nil, 0}})
+	return scopes, cases
+}
+
+// assertPage compares a page to its characterised answer, nil rows included.
+func assertPage(t *testing.T, label string, got, want CollectivePage) {
+	t.Helper()
+	if got.Total != want.Total {
+		t.Errorf("%s: total = %d, want %d", label, got.Total, want.Total)
+	}
+	if (got.Rows == nil) != (want.Rows == nil) {
+		t.Errorf("%s: rows nil = %v, want nil = %v", label, got.Rows == nil, want.Rows == nil)
+	}
+	if reflect.DeepEqual(got.Rows, want.Rows) {
+		return
+	}
+	if len(got.Rows) != len(want.Rows) {
+		t.Errorf("%s: %d rows %v, want %d rows", label, len(got.Rows), pageNames(got), len(want.Rows))
+		return
+	}
+	for i := range got.Rows {
+		if !reflect.DeepEqual(got.Rows[i], want.Rows[i]) {
+			t.Errorf("%s: row %d = %+v, want %+v", label, i, got.Rows[i], want.Rows[i])
+			return
+		}
+	}
+}
+
+func TestKeepHappyCollectivePageCharacterisation(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scopes, cases := collectiveCases(t, pool)
+	repo := NewRepository(pool)
+	for _, c := range cases {
+		assertPage(t, c.name, collectivePage(t, repo, scopes[c.name], c.q), c.want)
+	}
+}
+
+// burstSize is the 300-user cold burst of identical requests. Without
+// single-flight every request still issues its own statement.
+const burstSize = 300
+
+// runBurst fires burstSize concurrent identical page reads and returns them.
+func runBurst(t *testing.T, read func() (CollectivePage, error)) []CollectivePage {
+	t.Helper()
+	pages := make([]CollectivePage, burstSize)
+	errs := make([]error, burstSize)
+	var wg sync.WaitGroup
+	for i := 0; i < burstSize; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			pages[i], errs[i] = read()
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("burst request %d: %v", i, err)
+		}
+	}
+	return pages
+}
+
+// The counter sees BEGIN and COMMIT too, so a count of one is the data
+// statement alone.
+func TestKeepHappyCollectivePageOneStatement(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scopes, cases := collectiveCases(t, pool)
+	counted, counter := countingPool(t, pool.Config().ConnString())
+	repo := NewRepository(counted)
+	collectivePage(t, repo, scopes[cases[0].name], cases[0].q) // open a connection outside the count
+
+	for _, c := range cases {
+		counter.reset()
+		got := collectivePage(t, repo, scopes[c.name], c.q)
+		if n := counter.reset(); n != 1 {
+			t.Errorf("%s: statements = %d, want 1 data statement and no BEGIN/COMMIT", c.name, n)
+		}
+		assertPage(t, c.name, got, c.want)
+	}
+
+	burst := cases[1]
+	counter.reset()
+	pages := runBurst(t, func() (CollectivePage, error) {
+		return repo.CollectivePage(context.Background(), scopes[burst.name], burst.q)
+	})
+	if n := counter.reset(); n != burstSize {
+		t.Errorf("burst of %d: statements = %d, want %d", burstSize, n, burstSize)
+	}
+	for i, page := range pages {
+		assertPage(t, fmt.Sprintf("burst request %d", i), page, burst.want)
+	}
+}
+
+const dedicationCorpusSize = 100
+
+// characterisedDedicationRow is the served row for gem "Ded <i>", priced
+// 1000-i against the 100c BLUE skill input.
+func characterisedDedicationRow(i int) CollectiveResult {
+	chaos := float64(1000 - i)
+	return CollectiveResult{
+		TransfiguredName: fmt.Sprintf("Ded %03d", i), BaseName: "skill", Variant: "21/23", GemColor: "BLUE",
+		TransfiguredPrice: chaos, TransfiguredListings: 20, BasePrice: 100, ROI: chaos - 100, ROIPct: (chaos - 100) / 100 * 100,
+		Confidence: "OK",
+	}
+}
+
+type dedicationCase struct {
+	name string
+	q    DedicationCollectiveQuery
+	want CollectivePage
+}
+
+func dedicationCases(t *testing.T, pool *pgxpool.Pool) (map[string]league.Scope, []dedicationCase) {
+	t.Helper()
+	at := time.Now()
+	corpus := dedicationLeague(t, pool, "POE410-Ded-Corpus")
+	gems := make([]dedicationGem, 0, dedicationCorpusSize)
+	for i := 0; i < dedicationCorpusSize; i++ {
+		gems = append(gems, dedicationGem{name: fmt.Sprintf("Ded %03d", i), chaos: float64(1000 - i)})
+	}
+	seedDedication(t, pool, corpus, at, gems, blueSkillCost)
+
+	ties := dedicationLeague(t, pool, "POE410-Ded-Ties")
+	seedDedication(t, pool, ties, at, []dedicationGem{{name: "Charlie", chaos: 300}, {name: "Alpha", chaos: 300}, {name: "Bravo", chaos: 300}}, blueSkillCost)
+
+	noCost := dedicationLeague(t, pool, "POE410-Ded-NoCost")
+	seedDedication(t, pool, noCost, at, []dedicationGem{{name: "Spark", chaos: 400, listings: 1}}, nil)
+
+	scopes := map[string]league.Scope{}
+	var cases []dedicationCase
+	add := func(scope league.Scope, c dedicationCase) {
+		scopes[c.name] = scope
+		cases = append(cases, c)
+	}
+	all := span(0, dedicationCorpusSize-1)
+	add(corpus, dedicationCase{"1 row", dedicationQuery(1, 1, CollectiveSortPrice), CollectivePage{indexRows(characterisedDedicationRow, 0), 100}})
+	add(corpus, dedicationCase{"50 rows", dedicationQuery(1, 50, CollectiveSortPrice), CollectivePage{indexRows(characterisedDedicationRow, span(0, 49)...), 100}})
+	add(corpus, dedicationCase{"50 rows page 2", dedicationQuery(2, 50, CollectiveSortPrice), CollectivePage{indexRows(characterisedDedicationRow, span(50, 99)...), 100}})
+	add(corpus, dedicationCase{"out of range", dedicationQuery(3, 50, CollectiveSortPrice), CollectivePage{nil, 100}})
+	add(corpus, dedicationCase{"overflow offset", dedicationQuery(4611686018427387905, 2, CollectiveSortPrice), CollectivePage{nil, 100}})
+	search := dedicationQuery(3, 5, CollectiveSortPrice)
+	search.Search = "DED 00"
+	add(corpus, dedicationCase{"search ignores page", search, CollectivePage{indexRows(characterisedDedicationRow, span(0, 9)...), 10}})
+	escaped := dedicationQuery(1, 10, CollectiveSortPrice)
+	escaped.Search = "%"
+	add(corpus, dedicationCase{"search escapes wildcards", escaped, CollectivePage{nil, 0}})
+	add(corpus, dedicationCase{"legacy limit", DedicationCollectiveQuery{Variant: "21/23c", Sort: CollectiveSortPrice, Page: 1, PageSize: 2, Legacy: true},
+		CollectivePage{indexRows(characterisedDedicationRow, 0, 1), 100}})
+	add(corpus, dedicationCase{"legacy search before the limit", DedicationCollectiveQuery{Variant: "21/23c", Sort: CollectiveSortPrice, Page: 1, PageSize: 3, Legacy: true, Search: "ded 01"},
+		CollectivePage{indexRows(characterisedDedicationRow, 10, 11, 12), 10}})
+	tieRow := func(name string) CollectiveResult {
+		return CollectiveResult{
+			TransfiguredName: name, BaseName: "skill", Variant: "21/23", GemColor: "BLUE", TransfiguredPrice: 300,
+			TransfiguredListings: 20, BasePrice: 100, ROI: 200, ROIPct: 200, Confidence: "OK",
+		}
+	}
+	tieWant := []CollectiveResult{tieRow("Alpha"), tieRow("Bravo"), tieRow("Charlie")}
+	for _, sort := range []CollectiveSort{CollectiveSortPrice, CollectiveSortROI, CollectiveSortWeightedROI, CollectiveSortROIPct} {
+		add(corpus, dedicationCase{"100 rows by " + string(sort), dedicationQuery(1, 100, sort), CollectivePage{indexRows(characterisedDedicationRow, all...), 100}})
+		add(ties, dedicationCase{"ties by " + string(sort), dedicationQuery(1, 10, sort), CollectivePage{tieWant, 3}})
+	}
+	add(noCost, dedicationCase{"no input cost maps to NO_BASE", dedicationQuery(1, 10, CollectiveSortPrice), CollectivePage{[]CollectiveResult{{
+		TransfiguredName: "Spark", BaseName: "skill", Variant: "21/23", GemColor: "BLUE", TransfiguredPrice: 400, TransfiguredListings: 1,
+		Confidence: ConfidenceNoBase, LowConfidence: true,
+	}}, 1}})
+	emptyQ := dedicationQuery(1, 10, CollectiveSortPrice)
+	emptyQ.Variant = "21/20c"
+	add(corpus, dedicationCase{"empty variant", emptyQ, CollectivePage{nil, 0}})
+	return scopes, cases
+}
+
+func TestKeepHappyDedicationCollectivePageCharacterisation(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scopes, cases := dedicationCases(t, pool)
+	repo := NewRepository(pool)
+	for _, c := range cases {
+		assertPage(t, c.name, dedicationPage(t, repo, scopes[c.name], c.q), c.want)
+	}
+}
+
+func TestKeepHappyDedicationCollectivePageOneStatement(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scopes, cases := dedicationCases(t, pool)
+	counted, counter := countingPool(t, pool.Config().ConnString())
+	repo := NewRepository(counted)
+	dedicationPage(t, repo, scopes[cases[0].name], cases[0].q) // open a connection outside the count
+
+	for _, c := range cases {
+		counter.reset()
+		got := dedicationPage(t, repo, scopes[c.name], c.q)
+		if n := counter.reset(); n != 1 {
+			t.Errorf("%s: statements = %d, want 1 data statement and no BEGIN/COMMIT", c.name, n)
+		}
+		assertPage(t, c.name, got, c.want)
+	}
+
+	burst := cases[1]
+	counter.reset()
+	pages := runBurst(t, func() (CollectivePage, error) {
+		return repo.DedicationCollectivePage(context.Background(), scopes[burst.name], burst.q)
+	})
+	if n := counter.reset(); n != burstSize {
+		t.Errorf("burst of %d: statements = %d, want %d", burstSize, n, burstSize)
+	}
+	for i, page := range pages {
+		assertPage(t, fmt.Sprintf("burst request %d", i), page, burst.want)
 	}
 }
