@@ -393,6 +393,14 @@ export type CurrencyExchangeHorizon = 'recent' | 'day';
  * field means false, so no client may distinguish "not sent" from "both sides
  * stood".
  *
+ * `noOffers` is the EXECUTING side of this leg's book read the same way: true
+ * when nothing stood where this leg trades — no asks for a buy, no bids for a
+ * sell — so the order cannot be filled from the book and the reader posts it
+ * and waits (POE-281, "no offers - make your own"). The price is still the
+ * hour's realized trade, so the row ranks by value like any other. It is
+ * independent of `depletedSide` (the opposite side) and is a mark, never a sort
+ * key (ADR-018). Optional on the wire the same way: absent means false.
+ *
  * `priceItemQty`/`priceQuoteQty` are that same price as the in-game Currency
  * Exchange posts it: the reduced integer quantity pair behind this hour's
  * extreme, with `priceQuoteQty / priceItemQty === price` EXACTLY — the server
@@ -443,6 +451,8 @@ export interface CurrencyExchangeLeg {
 	suspect: boolean;
 	/** Optional: absent on a server older than the field, and absent means false. */
 	depletedSide?: boolean;
+	/** Optional: absent on a server older than the field, and absent means false. */
+	noOffers?: boolean;
 	/** Optional: absent on a server older than the field, and absent means false. */
 	windowPriced?: boolean;
 	/** Optional: absent on a server older than the field, and 0 when not window-priced. */
@@ -589,6 +599,8 @@ export interface CurrencyExchangePlay {
 	suspect: boolean;
 	/** Optional: absent on a server older than the field, and absent means false. */
 	lowLiquidity?: boolean;
+	/** Optional: true when any leg is `noOffers` (POE-281); absent means false. A mark, never a sort key. */
+	noOffers?: boolean;
 	/** Optional: absent on a server older than the field, and absent means false. */
 	windowPriced?: boolean;
 	/** Optional: absent on a server older than the field, and 0 when not window-priced. */

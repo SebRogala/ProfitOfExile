@@ -102,6 +102,7 @@
 	const investMaxPref = persisted('currencyExchangeScaleInvestMax', '');
 	const categoryRulesPref = persisted('currencyExchangeCategoryRules', '{}');
 	const itemRulesPref = persisted('currencyExchangeItemRules', '[]');
+	const noOffersOnlyPref = persisted('currencyExchangeNoOffersOnly', 'false');
 
 	/**
 	 * The seven quality gates (POE-191, plus the two trash-price knobs — POE-196's
@@ -163,7 +164,8 @@
 				investMin: investMinPref.value,
 				investMax: investMaxPref.value,
 				unit: unitPref.value,
-				search
+				search,
+				noOffersOnly: noOffersOnlyPref.value
 			})
 		}))
 	);
@@ -373,6 +375,7 @@
 		void categoryRulesPref.value;
 		void itemRulesPref.value;
 		void unitPref.value;
+		void noOffersOnlyPref.value;
 		untrack(() => controller.syncSelection());
 	});
 	$effect(() => {
@@ -481,6 +484,8 @@
 			onunit={(v) => (unitPref.value = v)}
 			onsearch={(v) => (search = v)}
 			onclear={clearFilters}
+			noOffersOnly={noOffersOnlyPref.value === 'true'}
+			onnooffers={(on) => (noOffersOnlyPref.value = on ? 'true' : 'false')}
 		/>
 	{/if}
 

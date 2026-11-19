@@ -78,7 +78,9 @@
 		oninvestmax,
 		onunit,
 		onsearch,
-		onclear
+		onclear,
+		noOffersOnly = false,
+		onnooffers = () => {}
 	}: {
 		/** The sidebar taxonomy, straight off the response — never a local copy. */
 		categories: string[];
@@ -191,6 +193,9 @@
 		 * the second control that undoes them.
 		 */
 		onclear: () => void;
+		/** The no-offers chip (POE-281): a filter on the request, never a sort (ADR-018). */
+		noOffersOnly?: boolean;
+		onnooffers?: (on: boolean) => void;
 	} = $props();
 
 	/**
@@ -687,6 +692,13 @@
 			>
 		{/if}
 		<button
+			class="no-offers-chip"
+			class:active={noOffersOnly}
+			aria-pressed={noOffersOnly}
+			title="Shows only the rows where one side of the book had no offers - make your own order there. The sort is unchanged."
+			onclick={() => onnooffers(!noOffersOnly)}>no offers</button
+		>
+		<button
 			class="clear"
 			title="Clears the category and item rules and the run investment bounds. The gates, the search, the sort, the row cap and the density are left alone."
 			onclick={onclear}>Clear</button
@@ -1007,6 +1019,22 @@
 	.show-all:hover,
 	.clear:hover {
 		color: var(--color-lab-text);
+	}
+
+	.no-offers-chip {
+		background: transparent;
+		border: 1px solid var(--color-lab-border);
+		border-radius: 999px;
+		color: var(--color-lab-text-secondary);
+		font-size: 0.75rem;
+		font-family: inherit;
+		cursor: pointer;
+		padding: 1px 8px;
+	}
+
+	.no-offers-chip.active {
+		border-color: var(--color-lab-yellow);
+		color: var(--color-lab-yellow);
 	}
 
 	.mono {

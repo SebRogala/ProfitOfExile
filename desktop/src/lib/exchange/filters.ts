@@ -569,6 +569,11 @@ export interface ExchangePagePrefs {
 	investMax: string;
 	unit: string;
 	search: string;
+	/**
+	 * `'true'` narrows the table to plays marked `noOffers` (POE-281); anything
+	 * else is off. A filter, never a sort (ADR-018): `sort` is sent unchanged.
+	 */
+	noOffersOnly: string;
 }
 
 /**
@@ -595,6 +600,7 @@ function parseAmount(raw: string): number | null {
  * - A bound is sent only when it parses (`parseAmount`), with `unit` always.
  * - `rowCap` is the `pageSize`, `all` included; a search bypasses it server-side.
  * - A blank search is omitted.
+ * - `noOffersOnly` sends `noOffers=only`; off, the param is omitted.
  *
  * A rule list with no entry is omitted rather than sent empty.
  */
@@ -629,6 +635,8 @@ export function exchangePageParams(prefs: ExchangePagePrefs): ExchangePageParams
 
 	const search = prefs.search.trim();
 	if (search !== '') params.search = search;
+
+	if (prefs.noOffersOnly === 'true') params.noOffers = 'only';
 
 	return params;
 }

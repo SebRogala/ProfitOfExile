@@ -2336,6 +2336,39 @@ describe('routeSlots', () => {
 		expect(route?.buy.depletedSide).toBe(false);
 	});
 
+	it('marks only the slot whose own book side had no offers, apart from depletedSide', () => {
+		const route = routeSlots(
+			chaosScarab({
+				legs: [
+					leg({ price: 19, priceItemQty: 1, priceQuoteQty: 19, depletedSide: true }),
+					leg({ action: 'sell', price: 21, priceItemQty: 1, priceQuoteQty: 21, noOffers: true })
+				]
+			}),
+			DIVINE_RATE
+		);
+
+		expect(route?.sell.noOffers).toBe(true);
+		expect(route?.buy.noOffers).toBe(false);
+		expect(route?.sell.depletedSide).toBe(false);
+	});
+
+	it('reads a leg served without the noOffers flag as fillable', () => {
+		const route = routeSlots(chaosScarab(), DIVINE_RATE);
+
+		expect(route?.buy.noOffers).toBe(false);
+		expect(route?.sell.noOffers).toBe(false);
+	});
+
+	it('marks a noOffers convert leg on the convert slot', () => {
+		const route = routeSlots(
+			omen({ legs: [omenBuy(), omenSell(), omenConvert({ noOffers: true })] }),
+			DIVINE_RATE
+		);
+
+		expect(route?.convert?.noOffers).toBe(true);
+		expect(route?.buy.noOffers).toBe(false);
+	});
+
 	it('reports a gain when the row is expected to profit', () => {
 		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.positive).toBe(true);
 	});

@@ -9,7 +9,23 @@ import { render } from 'svelte/server';
 import type { CurrencyExchangeResponse } from '$lib/api';
 import type { ExchangeQuery } from '$lib/exchange/controller.svelte';
 
-const pageHarness = vi.hoisted(() => ({ controller: null as unknown }));
+const pageHarness = vi.hoisted(() => ({
+	controller: null as unknown,
+	selection: null as null | (() => ExchangeQuery),
+	prefs: new Map<string, { value: string }>()
+}));
+
+vi.mock('$lib/prefs.svelte', async () => {
+	const actual = await vi.importActual<typeof import('$lib/prefs.svelte')>('$lib/prefs.svelte');
+	return {
+		...actual,
+		persisted: (key: string, initial: string) => {
+			const pref = actual.persisted(key, initial);
+			pageHarness.prefs.set(key, pref);
+			return pref;
+		}
+	};
+});
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({})) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
@@ -20,7 +36,8 @@ vi.mock('$lib/exchange/controller.svelte', async () => {
 	);
 	return {
 		...actual,
-		createExchangeController: () => {
+		createExchangeController: (deps: { selection: () => ExchangeQuery }) => {
+			pageHarness.selection = deps.selection;
 			if (!pageHarness.controller) throw new Error('the test builds the controller before render');
 			return pageHarness.controller;
 		}
@@ -166,5 +183,73 @@ describe('CurrencyExchangePage during a changed-query fetch', () => {
 		await settle();
 		const body = render(CurrencyExchangePage).body;
 		expect([body.includes('OldQueryOrb'), body.includes('Couldn')]).toEqual([false, true]);
+	});
+});
+
+const NO_OFFERS_LABEL = 'no offers - make your own';
+
+/** A play on `name` whose buy or sell leg carries `noOffers`, or neither. */
+function flaggedPlay(name: string, blocked: 'buy' | 'sell' | null) {
+	const play = page(name).plays[0];
+	play.key = `direct:${name}`;
+	play.legs = [
+		{ ...leg(name, 'buy'), noOffers: blocked === 'buy' },
+		{ ...leg(name, 'sell'), noOffers: blocked === 'sell' }
+	];
+	play.noOffers = blocked !== null;
+	return play;
+}
+
+/** The page settled on `plays`, in the order given. */
+async function settledOn(plays: ReturnType<typeof flaggedPlay>[]) {
+	const body = { ...page('unused'), plays, count: plays.length, total: plays.length, matched: plays.length };
+	const controller = createExchangeController({
+		selection: () => ({ mode: 'all', horizon: 'recent', params: { pageSize: '50' } }),
+		load: async () => body,
+		listen: async () => () => {}
+	});
+	await controller.load();
+	await settle();
+	pageHarness.controller = controller;
+}
+
+/** The rendered row markup for the play keyed `direct:<name>`, cut at the next play's name. */
+function rowOf(html: string, name: string, next: string | null): string {
+	const start = html.indexOf(name);
+	return html.slice(start, next === null ? undefined : html.indexOf(next, start));
+}
+
+describe('CurrencyExchangePage no offers mark and chip', () => {
+	it('shows the no offers label on buy-blocked and sell-blocked rows and not on a two-sided row', async () => {
+		await settledOn([
+			flaggedPlay('BuyBlockedOrb', 'buy'),
+			flaggedPlay('SellBlockedOrb', 'sell'),
+			flaggedPlay('TwoSidedOrb', null)
+		]);
+		const html = render(CurrencyExchangePage).body;
+
+		expect([
+			rowOf(html, 'BuyBlockedOrb', 'SellBlockedOrb').includes(NO_OFFERS_LABEL),
+			rowOf(html, 'SellBlockedOrb', 'TwoSidedOrb').includes(NO_OFFERS_LABEL),
+			rowOf(html, 'TwoSidedOrb', null).includes(NO_OFFERS_LABEL)
+		]).toEqual([true, true, false]);
+	});
+
+	it('no offers chip on sends noOffers=only with the same sort', async () => {
+		await settledOn([flaggedPlay('BuyBlockedOrb', 'buy')]);
+		render(CurrencyExchangePage);
+		const before = pageHarness.selection!().params;
+
+		pageHarness.prefs.get('currencyExchangeNoOffersOnly')!.value = 'true';
+		const after = pageHarness.selection!().params;
+
+		expect([before.noOffers, after.noOffers, after.sort]).toEqual([undefined, 'only', before.sort]);
+	});
+
+	it('no offers rows keep the order the server answered with', async () => {
+		await settledOn([flaggedPlay('SellBlockedOrb', 'sell'), flaggedPlay('BuyBlockedOrb', 'buy')]);
+		const html = render(CurrencyExchangePage).body;
+
+		expect(html.indexOf('SellBlockedOrb')).toBeLessThan(html.indexOf('BuyBlockedOrb'));
 	});
 });

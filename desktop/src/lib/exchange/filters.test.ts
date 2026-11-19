@@ -550,6 +550,7 @@ describe('exchangePageParams', () => {
 			investMax: '',
 			unit: 'chaos',
 			search: '',
+			noOffersOnly: 'false',
 			...overrides
 		};
 	}
@@ -629,6 +630,16 @@ describe('exchangePageParams', () => {
 			exchangePageParams(prefs({ sort: 'fastest' })).sort,
 			exchangePageParams(prefs({ sort: 'bogus' })).sort
 		]).toEqual(['fastest', 'expected']);
+	});
+
+	it('sends noOffers=only when the no-offers chip is on, with the sort unchanged', () => {
+		const params = exchangePageParams(prefs({ sort: 'roi', noOffersOnly: 'true' }));
+
+		expect([params.noOffers, params.sort]).toEqual(['only', 'roi']);
+	});
+
+	it('omits noOffers when the no-offers chip is off', () => {
+		expect('noOffers' in exchangePageParams(prefs({ noOffersOnly: 'false' }))).toBe(false);
 	});
 
 	it('sends a trimmed search and omits a blank one', () => {

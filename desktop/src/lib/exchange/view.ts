@@ -1434,6 +1434,12 @@ export interface RouteStep {
 	 * coercion happens once, at the derivation, rather than at every reader.
 	 */
 	depletedSide: boolean;
+	/**
+	 * The step's OWN side of the book stood empty — nobody to fill it, so the
+	 * reader posts the order and waits (POE-281). Independent of `depletedSide`;
+	 * always a boolean here, the absent wire field coerced to false.
+	 */
+	noOffers: boolean;
 }
 
 /** What goes in at the start of a run and what comes back out at the end. */
@@ -1563,7 +1569,8 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 		rate,
 		rateTitle,
 		suspect: leg.suspect,
-		depletedSide: leg.depletedSide === true
+		depletedSide: leg.depletedSide === true,
+		noOffers: leg.noOffers === true
 	});
 
 	// THE ONE EXEMPT BRANCH (spec §3). The response cannot value this row's entry
@@ -1690,7 +1697,8 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 			// carries its own `suspect`: the third trade is a real order against a
 			// real market, and a one-sided book there is the reader's problem as much
 			// as a one-sided book on the item's own two trades.
-			depletedSide: convertLeg.depletedSide === true
+			depletedSide: convertLeg.depletedSide === true,
+			noOffers: convertLeg.noOffers === true
 		};
 	};
 

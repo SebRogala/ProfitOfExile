@@ -92,6 +92,10 @@
 		showConvert: boolean;
 	} = $props();
 
+	const NO_OFFERS_LABEL = 'no offers - make your own';
+	const NO_OFFERS_TITLE =
+		'No offers - make your own: nobody stood on this side of the book in the hour, so post this order yourself and wait to be filled. The price is the hour\'s realized trade.';
+
 	const route = $derived(routeSlots(play, divineChaosRate));
 	const dense = $derived(density === 'dense');
 	/** 24px inside a 30px tile when comfortable; a bare 20px glyph when dense. */
@@ -165,6 +169,12 @@
 		     rather than silent. That is what `.route.dense .name` in the CSS
 		     below buys. -->
 		<span class="rate mono" title={slot.rateTitle ?? slot.rate}>{slot.rate}</span>
+		<!-- POE-281: this step's OWN side of the book was empty, so there is nothing
+		     to fill from — the reader posts the order and waits. A text mark, not a
+		     tile colour, so it never competes with the depleted border. -->
+		{#if slot.noOffers}
+			<span class="no-offers" title={NO_OFFERS_TITLE}>{NO_OFFERS_LABEL}</span>
+		{/if}
 	</span>
 {/snippet}
 
@@ -585,6 +595,15 @@
 	   wrapper's `title`, so it is a hover away. */
 	.route.dense .sub {
 		display: none;
+	}
+
+	.no-offers {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		flex-shrink: 0;
+		font-size: 0.625rem;
+		color: var(--color-lab-yellow);
 	}
 
 	.not-used {
