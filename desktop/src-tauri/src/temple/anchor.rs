@@ -1156,23 +1156,6 @@ mod tests {
         assert!(table_band(1920, 1200).is_none());
     }
 
-    /// The loop's band lookup is keyed by the game's render (client) size, not
-    /// the capture's: a windowed 1920x1080 client on a 2560x1440 monitor gets
-    /// the measured band, and a 1600x900 client on a 1920x1080 monitor gets
-    /// none. Counted as correlations with the sweep stopped, so only the band
-    /// search can score anything.
-    #[test]
-    fn a_measured_render_size_bands_by_client_not_capture() {
-        let stopped = || true;
-        let larger = DynamicImage::ImageRgb8(noise(2560, 1440));
-        let (_, banded) = search_tally(|| anchor_for_loop(&larger, None, (1920, 1080), &stopped));
-        assert!(banded.positions > 0, "a measured client size must search its band");
-
-        let monitor = DynamicImage::ImageRgb8(noise(1920, 1080));
-        let (_, unbanded) = search_tally(|| anchor_for_loop(&monitor, None, (1600, 900), &stopped));
-        assert_eq!(unbanded.positions, 0, "an unmeasured client size has no band, whatever the capture");
-    }
-
     /// The fallback sweep must be able to reach the scale a wide capture
     /// implies. 2560 px seeds at 1.86 and 3840 px at 2.79, both above the fixed
     /// 1.60 ceiling — a sweep that stopped there could never rescue the two
@@ -1874,6 +1857,39 @@ mod tests {
             ..cal
         }
         .applies_to(&img));
+    }
+
+    mod keep_happy {
+        use super::*;
+
+        /// A 1920x1080 game client drawn at the top-left of a 2560x1440
+        /// monitor: the band is keyed by the client size, so the measured row
+        /// anchors the plate with the fallback sweep stopped.
+        #[test]
+        fn a_measured_render_size_bands_by_client_not_capture() {
+            let mut capture = DynamicImage::ImageRgb8(noise(2560, 1440));
+            image::imageops::overlay(&mut capture, &full_screen_1080p(), 0, 0);
+
+            let found = anchor_for_loop(&capture, None, (1920, 1080), &|| true)
+                .expect("the measured client size anchors through its band");
+
+            assert!((found.scale - LIVE_SCREEN_SCALE).abs() < 1e-3, "scale {}", found.scale);
+            let (dx, dy) = (found.origin.0 - LIVE_SCREEN_ORIGIN.0, found.origin.1 - LIVE_SCREEN_ORIGIN.1);
+            assert!(dx.abs() <= 1 && dy.abs() <= 1, "origin {:?}", found.origin);
+        }
+
+        /// A 1600x900 client on a 1920x1080 monitor has no measured row, even
+        /// though the capture size has one: with the sweep stopped nothing
+        /// anchors, rather than the monitor's row being borrowed.
+        #[test]
+        fn an_unmeasured_render_size_gets_no_band_from_the_capture_size() {
+            let found = anchor_for_loop(&full_screen_1080p(), None, (1600, 900), &|| true);
+
+            assert!(
+                matches!(found, Err(ReadError::AnchorNotFound { .. })),
+                "the capture's measured row was used for an unmeasured client: {found:?}"
+            );
+        }
     }
 }
 

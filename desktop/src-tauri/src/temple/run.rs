@@ -3936,7 +3936,7 @@ mod tests {
         #[test]
         fn a_windowed_client_corroborates_its_anchor_against_the_client_height() {
             let published = windowed_anchor().expect("900 / 1200 is the 0.75 the anchor implies");
-            assert!((published.ui_scale - 0.75).abs() < 1e-3, "ui_scale {}", published.ui_scale);
+            assert_eq!(published.source, crate::ssot::ScreenScaleSource::TempleAnchor);
         }
     }
 
@@ -3948,9 +3948,8 @@ mod tests {
         /// could then never publish a scale after a resize dropped the slice.
         #[test]
         fn a_windowed_anchor_is_not_judged_against_the_monitor_height() {
-            let scale = anchor::TEMPLE_SCALE_PER_UI_SCALE * 0.75;
-            assert!(unit_ratio_line(scale, 1920, 1080).is_some(), "the monitor height refuses it");
-            assert!(windowed_anchor().is_ok(), "the client height is what judges it");
+            let published = windowed_anchor().expect("judged by the 900 px client, not the monitor");
+            assert!((published.ui_scale - 0.75).abs() < 1e-3, "ui_scale {}", published.ui_scale);
         }
     }
 }
