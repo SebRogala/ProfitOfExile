@@ -85,17 +85,20 @@
 		{#if history}
 			<section class="panel" aria-label="Boss loot runs">
 				<div role="table" aria-label="Runs">
-					<div class="runrow run-head" role="row">
-						<span role="columnheader">Run</span><span role="columnheader">Date</span><span role="columnheader">Unique</span><span role="columnheader">Additional</span><span role="columnheader" aria-label="Actions"></span>
+					<div class="runrow run-head" role="row" style:--group-columns={history.columns.length}>
+						<span role="columnheader">Run</span><span role="columnheader">Date</span>{#each history.columns as column (column.id)}<span role="columnheader">{column.label}</span>{/each}<span role="columnheader">Additional</span><span role="columnheader" aria-label="Actions"></span>
 					</div>
 					{#each history.rows as row (row.id)}
 						<div role="rowgroup">
-							<div class="runrow" role="row" data-run={row.run}>
+							<div class="runrow" role="row" data-run={row.run} style:--group-columns={history.columns.length}>
 								<span class="mono" role="cell">{groupNumber(String(row.run))}</span>
 								<span class="run-date" role="cell">{row.date}</span>
-								<span class="chips" role="cell">
-									{#each row.unique as item (item.id)}<span class="item"><ItemIcon src={iconFor(item)} alt="" size={22} />{item.name}</span>{/each}
-								</span>
+								{#each row.groups as group (group.id)}
+									<span class="chips" role="cell">
+										{#each group.items as item (item.id)}<span class="item"><ItemIcon src={iconFor(item)} alt="" size={22} />{item.name}</span>
+										{:else}<span class="secondary">—</span>{/each}
+									</span>
+								{/each}
 								<span class="chips" role="cell">
 									{#each row.extra as item (item.id)}<span class="history-chip"><ItemIcon src={iconFor(item)} alt="" size={18} />{item.name}{#if item.dropQuantity > 1} ×{groupNumber(String(item.dropQuantity))}{/if}</span>
 									{:else}<span class="secondary">—</span>{/each}
@@ -106,7 +109,7 @@
 								</span>
 							</div>
 							{#if editor?.id === row.id}
-								<div role="row"><div role="cell" aria-colspan="5" class="run-editor" aria-label="Edit run {row.run}">
+								<div role="row"><div role="cell" aria-colspan={4 + history.columns.length} class="run-editor" aria-label="Edit run {row.run}">
 									{#each editor.groups as group (group.id)}
 										<span class="table-heading">{group.label} pool · {group.rule}</span>
 										<div class="chips">
@@ -212,7 +215,7 @@
 	.pill:focus-visible { outline: 1px solid var(--color-lab-blue); outline-offset: 2px; }
 	.status-line { padding: 4px 12px; color: var(--color-lab-text-secondary); font-size: 12px; }
 	.warning { color: var(--color-lab-yellow); }
-	.runrow { display: grid; grid-template-columns: 44px 120px 200px minmax(0,1fr) 112px; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid var(--color-lab-border); }
+	.runrow { display: grid; grid-template-columns: 44px 120px repeat(var(--group-columns, 1), 200px) minmax(0,1fr) 112px; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid var(--color-lab-border); }
 	.run-head { border-top: 0; }
 	.run-head, .table-heading { font-size: .6875rem; text-transform: uppercase; letter-spacing: .5px; color: var(--color-lab-text-secondary); font-weight: 600; }
 	.run-date, .secondary { color: var(--color-lab-text-secondary); font-size: 12px; }
