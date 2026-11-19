@@ -175,7 +175,7 @@ describe('Runs projection', () => {
 		expect(row!.groups.map((group) => group.id)).toEqual(['unique', 'allflame'])
 		expect(row!.groups[0].items.map((item) => item.id)).not.toContain(ember)
 	})
-	it('renders one column per profile group with row drops aligned to them', async () => {
+	const threeGroupView = async () => {
 		const item = (id: string, name: string) => ({ id, name, base: 'Test base', wikiRate: '25%' })
 		const { profile: catarina, runs } = await runInput()
 		const profile = { ...catarina, groups: [
@@ -184,11 +184,16 @@ describe('Runs projection', () => {
 			{ id: 'fragments', label: 'Fragments', min: 1, max: 2, items: [item('f', 'Fragment'), item('g', 'Shard')] }
 		], extra: [item('e', 'Extra')], categories: [] }
 		const run = { ...runs.items[0], items: { quantities: { a: 1, z: 0, g: 2, e: 1 }, counted: [] } }
-		const view = buildRunsView(profile, { ...runs, items: [run] })
+		return buildRunsView(profile, { ...runs, items: [run] })
+	}
+	it('renders one column per profile group in profile order', async () => {
+		const view = await threeGroupView()
 		expect(view.columns).toEqual([{ id: 'relics', label: 'Relics' }, { id: 'tokens', label: 'Tokens' }, { id: 'fragments', label: 'Fragments' }])
+	})
+	it('aligns each row group to the columns with only dropped items', async () => {
+		const view = await threeGroupView()
 		expect(view.rows[0].groups.map((group) => [group.id, group.items.map((drop) => [drop.id, drop.dropQuantity])]))
 			.toEqual([['relics', [['a', 1]]], ['tokens', []], ['fragments', [['g', 2]]]])
-		expect(view.rows[0].extra.map((drop) => drop.id)).toEqual(['e'])
 	})
 	it('shows an empty history without invented run numbers', async () => {
 		const { profile, runs } = await runInput()

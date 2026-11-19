@@ -1,0 +1,8 @@
+# Deferred findings
+
+## POE-413 WI-1 — F-1 (low) `desktop/src/lib/boss-loot/page-view.test.ts:168`
+
+- **Original finding:** Observed: the new Catarina test combines the column-label assertion at line 171 with row group identity and Ember placement assertions at lines 173-176. Changing only buildRunsView's column label to group.id breaks line 171 while leaving the row assertions passing; putting the Ember into the Unique group breaks line 176 while leaving the column-label assertion passing. These are independently breakable behaviors under the review brief's explicit meaningfulness criterion 3. The conjunction in the name joins two group names rather than two behaviors; the defect is the independent assertions, not that conjunction. All assertions otherwise check observable projection output and resist concrete production mutations.
+- **Recommendation:** For AC-1, separate the existing Catarina column-label check from the existing Catarina row-placement checks into focused cases, preserving the exact expected labels and the Ember placement and exclusion checks. Add no new coverage.
+- **Reason:** not-reproduced-below-floor
+- **Evidence:** page-view.test.ts:168-177 holds the labels check (171) and the Ember placement/exclusion checks (173-176), as reported. The brief's WI-1 step 3(a) prescribes exactly one Catarina case 'asserting columns labels are [Unique, Allflame Ember] and a fixture run's Ember lands in the Ember group, not the Unique group'. The test matches the required shape, and the brief gives no one-behavior-per-test criterion, so no defect against it. Severity kept low (brief supplies no severity criteria).
