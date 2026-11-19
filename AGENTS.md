@@ -59,7 +59,8 @@ and the documentation index before acting on them.
   and fast-forward merge it back into `dev`; gates run on `dev`. `main` is
   production. Fast-forward `main` to `dev` only when the owner
   says deploy, because a push to `main` deploys; [docs/DEPLOY.md](docs/DEPLOY.md)
-  holds the deploy mechanics. Push `dev` only with the owner's go-ahead as well.
+  holds the deploy mechanics. Push `dev` without asking; a `dev` push deploys
+  nothing (owner, 2026-11-12 and 2026-11-19).
 - Agent-profile upgrades: when asked to upgrade or refresh the profiles in
   `.claude/agents/` (including "mine git"), run Pipeforge's
   `integrate-agent-learnings` skill instead of mining git by hand. Run
