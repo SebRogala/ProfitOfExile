@@ -58,24 +58,44 @@ function expectRowAt(row: HTMLElement): void {
 	expect({ left, top, width, height }).toEqual({ left: '8px', top: '4px', width: '224px', height: '16px' });
 }
 
-describe('overlay preview page for a windowed client', () => {
-	it('renders the rect frame, its numbers and the row offset inside it', async () => {
-		const target = await render([200, 120, 300, 60], [[210, 125, 280, 20]]);
+const WINDOWED = { rect: [200, 120, 300, 60] as OcrRect, row: [210, 125, 280, 20] as OcrRect };
+const MOVED = { rect: [400, 220, 300, 60] as OcrRect, row: [410, 225, 280, 20] as OcrRect };
+
+function onlyRow(target: HTMLElement): HTMLElement {
+	const rows = target.querySelectorAll<HTMLElement>('.preview-row');
+	expect(rows).toHaveLength(1);
+	return rows[0];
+}
+
+describe('keep_happy: overlay preview page for a windowed client', () => {
+	it('labels the preview frame for assistive tech', async () => {
+		const target = await render(WINDOWED.rect, [WINDOWED.row]);
 
 		const frame = target.querySelector('[role="img"]');
 		expect(frame?.getAttribute('aria-label')).toBe('Gem Tooltip Region OCR region preview');
-		expect(target.querySelector('.preview-label')?.textContent).toContain('[200, 120, 300, 60]');
-		const rows = target.querySelectorAll<HTMLElement>('.preview-row');
-		expect(rows).toHaveLength(1);
-		expectRowAt(rows[0]);
 	});
 
-	it('renders a moved rect with the same row offsets', async () => {
-		const target = await render([400, 220, 300, 60], [[410, 225, 280, 20]]);
+	it('shows the rect numbers', async () => {
+		const target = await render(WINDOWED.rect, [WINDOWED.row]);
+
+		expect(target.querySelector('.preview-label')?.textContent).toContain('[200, 120, 300, 60]');
+	});
+
+	it('draws the row at its offset inside the rect', async () => {
+		const target = await render(WINDOWED.rect, [WINDOWED.row]);
+
+		expectRowAt(onlyRow(target));
+	});
+
+	it('shows the moved rect numbers', async () => {
+		const target = await render(MOVED.rect, [MOVED.row]);
 
 		expect(target.querySelector('.preview-label')?.textContent).toContain('[400, 220, 300, 60]');
-		const rows = target.querySelectorAll<HTMLElement>('.preview-row');
-		expect(rows).toHaveLength(1);
-		expectRowAt(rows[0]);
+	});
+
+	it('draws the moved row at the same offset', async () => {
+		const target = await render(MOVED.rect, [MOVED.row]);
+
+		expectRowAt(onlyRow(target));
 	});
 });

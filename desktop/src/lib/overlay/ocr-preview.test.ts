@@ -299,29 +299,47 @@ describe('OCR preview owner', () => {
 		harness.gameMonitor = async () => ({ id: 2, x: 1920, y: 0, width: 2560, height: 1440 });
 	}
 
-	it("places a windowed client's rectangle at the client offset inside the game window", async () => {
+	// A 1600x900 client at capture-relative (160, 90); the rect sits at (40, 30) inside it.
+	const WINDOWED: OcrPreviewRequest['rect'] = [200, 120, 300, 60];
+	// The same rect after the client moved by (200, 100).
+	const MOVED: OcrPreviewRequest['rect'] = [400, 220, 300, 60];
+
+	async function openOnSecondMonitor(rect: OcrPreviewRequest['rect']) {
 		const harness = makeHarness();
 		onSecondMonitor(harness);
-
-		// A 1600x900 client at capture-relative (160, 90); the rect sits at (40, 30) inside it.
-		await harness.owner.preview(request([200, 120, 300, 60]));
+		await harness.owner.preview(request(rect));
 		const preview = harness.windows[0];
 		await preview.emit('tauri://created');
+		return preview;
+	}
+
+	it("keep_happy: a windowed client's preview window is created at the logical rect size", async () => {
+		const preview = await openOnSecondMonitor(WINDOWED);
 
 		expect(preview.options).toMatchObject({ width: 240, height: 48 });
+	});
+
+	it("keep_happy: places a windowed client's rectangle at the client offset inside the game window", async () => {
+		const preview = await openOnSecondMonitor(WINDOWED);
+
 		expect(preview.positionCalls).toEqual([{ x: 2120, y: 120 }, { x: 2120, y: 120 }]);
+	});
+
+	it("keep_happy: a windowed client's preview ends at the physical rect size", async () => {
+		const preview = await openOnSecondMonitor(WINDOWED);
+
 		expect(preview.sizeCalls.at(-1)).toEqual({ width: 300, height: 60 });
 	});
 
-	it('opens a re-placed rect at the moved position', async () => {
-		const harness = makeHarness();
-		onSecondMonitor(harness);
-
-		await harness.owner.preview(request([400, 220, 300, 60]));
-		const preview = harness.windows[0];
-		await preview.emit('tauri://created');
+	it('keep_happy: opens a re-placed rect at the moved position', async () => {
+		const preview = await openOnSecondMonitor(MOVED);
 
 		expect(preview.positionCalls).toEqual([{ x: 2320, y: 220 }, { x: 2320, y: 220 }]);
+	});
+
+	it('keep_happy: a re-placed rect keeps its physical size', async () => {
+		const preview = await openOnSecondMonitor(MOVED);
+
 		expect(preview.sizeCalls.at(-1)).toEqual({ width: 300, height: 60 });
 	});
 
