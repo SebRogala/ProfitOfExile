@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"profitofexile/internal/coalesce"
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/league"
 )
@@ -105,11 +106,7 @@ type Service struct {
 	notify func()
 	logger *slog.Logger
 
-	// mu guards running and dirty only. It is never held across a Recompute, so a
-	// second trigger returns immediately while the first is still reading.
-	mu      sync.Mutex
-	running bool
-	dirty   bool
+	recompute coalesce.Coalescer
 }
 
 // NewService builds a recompute service for one league scope. A nil logger
@@ -228,40 +225,17 @@ func tierPrice(ip ItemPrice) (float64, bool) {
 	return 0, false
 }
 
-// Trigger runs a recompute, coalescing concurrent requests.
-//
-// While a recompute is in flight, further triggers only set dirty and return
-// immediately, and the running recompute repeats once for however many arrived.
-// The rerun keeps the last event from being lost: the in-flight read may have
-// started before its rows were committed.
+// Trigger runs a recompute, coalescing concurrent requests through
+// coalesce.Coalescer, which documents the coalescing rationale.
 //
 // Errors are logged at Warn rather than returned, because callers are
 // fire-and-forget. Call Recompute directly when the error matters.
 func (s *Service) Trigger(ctx context.Context) {
-	s.mu.Lock()
-	if s.running {
-		s.dirty = true
-		s.mu.Unlock()
-		return
-	}
-	s.running = true
-	s.mu.Unlock()
-
-	for {
+	s.recompute.Run(func() {
 		if err := s.Recompute(ctx); err != nil {
 			s.logger.Warn("harvest: recompute failed", "error", err)
 		}
-
-		s.mu.Lock()
-		if s.dirty {
-			s.dirty = false
-			s.mu.Unlock()
-			continue
-		}
-		s.running = false
-		s.mu.Unlock()
-		return
-	}
+	})
 }
 
 // HandleEvent recomputes in response to a collector event. The payload is
