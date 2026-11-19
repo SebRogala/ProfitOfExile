@@ -81,6 +81,7 @@ the desktop defaults in `desktop/src-tauri/src/settings.rs`,
 make test                     # Go suite, race detector
 make test-league-rollover      # Docker rollover proof; requires the leased lane DB
 make worktree-create LANE=laneexample BASE=dev  # Provision an isolated lane
+make lane-setup               # Inside an existing lane worktree: isolate it (pipeforge laneSetup)
 make qa                       # Go + desktop Rust + desktop vitest + npm peer-range check
 make desktop-check-windows    # type-checks the cfg(windows) half against x86_64-pc-windows-gnu
 ```

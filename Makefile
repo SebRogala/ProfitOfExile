@@ -11,6 +11,13 @@ worktree-create: ## Provision a guarded isolated lane (LANE=lane… BASE=ref)
 
 export LANE BASE DRY_RUN
 
+.PHONY: lane-setup lane-teardown
+lane-setup: ## Isolate this lane worktree: own DBs, Compose project, host; idempotent (pipeforge laneSetup)
+	@scripts/lane-isolation.sh setup
+
+lane-teardown: ## Remove this lane's containers, DBs and generated env (lane worktree only)
+	@scripts/lane-isolation.sh teardown
+
 build: ## Build Go server binary
 	@docker compose exec app true 2>/dev/null || $(MAKE) up
 	docker compose exec app go build -o bin/server ./cmd/server

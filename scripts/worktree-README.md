@@ -41,6 +41,35 @@ Save these base `deliver` settings before guarded acceptance:
 }
 ```
 
+## Lane isolation in an existing worktree (`make lane-setup`)
+
+Pipeforge v2 creates the lane worktree itself and then runs the project's
+`laneSetup` argv in it, with no lane argument. For that path, run from inside
+a linked worktree at `.worktrees/<dir>`:
+
+```sh
+make lane-setup      # pipeforge laneSetup: ["make","lane-setup"]
+make lane-teardown   # throwaway lanes only
+```
+
+The lane name is `<dir>` lowercased with non-alphanumerics dropped, prefixed
+with `lane` when absent (`poe-414` gives `lanepoe414`); it must match
+`^lane[a-z0-9]{1,20}$`. It renders the same resources as § Created resources
+(databases, Compose project, container names, host, `.worktree/` caches, `.env`,
+`.env.local`, Vite config) from `docker-compose.worktree.yml`, reusing the main
+images `profitofexile-<service>:latest`, and migrates the lane dev DB in a
+one-off container, leaving none running; `make up` in the lane starts app and
+frontend, never the collector. In the main checkout `lane-setup` does nothing and exits 0.
+
+Each lane database carries the comment `lane-isolation:<checkout path>`.
+Setup reuses a database with its own comment and refuses one with any other
+comment; teardown drops only its own. The full integration runner recreates
+the integration DB without a comment; both commands accept that. A lane made
+by `make worktree-create` (64-hex allocation labels) is left unchanged by
+setup and refused by teardown. `WORKTREE_DB_PASSWORD` (default: the
+documented local `profitofexile`) must use URL-unreserved characters.
+Without Docker or PostgreSQL: `bash scripts/lane-isolation.test.sh`.
+
 ## Created resources
 
 The target creates `.worktrees/<lane>` on new branch `<lane>` from the resolved

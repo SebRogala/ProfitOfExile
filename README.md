@@ -118,6 +118,7 @@ make up-collector  # Opt-in: start the collector (polls poe.ninja + GGG trade)
 make test        # Run all Go tests
 make test-league-rollover     # Docker stale-contribution proof; leased lane DB required
 make worktree-create LANE=laneexample BASE=dev   # Provision an isolated lane
+make lane-setup  # Inside an existing lane worktree: isolate it (pipeforge laneSetup)
 make migration name=add_foo   # Generate new migration pair
 ```
 
