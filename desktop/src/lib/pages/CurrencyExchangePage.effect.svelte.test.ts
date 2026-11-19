@@ -4,7 +4,7 @@
  * effects run and the no-offers chip is clicked for real. The transport is the
  * stubbed `fetchCurrencyExchangePlays`; every call it records is a sent request.
  */
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import type { CurrencyExchangeResponse, ExchangePageParams } from '$lib/api';
 
@@ -23,13 +23,25 @@ vi.mock('$lib/api', async () => {
 		})
 	};
 });
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({})) }));
+/** The prefs map the stubbed Rust `get_ui_prefs` answers with: a nondefault sort, chip off. */
+const storedPrefs = vi.hoisted(() => ({
+	currencyExchangeSort: 'roi',
+	currencyExchangeNoOffersOnly: 'false'
+}));
+vi.mock('@tauri-apps/api/core', () => ({
+	invoke: vi.fn(async (cmd: string) => (cmd === 'get_ui_prefs' ? { ...storedPrefs } : {}))
+}));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 
-import CurrencyExchangePage from './CurrencyExchangePage.svelte';
-import { setNumberFormat } from '$lib/stores/number-format.svelte';
+let CurrencyExchangePage: typeof import('./CurrencyExchangePage.svelte').default;
 
-beforeAll(() => setNumberFormat('comma'));
+// prefs.svelte.ts caches the loaded map at module level; fresh modules per case
+// keep one case's chip toggle from hydrating the next case's mount.
+beforeEach(async () => {
+	vi.resetModules();
+	CurrencyExchangePage = (await import('./CurrencyExchangePage.svelte')).default;
+	(await import('$lib/stores/number-format.svelte')).setNumberFormat('comma');
+});
 
 const leg = (item: string, action: 'buy' | 'sell') => ({
 	action,
@@ -129,16 +141,21 @@ afterEach(() => {
 	transport.responses.length = 0;
 });
 
-/** The page mounted and settled on `first`, then the chip clicked with `second` as the next answer. */
-async function clickChip(first: string[], second: string[]) {
+/**
+ * The page mounted and settled on `first`, then the chip clicked with `second`
+ * as the next answer. Returns how many requests were sent before the click.
+ */
+async function clickChip(first: string[], second: string[]): Promise<number> {
 	transport.responses.push(answer(first), answer(second));
 	app = mount(CurrencyExchangePage, { target: document.body });
 	await settle();
 	const chip = document.querySelector<HTMLButtonElement>('button.no-offers-chip');
 	if (!chip) throw new Error('the no-offers chip did not render');
+	const before = transport.calls.length;
 	chip.click();
 	flushSync();
 	await settle();
+	return before;
 }
 
 /** Item names in the rendered table body, one per row, in row order. */
@@ -150,17 +167,15 @@ function rowNames(names: string[]): string[] {
 
 describe('CurrencyExchangePage no offers chip click', () => {
 	it('no offers chip click sends a request with noOffers=only', async () => {
-		await clickChip(['TwoSidedOrb'], ['SellBlockedOrb']);
+		const before = await clickChip(['TwoSidedOrb'], ['SellBlockedOrb']);
 
-		expect(transport.calls.at(-1)?.params.noOffers).toBe('only');
+		expect(transport.calls[before]?.params.noOffers).toBe('only');
 	});
 
 	it('no offers chip click sends the same sort as the request before it', async () => {
-		await clickChip(['TwoSidedOrb'], ['SellBlockedOrb']);
+		const before = await clickChip(['TwoSidedOrb'], ['SellBlockedOrb']);
 
-		const filtered = transport.calls.find((call) => call.params.noOffers === 'only');
-
-		expect(filtered?.params.sort).toBe(transport.calls[0].params.sort);
+		expect(transport.calls[before]?.params.sort).toBe(transport.calls[before - 1].params.sort);
 	});
 
 	it('no offers rows keep the order the filtered response answered with', async () => {
