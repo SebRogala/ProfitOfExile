@@ -374,10 +374,6 @@ func (s *Service) widestWindow() int {
 	return widest
 }
 
-// Trigger runs a recompute, coalescing concurrent requests.
-//
-// A catch-up pass stores several hours in a row and the subscriber fires one
-// Trigger per stored hour. Running them all would mean N full window reads for
 // Trigger runs a recompute, coalescing concurrent requests through
 // coalesce.Coalescer, which documents the coalescing rationale. A catch-up pass
 // stores several hours in a row and the subscriber fires one Trigger per stored
@@ -394,7 +390,11 @@ func (s *Service) Trigger(ctx context.Context) {
 	})
 }
 
-s rows: 0 while being fully populated — an
+// HandleEvent recomputes in response to a collector event. The raw payload is
+// deliberately ignored.
+//
+// The event's "rows" field counts what that pass INSERTED, not what the hour
+// holds, so a replayed hour publishes rows: 0 while being fully populated — an
 // event-content check would skip exactly the recompute a crash recovery needs.
 // Reading nothing from the payload also makes the handler replay-safe: a
 // duplicate delivery costs one coalesced recompute and changes no state.
