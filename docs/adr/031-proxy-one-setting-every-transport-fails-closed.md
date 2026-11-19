@@ -72,9 +72,11 @@ When Blocked:
   or not JSON, so a save cannot reset the file to defaults and unblock the
   next launch.
 
-Interim B: credentials (`user:pass@`) are rejected, because WebView2's
+Credentials (`user:pass@`) are rejected, because WebView2's
 `--proxy-server` cannot carry them and such a URL would route only part of the
-app.
+app. This was Interim B; the Operator made it final on 2026-11-19 (Desk
+poe360-proxy-credentials: reject). Accepting credentials would need a WebView2
+login prompt; build that only when a user needs a login proxy.
 
 The source-scan test in `http.rs`
 (`no_production_source_builds_an_http_client_outside_the_factory`) fails when
