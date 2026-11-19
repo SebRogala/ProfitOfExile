@@ -211,6 +211,10 @@ pub const UI_SCALE_REFERENCE_HEIGHT: f32 = 1200.0;
 /// because the obvious defence here (an `if height == 0` early return) is dead
 /// code that reads like it is load-bearing.
 ///
+/// Callers pass the game client's height ([`screen_from_geometry`]), which is
+/// the screen height fullscreen — the interim windowed rule pending the
+/// Operator's POE-267 decision.
+///
 /// Pure so the one piece of arithmetic in the derivation is testable without a
 /// screen.
 pub fn ui_scale_for_height(height: u32) -> f32 {
@@ -321,8 +325,9 @@ pub struct ScreenSlice {
     /// capture-relative.
     pub origin: (i32, i32),
     /// The capture rectangle in capture-relative physical px: x, y, w, h.
-    /// POE-268's capture path is fullscreen, so this is the whole capture,
-    /// `[0, 0, width, height]`; POE-272 will make it a live client rectangle.
+    /// The game client's rect inside the capture: `[0, 0, width, height]`
+    /// fullscreen, the window's client area when windowed (POE-272). A move
+    /// re-places the slice; a resize drops it ([`reconcile_screen`]).
     pub client: [i32; 4],
     /// Capture-relative origins learned by a module's later calibration pass.
     /// `None` means the corresponding placement still uses its seed.
@@ -1081,6 +1086,11 @@ pub fn should_remember_screen(changed: bool, source: ScreenScaleSource) -> bool 
 ///
 /// Pure so the rule is unit-testable without an `AppHandle`, the same reason
 /// [`should_flag_unreachable`] and [`record_screen`] are extracted.
+///
+/// Strict: a moved client is NOT a match, because the slice's anchors are
+/// stale until [`reconcile_screen`] re-places them (temple's `probe_frame`
+/// filter relies on that). Built on [`client_change`], the one home of the
+/// same-screen rule.
 pub fn screen_matches(
     current: &Option<ScreenSlice>,
     capture: (u32, u32),
@@ -1089,17 +1099,98 @@ pub fn screen_matches(
 ) -> bool {
     match current {
         None => true,
-        Some(current) => {
-            !different_display(current.origin, origin)
-                && current.width == capture.0
-                && current.height == capture.1
-                && current.client == client
-        }
+        Some(current) => client_change(current, capture, origin, client) == ClientChange::Same,
     }
 }
 
-/// Forget the remembered screen scale when this capture has different geometry
-/// (POE-227). Returns whether anything was dropped.
+/// How a capture's geometry relates to a standing slice (POE-272).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClientChange {
+    /// Same display, capture size and client rect.
+    Same,
+    /// Same display, capture size and client size; only the client origin
+    /// moved. The scale is height-tied, so it still holds: a re-place.
+    Moved { dx: i32, dy: i32 },
+    /// Another display, capture size or client size: a re-verify.
+    Mismatch,
+}
+
+/// Classify a capture against the standing slice — the same-screen rule.
+pub(crate) fn client_change(
+    current: &ScreenSlice,
+    capture: (u32, u32),
+    origin: (i32, i32),
+    client: [i32; 4],
+) -> ClientChange {
+    if different_display(current.origin, origin)
+        || current.width != capture.0
+        || current.height != capture.1
+        || current.client[2] != client[2]
+        || current.client[3] != client[3]
+    {
+        return ClientChange::Mismatch;
+    }
+    if current.client == client {
+        ClientChange::Same
+    } else {
+        ClientChange::Moved { dx: client[0] - current.client[0], dy: client[1] - current.client[1] }
+    }
+}
+
+/// What [`reconcile_screen`] did to the slot.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ScreenReconcile {
+    /// Empty slot, or the same screen: nothing changed.
+    Kept,
+    /// The client moved; the slot now holds the new client and shifted anchors.
+    Replaced { from: [i32; 4] },
+    /// The geometry no longer describes this slice; the slot is now empty.
+    Dropped(ScreenSlice),
+}
+
+/// The pure half of [`drop_if_mismatched`]: a moved client re-places the
+/// slice (new `client`, every remembered anchor shifted by the same delta,
+/// scale and provenance untouched); any other mismatch takes the slot.
+pub(crate) fn reconcile_screen(
+    current: &mut Option<ScreenSlice>,
+    capture: (u32, u32),
+    origin: (i32, i32),
+    client: [i32; 4],
+) -> ScreenReconcile {
+    let Some(screen) = current.as_mut() else {
+        return ScreenReconcile::Kept;
+    };
+    match client_change(screen, capture, origin, client) {
+        ClientChange::Same => ScreenReconcile::Kept,
+        ClientChange::Moved { dx, dy } => {
+            let from = screen.client;
+            screen.client = client;
+            if let Some(anchors) = screen.anchors.as_mut() {
+                for anchor in [&mut anchors.temple_entrance, &mut anchors.merc_panel] {
+                    if let Some([x, y]) = anchor.as_mut() {
+                        *x += dx;
+                        *y += dy;
+                    }
+                }
+            }
+            ScreenReconcile::Replaced { from }
+        }
+        ClientChange::Mismatch => match current.take() {
+            Some(stale) => ScreenReconcile::Dropped(stale),
+            None => ScreenReconcile::Kept,
+        },
+    }
+}
+
+/// Reconcile the remembered screen with this capture (POE-227, POE-272).
+/// Returns whether anything was dropped.
+///
+/// Two arms, decided by [`reconcile_screen`]: a moved game client (same
+/// display, capture size and client size) re-places the slice — the client and
+/// anchors follow, the scale stays, one log line and an `ssot-changed` emit,
+/// no settings write (the stored client and anchors stay a coherent pair, and
+/// the next reconcile re-places a stale stored pair the same way). Any other
+/// mismatch forgets the scale, as below.
 ///
 /// This is the lazy prune the startup load could not do: `settings::apply_to_state`
 /// loads and trusts a stored `screen_scale` with no `AppHandle` and no idea what
@@ -1124,17 +1215,25 @@ pub fn drop_if_mismatched(
     origin: (i32, i32),
     client: [i32; 4],
 ) -> bool {
-    let dropped = {
+    let outcome = {
         let state = app.state::<AppState>();
         let mut current = state.screen.lock().unwrap_or_else(|e| e.into_inner());
-        if screen_matches(&current, capture, origin, client) {
-            None
-        } else {
-            current.take()
-        }
+        reconcile_screen(&mut current, capture, origin, client)
     };
-    let Some(stale) = dropped else {
-        return false;
+    let stale = match outcome {
+        ScreenReconcile::Kept => return false,
+        ScreenReconcile::Replaced { .. } => {
+            crate::app_log(
+                app,
+                format!(
+                    "game client moved to {},{} ({}×{}) — placements follow",
+                    client[0], client[1], client[2], client[3]
+                ),
+            );
+            emit_ssot(app);
+            return false;
+        }
+        ScreenReconcile::Dropped(stale) => stale,
     };
     crate::app_log(
         app,
@@ -1202,7 +1301,9 @@ where
 /// (POE-278) — the value [`geometry_recalibrate`] publishes.
 ///
 /// Everything but the scale is carried straight off the capture; the scale is
-/// [`ui_scale_for_height`]. `anchors` is `None` because a grab has located no
+/// [`ui_scale_for_height`] of the game CLIENT's height, not the capture's —
+/// in windowed play the UI scales with the window (POE-272; the interim rule
+/// pending the Operator's POE-267 decision).`anchors` is `None` because a grab has located no
 /// module panel, and on the one path that publishes this the standing anchors
 /// are already gone — [`geometry_recalibrate`] empties the whole slot before it
 /// measures, which is the forgetting half of the press doing exactly what it
@@ -1223,7 +1324,7 @@ pub fn screen_from_geometry(
     ScreenSlice {
         width,
         height,
-        ui_scale: ui_scale_for_height(height),
+        ui_scale: ui_scale_for_height(client[3].max(0) as u32),
         source,
         measured_at_ms,
         // Not a verification and it must not claim to be one: nothing here
@@ -3547,6 +3648,120 @@ mod tests {
             OTHER_ORIGIN,
             [0, 0, 1920, 1200],
         ));
+    }
+
+    // ---------------------------------------- windowed client (POE-272) --
+
+    /// A windowed 1600x900 client on a 1920x1080 capture, with both anchors
+    /// remembered.
+    fn windowed_screen() -> ScreenSlice {
+        ScreenSlice {
+            width: 1920,
+            height: 1080,
+            ui_scale: 0.75,
+            client: [100, 50, 1600, 900],
+            anchors: Some(Anchors {
+                temple_entrance: Some([900, 700]),
+                merc_panel: Some([700, 600]),
+            }),
+            ..reference_screen()
+        }
+    }
+
+    fn shifted(rect: [i32; 4], dx: i32, dy: i32) -> [i32; 4] {
+        [rect[0] + dx, rect[1] + dy, rect[2], rect[3]]
+    }
+
+    mod keep_happy {
+        use super::*;
+
+        #[test]
+        fn a_moved_client_re_places_the_slice_and_its_anchors() {
+            let before = windowed_screen();
+            let mut slot = Some(before);
+
+            let outcome = reconcile_screen(&mut slot, (1920, 1080), REFERENCE_ORIGIN, [300, 150, 1600, 900]);
+
+            assert!(matches!(outcome, ScreenReconcile::Replaced { from: [100, 50, 1600, 900] }));
+            let after = slot.expect("a move keeps the slice");
+            assert_eq!(after.client, [300, 150, 1600, 900]);
+            assert_eq!(
+                after.anchors,
+                Some(Anchors { temple_entrance: Some([1100, 800]), merc_panel: Some([900, 700]) }),
+            );
+            assert_eq!(after.ui_scale, before.ui_scale);
+            assert_eq!(after.source, before.source);
+            assert_eq!(after.verified_this_session, before.verified_this_session);
+            assert_eq!(after.measured_at_ms, before.measured_at_ms);
+            assert_eq!((after.width, after.height, after.origin), (before.width, before.height, before.origin));
+        }
+
+        #[test]
+        fn a_moved_client_moves_every_placement_by_the_same_delta() {
+            let mut slot = Some(windowed_screen());
+            let before = placements(slot.as_ref().unwrap());
+
+            reconcile_screen(&mut slot, (1920, 1080), REFERENCE_ORIGIN, [300, 150, 1600, 900]);
+            let after = placements(slot.as_ref().unwrap());
+
+            let (dx, dy) = (200, 100);
+            assert_eq!(after.lab.gem, shifted(before.lab.gem, dx, dy));
+            assert_eq!(after.lab.font, shifted(before.lab.font, dx, dy));
+            for (a, b) in after.lab.gem_slots.iter().zip(before.lab.gem_slots.iter()) {
+                assert_eq!(*a, shifted(*b, dx, dy));
+            }
+            let (bt, at) = (before.temple.unwrap().entrance_origin, after.temple.unwrap().entrance_origin);
+            assert_eq!(at, (bt.0 + dx, bt.1 + dy));
+            assert_eq!(after.merc.unwrap().panel, shifted(before.merc.unwrap().panel, dx, dy));
+        }
+
+        #[test]
+        fn a_resized_client_drops_the_slice() {
+            let mut slot = Some(windowed_screen());
+
+            let outcome = reconcile_screen(&mut slot, (1920, 1080), REFERENCE_ORIGIN, [100, 50, 1280, 720]);
+
+            assert!(matches!(outcome, ScreenReconcile::Dropped(stale) if stale.client == [100, 50, 1600, 900]));
+            assert!(slot.is_none());
+        }
+
+        #[test]
+        fn a_windowed_capture_derives_scale_from_client_height() {
+            assert_eq!(screen_from_geometry(1920, 1080, 1, (0, 0), [160, 90, 1600, 900], 0).ui_scale, 0.75);
+        }
+    }
+
+    mod keep_critical {
+        use super::*;
+
+        /// Silent consequence if this were treated as a move: the slice would
+        /// keep another monitor's scale and place every rect from it, with
+        /// nothing on screen to say so.
+        #[test]
+        fn a_display_change_with_a_moved_client_still_drops() {
+            let mut slot = Some(windowed_screen());
+
+            let outcome = reconcile_screen(&mut slot, (1920, 1080), OTHER_ORIGIN, [300, 150, 1600, 900]);
+
+            assert!(matches!(outcome, ScreenReconcile::Dropped(_)));
+            assert!(slot.is_none());
+        }
+
+        /// Silent consequence of retaining measured geometry after a resize:
+        /// every module would read stale pixels at the old rects.
+        #[test]
+        fn a_resized_client_discards_the_old_measured_placements() {
+            let mut slot = Some(windowed_screen());
+
+            let outcome = reconcile_screen(&mut slot, (1920, 1080), REFERENCE_ORIGIN, [100, 50, 1280, 720]);
+
+            assert!(matches!(outcome, ScreenReconcile::Dropped(_)));
+            assert!(slot.is_none(), "no previous client or anchors survive");
+            let placements = placements_for(slot.as_ref());
+            assert_eq!(placements.temple, None);
+            assert_eq!(placements.merc, None);
+            assert_eq!(placements.lab, placements_for(None).lab);
+        }
     }
 
     macro_rules! snapshot_echoes {
