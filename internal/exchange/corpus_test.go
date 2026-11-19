@@ -690,9 +690,14 @@ func TestCorpus_journeyTattooOneSidedBook_theSellSideRouteIsServedAndMarkedDeple
 	if sell.Action != "sell" || sell.Item != tattooID || sell.Quote != chaosID {
 		t.Fatalf("leg 1 = %s %s in %s, want the tattoo sold into chaos", sell.Action, sell.Item, sell.Quote)
 	}
-	t.Run("sell leg is marked depleted, not noOffers", func(t *testing.T) {
-		if !sell.DepletedSide || sell.NoOffers {
-			t.Errorf("sell leg DepletedSide/NoOffers = %v/%v, want true/false — no tattoo was on offer, bids stood", sell.DepletedSide, sell.NoOffers)
+	t.Run("sell leg is marked depleted", func(t *testing.T) {
+		if !sell.DepletedSide {
+			t.Errorf("sell leg DepletedSide = false, want true — no tattoo was on offer")
+		}
+	})
+	t.Run("sell leg carries no noOffers", func(t *testing.T) {
+		if sell.NoOffers {
+			t.Errorf("sell leg NoOffers = true, want false — the chaos bids stood")
 		}
 	})
 	t.Run("sell leg reads the standing bids", func(t *testing.T) {
@@ -745,8 +750,13 @@ func TestCorpus_emptyExecutingSide_isServedAndMarkedNoOffers(t *testing.T) {
 						}
 					})
 					t.Run("blocked leg reads an empty own side", func(t *testing.T) {
-						if blocked := playByKey(t, got, tc.key).Legs[tc.blocked]; blocked.Stock != 0 || blocked.DepletedSide {
-							t.Errorf("blocked leg Stock/DepletedSide = %d/%v, want 0/false — the empty side is its own", blocked.Stock, blocked.DepletedSide)
+						if blocked := playByKey(t, got, tc.key).Legs[tc.blocked]; blocked.Stock != 0 {
+							t.Errorf("blocked leg Stock = %d, want 0 — the empty side is its own", blocked.Stock)
+						}
+					})
+					t.Run("blocked leg carries no depletedSide", func(t *testing.T) {
+						if blocked := playByKey(t, got, tc.key).Legs[tc.blocked]; blocked.DepletedSide {
+							t.Errorf("blocked leg DepletedSide = true, want false — the empty side is its own, not the opposite")
 						}
 					})
 					t.Run("served from the newest hour", func(t *testing.T) {
@@ -821,10 +831,17 @@ func TestCorpus_journeyTattooTwoSidedTwin_isServedAsAFlipCarryingNoDepletedSide(
 			t.Errorf("play NoOffers = true, want false — both sides of this book were alive")
 		}
 	})
-	t.Run("no leg is marked", func(t *testing.T) {
+	t.Run("no leg carries depletedSide", func(t *testing.T) {
 		for i, leg := range play.Legs {
-			if leg.DepletedSide || leg.NoOffers {
-				t.Errorf("leg %d (%s) DepletedSide/NoOffers = %v/%v, want false/false — both sides of this book were alive", i, leg.Action, leg.DepletedSide, leg.NoOffers)
+			if leg.DepletedSide {
+				t.Errorf("leg %d (%s) DepletedSide = true, want false — both sides of this book were alive", i, leg.Action)
+			}
+		}
+	})
+	t.Run("no leg carries noOffers", func(t *testing.T) {
+		for i, leg := range play.Legs {
+			if leg.NoOffers {
+				t.Errorf("leg %d (%s) NoOffers = true, want false — both sides of this book were alive", i, leg.Action)
 			}
 		}
 	})

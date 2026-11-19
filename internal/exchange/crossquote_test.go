@@ -404,15 +404,23 @@ func assertClosingMarketMarks(t *testing.T, emptied int, blockedKey, clearKey st
 	got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, windowView{}, DefaultConfig())
 
 	t.Run("blocked close carries noOffers", func(t *testing.T) {
-		blocked := candidateByKey(t, got, blockedKey).legs[2].obs
-		if !blocked.noOffers || blocked.depletedSide {
-			t.Errorf("%s close noOffers/depletedSide = %v/%v, want true/false", blockedKey, blocked.noOffers, blocked.depletedSide)
+		if !candidateByKey(t, got, blockedKey).legs[2].obs.noOffers {
+			t.Errorf("%s close noOffers = false, want true", blockedKey)
+		}
+	})
+	t.Run("blocked close carries no depletedSide", func(t *testing.T) {
+		if candidateByKey(t, got, blockedKey).legs[2].obs.depletedSide {
+			t.Errorf("%s close depletedSide = true, want false", blockedKey)
 		}
 	})
 	t.Run("mirror close carries depletedSide", func(t *testing.T) {
-		clear := candidateByKey(t, got, clearKey).legs[2].obs
-		if clear.noOffers || !clear.depletedSide {
-			t.Errorf("%s close noOffers/depletedSide = %v/%v, want false/true", clearKey, clear.noOffers, clear.depletedSide)
+		if !candidateByKey(t, got, clearKey).legs[2].obs.depletedSide {
+			t.Errorf("%s close depletedSide = false, want true", clearKey)
+		}
+	})
+	t.Run("mirror close carries no noOffers", func(t *testing.T) {
+		if candidateByKey(t, got, clearKey).legs[2].obs.noOffers {
+			t.Errorf("%s close noOffers = true, want false", clearKey)
 		}
 	})
 }
@@ -454,9 +462,14 @@ func TestCrossQuoteCandidates_sellLegIntoAMarketWithNoAsksStanding_isGatedAndMar
 			t.Errorf("sell leg stock = %d, want the 900 chaos it executes against", sell.obs.stock)
 		}
 	})
-	t.Run("sell leg is marked depleted, not noOffers", func(t *testing.T) {
-		if !sell.obs.depletedSide || sell.obs.noOffers {
-			t.Errorf("sell leg depletedSide/noOffers = %v/%v, want true/false — no card was on offer, bids stood", sell.obs.depletedSide, sell.obs.noOffers)
+	t.Run("sell leg is marked depleted", func(t *testing.T) {
+		if !sell.obs.depletedSide {
+			t.Errorf("sell leg depletedSide = false, want true — no card was on offer")
+		}
+	})
+	t.Run("sell leg carries no noOffers", func(t *testing.T) {
+		if sell.obs.noOffers {
+			t.Errorf("sell leg noOffers = true, want false — the chaos bids stood")
 		}
 	})
 }
@@ -480,9 +493,14 @@ func TestCrossQuoteCandidates_buyLegOnTheSameOneSidedMarket_isServedAndMarkedNoO
 			t.Errorf("buy stock = %d, want 0", buy.obs.stock)
 		}
 	})
-	t.Run("buy leg carries noOffers, not depletedSide", func(t *testing.T) {
-		if !buy.obs.noOffers || buy.obs.depletedSide {
-			t.Errorf("buy noOffers/depletedSide = %v/%v, want true/false", buy.obs.noOffers, buy.obs.depletedSide)
+	t.Run("buy leg carries noOffers", func(t *testing.T) {
+		if !buy.obs.noOffers {
+			t.Errorf("buy noOffers = false, want true")
+		}
+	})
+	t.Run("buy leg carries no depletedSide", func(t *testing.T) {
+		if buy.obs.depletedSide {
+			t.Errorf("buy depletedSide = true, want false")
 		}
 	})
 }

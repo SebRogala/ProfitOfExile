@@ -521,9 +521,14 @@ func TestDirectCandidates_rescuedHourWhoseNewestContributingRowHasNoExecutingSto
 			t.Errorf("buy noOffers = false, want true off the newest contributor's empty ask side")
 		}
 	})
-	t.Run("sell carries the opposite-side mark only", func(t *testing.T) {
-		if sell.noOffers || !sell.depletedSide {
-			t.Errorf("sell noOffers/depletedSide = %v/%v, want false/true", sell.noOffers, sell.depletedSide)
+	t.Run("sell carries no noOffers", func(t *testing.T) {
+		if sell.noOffers {
+			t.Errorf("sell noOffers = true, want false — its own side stood")
+		}
+	})
+	t.Run("sell carries depletedSide", func(t *testing.T) {
+		if !sell.depletedSide {
+			t.Errorf("sell depletedSide = false, want true off the empty opposite side")
 		}
 	})
 }
