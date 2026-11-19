@@ -5329,104 +5329,112 @@ mod tests {
         }
     }
 
-    // AC-1: every row of the editor table carries its line's facts, off the
-    // one projection the offer box uses, and none of them is empty.
-    #[test]
-    fn value_rows_carry_each_lines_facts_from_drops() {
-        let rows = value_rows(&allflame_valuation());
-        assert_eq!(rows.len(), 25);
-        for row in &rows {
-            let line = rooms::LINES
-                .iter()
-                .find(|line| line.key() == row.key)
-                .expect("every row is one of the 25 lines");
-            assert_eq!(row.line, line_view(line), "{}", row.key);
-            assert!(
-                row.line.content.is_some()
-                    || row.line.chest.is_some()
-                    || row.line.rarity_pct.is_some()
-                    || row.line.pack_size_pct.is_some()
-                    || row.line.magic_pack_size_pct.is_some(),
-                "{} has nothing to show in its tooltip",
-                row.key
-            );
-            let tiers = line.drops().tiers();
-            for source in &row.line.sources {
-                let select: LadderSelect = match source.figure.as_str() {
-                    "rarity_pct" => |tier| tier.rarity_pct(),
-                    "pack_size_pct" => |tier| tier.pack_size_pct(),
-                    "magic_pack_size_pct" => |tier| tier.magic_pack_size_pct(),
-                    other => panic!("{}: unknown figure {other}", row.key),
-                };
+    mod keep_happy {
+        use super::*;
+
+        // AC-1: every row of the editor table carries its line's facts, off the
+        // one projection the offer box uses, and none of them is empty.
+        #[test]
+        fn value_rows_carry_each_lines_facts_from_drops() {
+            let rows = value_rows(&allflame_valuation());
+            assert_eq!(rows.len(), 25);
+            for row in &rows {
+                let line = rooms::LINES
+                    .iter()
+                    .find(|line| line.key() == row.key)
+                    .expect("every row is one of the 25 lines");
+                assert_eq!(row.line, line_view(line), "{}", row.key);
                 assert!(
-                    tiers
-                        .iter()
-                        .filter_map(|tier| select(*tier))
-                        .any(|estimate| drops::source_label(estimate.source()) == source.label),
-                    "{}: {} label {:?} is not its estimate's",
-                    row.key,
-                    source.figure,
-                    source.label
+                    row.line.content.is_some()
+                        || row.line.chest.is_some()
+                        || row.line.rarity_pct.is_some()
+                        || row.line.pack_size_pct.is_some()
+                        || row.line.magic_pack_size_pct.is_some(),
+                    "{} has nothing to show in its tooltip",
+                    row.key
                 );
+                let tiers = line.drops().tiers();
+                for source in &row.line.sources {
+                    let select: LadderSelect = match source.figure.as_str() {
+                        "rarity_pct" => |tier| tier.rarity_pct(),
+                        "pack_size_pct" => |tier| tier.pack_size_pct(),
+                        "magic_pack_size_pct" => |tier| tier.magic_pack_size_pct(),
+                        other => panic!("{}: unknown figure {other}", row.key),
+                    };
+                    assert!(
+                        tiers
+                            .iter()
+                            .filter_map(|tier| select(*tier))
+                            .any(|estimate| drops::source_label(estimate.source()) == source.label),
+                        "{}: {} label {:?} is not its estimate's",
+                        row.key,
+                        source.figure,
+                        source.label
+                    );
+                }
             }
+        }
+
+        // AC-2: the Locus and Cradle rows show the 3.30 sheet's figures, cited to
+        // that sheet.
+        #[test]
+        fn locus_and_cradle_lines_carry_the_330_sheet_figures() {
+            let rows = value_rows(&allflame_valuation());
+            let find = |key: &str| {
+                rows.iter()
+                    .find(|row| row.key == key)
+                    .unwrap_or_else(|| panic!("no {key} row"))
+            };
+            let labels = |row: &RoomValueRowView, figure: &str| -> Vec<String> {
+                row.line
+                    .sources
+                    .iter()
+                    .filter(|s| s.figure == figure)
+                    .map(|s| s.label.clone())
+                    .collect()
+            };
+
+            let locus = find("corruption");
+            assert_eq!(locus.line.rarity_pct, Some([4.0, 8.0, 12.0]));
+            assert_eq!(locus.line.pack_size_pct, Some([1.0, 2.0, 3.0]));
+            let locus_label = drops::source_label(drops::SHEET_LOCUS_330).to_string();
+            assert_eq!(labels(locus, "rarity_pct"), [locus_label.clone()]);
+            assert_eq!(labels(locus, "pack_size_pct"), [locus_label]);
+
+            let cradle = find("throne_of_atziri");
+            assert_eq!(cradle.name, "Cradle of Creation");
+            assert_eq!(cradle.line.magic_pack_size_pct, Some([10.0, 20.0, 30.0]));
+            assert_eq!(
+                labels(cradle, "magic_pack_size_pct"),
+                [drops::source_label(drops::SHEET_CRADLE_330).to_string()]
+            );
         }
     }
 
-    // AC-2: the Locus and Cradle rows show the 3.30 sheet's figures, cited to
-    // that sheet.
-    #[test]
-    fn locus_and_cradle_lines_carry_the_330_sheet_figures() {
-        let rows = value_rows(&allflame_valuation());
-        let find = |key: &str| {
-            rows.iter()
-                .find(|row| row.key == key)
-                .unwrap_or_else(|| panic!("no {key} row"))
-        };
-        let labels = |row: &RoomValueRowView, figure: &str| -> Vec<String> {
-            row.line
-                .sources
-                .iter()
-                .filter(|s| s.figure == figure)
-                .map(|s| s.label.clone())
-                .collect()
-        };
+    mod keep_critical {
+        use super::*;
 
-        let locus = find("corruption");
-        assert_eq!(locus.line.rarity_pct, Some([4.0, 8.0, 12.0]));
-        assert_eq!(locus.line.pack_size_pct, Some([1.0, 2.0, 3.0]));
-        let locus_label = drops::source_label(drops::SHEET_LOCUS_330).to_string();
-        assert_eq!(labels(locus, "rarity_pct"), [locus_label.clone()]);
-        assert_eq!(labels(locus, "pack_size_pct"), [locus_label]);
-
-        let cradle = find("throne_of_atziri");
-        assert_eq!(cradle.name, "Cradle of Creation");
-        assert_eq!(cradle.line.magic_pack_size_pct, Some([10.0, 20.0, 30.0]));
-        assert_eq!(
-            labels(cradle, "magic_pack_size_pct"),
-            [drops::source_label(drops::SHEET_CRADLE_330).to_string()]
-        );
-    }
-
-    // WI-2's rendered tooltip test reads this fixture; a stale copy would let
-    // it pass on figures the app no longer shows.
-    #[test]
-    fn value_row_lines_fixture_matches_the_projection() {
-        let fresh = serde_json::Value::Array(
-            value_rows(&allflame_valuation())
-                .iter()
-                .map(|row| serde_json::json!({ "key": row.key, "name": row.name, "line": row.line }))
-                .collect(),
-        );
-        let committed: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../src/lib/temple/fixtures/value-row-lines.json"
-        ))
-        .expect("value-row-lines.json is JSON");
-        assert_eq!(
-            committed,
-            fresh,
-            "desktop/src/lib/temple/fixtures/value-row-lines.json drifted; paste:\n{}",
-            serde_json::to_string_pretty(&fresh).expect("rows serialise")
-        );
+        // WI-2's rendered tooltip test reads this fixture; a stale copy would let
+        // it pass on figures the app no longer shows.
+        #[test]
+        fn value_row_lines_fixture_matches_the_projection() {
+            let fresh = serde_json::Value::Array(
+                value_rows(&allflame_valuation())
+                    .iter()
+                    .map(|row| serde_json::json!({ "key": row.key, "name": row.name, "line": row.line }))
+                    .collect(),
+            );
+            let committed: serde_json::Value = serde_json::from_str(include_str!(
+                "../../../src/lib/temple/fixtures/value-row-lines.json"
+            ))
+            .expect("value-row-lines.json is JSON");
+            assert_eq!(
+                committed,
+                fresh,
+                "desktop/src/lib/temple/fixtures/value-row-lines.json drifted; paste:\n{}",
+                serde_json::to_string_pretty(&fresh).expect("rows serialise")
+            );
+        }
     }
 
     /// The three cells are tier 1, tier 2, tier 3 — in that order.

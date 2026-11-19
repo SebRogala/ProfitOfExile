@@ -328,8 +328,8 @@ impl TierDrops {
         self.pack_size_pct
     }
 
-    /// `increased Magic Monster Pack size`, in percent. Carried, not priced and
-    /// not on the wire, like pack size.
+    /// `increased Magic Monster Pack size`, in percent. Carried on the wire,
+    /// not priced, like pack size.
     pub fn magic_pack_size_pct(self) -> Option<Estimate> {
         self.magic_pack_size_pct
     }
@@ -1631,19 +1631,23 @@ mod tests {
         sources
     }
 
-    // A source with no short label would print its multi-sentence citation
-    // into a three-line tooltip; this fails on the first one DROPS cites.
-    #[test]
-    fn every_cited_source_has_a_short_label() {
-        let sources = cited_sources();
-        assert!(sources.contains(&SHEET_LOCUS_330) && sources.contains(&POEDB));
-        for source in sources {
-            let label = source_label(source);
-            assert_ne!(label, source, "no short label for {source}");
-            assert!(
-                label.chars().count() <= 40,
-                "label {label:?} for {source} is longer than 40 characters"
-            );
+    mod keep_critical {
+        use super::*;
+
+        // A source with no short label would print its multi-sentence citation
+        // into a three-line tooltip; this fails on the first one DROPS cites.
+        #[test]
+        fn every_cited_source_has_a_short_label() {
+            let sources = cited_sources();
+            assert!(sources.contains(&SHEET_LOCUS_330) && sources.contains(&POEDB));
+            for source in sources {
+                let label = source_label(source);
+                assert_ne!(label, source, "no short label for {source}");
+                assert!(
+                    label.chars().count() <= 40,
+                    "label {label:?} for {source} is longer than 40 characters"
+                );
+            }
         }
     }
 
