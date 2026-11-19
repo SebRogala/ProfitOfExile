@@ -165,6 +165,31 @@ describe('Runs projection', () => {
 		const { profile, runs } = await runInput(8)
 		expect(buildRunsView(profile, runs).rows.at(-1)?.extra.map((item) => item.name)).toContain('Communion Support')
 	})
+	it('splits Catarina run drops into Unique and Allflame Ember columns', async () => {
+		const { profile, runs } = await runInput(8)
+		const view = buildRunsView(profile, runs)
+		expect(view.columns.map((column) => column.label)).toEqual(['Unique', 'Allflame Ember'])
+		const ember = 'Metadata/Items/MapFragments/BetrayalAllflamePack'
+		const row = view.rows.find((candidate) => candidate.groups[1].items.some((item) => item.id === ember))
+		expect(row, 'a fixture run on page eight drops the Ember').toBeDefined()
+		expect(row!.groups.map((group) => group.id)).toEqual(['unique', 'allflame'])
+		expect(row!.groups[0].items.map((item) => item.id)).not.toContain(ember)
+	})
+	it('renders one column per profile group with row drops aligned to them', async () => {
+		const item = (id: string, name: string) => ({ id, name, base: 'Test base', wikiRate: '25%' })
+		const { profile: catarina, runs } = await runInput()
+		const profile = { ...catarina, groups: [
+			{ id: 'relics', label: 'Relics', min: 1, max: 1, items: [item('z', 'Zebra'), item('a', 'Amber')] },
+			{ id: 'tokens', label: 'Tokens', min: 0, max: 2, items: [item('t', 'Token')] },
+			{ id: 'fragments', label: 'Fragments', min: 1, max: 2, items: [item('f', 'Fragment'), item('g', 'Shard')] }
+		], extra: [item('e', 'Extra')], categories: [] }
+		const run = { ...runs.items[0], items: { quantities: { a: 1, z: 0, g: 2, e: 1 }, counted: [] } }
+		const view = buildRunsView(profile, { ...runs, items: [run] })
+		expect(view.columns).toEqual([{ id: 'relics', label: 'Relics' }, { id: 'tokens', label: 'Tokens' }, { id: 'fragments', label: 'Fragments' }])
+		expect(view.rows[0].groups.map((group) => [group.id, group.items.map((drop) => [drop.id, drop.dropQuantity])]))
+			.toEqual([['relics', [['a', 1]]], ['tokens', []], ['fragments', [['g', 2]]]])
+		expect(view.rows[0].extra.map((drop) => drop.id)).toEqual(['e'])
+	})
 	it('shows an empty history without invented run numbers', async () => {
 		const { profile, runs } = await runInput()
 		const view = buildRunsView(profile, { ...runs, total: 0, items: [] })

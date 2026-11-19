@@ -154,7 +154,7 @@ describe('Runs controller', () => {
 		h.page.toggleEditorItem('Cinderswallow Urn')
 		h.page.cancelEdit()
 		expect(h.writes).toEqual([])
-		expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cane of Kulemak', 'Metadata/Items/MapFragments/BetrayalAllflamePack'])
+		expect(h.page.runsView?.rows[0].groups.map((group) => [group.id, group.items.map((item) => item.id)])).toEqual([['unique', ['Cane of Kulemak']], ['allflame', ['Metadata/Items/MapFragments/BetrayalAllflamePack']]])
 	})
 	it('preserves the full hidden Eye history while correcting a unique', async () => {
 		const eye = 'Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly'
@@ -211,7 +211,7 @@ describe('Runs controller', () => {
 		h.page.toggleEditorItem('Cinderswallow Urn')
 		h.setEditError('edit offline')
 		await h.page.saveEditor()
-		expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cane of Kulemak', 'Metadata/Items/MapFragments/BetrayalAllflamePack'])
+		expect(h.page.runsView?.rows[0].groups.map((group) => [group.id, group.items.map((item) => item.id)])).toEqual([['unique', ['Cane of Kulemak']], ['allflame', ['Metadata/Items/MapFragments/BetrayalAllflamePack']]])
 		expect(h.page.runMutationError).toContain('edit offline')
 		expect(h.page.editorView?.groups[0].items.find((item) => item.id === 'Cinderswallow Urn')?.selected).toBe(true)
 	})
@@ -221,7 +221,7 @@ describe('Runs controller', () => {
 		h.page.beginEdit('fixture-catarina-8')
 		h.page.toggleEditorItem('Cinderswallow Urn')
 		await h.page.saveEditor()
-		expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cinderswallow Urn', 'Metadata/Items/MapFragments/BetrayalAllflamePack'])
+		expect(h.page.runsView?.rows[0].groups.map((group) => [group.id, group.items.map((item) => item.id)])).toEqual([['unique', ['Cinderswallow Urn']], ['allflame', ['Metadata/Items/MapFragments/BetrayalAllflamePack']]])
 		expect(h.page.editorView).toBeNull()
 	})
 	it('preserves the server-confirmed row when delete is rejected', async () => {
@@ -302,7 +302,7 @@ describe('Runs controller', () => {
 				return edit(request)
 			}
 			await h.page.saveEditor()
-			expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cane of Kulemak', 'Metadata/Items/MapFragments/BetrayalAllflamePack'])
+			expect(h.page.runsView?.rows[0].groups.map((group) => [group.id, group.items.map((item) => item.id)])).toEqual([['unique', ['Cane of Kulemak']], ['allflame', ['Metadata/Items/MapFragments/BetrayalAllflamePack']]])
 			expect(h.page.runMutationError).toContain('changed again')
 		})
 		it('loads owned Runs while the separate statistics source is unreachable', async () => {

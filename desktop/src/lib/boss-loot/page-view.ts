@@ -79,16 +79,17 @@ function runDate(value: string | null): string {
 }
 
 export function buildRunsView(profile: BossProfile, runs: RunsPage) {
-	const uniques = profile.groups.flatMap((group) => group.items)
+	const columns = profile.groups.map((group) => ({ id: group.id, label: group.label }))
 	const extras = [...profile.extra, ...profile.categories]
 	const rows = runs.items.map((run) => {
 		const positive = (item: LootItem) => Object.hasOwn(run.items.quantities, item.id) && run.items.quantities[item.id] > 0
 		const project = (item: LootItem) => ({ ...item, dropQuantity: run.items.quantities[item.id] })
 		return { id: run.id, run: run.run, date: runDate(run.date),
-			unique: uniques.filter(positive).map(project), extra: extras.filter(positive).map(project) }
+			groups: profile.groups.map((group) => ({ id: group.id, items: group.items.filter(positive).map(project) })),
+			extra: extras.filter(positive).map(project) }
 	})
 	const pages = Array.from({ length: Math.ceil(runs.total / runs.pageSize) }, (_, index) => index + 1)
-	return { rows, total: runs.total, page: runs.page, pages, first: runs.page <= 1, last: runs.page >= pages.length,
+	return { columns, rows, total: runs.total, page: runs.page, pages, first: runs.page <= 1, last: runs.page >= pages.length,
 		range: rows.length ? `Runs ${groupNumber(String(rows[0].run))}–${groupNumber(String(rows.at(-1)!.run))} of ${groupNumber(String(runs.total))}, newest first`
 			: 'No runs logged for this boss yet.' }
 }
