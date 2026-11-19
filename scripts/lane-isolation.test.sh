@@ -24,6 +24,7 @@ case "$1 $2" in
 	"container ls") ;;
 	"compose "*) ;;
 	"exec -i")
+		[[ -z ${FAKE_PSQL_DOWN:-} ]] || { echo 'Error response from daemon: container postgres is not running' >&2; exit 1; }
 		sql=${*: -1}
 		name=$(sed -E 's/.*(datname = |DATABASE )["'\'']([a-z0-9_]+)["'\''].*/\2/' <<<"$sql")
 		case $sql in
@@ -107,5 +108,18 @@ for action in setup teardown; do
 	check "$action runs no migration, DROP or COMMENT against it" \
 		bash -c '! grep -Eq "DROP|COMMENT|migrate" "$1"' _ "$FAKE_LOG"
 done
+
+# keep:critical — with postgres unreachable, teardown must not report the lane's
+# databases removed: lane-close cleanup trusts that result and the databases leak.
+p="$work/psql-down"
+fresh_project "$p" poe-414
+in_dir "$p/.worktrees/poe-414" "$script" setup >/dev/null
+rc=0
+out=$(cd "$p/.worktrees/poe-414" && FAKE_PSQL_DOWN=1 "$script" teardown 2>&1) || rc=$?
+check "teardown exits non-zero when psql cannot read the lane databases" test "$rc" -ne 0
+check "teardown keeps the lane's env files when psql cannot read the lane databases" \
+	test -f "$p/.worktrees/poe-414/.env" -a -f "$p/.worktrees/poe-414/.env.local"
+check "teardown prints no removal when psql cannot read the lane databases" \
+	bash -c '! grep -q "removed" <<<"$1"' _ "$out"
 
 exit "$fail"

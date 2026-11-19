@@ -46,7 +46,7 @@ psql_q() { docker exec -i postgres psql -X -U postgres -d postgres -v ON_ERROR_S
 # Prints "absent", "ours" or "foreign:<comment>" for a database.
 db_owner() {
 	local row
-	row=$(psql_q "SELECT 'x' || coalesce(shobj_description(oid, 'pg_database'), '') FROM pg_database WHERE datname = '$1'")
+	row=$(psql_q "SELECT 'x' || coalesce(shobj_description(oid, 'pg_database'), '') FROM pg_database WHERE datname = '$1'") || return 1
 	if [[ -z $row ]]; then echo absent
 	elif [[ ${row#x} == "$marker" ]]; then echo ours
 	else echo "foreign:${row#x}"; fi
@@ -63,7 +63,7 @@ if [[ $action == teardown ]]; then
 		fail "containers of $project exist without docker-compose.lane.yml; inspect them"
 	fi
 	for db in "$dev_db" "$test_db"; do
-		owner=$(db_owner "$db")
+		owner=$(db_owner "$db") || fail "cannot read $db from postgres"
 		case $owner in
 			absent) ;;
 			ours) psql_q "DROP DATABASE \"$db\"" >/dev/null ;;
@@ -91,7 +91,7 @@ for service in "${services[@]}"; do
 done
 
 for db in "$dev_db" "$test_db"; do
-	owner=$(db_owner "$db")
+	owner=$(db_owner "$db") || fail "cannot read $db from postgres"
 	case $owner in
 		absent) psql_q "CREATE DATABASE \"$db\" OWNER profitofexile" >/dev/null ;;
 		ours) ;;
