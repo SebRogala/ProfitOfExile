@@ -204,12 +204,16 @@ func TestDirectCandidates_emptyBookSide_isServedAndMarkedOnTheLegItBlocks(t *tes
 				t.Fatalf("got %d candidates, want the market served", len(got))
 			}
 			buy, sell := got[0].legs[0].obs, got[0].legs[1].obs
-			if buy.noOffers != tt.buyNoOffers || sell.noOffers != tt.sellNoOffers {
-				t.Errorf("noOffers buy/sell = %v/%v, want %v/%v", buy.noOffers, sell.noOffers, tt.buyNoOffers, tt.sellNoOffers)
-			}
-			if buy.depletedSide != tt.buyDepleted || sell.depletedSide != tt.sellDepleted {
-				t.Errorf("depletedSide buy/sell = %v/%v, want %v/%v", buy.depletedSide, sell.depletedSide, tt.buyDepleted, tt.sellDepleted)
-			}
+			t.Run("executing-side mark", func(t *testing.T) {
+				if buy.noOffers != tt.buyNoOffers || sell.noOffers != tt.sellNoOffers {
+					t.Errorf("noOffers buy/sell = %v/%v, want %v/%v", buy.noOffers, sell.noOffers, tt.buyNoOffers, tt.sellNoOffers)
+				}
+			})
+			t.Run("opposite-side mark", func(t *testing.T) {
+				if buy.depletedSide != tt.buyDepleted || sell.depletedSide != tt.sellDepleted {
+					t.Errorf("depletedSide buy/sell = %v/%v, want %v/%v", buy.depletedSide, sell.depletedSide, tt.buyDepleted, tt.sellDepleted)
+				}
+			})
 		})
 	}
 }
@@ -507,12 +511,21 @@ func TestDirectCandidates_rescuedHourWhoseNewestContributingRowHasNoExecutingSto
 	if !buy.rescued {
 		t.Fatalf("buy leg not rescued; the case no longer exercises the window row")
 	}
-	if !buy.noOffers || buy.stock != 0 {
-		t.Errorf("buy noOffers/stock = %v/%d, want true/0 off the newest contributor's empty ask side", buy.noOffers, buy.stock)
-	}
-	if sell.noOffers || !sell.depletedSide {
-		t.Errorf("sell noOffers/depletedSide = %v/%v, want false/true", sell.noOffers, sell.depletedSide)
-	}
+	t.Run("buy stock reads the newest contributor", func(t *testing.T) {
+		if buy.stock != 0 {
+			t.Errorf("buy stock = %d, want 0 off the newest contributor's empty ask side", buy.stock)
+		}
+	})
+	t.Run("buy carries noOffers", func(t *testing.T) {
+		if !buy.noOffers {
+			t.Errorf("buy noOffers = false, want true off the newest contributor's empty ask side")
+		}
+	})
+	t.Run("sell carries the opposite-side mark only", func(t *testing.T) {
+		if sell.noOffers || !sell.depletedSide {
+			t.Errorf("sell noOffers/depletedSide = %v/%v, want false/true", sell.noOffers, sell.depletedSide)
+		}
+	})
 }
 
 func TestDirectCandidates_marketWithNoRowInTheScoredHour_isEnumeratedFromTheWindow(t *testing.T) {

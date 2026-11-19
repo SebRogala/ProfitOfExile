@@ -743,14 +743,25 @@ func TestBestPlays_buyLegOnTheSameOneSidedMarket_isServedAndMarkedNoOffers(t *te
 
 	for _, key := range []string{oneHopKey(scarabID, divineID, chaosID), directKey(divineID, scarabID)} {
 		play := playByKey(t, got, key)
-		if !play.NoOffers || !play.Legs[0].NoOffers {
-			t.Errorf("%s play/buy-leg NoOffers = %v/%v, want true/true", key, play.NoOffers, play.Legs[0].NoOffers)
-		}
-		for i := 1; i < len(play.Legs); i++ {
-			if play.Legs[i].NoOffers {
-				t.Errorf("%s leg %d NoOffers = true, want false — its side is standing", key, i)
-			}
-		}
+		t.Run(key, func(t *testing.T) {
+			t.Run("play carries noOffers", func(t *testing.T) {
+				if !play.NoOffers {
+					t.Errorf("play NoOffers = false, want true")
+				}
+			})
+			t.Run("buy leg carries noOffers", func(t *testing.T) {
+				if !play.Legs[0].NoOffers {
+					t.Errorf("buy leg NoOffers = false, want true")
+				}
+			})
+			t.Run("other legs stay unmarked", func(t *testing.T) {
+				for i := 1; i < len(play.Legs); i++ {
+					if play.Legs[i].NoOffers {
+						t.Errorf("leg %d NoOffers = true, want false — its side is standing", i)
+					}
+				}
+			})
+		})
 	}
 }
 

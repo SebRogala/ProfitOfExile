@@ -690,12 +690,16 @@ func TestCorpus_journeyTattooOneSidedBook_theSellSideRouteIsServedAndMarkedDeple
 	if sell.Action != "sell" || sell.Item != tattooID || sell.Quote != chaosID {
 		t.Fatalf("leg 1 = %s %s in %s, want the tattoo sold into chaos", sell.Action, sell.Item, sell.Quote)
 	}
-	if !sell.DepletedSide || sell.NoOffers {
-		t.Errorf("sell leg DepletedSide/NoOffers = %v/%v, want true/false — no tattoo was on offer, bids stood", sell.DepletedSide, sell.NoOffers)
-	}
-	if sell.Stock != 1121 {
-		t.Errorf("sell leg Stock = %d, want the 1121 chaos of bids it is paid out of", sell.Stock)
-	}
+	t.Run("sell leg is marked depleted, not noOffers", func(t *testing.T) {
+		if !sell.DepletedSide || sell.NoOffers {
+			t.Errorf("sell leg DepletedSide/NoOffers = %v/%v, want true/false — no tattoo was on offer, bids stood", sell.DepletedSide, sell.NoOffers)
+		}
+	})
+	t.Run("sell leg reads the standing bids", func(t *testing.T) {
+		if sell.Stock != 1121 {
+			t.Errorf("sell leg Stock = %d, want the 1121 chaos of bids it is paid out of", sell.Stock)
+		}
+	})
 	// The mark belongs to the one leg it describes: the other two executed against
 	// live sides, and a flag that spread would stop naming the book.
 	for _, i := range []int{0, 2} {
@@ -708,7 +712,7 @@ func TestCorpus_journeyTattooOneSidedBook_theSellSideRouteIsServedAndMarkedDeple
 	}
 }
 
-func TestCorpus_emptyExecutingSide_isServedMarkedNoOffersAndRankedByValue(t *testing.T) {
+func TestCorpus_emptyExecutingSide_isServedAndMarkedNoOffers(t *testing.T) {
 	// POE-281. A market that traded but whose EXECUTING side stood empty in the
 	// newest hour is served, not dropped: the reader posts the top order and
 	// waits, and the price comes from realized trades. Buy-blocked: the tattoo's
@@ -727,21 +731,42 @@ func TestCorpus_emptyExecutingSide_isServedMarkedNoOffersAndRankedByValue(t *tes
 		t.Run(string(horizon), func(t *testing.T) {
 			got := corpusResult(t, horizon)
 			for _, tc := range cases {
-				play := playByKey(t, got, tc.key)
-				if !play.NoOffers {
-					t.Errorf("%s: play NoOffers = false, want true", tc.name)
-				}
-				for i, leg := range play.Legs {
-					if want := i == tc.blocked; leg.NoOffers != want {
-						t.Errorf("%s: leg %d (%s %s in %s) NoOffers = %v, want %v", tc.name, i, leg.Action, leg.Item, leg.Quote, leg.NoOffers, want)
-					}
-				}
-				if blocked := play.Legs[tc.blocked]; blocked.Stock != 0 || blocked.DepletedSide {
-					t.Errorf("%s: blocked leg Stock/DepletedSide = %d/%v, want 0/false — the empty side is its own", tc.name, blocked.Stock, blocked.DepletedSide)
-				}
-				if !play.LastHour.Equal(corpusNewest) {
-					t.Errorf("%s: LastHour = %v, want the newest hour %v", tc.name, play.LastHour, corpusNewest)
-				}
+				t.Run(tc.name, func(t *testing.T) {
+					t.Run("play carries noOffers", func(t *testing.T) {
+						if play := playByKey(t, got, tc.key); !play.NoOffers {
+							t.Errorf("play NoOffers = false, want true")
+						}
+					})
+					t.Run("only the blocked leg carries noOffers", func(t *testing.T) {
+						for i, leg := range playByKey(t, got, tc.key).Legs {
+							if want := i == tc.blocked; leg.NoOffers != want {
+								t.Errorf("leg %d (%s %s in %s) NoOffers = %v, want %v", i, leg.Action, leg.Item, leg.Quote, leg.NoOffers, want)
+							}
+						}
+					})
+					t.Run("blocked leg reads an empty own side", func(t *testing.T) {
+						if blocked := playByKey(t, got, tc.key).Legs[tc.blocked]; blocked.Stock != 0 || blocked.DepletedSide {
+							t.Errorf("blocked leg Stock/DepletedSide = %d/%v, want 0/false — the empty side is its own", blocked.Stock, blocked.DepletedSide)
+						}
+					})
+					t.Run("served from the newest hour", func(t *testing.T) {
+						if play := playByKey(t, got, tc.key); !play.LastHour.Equal(corpusNewest) {
+							t.Errorf("LastHour = %v, want the newest hour %v", play.LastHour, corpusNewest)
+						}
+					})
+				})
+			}
+		})
+	}
+}
+
+func TestCorpus_emptyExecutingSide_ranksByValueWithEveryOtherPlay(t *testing.T) {
+	// POE-281, ADR-018: the noOffers rows above sit in the one value ranking.
+	for _, horizon := range []Horizon{HorizonRecent, HorizonDay} {
+		t.Run(string(horizon), func(t *testing.T) {
+			got := corpusResult(t, horizon)
+			for _, key := range []string{tattooDirectKey, tattooBuyKey, tattooNoBidsKey} {
+				playByKey(t, got, key)
 			}
 			assertRankedByValue(t, got.Plays)
 		})
@@ -791,20 +816,26 @@ func TestCorpus_journeyTattooTwoSidedTwin_isServedAsAFlipCarryingNoDepletedSide(
 	if play.Mode != ModeDirect {
 		t.Fatalf("Mode = %q, want %q", play.Mode, ModeDirect)
 	}
-	if play.NoOffers {
-		t.Errorf("play NoOffers = true, want false — both sides of this book were alive")
-	}
-	for i, leg := range play.Legs {
-		if leg.DepletedSide || leg.NoOffers {
-			t.Errorf("leg %d (%s) DepletedSide/NoOffers = %v/%v, want false/false — both sides of this book were alive", i, leg.Action, leg.DepletedSide, leg.NoOffers)
+	t.Run("play carries no noOffers", func(t *testing.T) {
+		if play.NoOffers {
+			t.Errorf("play NoOffers = true, want false — both sides of this book were alive")
 		}
-	}
-	if play.Legs[0].Stock != 500 {
-		t.Errorf("buy leg Stock = %d, want the 500 tattoos it takes off the book", play.Legs[0].Stock)
-	}
-	if play.Legs[1].Stock != 5000 {
-		t.Errorf("sell leg Stock = %d, want the 5000 chaos it is paid out of", play.Legs[1].Stock)
-	}
+	})
+	t.Run("no leg is marked", func(t *testing.T) {
+		for i, leg := range play.Legs {
+			if leg.DepletedSide || leg.NoOffers {
+				t.Errorf("leg %d (%s) DepletedSide/NoOffers = %v/%v, want false/false — both sides of this book were alive", i, leg.Action, leg.DepletedSide, leg.NoOffers)
+			}
+		}
+	})
+	t.Run("legs read their executing stock", func(t *testing.T) {
+		if play.Legs[0].Stock != 500 {
+			t.Errorf("buy leg Stock = %d, want the 500 tattoos it takes off the book", play.Legs[0].Stock)
+		}
+		if play.Legs[1].Stock != 5000 {
+			t.Errorf("sell leg Stock = %d, want the 5000 chaos it is paid out of", play.Legs[1].Stock)
+		}
+	})
 }
 
 func TestCorpus_spreadless170NewestHour_isServedWithTheLossTwoTicksProduce(t *testing.T) {

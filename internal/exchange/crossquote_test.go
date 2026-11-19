@@ -391,39 +391,42 @@ func TestCrossQuoteCandidates_unusableClosingMarket_dropsEveryRouteThroughIt(t *
 	}
 }
 
-func TestCrossQuoteCandidates_closingMarketWithAnEmptySide_servesBothDirectionsAndMarksTheBlockedClose(t *testing.T) {
-	// The closing leg SELLS one currency for the other, so the book side it
-	// executes against is the currency it is paid in. Emptying one side of the
-	// chaos/divine market blocks the close of exactly one direction; since
-	// POE-281 that route is served with noOffers on its closing leg, and its
-	// mirror — whose close executes against the side still standing — carries
-	// depletedSide instead. Both sides are exercised so neither passes by
-	// accident.
-	tests := []struct {
-		name           string
-		emptied        int
-		blocked, clear string
-	}{
-		{"chaos side empty", 0, oneHopKey(cardID, chaosID, divineID), oneHopKey(cardID, divineID, chaosID)},
-		{"divine side empty", 1, oneHopKey(cardID, divineID, chaosID), oneHopKey(cardID, chaosID, divineID)},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			closing := chaosDivineSpec()
-			closing.highestStock[tt.emptied] = 0
+// assertClosingMarketMarks serves a chaos/divine closing market with one side
+// emptied. The closing leg SELLS one currency for the other, so the book side it
+// executes against is the currency it is paid in: since POE-281 the route whose
+// close is blocked is served with noOffers on its closing leg, and its mirror —
+// whose close executes against the side still standing — carries depletedSide.
+func assertClosingMarketMarks(t *testing.T, emptied int, blockedKey, clearKey string) {
+	t.Helper()
+	closing := chaosDivineSpec()
+	closing.highestStock[emptied] = 0
 
-			got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, windowView{}, DefaultConfig())
+	got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, windowView{}, DefaultConfig())
 
-			blocked := candidateByKey(t, got, tt.blocked).legs[2].obs
-			if !blocked.noOffers || blocked.depletedSide {
-				t.Errorf("%s close noOffers/depletedSide = %v/%v, want true/false", tt.blocked, blocked.noOffers, blocked.depletedSide)
-			}
-			clear := candidateByKey(t, got, tt.clear).legs[2].obs
-			if clear.noOffers || !clear.depletedSide {
-				t.Errorf("%s close noOffers/depletedSide = %v/%v, want false/true", tt.clear, clear.noOffers, clear.depletedSide)
-			}
-		})
-	}
+	t.Run("blocked close carries noOffers", func(t *testing.T) {
+		blocked := candidateByKey(t, got, blockedKey).legs[2].obs
+		if !blocked.noOffers || blocked.depletedSide {
+			t.Errorf("%s close noOffers/depletedSide = %v/%v, want true/false", blockedKey, blocked.noOffers, blocked.depletedSide)
+		}
+	})
+	t.Run("mirror close carries depletedSide", func(t *testing.T) {
+		clear := candidateByKey(t, got, clearKey).legs[2].obs
+		if clear.noOffers || !clear.depletedSide {
+			t.Errorf("%s close noOffers/depletedSide = %v/%v, want false/true", clearKey, clear.noOffers, clear.depletedSide)
+		}
+	})
+}
+
+func TestCrossQuoteCandidates_closingMarketWithNoStockOfTheCurrencyBeingSold_servesBothDirectionsAndMarksTheBlockedClose(t *testing.T) {
+	// The chaos side of the chaos/divine market standing empty blocks only the
+	// route whose last leg is paid in chaos.
+	assertClosingMarketMarks(t, 0, oneHopKey(cardID, chaosID, divineID), oneHopKey(cardID, divineID, chaosID))
+}
+
+func TestCrossQuoteCandidates_closingMarketWithNoStockOfTheCurrencyBeingBought_servesBothDirectionsAndMarksTheMirrorClose(t *testing.T) {
+	// The other half of the same rule, so neither direction can be passing by
+	// accident: with the divine side empty, the route paid in divine is blocked.
+	assertClosingMarketMarks(t, 1, oneHopKey(cardID, divineID, chaosID), oneHopKey(cardID, chaosID, divineID))
 }
 
 func TestCrossQuoteCandidates_sellLegIntoAMarketWithNoAsksStanding_isGatedAndMarkedDepleted(t *testing.T) {
@@ -446,12 +449,16 @@ func TestCrossQuoteCandidates_sellLegIntoAMarketWithNoAsksStanding_isGatedAndMar
 	if sell.action != "sell" || sell.quote != chaosID {
 		t.Fatalf("leg 1 = %s %s in %s, want the sell into chaos", sell.action, sell.item, sell.quote)
 	}
-	if sell.obs.stock != 900 {
-		t.Errorf("sell leg stock = %d, want the 900 chaos it executes against", sell.obs.stock)
-	}
-	if !sell.obs.depletedSide || sell.obs.noOffers {
-		t.Errorf("sell leg depletedSide/noOffers = %v/%v, want true/false — no card was on offer, bids stood", sell.obs.depletedSide, sell.obs.noOffers)
-	}
+	t.Run("sell leg reads the standing bids", func(t *testing.T) {
+		if sell.obs.stock != 900 {
+			t.Errorf("sell leg stock = %d, want the 900 chaos it executes against", sell.obs.stock)
+		}
+	})
+	t.Run("sell leg is marked depleted, not noOffers", func(t *testing.T) {
+		if !sell.obs.depletedSide || sell.obs.noOffers {
+			t.Errorf("sell leg depletedSide/noOffers = %v/%v, want true/false — no card was on offer, bids stood", sell.obs.depletedSide, sell.obs.noOffers)
+		}
+	})
 }
 
 func TestCrossQuoteCandidates_buyLegOnTheSameOneSidedMarket_isServedAndMarkedNoOffers(t *testing.T) {
@@ -468,9 +475,16 @@ func TestCrossQuoteCandidates_buyLegOnTheSameOneSidedMarket_isServedAndMarkedNoO
 	if buy.action != "buy" || buy.quote != chaosID {
 		t.Fatalf("leg 0 = %s %s in %s, want the buy in chaos", buy.action, buy.item, buy.quote)
 	}
-	if !buy.obs.noOffers || buy.obs.stock != 0 || buy.obs.depletedSide {
-		t.Errorf("buy noOffers/stock/depletedSide = %v/%d/%v, want true/0/false", buy.obs.noOffers, buy.obs.stock, buy.obs.depletedSide)
-	}
+	t.Run("buy leg reads an empty own side", func(t *testing.T) {
+		if buy.obs.stock != 0 {
+			t.Errorf("buy stock = %d, want 0", buy.obs.stock)
+		}
+	})
+	t.Run("buy leg carries noOffers, not depletedSide", func(t *testing.T) {
+		if !buy.obs.noOffers || buy.obs.depletedSide {
+			t.Errorf("buy noOffers/depletedSide = %v/%v, want true/false", buy.obs.noOffers, buy.obs.depletedSide)
+		}
+	})
 }
 
 func TestCrossQuoteCandidates_secondRowForTheSamePair_isIgnored(t *testing.T) {
