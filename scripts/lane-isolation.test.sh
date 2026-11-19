@@ -87,6 +87,21 @@ check "teardown drops only that lane's databases" \
 check "teardown removes the lane's generated env and compose file" \
 	bash -c '! ls -a "$1" | grep -qxE "\.env|\.env\.local|docker-compose\.lane\.yml|\.worktree"' _ "$p/.worktrees/poe-414"
 
+# keep:happy — the full integration runner recreates the lane's integration
+# database without the marker; the lane keeps owning it while its dev database is marked.
+p="$work/recreated"
+fresh_project "$p" poe-414
+in_dir "$p/.worktrees/poe-414" "$script" setup >/dev/null
+unmark_integration() { awk -F '\t' 'BEGIN { OFS = "\t" } $1 ~ /_integration$/ { $2 = "" } { print }' "$FAKE_DBS" >"$FAKE_DBS.new"; mv "$FAKE_DBS.new" "$FAKE_DBS"; }
+unmark_integration
+check "a repeat setup accepts the lane's recreated integration database" \
+	bash -c '(cd "$1" && "$2" setup) >/dev/null' _ "$p/.worktrees/poe-414" "$script"
+check "a repeat setup marks the recreated integration database as the lane's again" \
+	grep -qxF "profitofexile_lanepoe414_integration	lane-isolation:$p/.worktrees/poe-414" "$FAKE_DBS"
+unmark_integration
+check "teardown drops the lane's dev and recreated integration databases" \
+	bash -c '(cd "$1" && "$2" teardown) >/dev/null && test ! -s "$3"' _ "$p/.worktrees/poe-414" "$script" "$FAKE_DBS"
+
 # keep:critical — teardown in the main checkout would drop data; it must refuse.
 p="$work/main"
 fresh_project "$p" poe-414
