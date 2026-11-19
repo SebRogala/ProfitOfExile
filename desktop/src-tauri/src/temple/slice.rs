@@ -620,6 +620,53 @@ pub struct LineView {
     /// `null` when any tier has no stated number (a ladder is a ladder or it
     /// is nothing; `TierDrops` keeps `None` apart from zero).
     pub rarity_pct: Option<[f64; 3]>,
+    /// Area pack size bonus at tiers 1, 2, 3, under the same ladder rule.
+    #[serde(default)]
+    pub pack_size_pct: Option<[f64; 3]>,
+    /// Magic monster pack size bonus at tiers 1, 2, 3, under the same rule.
+    #[serde(default)]
+    pub magic_pack_size_pct: Option<[f64; 3]>,
+    /// The tier-3 chest, `null` for a content line.
+    #[serde(default)]
+    pub chest: Option<ChestView>,
+    /// Where each stated ladder came from, rarity first, then pack size, then
+    /// magic pack size.
+    #[serde(default)]
+    pub sources: Vec<FigureSourceView>,
+}
+
+/// A line's tier-3 chest: its unique rate and the pool it drops from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChestView {
+    /// Expected chest uniques per run at tier 3, `null` when nobody stated one.
+    pub per_run: Option<f64>,
+    /// Whether that rate is somebody's estimate.
+    pub guessed: bool,
+    /// The rate's short source label, `null` with no rate.
+    pub source: Option<String>,
+    /// The pool, base first in each pair.
+    pub uniques: Vec<ChestUniqueView>,
+}
+
+/// One unique the chest drops and its Cradle-present upgrade.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChestUniqueView {
+    pub base: String,
+    pub upgraded: String,
+}
+
+/// The provenance of one ladder on a [`LineView`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FigureSourceView {
+    /// `"rarity_pct"`, `"pack_size_pct"` or `"magic_pack_size_pct"`.
+    pub figure: String,
+    /// The short source label.
+    pub label: String,
+    /// Whether the figure is somebody's estimate.
+    pub guessed: bool,
 }
 
 /// One room-tier's chaos value and the terms behind it, on the wire.
@@ -701,6 +748,8 @@ pub struct RoomValueRowView {
     /// Tier 1, tier 2, tier 3 — an array and not a `Vec`, because a row is
     /// exactly three tiers and the editor indexes them.
     pub tiers: [RoomValueView; 3],
+    /// The line's drop facts, built by the same projection an offer box uses.
+    pub line: LineView,
 }
 
 /// One term of a [`RoomValueView`]'s sum.
@@ -1502,6 +1551,7 @@ pub fn value_rows(valuation: &Valued) -> Vec<RoomValueRowView> {
                     room_value_view(&tiers[1], valuation),
                     room_value_view(&tiers[2], valuation),
                 ],
+                line: line_view(line),
             })
         })
         .collect();
@@ -1571,12 +1621,66 @@ where
     Some(values.map(|value| value.expect("ladder values are complete").value()))
 }
 
+type LadderSelect = fn(drops::TierDrops) -> Option<drops::Estimate>;
+
+/// The ladders a line view carries, in the order their sources are listed.
+const LADDERS: [(&str, LadderSelect); 3] = [
+    ("rarity_pct", |tier| tier.rarity_pct()),
+    ("pack_size_pct", |tier| tier.pack_size_pct()),
+    ("magic_pack_size_pct", |tier| tier.magic_pack_size_pct()),
+];
+
+fn figure_sources(tiers: &[drops::TierDrops; 3]) -> Vec<FigureSourceView> {
+    let mut sources: Vec<FigureSourceView> = Vec::new();
+    for (figure, select) in LADDERS {
+        if ladder_values(tiers, select).is_none() {
+            continue;
+        }
+        for estimate in tiers.iter().filter_map(|tier| select(*tier)) {
+            let label = drops::source_label(estimate.source());
+            if !sources.iter().any(|s| s.figure == figure && s.label == label) {
+                sources.push(FigureSourceView {
+                    figure: figure.to_string(),
+                    label: label.to_string(),
+                    guessed: estimate.is_guess(),
+                });
+            }
+        }
+    }
+    sources
+}
+
+fn chest_view(row: &drops::LineDrops) -> Option<ChestView> {
+    if row.kind() != LineKind::Chest {
+        return None;
+    }
+    let rate = row.tiers()[2].uniques_per_run();
+    Some(ChestView {
+        per_run: rate.map(|r| r.value()),
+        guessed: rate.is_some_and(|r| r.is_guess()),
+        source: rate.map(|r| drops::source_label(r.source()).to_string()),
+        uniques: row
+            .uniques()
+            .iter()
+            .map(|u| ChestUniqueView {
+                base: u.base().to_string(),
+                upgraded: u.upgraded().to_string(),
+            })
+            .collect(),
+    })
+}
+
 fn line_view(line: &rooms::RoomLine) -> LineView {
     let row = line.drops();
+    let [rarity, pack, magic_pack] = LADDERS.map(|(_, select)| ladder_values(row.tiers(), select));
     LineView {
         kind: row.kind(),
         content: row.content().map(str::to_string),
-        rarity_pct: ladder_values(row.tiers(), |tier| tier.rarity_pct()),
+        rarity_pct: rarity,
+        pack_size_pct: pack,
+        magic_pack_size_pct: magic_pack,
+        chest: chest_view(row),
+        sources: figure_sources(row.tiers()),
     }
 }
 
@@ -3228,7 +3332,18 @@ mod tests {
             .map(String::as_str)
             .collect();
         keys.sort_unstable();
-        assert_eq!(keys, ["content", "kind", "rarityPct"]);
+        assert_eq!(
+            keys,
+            [
+                "chest",
+                "content",
+                "kind",
+                "magicPackSizePct",
+                "packSizePct",
+                "rarityPct",
+                "sources"
+            ]
+        );
     }
 
     /// A line with no tier-3 chest publishes the prose the box draws in place
@@ -4927,6 +5042,10 @@ mod tests {
                         kind: LineKind::Content,
                         content: Some("Extra monsters (dangerous)".to_string()),
                         rarity_pct: None,
+                        pack_size_pct: None,
+                        magic_pack_size_pct: None,
+                        chest: None,
+                        sources: vec![],
                     }),
                 }],
                 incursions_remaining: Some(6),
@@ -5051,7 +5170,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]},"cradle":false},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true,"upgraded":null},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false,"upgraded":null}]},"line":{"kind":"content","content":"Extra monsters (dangerous)","rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]},"cradle":false},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true,"upgraded":null},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false,"upgraded":null}]},"line":{"kind":"content","content":"Extra monsters (dangerous)","rarityPct":null,"packSizePct":null,"magicPackSizePct":null,"chest":null,"sources":[]}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///
@@ -5208,6 +5327,106 @@ mod tests {
             let wire = serde_json::to_value(row).expect("serializes");
             assert_eq!(wire["pickOrder"], line.rank().pick_order());
         }
+    }
+
+    // AC-1: every row of the editor table carries its line's facts, off the
+    // one projection the offer box uses, and none of them is empty.
+    #[test]
+    fn value_rows_carry_each_lines_facts_from_drops() {
+        let rows = value_rows(&allflame_valuation());
+        assert_eq!(rows.len(), 25);
+        for row in &rows {
+            let line = rooms::LINES
+                .iter()
+                .find(|line| line.key() == row.key)
+                .expect("every row is one of the 25 lines");
+            assert_eq!(row.line, line_view(line), "{}", row.key);
+            assert!(
+                row.line.content.is_some()
+                    || row.line.chest.is_some()
+                    || row.line.rarity_pct.is_some()
+                    || row.line.pack_size_pct.is_some()
+                    || row.line.magic_pack_size_pct.is_some(),
+                "{} has nothing to show in its tooltip",
+                row.key
+            );
+            let tiers = line.drops().tiers();
+            for source in &row.line.sources {
+                let select: LadderSelect = match source.figure.as_str() {
+                    "rarity_pct" => |tier| tier.rarity_pct(),
+                    "pack_size_pct" => |tier| tier.pack_size_pct(),
+                    "magic_pack_size_pct" => |tier| tier.magic_pack_size_pct(),
+                    other => panic!("{}: unknown figure {other}", row.key),
+                };
+                assert!(
+                    tiers
+                        .iter()
+                        .filter_map(|tier| select(*tier))
+                        .any(|estimate| drops::source_label(estimate.source()) == source.label),
+                    "{}: {} label {:?} is not its estimate's",
+                    row.key,
+                    source.figure,
+                    source.label
+                );
+            }
+        }
+    }
+
+    // AC-2: the Locus and Cradle rows show the 3.30 sheet's figures, cited to
+    // that sheet.
+    #[test]
+    fn locus_and_cradle_lines_carry_the_330_sheet_figures() {
+        let rows = value_rows(&allflame_valuation());
+        let find = |key: &str| {
+            rows.iter()
+                .find(|row| row.key == key)
+                .unwrap_or_else(|| panic!("no {key} row"))
+        };
+        let labels = |row: &RoomValueRowView, figure: &str| -> Vec<String> {
+            row.line
+                .sources
+                .iter()
+                .filter(|s| s.figure == figure)
+                .map(|s| s.label.clone())
+                .collect()
+        };
+
+        let locus = find("corruption");
+        assert_eq!(locus.line.rarity_pct, Some([4.0, 8.0, 12.0]));
+        assert_eq!(locus.line.pack_size_pct, Some([1.0, 2.0, 3.0]));
+        let locus_label = drops::source_label(drops::SHEET_LOCUS_330).to_string();
+        assert_eq!(labels(locus, "rarity_pct"), [locus_label.clone()]);
+        assert_eq!(labels(locus, "pack_size_pct"), [locus_label]);
+
+        let cradle = find("throne_of_atziri");
+        assert_eq!(cradle.name, "Cradle of Creation");
+        assert_eq!(cradle.line.magic_pack_size_pct, Some([10.0, 20.0, 30.0]));
+        assert_eq!(
+            labels(cradle, "magic_pack_size_pct"),
+            [drops::source_label(drops::SHEET_CRADLE_330).to_string()]
+        );
+    }
+
+    // WI-2's rendered tooltip test reads this fixture; a stale copy would let
+    // it pass on figures the app no longer shows.
+    #[test]
+    fn value_row_lines_fixture_matches_the_projection() {
+        let fresh = serde_json::Value::Array(
+            value_rows(&allflame_valuation())
+                .iter()
+                .map(|row| serde_json::json!({ "key": row.key, "name": row.name, "line": row.line }))
+                .collect(),
+        );
+        let committed: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/lib/temple/fixtures/value-row-lines.json"
+        ))
+        .expect("value-row-lines.json is JSON");
+        assert_eq!(
+            committed,
+            fresh,
+            "desktop/src/lib/temple/fixtures/value-row-lines.json drifted; paste:\n{}",
+            serde_json::to_string_pretty(&fresh).expect("rows serialise")
+        );
     }
 
     /// The three cells are tier 1, tier 2, tier 3 — in that order.

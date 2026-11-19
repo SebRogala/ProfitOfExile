@@ -1,0 +1,639 @@
+[
+  {
+    "key": "apex_of_ascension",
+    "line": {
+      "chest": null,
+      "content": "Sacrifice a unique for uniques of its worth",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "name": "Apex of Ascension"
+  },
+  {
+    "key": "atlas_of_worlds",
+    "line": {
+      "chest": null,
+      "content": "Map drops; re-corrupt maps (uses rise by tier)",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "name": "Atlas of Worlds"
+  },
+  {
+    "key": "chamber_of_iron",
+    "line": {
+      "chest": null,
+      "content": "Armour drops",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        4.0,
+        8.0,
+        12.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "name": "Chamber of Iron"
+  },
+  {
+    "key": "conduit_of_lightning",
+    "line": {
+      "chest": {
+        "guessed": true,
+        "perRun": 0.25,
+        "source": "3.30 sheet 2026-11-13, guess",
+        "uniques": [
+          {
+            "base": "Dance of the Offered",
+            "upgraded": "Omeyocan"
+          }
+        ]
+      },
+      "content": null,
+      "kind": "chest",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        4.0,
+        8.0,
+        12.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "name": "Conduit of Lightning"
+  },
+  {
+    "key": "court_of_sealed_death",
+    "line": {
+      "chest": null,
+      "content": "Arcanist & Diviner strongboxes",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "name": "Court of Sealed Death"
+  },
+  {
+    "key": "throne_of_atziri",
+    "line": {
+      "chest": null,
+      "content": "Uber Atziri, area level 84",
+      "kind": "content",
+      "magicPackSizePct": [
+        10.0,
+        20.0,
+        30.0
+      ],
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": [
+        {
+          "figure": "magic_pack_size_pct",
+          "guessed": false,
+          "label": "3.30 sheet 2026-11-13"
+        }
+      ]
+    },
+    "name": "Cradle of Creation"
+  },
+  {
+    "key": "crucible_of_flame",
+    "line": {
+      "chest": {
+        "guessed": true,
+        "perRun": 0.25,
+        "source": "3.30 sheet 2026-11-13, guess",
+        "uniques": [
+          {
+            "base": "Story of the Vaal",
+            "upgraded": "Fate of the Vaal"
+          }
+        ]
+      },
+      "content": null,
+      "kind": "chest",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        4.0,
+        8.0,
+        12.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "name": "Crucible of Flame"
+  },
+  {
+    "key": "defense_research_lab",
+    "line": {
+      "chest": {
+        "guessed": true,
+        "perRun": 0.25,
+        "source": "3.30 sheet 2026-11-13, guess",
+        "uniques": [
+          {
+            "base": "Architect's Hand",
+            "upgraded": "Slavedriver's Hand"
+          }
+        ]
+      },
+      "content": null,
+      "kind": "chest",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        4.0,
+        8.0,
+        12.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "name": "Defense Research Lab"
+  },
+  {
+    "key": "gem",
+    "line": {
+      "chest": null,
+      "content": "Double-corrupt a gem",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "name": "Doryani's Institute"
+  },
+  {
+    "key": "factory",
+    "line": {
+      "chest": null,
+      "content": "Extra item drops",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        4.0,
+        8.0,
+        12.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "name": "Factory"
+  },
+  {
+    "key": "glittering_halls",
+    "line": {
+      "chest": {
+        "guessed": true,
+        "perRun": 0.25,
+        "source": "3.30 sheet 2026-11-13, guess",
+        "uniques": [
+          {
+            "base": "Sacrificial Heart",
+            "upgraded": "Zerphi's Heart"
+          },
+          {
+            "base": "Tempered Flesh",
+            "upgraded": "Transcendent Flesh"
+          },
+          {
+            "base": "Tempered Mind",
+            "upgraded": "Transcendent Mind"
+          },
+          {
+            "base": "Tempered Spirit",
+            "upgraded": "Transcendent Spirit"
+          }
+        ]
+      },
+      "content": null,
+      "kind": "chest",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": [
+        12.0,
+        24.0,
+        36.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": false,
+          "label": "3.30 sheet 2026-11-13"
+        }
+      ]
+    },
+    "name": "Glittering Halls"
+  },
+  {
+    "key": "hall_of_champions",
+    "line": {
+      "chest": null,
+      "content": "Weapon drops",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        4.0,
+        8.0,
+        12.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "name": "Hall of Champions"
+  },
+  {
+    "key": "hall_of_legends",
+    "line": {
+      "chest": null,
+      "content": "Legion encounter",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "name": "Hall of Legends"
+  },
+  {
+    "key": "hall_of_war",
+    "line": {
+      "chest": null,
+      "content": "Rare monster packs",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        10.0,
+        20.0,
+        30.0
+      ],
+      "rarityPct": null,
+      "sources": [
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "name": "Hall of War"
+  },
+  {
+    "key": "house_of_the_others",
+    "line": {
+      "chest": null,
+      "content": "Breach encounter",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "name": "House of the Others"
+  },
+  {
+    "key": "hybridisation_chamber",
+    "line": {
+      "chest": {
+        "guessed": true,
+        "perRun": 0.25,
+        "source": "3.30 sheet 2026-11-13, guess",
+        "uniques": [
+          {
+            "base": "Coward's Chains",
+            "upgraded": "Coward's Legacy"
+          }
+        ]
+      },
+      "content": null,
+      "kind": "chest",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        4.0,
+        8.0,
+        12.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "name": "Hybridisation Chamber"
+  },
+  {
+    "key": "corruption",
+    "line": {
+      "chest": null,
+      "content": "Double-corrupt an item",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        4.0,
+        8.0,
+        12.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": false,
+          "label": "3.30 sheet 2026-11-13, unconfirmed"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "3.30 sheet 2026-11-13, unconfirmed"
+        }
+      ]
+    },
+    "name": "Locus of Corruption"
+  },
+  {
+    "key": "museum_of_artefacts",
+    "line": {
+      "chest": {
+        "guessed": true,
+        "perRun": 0.25,
+        "source": "3.30 sheet 2026-11-13, guess",
+        "uniques": [
+          {
+            "base": "Soul Catcher",
+            "upgraded": "Soul Ripper"
+          }
+        ]
+      },
+      "content": null,
+      "kind": "chest",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "name": "Museum of Artefacts"
+  },
+  {
+    "key": "sadists_den",
+    "line": {
+      "chest": null,
+      "content": "Extra monsters (dangerous)",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "name": "Sadist's Den"
+  },
+  {
+    "key": "sanctum_of_immortality",
+    "line": {
+      "chest": {
+        "guessed": true,
+        "perRun": 0.25,
+        "source": "3.30 sheet 2026-11-13, guess",
+        "uniques": [
+          {
+            "base": "Mask of the Spirit Drinker",
+            "upgraded": "Mask of the Stitched Demon"
+          }
+        ]
+      },
+      "content": null,
+      "kind": "chest",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        4.0,
+        8.0,
+        12.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "name": "Sanctum of Immortality"
+  },
+  {
+    "key": "explosive",
+    "line": {
+      "chest": null,
+      "content": "Destroy rooms / explosives",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "name": "Shrine of Unmaking"
+  },
+  {
+    "key": "storm_of_corruption",
+    "line": {
+      "chest": null,
+      "content": "Corrupting tempest",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "name": "Storm of Corruption"
+  },
+  {
+    "key": "upgrade",
+    "line": {
+      "chest": null,
+      "content": "Upgrade a room",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        4.0,
+        8.0,
+        12.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "name": "Temple Nexus"
+  },
+  {
+    "key": "toxic_grove",
+    "line": {
+      "chest": {
+        "guessed": true,
+        "perRun": 0.25,
+        "source": "3.30 sheet 2026-11-13, guess",
+        "uniques": [
+          {
+            "base": "Apep's Slumber",
+            "upgraded": "Apep's Supremacy"
+          }
+        ]
+      },
+      "content": null,
+      "kind": "chest",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "name": "Toxic Grove"
+  },
+  {
+    "key": "wealth_of_the_vaal",
+    "line": {
+      "chest": null,
+      "content": "Currency drops",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "name": "Wealth of the Vaal"
+  }
+]

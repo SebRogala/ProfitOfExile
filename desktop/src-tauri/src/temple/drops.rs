@@ -146,13 +146,29 @@ pub const VERTOLKA_MSG: &str = "Vertolka, 2026-09-06 message (POE-124)";
 /// (Operator ruling T28 2026-11-13 00:20).
 pub const SHEET_UNIQUES_330: &str = "Vertolka's sheet export 2026-11-13: g744679169.csv row 13 (use non-upgraded version / count 25% of value; the upgraded version only with a Cradle of Creation), rows 28-29 (Glittering Halls: Sacrificial Heart and the Tempered jewels; Museum of Artefacts: Soul Catcher), gid0.csv rows 13 and 25; equal-weight pool per the Operator ruling 2026-11-13 00:20 (the sheet author's guess)";
 
+/// The short label a tooltip prints for `source`: who stated the figure and
+/// the date it was read. The full citations above stay the record; these are
+/// their only compact form. An unmapped source falls through unchanged, which
+/// `every_cited_source_has_a_short_label` rejects for every source [`DROPS`]
+/// cites.
+pub fn source_label(source: &'static str) -> &'static str {
+    match source {
+        POEDB => "poedb 2026-09-06",
+        SHEET_LOCUS_330 => "3.30 sheet 2026-11-13, unconfirmed",
+        SHEET_CRADLE_330 | SHEET_GLITTERING_330 => "3.30 sheet 2026-11-13",
+        SHEET_UNIQUES_330 => "3.30 sheet 2026-11-13, guess",
+        other => other,
+    }
+}
+
 // ----------------------------------------------------------- chest uniques --
 
 /// One unique a tier-3 chest drops and the upgraded version that drops in its
 /// place when a Cradle of Creation is present. Both are poe.ninja spellings.
 ///
-/// The server keeps the same pairs in `internal/temple/upgrades.go`
-/// `uniqueUpgrades`.
+/// The server embeds this table's projection,
+/// `internal/temple/unique_upgrades.json`, which
+/// `unique_upgrades_json_matches_the_chest_uniques` keeps in step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChestUnique {
     base: &'static str,
@@ -198,7 +214,6 @@ pub enum Basis {
 
 impl Basis {
     /// Who stated or guessed the number, and the date it was read.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn source(self) -> &'static str {
         match self {
             Basis::Measured { source } | Basis::Guess { source } => source,
@@ -261,7 +276,6 @@ impl Estimate {
     }
 
     /// Shorthand for [`Basis::source`].
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn source(self) -> &'static str {
         self.basis.source()
     }
@@ -310,14 +324,12 @@ impl TierDrops {
     }
 
     /// `increased Pack size`, in percent.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn pack_size_pct(self) -> Option<Estimate> {
         self.pack_size_pct
     }
 
     /// `increased Magic Monster Pack size`, in percent. Carried, not priced and
     /// not on the wire, like pack size.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn magic_pack_size_pct(self) -> Option<Estimate> {
         self.magic_pack_size_pct
     }
@@ -1593,4 +1605,74 @@ mod tests {
         }
     }
 
+
+    // ---------------------------------------------------------- projections --
+
+    /// Every estimate source [`DROPS`] cites, each once, in first-cited order.
+    fn cited_sources() -> Vec<&'static str> {
+        let mut sources: Vec<&'static str> = Vec::new();
+        for row in DROPS.iter() {
+            for tier in row.tiers() {
+                for estimate in [
+                    tier.uniques_per_run(),
+                    tier.rarity_pct(),
+                    tier.pack_size_pct(),
+                    tier.magic_pack_size_pct(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if !sources.contains(&estimate.source()) {
+                        sources.push(estimate.source());
+                    }
+                }
+            }
+        }
+        sources
+    }
+
+    // A source with no short label would print its multi-sentence citation
+    // into a three-line tooltip; this fails on the first one DROPS cites.
+    #[test]
+    fn every_cited_source_has_a_short_label() {
+        let sources = cited_sources();
+        assert!(sources.contains(&SHEET_LOCUS_330) && sources.contains(&POEDB));
+        for source in sources {
+            let label = source_label(source);
+            assert_ne!(label, source, "no short label for {source}");
+            assert!(
+                label.chars().count() <= 40,
+                "label {label:?} for {source} is longer than 40 characters"
+            );
+        }
+    }
+
+    // The Go server embeds internal/temple/unique_upgrades.json and prices
+    // exactly those names; this keeps it the projection of DROPS' pairs.
+    #[test]
+    fn unique_upgrades_json_matches_the_chest_uniques() {
+        let mut pairs: Vec<(&str, &str)> = DROPS
+            .iter()
+            .flat_map(|row| row.uniques().iter())
+            .map(|u| (u.base(), u.upgraded()))
+            .collect();
+        pairs.sort();
+        pairs.dedup();
+        let fresh = serde_json::Value::Array(
+            pairs
+                .iter()
+                .map(|(base, upgraded)| serde_json::json!({ "base": base, "upgraded": upgraded }))
+                .collect(),
+        );
+        let committed: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../internal/temple/unique_upgrades.json"
+        ))
+        .expect("unique_upgrades.json is JSON");
+        assert_eq!(
+            committed,
+            fresh,
+            "internal/temple/unique_upgrades.json drifted from DROPS; paste:\n{}",
+            serde_json::to_string_pretty(&fresh).expect("pairs serialise")
+        );
+    }
 }
