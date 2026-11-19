@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -513,6 +514,42 @@ func TestSearchFixedTarget_SendsDecodedTicketQueryInClientLeague(t *testing.T) {
 			json.Unmarshal([]byte(want[target.Gem]), &expected)
 			if !reflect.DeepEqual(got, expected) {
 				t.Errorf("body = %s\nwant   %s", body, want[target.Gem])
+			}
+		})
+	}
+}
+
+type gemNameFoldVector struct {
+	Name      string `json:"name"`
+	Gem       string `json:"gem"`
+	TradeName string `json:"tradeName"`
+}
+
+func TestKeepHappy_BuildSearchQueryFoldsGemNameVectors(t *testing.T) {
+	data, err := os.ReadFile("testdata/gem-name-fold-vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors []gemNameFoldVector
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	for _, vector := range vectors {
+		t.Run(vector.Name, func(t *testing.T) {
+			body, err := buildSearchQuery(vector.Gem, 20, 20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var parsed struct {
+				Query struct {
+					Type string `json:"type"`
+				} `json:"query"`
+			}
+			if err := json.Unmarshal(body, &parsed); err != nil {
+				t.Fatal(err)
+			}
+			if parsed.Query.Type != vector.TradeName {
+				t.Errorf("query.type = %q, want %q", parsed.Query.Type, vector.TradeName)
 			}
 		})
 	}
