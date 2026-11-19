@@ -210,4 +210,39 @@ mod tests {
         assert!(q["query"]["type"].is_string());
         assert!(q["query"].get("term").is_none());
     }
+
+    mod keep_regression {
+        use super::super::*;
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct FoldVector {
+            name: String,
+            gem: String,
+            trade_name: String,
+        }
+
+        fn vectors() -> Vec<FoldVector> {
+            // Shared with the Go trade query test in internal/trade (WI-1).
+            serde_json::from_str(include_str!(
+                "../../../../internal/trade/testdata/gem-name-fold-vectors.json"
+            )).unwrap()
+        }
+
+        #[test]
+        fn gem_name_fold_vectors_reach_the_query() {
+            const PREFIX: &str = "Summon Chaos Golem of the ";
+            for case in vectors() {
+                for dedication in [false, true] {
+                    let base = build_search_query_with_mode(&case.gem, "20/20", dedication);
+                    assert_eq!(base["query"]["type"], case.trade_name.as_str(), "{} type (dedication={dedication})", case.name);
+
+                    let transfigured = build_search_query_with_mode(&format!("{PREFIX}{}", case.gem), "20/20", dedication);
+                    assert_eq!(transfigured["query"]["term"], format!("{PREFIX}{}", case.trade_name).as_str(), "{} term (dedication={dedication})", case.name);
+                    assert!(transfigured["query"].get("type").is_none(), "{} type absent", case.name);
+                }
+            }
+        }
+    }
 }
