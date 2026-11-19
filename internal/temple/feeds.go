@@ -1,5 +1,7 @@
 package temple
 
+import "profitofexile/internal/mercure"
+
 // THE SEVEN FEEDS THIS PACKAGE READS
 //
 // POE-254's collector polls seven poe.ninja item-overview categories and stores
@@ -19,7 +21,7 @@ package temple
 // mercureTopicPrefix mirrors internal/collector's namespace for the shared hub.
 // It is spelled out in Feed.Topic below rather than concatenated at use sites so
 // the parity test compares the exact strings the server subscribes to.
-const mercureTopicPrefix = "poe/collector/"
+const mercureTopicPrefix = mercure.CollectorTopicPrefix
 
 // RoomCategory is the item_snapshots category carrying the 86 temple room-tier
 // lines. It is the only category whose lines are rooms; the other six carry the

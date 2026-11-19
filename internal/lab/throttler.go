@@ -112,7 +112,7 @@ func (t *Throttler) publish() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := t.publishFn(ctx, t.mercureURL, t.mercureSecret, "poe/analysis/updated", string(payload)); err != nil {
+	if err := t.publishFn(ctx, t.mercureURL, t.mercureSecret, mercure.AnalysisUpdatedTopic, string(payload)); err != nil {
 		t.logger.Error("throttler: failed to publish analysis event", "error", err)
 		return
 	}

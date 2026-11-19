@@ -7,6 +7,7 @@ import (
 
 	"profitofexile/internal/collector"
 	"profitofexile/internal/league"
+	"profitofexile/internal/mercure"
 )
 
 // DebugTrigger returns a handler that publishes a fake Mercure event for
@@ -23,7 +24,7 @@ func DebugTrigger(mercureURL, mercureSecret string, scope league.Scope) http.Han
 			return
 		}
 
-		topic := "poe/collector/" + endpoint
+		topic := mercure.CollectorTopicPrefix + endpoint
 		payload, err := json.Marshal(map[string]any{
 			"league":    scope.ID(),
 			"endpoint":  "ninja_" + endpoint,

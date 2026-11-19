@@ -17,6 +17,7 @@ import (
 	"profitofexile/internal/db"
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/league"
+	"profitofexile/internal/mercure"
 	"profitofexile/internal/price/gemcolor"
 )
 
@@ -472,7 +473,7 @@ func checkExpectedLeague(expected, resolved string) error {
 // and clear their cached lab layout so they fetch the new daily layout.
 func runLayoutResetTicker(ctx context.Context, scope league.Scope, mercureURL, mercureSecret string) {
 	payloadBytes, err := json.Marshal(collector.StampScope(map[string]any{
-		"topic":  "poe/lab/layout",
+		"topic":  mercure.LabLayoutTopic,
 		"action": "reset",
 		"source": "collector",
 	}, scope))
@@ -494,7 +495,7 @@ func runLayoutResetTicker(ctx context.Context, scope league.Scope, mercureURL, m
 		case <-time.After(sleepDur):
 		}
 
-		if err := collector.PublishMercureEvent(ctx, mercureURL, mercureSecret, "poe/lab/layout", payload); err != nil {
+		if err := collector.PublishMercureEvent(ctx, mercureURL, mercureSecret, mercure.LabLayoutTopic, payload); err != nil {
 			slog.Error("layout reset: mercure publish failed", "error", err)
 		} else {
 			slog.Info("layout reset: published reset event at midnight UTC")
@@ -520,7 +521,7 @@ func runTradeRefresher(ctx context.Context, scope league.Scope, mercureURL, merc
 
 func runTradeRefresherTicks(ctx context.Context, scope league.Scope, mercureURL, mercureSecret string, ticks <-chan time.Time) {
 	const publishErrorEscalateAfter = 3
-	payloadBytes, err := json.Marshal(collector.StampScope(map[string]any{"topic": "poe/collector/trade-tick"}, scope))
+	payloadBytes, err := json.Marshal(collector.StampScope(map[string]any{"topic": mercure.TradeTickTopic}, scope))
 	if err != nil {
 		slog.Error("trade tick: marshal payload failed", "error", err)
 		return
@@ -536,7 +537,7 @@ func runTradeRefresherTicks(ctx context.Context, scope league.Scope, mercureURL,
 			return
 		case <-ticks:
 
-			if err := collector.PublishMercureEvent(ctx, mercureURL, mercureSecret, "poe/collector/trade-tick", payload); err != nil {
+			if err := collector.PublishMercureEvent(ctx, mercureURL, mercureSecret, mercure.TradeTickTopic, payload); err != nil {
 				if ctx.Err() != nil {
 					return
 				}

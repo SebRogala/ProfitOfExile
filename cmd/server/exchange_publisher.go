@@ -28,7 +28,7 @@ type marketUpdatePublisher struct {
 
 // PublishLeagueActive announces the fenced process scope on the shared stream.
 func (p marketUpdatePublisher) PublishLeagueActive(ctx context.Context) error {
-	return p.Publish(ctx, "poe/league/active", map[string]any{"topic": "poe/league/active"})
+	return p.Publish(ctx, mercure.LeagueActiveTopic, map[string]any{"topic": mercure.LeagueActiveTopic})
 }
 
 // Publish stamps the league identity onto the payload and posts it to the hub.

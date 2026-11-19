@@ -14,7 +14,7 @@ import (
 	"profitofexile/internal/mercure"
 )
 
-const mercureTradeTopic = "poe/trade/results"
+const mercureTradeTopic = mercure.TradeResultsTopic
 
 const (
 	failedLookupRetryDelay  = 5 * time.Minute

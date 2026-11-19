@@ -69,7 +69,7 @@ func DesktopGems(mercureURL, mercureSecret string) http.HandlerFunc {
 		}
 
 		// Build Mercure event payload.
-		topic := "poe/desktop/" + body.Pair
+		topic := mercure.DesktopTopicPrefix + body.Pair
 		eventPayload := map[string]any{
 			"type": "gems-detected",
 			"gems": body.Gems,

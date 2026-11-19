@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"profitofexile/internal/league"
+	"profitofexile/internal/mercure"
 	"profitofexile/internal/price/gemcolor"
 )
 
@@ -20,7 +21,7 @@ import (
 const perSourceSemaphoreCapacity = 3
 
 // mercureTopicPrefix namespaces Mercure topics for the shared hub.
-const mercureTopicPrefix = "poe/collector/"
+const mercureTopicPrefix = mercure.CollectorTopicPrefix
 
 // mercureTopicSuffix maps endpoint names to source-agnostic topic suffixes.
 // Falls back to the raw endpoint name if not present in the map.
