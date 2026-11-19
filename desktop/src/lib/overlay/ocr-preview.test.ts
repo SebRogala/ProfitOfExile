@@ -293,6 +293,38 @@ describe('OCR preview owner', () => {
 		]);
 	});
 
+	function onSecondMonitor(harness: ReturnType<typeof makeHarness>) {
+		harness.primaryMonitor = async () => ({ position: { x: 1920, y: 0 }, scaleFactor: 1.25 });
+		harness.availableMonitors = async () => [{ position: { x: 1920, y: 0 }, scaleFactor: 1.25 }];
+		harness.gameMonitor = async () => ({ id: 2, x: 1920, y: 0, width: 2560, height: 1440 });
+	}
+
+	it("places a windowed client's rectangle at the client offset inside the game window", async () => {
+		const harness = makeHarness();
+		onSecondMonitor(harness);
+
+		// A 1600x900 client at capture-relative (160, 90); the rect sits at (40, 30) inside it.
+		await harness.owner.preview(request([200, 120, 300, 60]));
+		const preview = harness.windows[0];
+		await preview.emit('tauri://created');
+
+		expect(preview.options).toMatchObject({ width: 240, height: 48 });
+		expect(preview.positionCalls).toEqual([{ x: 2120, y: 120 }, { x: 2120, y: 120 }]);
+		expect(preview.sizeCalls.at(-1)).toEqual({ width: 300, height: 60 });
+	});
+
+	it('opens a re-placed rect at the moved position', async () => {
+		const harness = makeHarness();
+		onSecondMonitor(harness);
+
+		await harness.owner.preview(request([400, 220, 300, 60]));
+		const preview = harness.windows[0];
+		await preview.emit('tauri://created');
+
+		expect(preview.positionCalls).toEqual([{ x: 2320, y: 220 }, { x: 2320, y: 220 }]);
+		expect(preview.sizeCalls.at(-1)).toEqual({ width: 300, height: 60 });
+	});
+
 	it('stops after the resize checkpoint when replacement happens during the workaround', async () => {
 		const harness = makeHarness();
 
