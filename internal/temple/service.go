@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"profitofexile/internal/coalesce"
 	"profitofexile/internal/league"
 )
 
@@ -143,9 +144,9 @@ type Service struct {
 	scope  league.Scope
 	logger *slog.Logger
 
-	mu      sync.Mutex
-	running bool
-	dirty   bool
+	recompute coalesce.Coalescer
+
+	mu sync.Mutex
 
 	// lastUntiered is the previously logged untiered set, joined on a byte no
 	// room name can contain. Guarded by mu.
@@ -212,48 +213,23 @@ func (s *Service) Recompute(ctx context.Context) (Market, error) {
 	return market, nil
 }
 
-// Trigger runs a recompute, coalescing concurrent callers.
+// Trigger runs a recompute, coalescing concurrent callers through
+// coalesce.Coalescer, which documents the coalescing rationale.
 //
 // The seven item feeds publish within seconds of each other, so seven events can
-// arrive while one recompute is in flight. A caller that finds one running marks
-// the work dirty and returns; the running recompute then repeats ONCE for
-// however many arrived. The rerun is what keeps the last event from being lost —
-// the in-flight read may have started before that event's rows were committed.
-//
-// This is a mutex and a rerun, deliberately not a debounce or a timer: there is
-// no quiet period to wait out and nothing to schedule, so a burst costs two
-// recomputes rather than seven, and the answer served after the burst was
-// computed after the last event.
+// arrive while one recompute is in flight; a burst costs two recomputes rather
+// than seven.
 //
 // Errors are logged at Warn rather than returned: the callers are the Mercure
 // subscriber and the startup goroutine, both fire-and-forget, and the next
 // stored tick triggers another attempt. Call Recompute directly when the error
 // matters.
 func (s *Service) Trigger(ctx context.Context) {
-	s.mu.Lock()
-	if s.running {
-		s.dirty = true
-		s.mu.Unlock()
-		return
-	}
-	s.running = true
-	s.mu.Unlock()
-
-	for {
+	s.recompute.Run(func() {
 		if _, err := s.Recompute(ctx); err != nil {
 			s.logger.Warn("temple: recompute failed", "error", err)
 		}
-
-		s.mu.Lock()
-		if s.dirty {
-			s.dirty = false
-			s.mu.Unlock()
-			continue
-		}
-		s.running = false
-		s.mu.Unlock()
-		return
-	}
+	})
 }
 
 // HandleEvent recomputes in response to one of the seven collector item events.
