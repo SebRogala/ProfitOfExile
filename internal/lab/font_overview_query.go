@@ -37,6 +37,9 @@ type overviewFlight struct {
 	waiters int
 	value   any
 	err     error
+	// panicked is a panic the load raised; each waiter re-raises it, as the
+	// request would have raised it loading alone.
+	panicked any
 }
 
 const (
@@ -66,6 +69,9 @@ func (f *FontColdFills) load(ctx context.Context, kind string, read func(context
 
 	select {
 	case <-fl.done:
+		if fl.panicked != nil {
+			panic(fl.panicked)
+		}
 		return fl.value, fl.err
 	case <-ctx.Done():
 		f.mu.Lock()
@@ -83,7 +89,8 @@ func (f *FontColdFills) run(ctx context.Context, kind string, fl *overviewFlight
 	var value any
 	var err error
 	defer func() {
-		if recovered := recover(); recovered != nil {
+		recovered := recover()
+		if recovered != nil {
 			slog.Error("lab: font overview load panicked", "kind", kind, "recover", recovered)
 			value, err = nil, fmt.Errorf("lab: font overview load panicked: %v", recovered)
 		}
@@ -92,7 +99,7 @@ func (f *FontColdFills) run(ctx context.Context, kind string, fl *overviewFlight
 			delete(f.flights, kind)
 		}
 		fl.cancel()
-		fl.value, fl.err = value, err
+		fl.value, fl.err, fl.panicked = value, err, recovered
 		close(fl.done)
 		f.mu.Unlock()
 	}()
