@@ -115,9 +115,15 @@ pub struct ScoredLineMatch {
 /// | `ZORATHS EYE` fragment          | Zorath's Eye of the Endless    | 0.808 | 0.577 |
 /// | `TANIUM SPIRI` fragment         | Titanium Spirit Shield         | 0.710 | 0.629 |
 /// | `OTHER SERPENTINE STAFF` fragment | Serpentine Staff             | 0.805 | 0.695 |
+/// | `COMBUSTION SUPPORT` ground loot | Communion Support            | 0.883 | 0.580 |
+/// | `FIRE ARROW QUIVER` ground loot  | Vile Arrow Quiver            | 0.877 | 0.626 |
+/// | `NECROMANCER SILKS` ground loot  | Necromancer Circlet          | 0.853 | 0.617 |
+/// | `SULPHUR FLASK` ground loot      | Silver Flask                 | 0.814 | 0.580 |
 ///
 /// Highest sibling-label pair: Allflame Ember of Kulemak / of the Ethereal,
-/// 0.831. 0.90 sits above it and above every fragment (highest 0.853).
+/// 0.831. 0.90 sits above it, above every fragment (highest 0.853) and above
+/// every near-miss ground label (highest 0.883, pinned by
+/// `near_miss_ground_loot_labels_stay_unknown`).
 pub const LOOT_MATCH_THRESHOLD: f64 = 0.90;
 
 /// Lead the best label needs over the runner-up label. The single-wrong-letter
@@ -340,6 +346,16 @@ mod tests {
     fn old_suffix_category_fragment_matches_stay_unknown() {
         let profile = fixture_profile("catarina");
         for text in ["Flask", "Granite Flask", "Staff", "Other Serpentine Staff", "TANIUM SPIRI", "ALLFLAME EMBER", "ZORATHS EYE", "SUPPORT", "Rare, two veiled modifiers"] {
+            assert_eq!(profile.match_line(text), LineMatch::Unknown, "{text}");
+        }
+    }
+
+    // Real ground-loot labels one or two words from a Catarina label; the scores
+    // sit 0.017-0.086 under LOOT_MATCH_THRESHOLD (`loot_tolerance_measurements`).
+    #[test]
+    fn near_miss_ground_loot_labels_stay_unknown() {
+        let profile = &built_in_profiles()[0];
+        for text in ["FIRE ARROW QUIVER", "COMBUSTION SUPPORT", "NECROMANCER SILKS", "SULPHUR FLASK"] {
             assert_eq!(profile.match_line(text), LineMatch::Unknown, "{text}");
         }
     }
@@ -588,7 +604,8 @@ mod tests {
         println!("highest sibling pair {:.3} {} / {}", sibling.0, sibling.1, sibling.2);
         let names: Vec<&str> = labels.iter().map(|(l, _)| l.as_str()).collect();
         for read in ["LORATHS EYE OF THE ENDLESS", "LLFLAME EMBER OF THE ETHERE", "ALLFLAME EMBER OF THE ETHEREA",
-            "ALLFLAME EMBER", "ZORATHS EYE", "TANIUM SPIRI", "OTHER SERPENTINE STAFF", "GRANITE FLASK", "SPIDERSILK ROBE"] {
+            "ALLFLAME EMBER", "ZORATHS EYE", "TANIUM SPIRI", "OTHER SERPENTINE STAFF", "GRANITE FLASK", "SPIDERSILK ROBE",
+            "FIRE ARROW QUIVER", "COMBUSTION SUPPORT", "NECROMANCER SILKS", "SULPHUR FLASK"] {
             let r = crate::gem_matcher::rank(read, &names, strsim::jaro).unwrap();
             println!("{read}: {} {:.3} second {:.3}", names[r.best_idx], r.best_score, r.second_score);
         }
