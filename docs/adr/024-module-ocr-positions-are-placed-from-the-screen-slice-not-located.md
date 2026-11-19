@@ -404,3 +404,17 @@ id is a Windows handle that changes for one display between sessions, and each
 change dropped the slice and its remembered anchors. See
 [ADR-020](020-one-shared-screen-scale-a-module-corroborates-or-withholds.md)'s
 2026-09-14 amendment.
+
+## Amendment: POE-272 windowed client rectangle (2026-11-19)
+
+`ScreenSlice.client` is now the live game client rectangle, not the fullscreen
+capture rect POE-268 shipped. The focus poller reads it while the game is
+foreground. A client MOVE only re-places (origin and anchors shift, the scale
+is kept); a client RESIZE is a re-verify (the slice drops, like a capture-size
+change). Capture stays the monitor grab; there is no crop-to-client.
+`ui_scale = client_height / 1200` is an interim rule pending the Operator's
+open Desk decision (carried from POE-267). The rules' normative home is the
+Lifecycle paragraph under "Screen Geometry (SSOT)" in
+[desktop/src/lib/README.md](../../desktop/src/lib/README.md); this amendment
+restates no mechanism. The earlier sections' "POE-272 owns…" lines stay as
+dated history.
