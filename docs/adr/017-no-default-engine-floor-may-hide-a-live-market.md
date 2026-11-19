@@ -399,8 +399,9 @@ sides empty is 0–1. Roughly **8% of the served surface**.
   These rows rank by value with every other play; the desktop offers a filter
   chip that narrows the table to exactly them without reordering anything. No
   new ranking is added (contrast POE-178).
-- **What still drops** is only what cannot be priced: nothing traded on a leg
-  this hour (`MinVolumePerHour` 1), or an entry currency with no chaos rate.
+- **What still drops** is only what cannot be priced: a leg with neither a
+  usable current-hour price nor a qualifying trailing-window rescue, or an
+  entry currency with no chaos rate.
 
 ### Consequences
 
