@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"profitofexile/internal/coalesce"
 	"profitofexile/internal/league"
 )
 
@@ -229,12 +230,7 @@ type Service struct {
 	notify func()
 	logger *slog.Logger
 
-	// mu guards running and dirty only. It is never held across a Recompute:
-	// the whole point of the flags is to let a second trigger return
-	// immediately while the first one is still in the database.
-	mu      sync.Mutex
-	running bool
-	dirty   bool
+	recompute coalesce.Coalescer
 }
 
 // NewService builds a recompute service for one league scope.
@@ -382,46 +378,23 @@ func (s *Service) widestWindow() int {
 //
 // A catch-up pass stores several hours in a row and the subscriber fires one
 // Trigger per stored hour. Running them all would mean N full window reads for
-// one answer, so: while a recompute is in flight, further triggers only set
-// dirty and return immediately, and the running recompute then repeats ONCE for
-// however many arrived. The rerun is what keeps the last event from being lost —
-// the in-flight read may have started before its rows were committed.
+// Trigger runs a recompute, coalescing concurrent requests through
+// coalesce.Coalescer, which documents the coalescing rationale. A catch-up pass
+// stores several hours in a row and the subscriber fires one Trigger per stored
+// hour.
 //
 // Errors are logged at Warn rather than returned: callers are the subscriber and
 // the startup goroutine, both fire-and-forget, and the next stored hour triggers
 // another attempt. Call Recompute directly when the error matters.
 func (s *Service) Trigger(ctx context.Context) {
-	s.mu.Lock()
-	if s.running {
-		s.dirty = true
-		s.mu.Unlock()
-		return
-	}
-	s.running = true
-	s.mu.Unlock()
-
-	for {
+	s.recompute.Run(func() {
 		if _, err := s.Recompute(ctx); err != nil {
 			s.logger.Warn("currency-exchange: recompute failed", "error", err)
 		}
-
-		s.mu.Lock()
-		if s.dirty {
-			s.dirty = false
-			s.mu.Unlock()
-			continue
-		}
-		s.running = false
-		s.mu.Unlock()
-		return
-	}
+	})
 }
 
-// HandleEvent recomputes in response to a collector event. The raw payload is
-// deliberately ignored.
-//
-// The event's "rows" field counts what that pass INSERTED, not what the hour
-// holds, so a replayed hour publishes rows: 0 while being fully populated — an
+s rows: 0 while being fully populated — an
 // event-content check would skip exactly the recompute a crash recovery needs.
 // Reading nothing from the payload also makes the handler replay-safe: a
 // duplicate delivery costs one coalesced recompute and changes no state.
