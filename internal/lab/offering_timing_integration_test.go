@@ -186,7 +186,7 @@ func TestKeepCriticalOfferingFailureNotCached(t *testing.T) {
 	}
 
 	immediate := func(context.Context) ([]OfferingTiming, error) { return partial, errors.New("sparkline query failed") }
-	if _, err := c.offeringFill.do(ctx, immediate, publishOfferingTimings(c)); err == nil {
+	if _, err := c.offeringFill.do(ctx, immediate, publishOfferingTimings(c), nil); err == nil {
 		t.Fatal("a failed refresh reported no error")
 	}
 	v, stale := serveOfferingTimings(ctx, immediate, c)
@@ -195,7 +195,7 @@ func TestKeepCriticalOfferingFailureNotCached(t *testing.T) {
 	}
 
 	none := func(context.Context) ([]OfferingTiming, error) { return []OfferingTiming{}, nil }
-	if _, err := c.offeringFill.do(ctx, none, publishOfferingTimings(c)); err != nil {
+	if _, err := c.offeringFill.do(ctx, none, publishOfferingTimings(c), nil); err != nil {
 		t.Fatalf("successful empty refresh: %v", err)
 	}
 	if data, stale := c.OfferingTimingState(); string(data) != "[]" || stale {

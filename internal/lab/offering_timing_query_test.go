@@ -106,3 +106,34 @@ func TestKeepHappyOfferingTimingsNoSnapshotRowsIsACompleteEmptyAnswer(t *testing
 		t.Errorf("offerings %+v, error %v; want only offer-dedication and no error", got, err)
 	}
 }
+
+// POE-410 F-1: a request that read the cache COLD and reaches the fill only
+// after another fill published loads nothing and answers the published value.
+func TestKeepHappyColdFillAfterAnotherFillPublishedLoadsNothing(t *testing.T) {
+	scope := league.Historical("Mirage")
+	c := NewCache(scope).For(scope)
+	published := []OfferingTiming{{Name: "Gift to the Goddess", FragmentID: "offer-gift", CurrentPrice: 9}}
+	first := func(context.Context) ([]OfferingTiming, error) { return published, nil }
+	if _, stale := fillColdOfferingTimings(context.Background(), first, c); stale {
+		t.Fatal("the first cold fill answered stale")
+	}
+
+	loads := 0
+	second := func(context.Context) ([]OfferingTiming, error) { loads++; return nil, errors.New("must not run") }
+	got, stale := fillColdOfferingTimings(context.Background(), second, c)
+	if loads != 0 || stale || len(got) != 1 || got[0].CurrentPrice != 9 {
+		t.Errorf("late cold fill: %d loads, stale %v, offerings %+v; want 0 loads and the published value fresh", loads, stale, got)
+	}
+}
+
+// The background refresh is unconditional: it fills even over a warm cache.
+func TestKeepHappyRefreshFillsOverAWarmCache(t *testing.T) {
+	scope := league.Historical("Mirage")
+	c := NewCache(scope).For(scope)
+	c.SetOfferingTiming([]byte(`[]`))
+	loads := 0
+	load := func(context.Context) ([]OfferingTiming, error) { loads++; return []OfferingTiming{}, nil }
+	if _, err := c.offeringFill.do(context.Background(), load, publishOfferingTimings(c), nil); err != nil || loads != 1 {
+		t.Errorf("refresh over a warm cache: %d loads, err %v; want 1 load", loads, err)
+	}
+}

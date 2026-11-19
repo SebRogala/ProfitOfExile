@@ -86,10 +86,19 @@ type offeringFlight struct {
 }
 
 // do joins the in-flight fill, starting one with load when none runs. load
-// runs once per flight; publish runs with its result before any waiter wakes.
-func (f *offeringFill) do(ctx context.Context, load offeringLoader, publish func([]OfferingTiming, error)) ([]OfferingTiming, error) {
+// runs once per flight; publish runs with its result before the flight is
+// cleared and any waiter wakes. warm, when non-nil, is asked under the same
+// lock before a flight starts: a value it returns answers instead, so a caller
+// that saw a miss before an earlier flight published loads nothing.
+func (f *offeringFill) do(ctx context.Context, load offeringLoader, publish func([]OfferingTiming, error), warm func() ([]OfferingTiming, bool)) ([]OfferingTiming, error) {
 	f.mu.Lock()
 	fl := f.flight
+	if fl == nil && warm != nil {
+		if offerings, ok := warm(); ok {
+			f.mu.Unlock()
+			return offerings, nil
+		}
+	}
 	if fl == nil {
 		fl = &offeringFlight{done: make(chan struct{})}
 		f.flight = fl
@@ -166,7 +175,7 @@ func publishOfferingTimings(c *Cache) func([]OfferingTiming, error) {
 // This is the tick's entry point (cmd/server/main.go, ninja_fragments event).
 func RefreshOfferingTimings(ctx context.Context, repo *Repository, cache *Cache, scope league.Scope) (int, error) {
 	c := cache.For(scope)
-	offerings, err := c.offeringFill.do(ctx, repo.offeringLoader(scope), publishOfferingTimings(c))
+	offerings, err := c.offeringFill.do(ctx, repo.offeringLoader(scope), publishOfferingTimings(c), nil)
 	return len(offerings), err
 }
 
@@ -183,19 +192,41 @@ func ServeOfferingTimings(ctx context.Context, repo *Repository, cache *Cache, s
 }
 
 func serveOfferingTimings(ctx context.Context, load offeringLoader, c *Cache) ([]OfferingTiming, bool) {
-	if data, stale := c.OfferingTimingState(); data != nil {
-		var offerings []OfferingTiming
-		err := json.Unmarshal(data, &offerings)
-		if err == nil {
-			return offerings, stale
-		}
-		slog.Warn("lab: cached offering timing is not decodable, refilling", "error", err)
+	if offerings, stale, ok := storedOfferingTimings(c); ok {
+		return offerings, stale
 	}
 	if load == nil {
 		return nil, false
 	}
-	offerings, err := c.offeringFill.do(ctx, load, publishOfferingTimings(c))
-	return offerings, err != nil
+	return fillColdOfferingTimings(ctx, load, c)
+}
+
+// fillColdOfferingTimings runs or joins the shared fill after a cold read,
+// answering from the cache instead when a fill published since that read.
+func fillColdOfferingTimings(ctx context.Context, load offeringLoader, c *Cache) ([]OfferingTiming, bool) {
+	stale := false
+	warm := func() ([]OfferingTiming, bool) {
+		offerings, s, ok := storedOfferingTimings(c)
+		stale = s
+		return offerings, ok
+	}
+	offerings, err := c.offeringFill.do(ctx, load, publishOfferingTimings(c), warm)
+	return offerings, stale || err != nil
+}
+
+// storedOfferingTimings decodes the stored offering slot; ok is false when it
+// is COLD or not decodable.
+func storedOfferingTimings(c *Cache) ([]OfferingTiming, bool, bool) {
+	data, stale := c.OfferingTimingState()
+	if data == nil {
+		return nil, false, false
+	}
+	var offerings []OfferingTiming
+	if err := json.Unmarshal(data, &offerings); err != nil {
+		slog.Warn("lab: cached offering timing is not decodable, refilling", "error", err)
+		return nil, false, false
+	}
+	return offerings, stale, true
 }
 
 func (r *Repository) offeringLoader(scope league.Scope) offeringLoader {
