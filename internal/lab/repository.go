@@ -332,8 +332,13 @@ func (r *Repository) LatestFontResults(ctx context.Context, scope league.Scope, 
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query font results: %w", err)
 	}
-	defer rows.Close()
+	return scanFontRows(rows)
+}
 
+// scanFontRows decodes font_snapshots rows selected in the LatestFontResults
+// column order.
+func scanFontRows(rows pgx.Rows) ([]FontResult, error) {
+	defer rows.Close()
 	var results []FontResult
 	for rows.Next() {
 		var fr FontResult
@@ -351,7 +356,6 @@ func (r *Repository) LatestFontResults(ctx context.Context, scope league.Scope, 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("lab repo: font rows iteration: %w", err)
 	}
-
 	return results, nil
 }
 
@@ -379,25 +383,7 @@ func (r *Repository) FontOverviewRows(ctx context.Context, scope league.Scope) (
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query font overview rows: %w", err)
 	}
-	defer rows.Close()
-
-	var results []FontResult
-	for rows.Next() {
-		var fr FontResult
-		if err := rows.Scan(&fr.Time, &fr.Color, &fr.Variant, &fr.Pool, &fr.PricedGems, &fr.Winners,
-			&fr.PWin, &fr.AvgWin, &fr.EV, &fr.InputCost, &fr.Profit,
-			&fr.Mode, &fr.ThinPoolGems, &fr.LiquidityRisk); err != nil {
-			return nil, fmt.Errorf("lab repo: scan font overview row: %w", err)
-		}
-		if fr.PWin > 0 {
-			fr.FontsToHit = 1.0 / fr.PWin
-		}
-		results = append(results, fr)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("lab repo: font overview rows iteration: %w", err)
-	}
-	return results, nil
+	return scanFontRows(rows)
 }
 
 // LatestQualityResults returns the most recent quality-roll analysis results, optionally filtered by variant.
@@ -1754,6 +1740,12 @@ func (r *Repository) LatestDedicationResults(ctx context.Context, scope league.S
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query dedication results: %w", err)
 	}
+	return scanDedicationRows(rows)
+}
+
+// scanDedicationRows decodes dedication_snapshots rows selected in the
+// LatestDedicationResults column order.
+func scanDedicationRows(rows pgx.Rows) ([]DedicationResult, error) {
 	defer rows.Close()
 
 	var results []DedicationResult
@@ -1782,7 +1774,6 @@ func (r *Repository) LatestDedicationResults(ctx context.Context, scope league.S
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("lab repo: dedication rows iteration: %w", err)
 	}
-
 	return results, nil
 }
 
@@ -1813,35 +1804,7 @@ func (r *Repository) DedicationOverviewRows(ctx context.Context, scope league.Sc
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query dedication overview rows: %w", err)
 	}
-	defer rows.Close()
-
-	var results []DedicationResult
-	for rows.Next() {
-		var dr DedicationResult
-		var poolBreakdownJSON, lowConfJSON []byte
-		if err := rows.Scan(&dr.Time, &dr.Variant, &dr.Color, &dr.GemType, &dr.Pool, &dr.Winners,
-			&dr.PWin, &dr.AvgWinRaw, &dr.EVRaw,
-			&dr.InputCost, &dr.Profit, &dr.FontsToHit,
-			&dr.Mode, &dr.ThinPoolGems, &dr.LiquidityRisk,
-			&poolBreakdownJSON, &lowConfJSON); err != nil {
-			return nil, fmt.Errorf("lab repo: scan dedication overview row: %w", err)
-		}
-		if len(poolBreakdownJSON) > 0 {
-			if err := json.Unmarshal(poolBreakdownJSON, &dr.PoolBreakdown); err != nil {
-				return nil, fmt.Errorf("lab repo: unmarshal pool_breakdown: %w", err)
-			}
-		}
-		if len(lowConfJSON) > 0 {
-			if err := json.Unmarshal(lowConfJSON, &dr.LowConfidenceGems); err != nil {
-				return nil, fmt.Errorf("lab repo: unmarshal low_confidence_gems: %w", err)
-			}
-		}
-		results = append(results, dr)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("lab repo: dedication overview rows iteration: %w", err)
-	}
-	return results, nil
+	return scanDedicationRows(rows)
 }
 
 // SaveDoubleCorruptResults persists one tick's double-corruption EV results.
