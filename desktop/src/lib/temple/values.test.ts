@@ -27,12 +27,23 @@ import {
 	orderRows,
 	parseTiersMode,
 	parseValueSort,
+	roomTooltip,
 	serializeValueSort,
 	sortValueRows,
 	type ValueMark,
 	type ValueRow
 } from './values';
-import type { MarketView, RoomValueView, TempleCustom, TempleValueRow } from './slice';
+import type { LineView, MarketView, RoomValueView, TempleCustom, TempleValueRow } from './slice';
+import valueRowLines from './fixtures/value-row-lines.json';
+
+/** Rust's projected line facts per room line (WI-1's Rust-checked fixture). */
+const FIXTURE = valueRowLines as unknown as { key: string; name: string; line: LineView }[];
+
+function fixtureLine(key: string): LineView {
+	const entry = FIXTURE.find((e) => e.key === key);
+	if (!entry) throw new Error(`no fixture line for ${key}`);
+	return entry.line;
+}
 
 /** A cell as Rust publishes one. Every field is overridable so a test states
  *  only the one it is about. */
@@ -56,7 +67,8 @@ function row(key: string, name: string, tiers: Partial<RoomValueView>[]): Temple
 		name,
 		grade: 'A1',
 		pickOrder: 0,
-		tiers: [value(tiers[0]), value(tiers[1]), value(tiers[2])]
+		tiers: [value(tiers[0]), value(tiers[1]), value(tiers[2])],
+		line: FIXTURE.find((e) => e.key === key)?.line ?? fixtureLine('corruption')
 	};
 }
 
@@ -687,6 +699,45 @@ describe('KNOBS', () => {
 	});
 });
 
+describe('roomTooltip', () => {
+	const lines = (text: string) => text.split('<br>');
+
+	// keep:happy — AC-1 and AC-2 at the formatting boundary.
+	it('roomTooltip states the effect, drops and source of a line', () => {
+		const locus = fixtureLine('corruption');
+		const cradle = fixtureLine('throne_of_atziri');
+		const locusTip = roomTooltip(locus);
+		const cradleTip = roomTooltip(cradle);
+
+		expect(locusTip).toContain('Rarity 4/8/12 %');
+		expect(locusTip).toContain('Pack size 1/2/3 %');
+		expect(locusTip).toContain(locus.sources[0].label);
+		expect(cradleTip).toContain('Magic packs 10/20/30 %');
+		expect(cradleTip).toContain(cradle.sources[0].label);
+
+		const chestEntry = FIXTURE.find((e) => e.line.chest !== null && e.line.chest.uniques.length > 0)!;
+		const unique = chestEntry.line.chest!.uniques[0];
+		const chestTip = roomTooltip(chestEntry.line).replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+		expect(chestTip).toContain(`${unique.base} → ${unique.upgraded} with Cradle`);
+
+		for (const entry of FIXTURE) {
+			const parts = lines(roomTooltip(entry.line));
+			expect(parts).toHaveLength(3);
+			expect(parts.map((p) => p.match(/^<b>(\w+)<\/b>/)?.[1])).toEqual(['Effect', 'Drops', 'Source']);
+		}
+	});
+
+	// keep:critical — Tooltip renders the string as HTML.
+	it('roomTooltip escapes wire text', () => {
+		const tip = roomTooltip({
+			...fixtureLine('corruption'),
+			content: "Tom & Jerry's <script>"
+		});
+		expect(tip).toContain('Tom &amp; Jerry&#39;s &lt;script&gt;');
+		expect(tip).not.toContain('<script>');
+	});
+});
+
 /** A `ValueRow` as the table holds one (POE-263). Tiers 1 and 2 sit at the
  *  shipped 0.8 of tier 3, which is what the sort must ignore: only the tier-3
  *  column is a sort key. */
@@ -698,6 +749,7 @@ function vrow(
 	return {
 		key: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
 		name,
+		tooltip: '',
 		cells: TIERS.map((tier) => ({
 			tier,
 			total: tier === 3 ? tier3 : tier3 * 0.8,

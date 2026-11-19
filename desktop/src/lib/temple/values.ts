@@ -15,6 +15,7 @@
  */
 
 import type {
+	LineView,
 	MarketView,
 	RoomValueView,
 	TempleCustom,
@@ -264,6 +265,8 @@ export interface ValueRow {
 	key: string;
 	name: string;
 	cells: ValueCell[];
+	/** The room name's tooltip, from `roomTooltip(row.line)`. */
+	tooltip: string;
 }
 
 /**
@@ -277,6 +280,7 @@ export function valueRows(rows: TempleValueRow[], custom: TempleCustom | null): 
 	return rows.map((row) => ({
 		key: row.key,
 		name: row.name,
+		tooltip: roomTooltip(row.line),
 		cells: TIERS.map((tier) => {
 			const value = row.tiers[tier - 1];
 			return {
@@ -288,6 +292,85 @@ export function valueRows(rows: TempleValueRow[], custom: TempleCustom | null): 
 			};
 		})
 	}));
+}
+
+// --- the room tooltip ---------------------------------------------------------
+
+/** What a `FigureSourceView.figure` or a ladder is called in the tooltip. */
+const FIGURE_LABEL: Record<string, string> = {
+	rarity_pct: 'Rarity',
+	pack_size_pct: 'Pack size',
+	magic_pack_size_pct: 'Magic packs',
+	chest: 'Chest'
+};
+
+/** `Tooltip` renders its text as HTML, and room and unique names hold `'` and `&`. */
+function escapeHtml(text: string): string {
+	return text
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+}
+
+function ladder(figure: string, tiers: [number, number, number] | null): string | null {
+	if (tiers === null) return null;
+	const [t1, t2, t3] = tiers;
+	const values = t1 === t2 && t2 === t3 ? `${t1}` : `${t1}/${t2}/${t3}`;
+	return `${FIGURE_LABEL[figure]} ${values} %`;
+}
+
+function tooltipLine(label: string, body: string): string {
+	return `<b>${label}</b> ${body}`;
+}
+
+/**
+ * A room line's tooltip: three labelled lines — what it does, what it drops,
+ * and where each figure came from — joined by `<br>`.
+ *
+ * Every fact is the row's Rust `LineView`; this only words it. Wire strings
+ * are escaped because `Tooltip` assigns its text as HTML.
+ */
+export function roomTooltip(line: LineView): string {
+	const effect = [
+		line.content === null ? null : escapeHtml(line.content),
+		ladder('rarity_pct', line.rarityPct),
+		ladder('pack_size_pct', line.packSizePct),
+		ladder('magic_pack_size_pct', line.magicPackSizePct)
+	].filter((part): part is string => part !== null);
+
+	let drops = 'no chest';
+	if (line.chest !== null) {
+		const chest = line.chest;
+		const rate = [
+			chest.perRun === null ? null : `${Math.round(chest.perRun * 1000) / 10}%`,
+			chest.perRun !== null && chest.guessed ? 'est.' : null
+		].filter((part): part is string => part !== null);
+		const pool = chest.uniques
+			.map((u) => `${escapeHtml(u.base)} → ${escapeHtml(u.upgraded)} with Cradle`)
+			.join(', ');
+		drops = `T3 chest${rate.length > 0 ? ` (${rate.join(', ')})` : ''}${pool === '' ? '' : `: ${pool}`}`;
+	}
+
+	const figures = line.sources.map((s) => ({ figure: s.figure, label: s.label, guessed: s.guessed }));
+	if (line.chest !== null && line.chest.source !== null) {
+		figures.push({ figure: 'chest', label: line.chest.source, guessed: line.chest.guessed });
+	}
+	const groups = new Map<string, string[]>();
+	for (const f of figures) {
+		const name = (FIGURE_LABEL[f.figure] ?? f.figure) + (f.guessed ? ' est.' : '');
+		const names = groups.get(f.label) ?? [];
+		names.push(names.length === 0 ? name : name.toLowerCase());
+		groups.set(f.label, names);
+	}
+	const source = [...groups].map(([label, names]) => `${escapeHtml(names.join(', '))}: ${escapeHtml(label)}`);
+
+	return [
+		tooltipLine('Effect', effect.length > 0 ? effect.join(' · ') : 'none stated'),
+		tooltipLine('Drops', drops),
+		tooltipLine('Source', source.length > 0 ? source.join('; ') : 'none stated')
+	].join('<br>');
 }
 
 /** What the Custom table states for one room-tier, or null for "use the

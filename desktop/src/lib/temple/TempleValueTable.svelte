@@ -25,6 +25,7 @@
 	 * room the moment a header was clicked.
 	 */
 	import { persisted } from '$lib/prefs.svelte';
+	import Tooltip from '$lib/components/Tooltip.svelte';
 	import {
 		DEFAULT_TIERS_MODE,
 		DEFAULT_VALUE_SORT,
@@ -231,7 +232,7 @@
 			<tbody>
 				{#each ordered as row (row.key)}
 					<tr>
-						<td class="room">{row.name}</td>
+						<td class="room"><Tooltip text={row.tooltip} position="below"><span tabindex="0">{row.name}</span></Tooltip></td>
 
 						{#each shownCells(row) as cell (cell.tier)}
 							<td class="cell">

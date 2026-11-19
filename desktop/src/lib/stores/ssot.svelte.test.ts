@@ -1186,6 +1186,34 @@ describe('temple slice', () => {
 			expect(offer?.builtTier).toBe(2);
 		});
 
+		// keep:critical — an older build's line has no figure keys, and the room
+		// tooltip would otherwise format `undefined`.
+		it('normalises an older offer line without the new figure keys', () => {
+			const sample = readSlice();
+			const incoming = {
+				...sample,
+				panel: {
+					...sample.panel!,
+					offers: [
+						{
+							...sample.panel!.offers[0],
+							line: { kind: 'content', content: 'Extra monsters (dangerous)', rarityPct: null }
+						}
+					]
+				}
+			} as unknown as TempleSlice;
+			mod.applySnapshot({ league, temple: incoming });
+			expect(mod.ssot.temple.panel?.offers[0].line).toEqual({
+				kind: 'content',
+				content: 'Extra monsters (dangerous)',
+				rarityPct: null,
+				packSizePct: null,
+				magicPackSizePct: null,
+				chest: null,
+				sources: []
+			});
+		});
+
 		it('keeps the payload\'s own value for a field it does carry', () => {
 			// The filling above must not reach a field that IS present, or a
 			// board would be blanked by the very code meant to type it honestly.

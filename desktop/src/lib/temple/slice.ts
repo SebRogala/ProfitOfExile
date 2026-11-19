@@ -346,6 +346,42 @@ export interface LineView {
 	/** Draft prose for a content line, or null for a chest line. */
 	content: string | null;
 	rarityPct: [number, number, number] | null;
+	/** Area pack size bonus at tiers 1, 2, 3, or null with no stated ladder. */
+	packSizePct: [number, number, number] | null;
+	/** Magic monster pack size bonus at tiers 1, 2, 3, under the same rule. */
+	magicPackSizePct: [number, number, number] | null;
+	/** The tier-3 chest, null for a content line. */
+	chest: ChestView | null;
+	/** Where each stated ladder came from: rarity, then pack size, then magic pack size. */
+	sources: FigureSourceView[];
+}
+
+/** A line's tier-3 chest. Mirrors `slice.rs::ChestView`. */
+export interface ChestView {
+	/** Expected chest uniques per run at tier 3, null when nobody stated one. */
+	perRun: number | null;
+	/** Whether that rate is somebody's estimate. */
+	guessed: boolean;
+	/** The rate's short source label, null with no rate. */
+	source: string | null;
+	/** The pool, base first in each pair. */
+	uniques: ChestUniqueView[];
+}
+
+/** One unique the chest drops and its Cradle-present upgrade. */
+export interface ChestUniqueView {
+	base: string;
+	upgraded: string;
+}
+
+/** The provenance of one ladder on a `LineView`. */
+export interface FigureSourceView {
+	/** `"rarity_pct"`, `"pack_size_pct"` or `"magic_pack_size_pct"`. */
+	figure: string;
+	/** The short source label. */
+	label: string;
+	/** Whether the figure is somebody's estimate. */
+	guessed: boolean;
 }
 
 /** One room-tier's chaos value and the terms behind it. */
@@ -637,6 +673,8 @@ export interface TempleValueRow {
 	pickOrder: number;
 	/** Tier 1, tier 2, tier 3, in that order. */
 	tiers: [RoomValueView, RoomValueView, RoomValueView];
+	/** The line's drop facts, the same projection an offer box carries. */
+	line: LineView;
 }
 
 /** The four tunable fields of the strategy profile. */

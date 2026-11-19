@@ -672,8 +672,19 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 							value: offer.value ?? null,
 							// POE-277's line facts, same rule again: `serde(default)`
 							// on the Rust side, and the ladder row tests `line ===
-							// null` to decide whether it draws at all.
-							line: offer.line ?? null
+							// null` to decide whether it draws at all. POE-416's
+							// figure keys arrive the same way: an older line
+							// carries none, and the room tooltip formats them.
+							line:
+								offer.line == null
+									? null
+									: {
+											...offer.line,
+											packSizePct: offer.line.packSizePct ?? null,
+											magicPackSizePct: offer.line.magicPackSizePct ?? null,
+											chest: offer.line.chest ?? null,
+											sources: offer.line.sources ?? []
+										}
 						}))
 					},
 		advice: incoming.advice ?? null,

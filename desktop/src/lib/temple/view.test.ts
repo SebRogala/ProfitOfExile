@@ -856,7 +856,11 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					rarityPct: [4, 8, 12]
+					rarityPct: [4, 8, 12],
+					packSizePct: null,
+					magicPackSizePct: null,
+					chest: null,
+					sources: []
 				},
 				builtTier: 2
 			})])
@@ -883,7 +887,11 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					rarityPct: null
+					rarityPct: null,
+					packSizePct: null,
+					magicPackSizePct: null,
+					chest: null,
+					sources: []
 				}
 			})])
 		);
@@ -897,7 +905,11 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					rarityPct: [2, 4, 22.5]
+					rarityPct: [2, 4, 22.5],
+					packSizePct: null,
+					magicPackSizePct: null,
+					chest: null,
+					sources: []
 				}
 			})])
 		);
@@ -913,7 +925,11 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					rarityPct: [4, 8, 12]
+					rarityPct: [4, 8, 12],
+					packSizePct: null,
+					magicPackSizePct: null,
+					chest: null,
+					sources: []
 				}
 			})])
 		);
@@ -930,7 +946,11 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'content',
 					content: 'Queen Atziri',
-					rarityPct: null
+					rarityPct: null,
+					packSizePct: null,
+					magicPackSizePct: null,
+					chest: null,
+					sources: []
 				}
 			})])
 		);
@@ -948,7 +968,11 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'chest',
 					content: 'Double-corrupt an item',
-					rarityPct: null
+					rarityPct: null,
+					packSizePct: null,
+					magicPackSizePct: null,
+					chest: null,
+					sources: []
 				}
 			})])
 		);
@@ -965,7 +989,11 @@ describe('offerBoxes', () => {
 				line: {
 					kind: 'content',
 					content: null,
-					rarityPct: null
+					rarityPct: null,
+					packSizePct: null,
+					magicPackSizePct: null,
+					chest: null,
+					sources: []
 				}
 			})])
 		);
@@ -1640,7 +1668,11 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				line: {
 					kind: 'content',
 					content: 'Upgrade a room',
-					rarityPct: null
+					rarityPct: null,
+					packSizePct: null,
+					magicPackSizePct: null,
+					chest: null,
+					sources: []
 				},
 				grade: 'C1',
 				value: value({ priced: 'instrumental', total: 21.15, drivers: [] })
@@ -1661,7 +1693,11 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				line: {
 					kind: 'content',
 					content: 'Armour drops',
-					rarityPct: null
+					rarityPct: null,
+					packSizePct: null,
+					magicPackSizePct: null,
+					chest: null,
+					sources: []
 				},
 				value: value({ drivers: [rarityTerm()] })
 			})
@@ -1681,7 +1717,11 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				line: {
 					kind: 'content',
 					content: 'Double-corrupt an item',
-					rarityPct: null
+					rarityPct: null,
+					packSizePct: null,
+					magicPackSizePct: null,
+					chest: null,
+					sources: []
 				},
 				value: value({ priced: 'override', total: 500, drivers: [] })
 			})
@@ -2054,7 +2094,11 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				line: {
 					kind: 'chest',
 					content: null,
-					rarityPct: null
+					rarityPct: null,
+					packSizePct: null,
+					magicPackSizePct: null,
+					chest: null,
+					sources: []
 				},
 				value: value({ drivers: [rarityTerm()] })
 			})

@@ -100,7 +100,7 @@ and the documentation index before acting on them.
   BuildCompareResults in collective.go`), not a line (`collective.go:311` rots on the next edit).
   Keep the why and its evidence, including a past behaviour that explains a current constraint.
 - User-visible text (labels, tooltips, notes, empty states) shows data and when it was updated,
-  nothing else: no explanatory sentences. A tooltip is at most 3 short lines.
+  nothing else: no explanatory sentences. A tooltip is at most 3 short lines; a Room valuation tooltip may hold three compact labelled sections (Effect, Drops, Source) that wrap.
 
 ## Modeling rules
 
