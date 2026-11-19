@@ -57,7 +57,8 @@ type rankingGeneration [rankingInputCount]uint64
 //
 // Equal requests share one in-flight load per answer generation. The load
 // runs detached from any one caller, so a waiter that gives up neither cancels
-// it nor the others' answer. Only successful loads are retained.
+// it nor the others' answer; the last waiter leaving cancels it. Only
+// successful loads are retained, and an answer's size counts its key.
 //
 // The publication barrier is separate from Cache's data mutex: fills hold it
 // shared across their SQL, writers hold it exclusively across their commit
@@ -90,6 +91,7 @@ type rankingFlightKey struct {
 
 type rankingFlight struct {
 	done    chan struct{}
+	cancel  context.CancelFunc
 	waiters int
 	value   any
 	err     error
@@ -228,9 +230,10 @@ func (rc *RankingAnswers) get(ctx context.Context, key string, inputs RankingInp
 	fk := rankingFlightKey{key: key, generation: generation}
 	f, ok := rc.flights[fk]
 	if !ok {
-		f = &rankingFlight{done: make(chan struct{})}
+		loadCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		f = &rankingFlight{done: make(chan struct{}), cancel: cancel}
 		rc.flights[fk] = f
-		go rc.fill(context.WithoutCancel(ctx), fk, inputs, f, load)
+		go rc.fill(loadCtx, fk, inputs, f, load)
 	}
 	f.waiters++
 	rc.mu.Unlock()
@@ -241,6 +244,12 @@ func (rc *RankingAnswers) get(ctx context.Context, key string, inputs RankingInp
 	case <-ctx.Done():
 		rc.mu.Lock()
 		f.waiters--
+		// The last waiter gone stops the load, as a lone request's cancel
+		// would; a later equal request starts a fresh flight.
+		if f.waiters == 0 && rc.flights[fk] == f {
+			delete(rc.flights, fk)
+			f.cancel()
+		}
 		rc.mu.Unlock()
 		return nil, ctx.Err()
 	}
@@ -259,10 +268,14 @@ func (rc *RankingAnswers) fill(ctx context.Context, fk rankingFlightKey, inputs 
 		rc.mu.Lock()
 		// Retained only when no publication for its inputs landed since the
 		// flight began; a newer generation's requests start their own flight.
-		if err == nil && size <= rc.maxBytes && rc.generationLocked(inputs) == fk.generation {
+		size += int64(len(fk.key))
+		if err == nil && ctx.Err() == nil && size <= rc.maxBytes && rc.generationLocked(inputs) == fk.generation {
 			rc.storeLocked(fk, value, size)
 		}
-		delete(rc.flights, fk)
+		if rc.flights[fk] == f {
+			delete(rc.flights, fk)
+		}
+		f.cancel()
 		f.value, f.err = value, err
 		close(f.done)
 		rc.mu.Unlock()

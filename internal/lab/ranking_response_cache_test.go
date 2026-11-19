@@ -432,3 +432,34 @@ func TestRankingAnswers_ReturnedRowsAreACopy(t *testing.T) {
 		t.Errorf("retained row carries %q, want the undecorated answer", got.Rows[0].TradeConfidenceNote)
 	}
 }
+
+// With every waiter gone the load is cancelled, as a lone request's would be,
+// and its answer is not retained.
+func TestRankingAnswers_LastWaiterLeavingCancelsTheLoad(t *testing.T) {
+	rc := newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)
+	loadCancelled := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() {
+		_, err := rc.NormalPage(ctx, pageQuery(1), func(ctx context.Context) (CollectivePage, error) {
+			<-ctx.Done()
+			close(loadCancelled)
+			return CollectivePage{}, ctx.Err()
+		})
+		errc <- err
+	}()
+	eventually(t, "the waiter", func() bool { return rc.waiting(normalKeyPrefix) == 1 })
+	cancel()
+	if err := <-errc; !errors.Is(err, context.Canceled) {
+		t.Errorf("waiter err = %v, want context.Canceled", err)
+	}
+	select {
+	case <-loadCancelled:
+	case <-time.After(time.Second):
+		t.Fatal("load still running after its only waiter left")
+	}
+	loader := &countingLoader{}
+	if got := loadNormal(t, rc, pageQuery(1), loader.page("fresh")); pageTag(got) != "fresh" || loader.calls.Load() != 1 {
+		t.Errorf("next request = %q after %d loads, want a fresh load", pageTag(got), loader.calls.Load())
+	}
+}

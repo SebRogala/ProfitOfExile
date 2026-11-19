@@ -189,8 +189,8 @@ has its own cache of the SQL's answers: each Normal page, each Dedication page
 and each GCP base-price map (keyed by the sorted base set). Equal requests share
 one in-flight load per answer generation, and a warm answer runs no ranking SQL.
 The load runs detached from the request that started it, so one waiter giving up
-cancels neither the load nor the others' answer; a request already cancelled
-when it arrives loads on its own, unshared. Only a successful load is retained:
+cancels neither the load nor the others' answer; the last waiter leaving cancels
+it, and a request already cancelled when it arrives loads on its own, unshared. Only a successful load is retained:
 a failed base-price lookup serves that burst today's partial response (no GCP
 recipe fields) and the next request retries.
 
@@ -198,7 +198,7 @@ recipe fields) and the next request retries.
   applied fresh, to a copy of the rows, on every request. Sparkline variant is a
   decoration input and not part of the key; a search's page and page size are
   not part of the key either, because a search answers its whole match set.
-- **Bounds.** 256 answers or 16 MiB (estimated), whichever is reached first,
+- **Bounds.** 256 answers or 16 MiB (estimated, keys included), whichever is reached first,
   evicting the least recently used. An answer larger than the byte bound is
   served to its waiters and never retained. There is no TTL.
 - **Invalidation.** Each answer is retained under the revision of the tables it
