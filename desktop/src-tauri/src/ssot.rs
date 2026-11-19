@@ -1222,12 +1222,12 @@ pub fn drop_if_mismatched(
     };
     let stale = match outcome {
         ScreenReconcile::Kept => return false,
-        ScreenReconcile::Replaced { .. } => {
+        ScreenReconcile::Replaced { from } => {
             crate::app_log(
                 app,
                 format!(
-                    "game client moved to {},{} ({}×{}) — placements follow",
-                    client[0], client[1], client[2], client[3]
+                    "game client moved to {},{} ({}×{}) — placements follow (was {},{})",
+                    client[0], client[1], client[2], client[3], from[0], from[1]
                 ),
             );
             emit_ssot(app);
