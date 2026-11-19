@@ -90,3 +90,21 @@ func TestMercureToken_grantsTheHarvestUpdateTopic(t *testing.T) {
 	}
 	t.Errorf("subscriber topics %v missing %q", got, harvest.UpdatedTopic)
 }
+
+// keep:critical — the POE-410 frontend and desktop ends subscribe by literal
+// string, so a renamed constant would silently drop their subscription.
+func TestKeepCritical_MercureTokenGrantsExactBrowserTopics(t *testing.T) {
+	want := []string{
+		"poe/league/active",
+		"poe/analysis/updated",
+		"poe/trade/results",
+		"poe/desktop/{pair}",
+		"poe/lab/layout",
+		"poe/currency-exchange/updated",
+		"poe/harvest/updated",
+	}
+	got := subscribeClaims(t)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("subscriber topics = %q, want %q", got, want)
+	}
+}

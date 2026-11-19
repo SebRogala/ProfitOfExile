@@ -1,9 +1,6 @@
 package handlers
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -11,6 +8,7 @@ import (
 
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/harvest"
+	"profitofexile/internal/mercure"
 )
 
 // MercureToken returns a short-lived subscriber JWT and the public Mercure URL.
@@ -40,38 +38,18 @@ func MercureToken(subscriberKey, publicURL string) http.HandlerFunc {
 }
 
 func signSubscriberToken(secret string) (string, error) {
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
-
-	now := time.Now()
-	claims := map[string]any{
-		"mercure": map[string]any{
-			"subscribe": []string{
-				"poe/league/active",
-				"poe/analysis/updated",
-				"poe/trade/results",
-				"poe/desktop/{pair}",
-				"poe/lab/layout",
-				// The currency-exchange pillar publishes here after a recompute
-				// changed the served answer; without the claim the browser's
-				// subscription is rejected and the page never refetches.
-				exchange.UpdatedTopic,
-				// Harvest finishes independently of the exchange recompute.
-				harvest.UpdatedTopic,
-			},
-		},
-		"iat": now.Unix(),
-		"exp": now.Add(30 * time.Minute).Unix(),
+	topics := []string{
+		mercure.LeagueActiveTopic,
+		mercure.AnalysisUpdatedTopic,
+		mercure.TradeResultsTopic,
+		mercure.DesktopTopicPattern,
+		mercure.LabLayoutTopic,
+		// The currency-exchange pillar publishes here after a recompute
+		// changed the served answer; without the claim the browser's
+		// subscription is rejected and the page never refetches.
+		exchange.UpdatedTopic,
+		// Harvest finishes independently of the exchange recompute.
+		harvest.UpdatedTopic,
 	}
-	claimsJSON, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
-	}
-	payload := base64.RawURLEncoding.EncodeToString(claimsJSON)
-
-	unsigned := header + "." + payload
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(unsigned))
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-
-	return unsigned + "." + signature, nil
+	return mercure.SignJWT(secret, map[string]any{"subscribe": topics}, 30*time.Minute)
 }
