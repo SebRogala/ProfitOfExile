@@ -742,23 +742,30 @@ mod tests {
     mod keep_critical {
         use super::super::client_in_capture;
 
-        /// Silent consequence if this broke: a client rect outside the image
-        /// would crop OCR from the wrong pixels and return a plausible wrong
-        /// read instead of failing.
+        const WHOLE: [i32; 4] = [0, 0, 1920, 1080];
+
+        /// Silent consequence if this broke: a client rect running past the
+        /// image would crop OCR from the wrong pixels and return a plausible
+        /// wrong read instead of failing.
         #[test]
         fn a_client_off_the_captured_monitor_falls_back_to_the_whole_capture() {
-            let whole = [0, 0, 1920, 1080];
-            assert_eq!(client_in_capture(None, (1920, 0), (1920, 1080)), whole, "unknown client");
-            assert_eq!(
-                client_in_capture(Some([3500, 90, 1600, 900]), (1920, 0), (1920, 1080)),
-                whole,
-                "client running past the right edge"
-            );
-            assert_eq!(
-                client_in_capture(Some([100, 90, 1600, 900]), (1920, 0), (1920, 1080)),
-                whole,
-                "client on another monitor"
-            );
+            let client = client_in_capture(Some([3500, 90, 1600, 900]), (1920, 0), (1920, 1080));
+            assert_eq!(client, WHOLE);
+        }
+
+        /// Silent consequence if this broke: before the first client read,
+        /// OCR would crop a made-up rect instead of the fullscreen capture.
+        #[test]
+        fn an_unknown_client_falls_back_to_the_whole_capture() {
+            assert_eq!(client_in_capture(None, (1920, 0), (1920, 1080)), WHOLE);
+        }
+
+        /// Silent consequence if this broke: a client left of the captured
+        /// monitor would yield a negative crop origin and read the wrong pixels.
+        #[test]
+        fn a_client_left_of_the_captured_monitor_falls_back_to_the_whole_capture() {
+            let client = client_in_capture(Some([100, 90, 1600, 900]), (1920, 0), (1920, 1080));
+            assert_eq!(client, WHOLE);
         }
     }
 
