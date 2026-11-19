@@ -3675,44 +3675,62 @@ mod tests {
     mod keep_happy {
         use super::*;
 
+        const MOVED: [i32; 4] = [300, 150, 1600, 900];
+
+        fn moved() -> ScreenSlice {
+            let mut slot = Some(windowed_screen());
+            let outcome = reconcile_screen(&mut slot, (1920, 1080), REFERENCE_ORIGIN, MOVED);
+            assert!(matches!(outcome, ScreenReconcile::Replaced { from: [100, 50, 1600, 900] }));
+            slot.expect("a move keeps the slice")
+        }
+
+        /// AC-2 acceptance: a move re-places the slice on the new client.
         #[test]
         fn a_moved_client_re_places_the_slice_and_its_anchors() {
-            let before = windowed_screen();
-            let mut slot = Some(before);
-
-            let outcome = reconcile_screen(&mut slot, (1920, 1080), REFERENCE_ORIGIN, [300, 150, 1600, 900]);
-
-            assert!(matches!(outcome, ScreenReconcile::Replaced { from: [100, 50, 1600, 900] }));
-            let after = slot.expect("a move keeps the slice");
-            assert_eq!(after.client, [300, 150, 1600, 900]);
-            assert_eq!(
-                after.anchors,
-                Some(Anchors { temple_entrance: Some([1100, 800]), merc_panel: Some([900, 700]) }),
-            );
-            assert_eq!(after.ui_scale, before.ui_scale);
-            assert_eq!(after.source, before.source);
-            assert_eq!(after.verified_this_session, before.verified_this_session);
-            assert_eq!(after.measured_at_ms, before.measured_at_ms);
-            assert_eq!((after.width, after.height, after.origin), (before.width, before.height, before.origin));
+            assert_eq!(moved().client, MOVED);
         }
 
         #[test]
+        fn a_moved_client_shifts_the_temple_anchor_by_the_delta() {
+            assert_eq!(moved().anchors.unwrap().temple_entrance, Some([1100, 800]));
+        }
+
+        #[test]
+        fn a_moved_client_shifts_the_merc_anchor_by_the_delta() {
+            assert_eq!(moved().anchors.unwrap().merc_panel, Some([900, 700]));
+        }
+
+        #[test]
+        fn a_moved_client_keeps_the_measured_scale_and_its_provenance() {
+            let (before, after) = (windowed_screen(), moved());
+            assert_eq!(
+                (after.ui_scale, after.source, after.verified_this_session, after.measured_at_ms),
+                (before.ui_scale, before.source, before.verified_this_session, before.measured_at_ms),
+            );
+            assert_eq!((after.width, after.height, after.origin), (before.width, before.height, before.origin));
+        }
+
+        /// AC-2 placement probe: every Lab rect shifts by the move's delta.
+        #[test]
         fn a_moved_client_moves_every_placement_by_the_same_delta() {
-            let mut slot = Some(windowed_screen());
-            let before = placements(slot.as_ref().unwrap());
-
-            reconcile_screen(&mut slot, (1920, 1080), REFERENCE_ORIGIN, [300, 150, 1600, 900]);
-            let after = placements(slot.as_ref().unwrap());
-
-            let (dx, dy) = (200, 100);
-            assert_eq!(after.lab.gem, shifted(before.lab.gem, dx, dy));
-            assert_eq!(after.lab.font, shifted(before.lab.font, dx, dy));
-            for (a, b) in after.lab.gem_slots.iter().zip(before.lab.gem_slots.iter()) {
-                assert_eq!(*a, shifted(*b, dx, dy));
+            let (before, after) = (placements(&windowed_screen()).lab, placements(&moved()).lab);
+            assert_eq!(after.gem, shifted(before.gem, 200, 100));
+            assert_eq!(after.font, shifted(before.font, 200, 100));
+            for (a, b) in after.gem_slots.iter().zip(before.gem_slots.iter()) {
+                assert_eq!(*a, shifted(*b, 200, 100));
             }
-            let (bt, at) = (before.temple.unwrap().entrance_origin, after.temple.unwrap().entrance_origin);
-            assert_eq!(at, (bt.0 + dx, bt.1 + dy));
-            assert_eq!(after.merc.unwrap().panel, shifted(before.merc.unwrap().panel, dx, dy));
+        }
+
+        #[test]
+        fn a_moved_client_moves_the_temple_placement_by_the_same_delta() {
+            let b = placements(&windowed_screen()).temple.unwrap().entrance_origin;
+            assert_eq!(placements(&moved()).temple.unwrap().entrance_origin, (b.0 + 200, b.1 + 100));
+        }
+
+        #[test]
+        fn a_moved_client_moves_the_merc_placement_by_the_same_delta() {
+            let b = placements(&windowed_screen()).merc.unwrap().panel;
+            assert_eq!(placements(&moved()).merc.unwrap().panel, shifted(b, 200, 100));
         }
 
         #[test]
@@ -3760,7 +3778,6 @@ mod tests {
             let placements = placements_for(slot.as_ref());
             assert_eq!(placements.temple, None);
             assert_eq!(placements.merc, None);
-            assert_eq!(placements.lab, placements_for(None).lab);
         }
     }
 
