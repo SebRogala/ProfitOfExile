@@ -9,23 +9,7 @@ import { render } from 'svelte/server';
 import type { CurrencyExchangeResponse } from '$lib/api';
 import type { ExchangeQuery } from '$lib/exchange/controller.svelte';
 
-const pageHarness = vi.hoisted(() => ({
-	controller: null as unknown,
-	selection: null as null | (() => ExchangeQuery),
-	prefs: new Map<string, { value: string }>()
-}));
-
-vi.mock('$lib/prefs.svelte', async () => {
-	const actual = await vi.importActual<typeof import('$lib/prefs.svelte')>('$lib/prefs.svelte');
-	return {
-		...actual,
-		persisted: (key: string, initial: string) => {
-			const pref = actual.persisted(key, initial);
-			pageHarness.prefs.set(key, pref);
-			return pref;
-		}
-	};
-});
+const pageHarness = vi.hoisted(() => ({ controller: null as unknown }));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({})) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
@@ -36,8 +20,7 @@ vi.mock('$lib/exchange/controller.svelte', async () => {
 	);
 	return {
 		...actual,
-		createExchangeController: (deps: { selection: () => ExchangeQuery }) => {
-			pageHarness.selection = deps.selection;
+		createExchangeController: () => {
 			if (!pageHarness.controller) throw new Error('the test builds the controller before render');
 			return pageHarness.controller;
 		}
@@ -229,7 +212,7 @@ function tableRowNames(html: string, names: string[]): string[] {
 		.filter((name): name is string => name !== undefined);
 }
 
-describe('CurrencyExchangePage no offers mark and chip', () => {
+describe('CurrencyExchangePage no offers mark', () => {
 	const threeRows = () =>
 		settledOn([
 			flaggedPlay('BuyBlockedOrb', 'buy'),
@@ -256,17 +239,6 @@ describe('CurrencyExchangePage no offers mark and chip', () => {
 		const html = render(CurrencyExchangePage).body;
 
 		expect(rowOf(html, 'TwoSidedOrb', null)).not.toContain(NO_OFFERS_LABEL);
-	});
-
-	it('no offers chip on sends noOffers=only with the same sort', async () => {
-		await settledOn([flaggedPlay('BuyBlockedOrb', 'buy')]);
-		render(CurrencyExchangePage);
-		const before = pageHarness.selection!().params;
-
-		pageHarness.prefs.get('currencyExchangeNoOffersOnly')!.value = 'true';
-		const after = pageHarness.selection!().params;
-
-		expect([before.noOffers, after.noOffers, after.sort]).toEqual([undefined, 'only', before.sort]);
 	});
 
 	it('no offers rows keep the order the server answered with', async () => {
