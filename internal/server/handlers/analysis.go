@@ -1177,35 +1177,13 @@ func MarketOverview(cache *lab.Cache, repo *lab.Repository, divineRate *exchange
 			}
 		}
 
-		// Lab offering timing: serve from cache when available, compute on miss.
-		//
-		// A miss is "nothing has been stored", not "the stored answer is empty".
-		// lab.(*Repository).OfferingTimings drops an offering whose current-price query
-		// returns NULL, so an offering with no fragment_snapshots rows yields an
-		// empty result — and storing it only when non-empty re-ran all ten of its
-		// queries on every request, forever (POE-152).
-		timingCached := false
-		if cache != nil {
-			if cached := cache.For(scope).OfferingTiming(); cached != nil {
-				if err := json.Unmarshal(cached, &resp.Offerings); err == nil {
-					timingCached = true
-				} else {
-					slog.Warn("market overview: cached offering timing is not decodable, recomputing", "error", err)
-				}
-			}
-		}
-		if !timingCached && repo != nil {
-			resp.Offerings = repo.OfferingTimings(r.Context(), scope)
-			// Populate the cache with whatever came back, empty included: an empty
-			// answer is an answer, and the next request must not recompute it.
-			// Fragment collection re-populates it once rows exist
-			// (cmd/server/main.go, ninja_fragments event). OfferingTimings
-			// never returns nil, so this stores `[]` rather than `null`.
-			if cache != nil {
-				if data, err := json.Marshal(resp.Offerings); err == nil {
-					cache.For(scope).SetOfferingTiming(data)
-				}
-			}
+		// Lab offering timing: the stored answer, or the fill shared with every
+		// overlapping request. A stale or partial answer is marked, never
+		// replaced by an error.
+		offerings, stale := lab.ServeOfferingTimings(r.Context(), repo, cache, scope)
+		resp.Offerings = offerings
+		if stale {
+			w.Header().Set("X-Data-Stale", "1")
 		}
 
 		if err := json.NewEncoder(w).Encode(resp); err != nil {

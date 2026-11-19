@@ -3,10 +3,15 @@ package lab
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"sort"
+	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"profitofexile/internal/league"
 )
@@ -51,37 +56,170 @@ type OfferingTimingDay struct {
 	Median float64 `json:"median"`
 }
 
-// RefreshOfferingTimings recomputes lab offering timings and stores the result
-// in cache, returning how many offerings the answer holds.
-//
-// It stores the answer even when it is empty. An offering with no
-// fragment_snapshots rows is dropped, so an empty result is the tick's real
-// answer, not a failure — withholding it leaves the cache COLD, and then no
-// amount of reader discipline helps: MarketOverview re-runs all ten queries on
-// every request until rows happen to exist. See the cache-state contract at the
-// top of internal/lab/cache.go.
-//
-// This is the tick's entry point (cmd/server/main.go, ninja_fragments event).
-// MarketOverview's own cold path computes inline because it needs the values it
-// serves, not just the stored bytes.
-func RefreshOfferingTimings(ctx context.Context, repo *Repository, cache *Cache, scope league.Scope) (int, error) {
-	offerings := repo.OfferingTimings(ctx, scope)
-	data, err := json.Marshal(offerings)
-	if err != nil {
-		return 0, err
-	}
-	cache.For(scope).SetOfferingTiming(data)
-	return len(offerings), nil
+// offeringFillTimeout bounds one shared offering fill. The fill runs detached
+// from the requests that wait on it.
+const offeringFillTimeout = 10 * time.Second
+
+// offeringQuerier is the part of the pool the offering fill uses.
+type offeringQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// OfferingTimings computes timing analysis for all lab offerings.
+type offeringLoader func(context.Context) ([]OfferingTiming, error)
+
+// offeringFill shares one league's offering fill among the market-overview
+// requests and the background refresh that overlap it. The fill is held only
+// while in flight; its answer lives in the cache's offering slot.
+type offeringFill struct {
+	mu     sync.Mutex
+	flight *offeringFlight
+}
+
+type offeringFlight struct {
+	done    chan struct{}
+	waiters int
+	value   []OfferingTiming
+	err     error
+	// panicked is a panic the fill raised; each waiter re-raises it.
+	panicked any
+}
+
+// do joins the in-flight fill, starting one with load when none runs. load
+// runs once per flight; publish runs with its result before any waiter wakes.
+func (f *offeringFill) do(ctx context.Context, load offeringLoader, publish func([]OfferingTiming, error)) ([]OfferingTiming, error) {
+	f.mu.Lock()
+	fl := f.flight
+	if fl == nil {
+		fl = &offeringFlight{done: make(chan struct{})}
+		f.flight = fl
+		go f.run(context.WithoutCancel(ctx), fl, load, publish)
+	}
+	fl.waiters++
+	f.mu.Unlock()
+
+	select {
+	case <-fl.done:
+		if fl.panicked != nil {
+			panic(fl.panicked)
+		}
+		return fl.value, fl.err
+	case <-ctx.Done():
+		f.mu.Lock()
+		fl.waiters--
+		f.mu.Unlock()
+		return nil, ctx.Err()
+	}
+}
+
+func (f *offeringFill) run(ctx context.Context, fl *offeringFlight, load offeringLoader, publish func([]OfferingTiming, error)) {
+	ctx, cancel := context.WithTimeout(ctx, offeringFillTimeout)
+	defer cancel()
+	defer func() {
+		fl.panicked = recover()
+		if fl.panicked != nil {
+			slog.Error("lab: offering timing fill panicked", "recover", fl.panicked)
+		} else {
+			publish(fl.value, fl.err)
+		}
+		f.mu.Lock()
+		f.flight = nil
+		f.mu.Unlock()
+		close(fl.done)
+	}()
+	fl.value, fl.err = load(ctx)
+}
+
+// waiting reports how many callers wait on the in-flight fill.
+func (f *offeringFill) waiting() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.flight == nil {
+		return 0
+	}
+	return f.flight.waiters
+}
+
+// publishOfferingTimings stores a complete fill — an empty one included — and
+// marks the stored value stale after a failed one, which is never stored.
+func publishOfferingTimings(c *Cache) func([]OfferingTiming, error) {
+	return func(offerings []OfferingTiming, err error) {
+		if err == nil {
+			var data []byte
+			if data, err = json.Marshal(offerings); err == nil {
+				c.SetOfferingTiming(data)
+				return
+			}
+		}
+		slog.Warn("lab: offering timing fill incomplete; not cached", "error", err)
+		c.MarkOfferingTimingStale()
+	}
+}
+
+// RefreshOfferingTimings refills the cache's offering timings through the
+// shared fill and returns how many offerings the answer holds. A complete
+// answer is stored even when empty (an offering with no fragment_snapshots rows
+// is dropped, so empty is a real answer — see the cache-state contract at the
+// top of internal/lab/cache.go). A failed fill keeps the last complete value,
+// marked stale, and returns the error.
+//
+// This is the tick's entry point (cmd/server/main.go, ninja_fragments event).
+func RefreshOfferingTimings(ctx context.Context, repo *Repository, cache *Cache, scope league.Scope) (int, error) {
+	c := cache.For(scope)
+	offerings, err := c.offeringFill.do(ctx, repo.offeringLoader(scope), publishOfferingTimings(c))
+	return len(offerings), err
+}
+
+// ServeOfferingTimings answers the market overview's offerings: the stored
+// value when one exists (stale when a later fill failed), otherwise the shared
+// fill. A failed fill still answers its partial result, uncached and stale. A
+// nil repo serves only the stored value.
+func ServeOfferingTimings(ctx context.Context, repo *Repository, cache *Cache, scope league.Scope) ([]OfferingTiming, bool) {
+	var load offeringLoader
+	if repo != nil {
+		load = repo.offeringLoader(scope)
+	}
+	return serveOfferingTimings(ctx, load, cache.For(scope))
+}
+
+func serveOfferingTimings(ctx context.Context, load offeringLoader, c *Cache) ([]OfferingTiming, bool) {
+	if data, stale := c.OfferingTimingState(); data != nil {
+		var offerings []OfferingTiming
+		err := json.Unmarshal(data, &offerings)
+		if err == nil {
+			return offerings, stale
+		}
+		slog.Warn("lab: cached offering timing is not decodable, refilling", "error", err)
+	}
+	if load == nil {
+		return nil, false
+	}
+	offerings, err := c.offeringFill.do(ctx, load, publishOfferingTimings(c))
+	return offerings, err != nil
+}
+
+func (r *Repository) offeringLoader(scope league.Scope) offeringLoader {
+	return func(ctx context.Context) ([]OfferingTiming, error) {
+		return offeringTimings(ctx, r.pool, scope)
+	}
+}
+
+// OfferingTimings computes timing analysis for all lab offerings, keeping
+// whatever partial result a failed query leaves.
+func (r *Repository) OfferingTimings(ctx context.Context, scope league.Scope) []OfferingTiming {
+	offerings, _ := offeringTimings(ctx, r.pool, scope)
+	return offerings
+}
+
+// offeringTimings computes timing analysis for all lab offerings with the ten
+// queries, returning the partial result and the joined error of every failed
+// query, scan or iteration.
 //
 // It never returns nil. An offering with no fragment_snapshots rows is dropped,
 // so "no offerings" is a legitimate answer, and callers cache that answer — a
 // nil slice marshals to `null`, which is indistinguishable from "never stored"
-// on the way back out. Returning an empty slice lets every caller store the
-// result as it stands.
-func (r *Repository) OfferingTimings(ctx context.Context, scope league.Scope) []OfferingTiming {
+// on the way back out.
+func offeringTimings(ctx context.Context, q offeringQuerier, scope league.Scope) ([]OfferingTiming, error) {
 	offerings := []struct {
 		name       string
 		fragmentID string
@@ -92,36 +230,46 @@ func (r *Repository) OfferingTimings(ctx context.Context, scope league.Scope) []
 	dayNames := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
 
 	result := make([]OfferingTiming, 0, len(offerings))
+	var errs []error
 	for _, off := range offerings {
-		ot := r.offeringTiming(ctx, scope, off.name, off.fragmentID, dayNames)
+		ot, err := offeringTiming(ctx, q, scope, off.name, off.fragmentID, dayNames)
+		if err != nil {
+			errs = append(errs, err)
+		}
 		if ot != nil {
 			result = append(result, *ot)
 		}
 	}
-	return result
+	return result, errors.Join(errs...)
 }
 
 // offeringTiming queries fragment_snapshots for a single offering's
-// price patterns and returns structured timing data. Returns nil if no data.
-func (r *Repository) offeringTiming(ctx context.Context, scope league.Scope, name, fragmentID string, dayNames []string) *OfferingTiming {
+// price patterns and returns structured timing data, nil if no data. err joins
+// every failure; the timing keeps what the other queries produced.
+func offeringTiming(ctx context.Context, q offeringQuerier, scope league.Scope, name, fragmentID string, dayNames []string) (*OfferingTiming, error) {
 	ot := OfferingTiming{Name: name, FragmentID: fragmentID}
+	var errs []error
+	fail := func(msg string, err error) {
+		slog.Warn("offering timing: "+msg, "fragment", fragmentID, "error", err)
+		errs = append(errs, fmt.Errorf("offering timing %s: %s: %w", fragmentID, msg, err))
+	}
 
 	// Current price.
 	var currentPrice *float64
-	if err := r.pool.QueryRow(ctx, `
+	if err := q.QueryRow(ctx, `
 		SELECT chaos FROM fragment_snapshots
 		WHERE league = $1 AND fragment_id = $2
 		ORDER BY time DESC LIMIT 1`, scope.ID(), fragmentID).Scan(&currentPrice); err != nil {
-		slog.Warn("offering timing: current price query failed", "fragment", fragmentID, "error", err)
-		return nil
+		fail("current price query failed", err)
+		return nil, errors.Join(errs...)
 	}
 	if currentPrice == nil {
-		return nil
+		return nil, nil
 	}
 	ot.CurrentPrice = math.Round(*currentPrice)
 
 	// Hourly medians (14-day window).
-	hourRows, err := r.pool.Query(ctx, `
+	hourRows, err := q.Query(ctx, `
 		SELECT EXTRACT(HOUR FROM time)::int AS h,
 		       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
 		FROM fragment_snapshots
@@ -129,20 +277,20 @@ func (r *Repository) offeringTiming(ctx context.Context, scope league.Scope, nam
 		GROUP BY 1 HAVING COUNT(*) >= 3
 		ORDER BY median`, scope.ID(), fragmentID)
 	if err != nil {
-		slog.Warn("offering timing: hourly query failed", "fragment", fragmentID, "error", err)
+		fail("hourly query failed", err)
 	} else {
 		var hours []offeringHourMedian
 		for hourRows.Next() {
 			var hm offeringHourMedian
 			if err := hourRows.Scan(&hm.Hour, &hm.Median); err != nil {
-				slog.Warn("offering timing: hourly scan failed", "fragment", fragmentID, "error", err)
+				fail("hourly scan failed", err)
 				continue
 			}
 			hours = append(hours, hm)
 		}
 		hourRows.Close()
 		if err := hourRows.Err(); err != nil {
-			slog.Warn("offering timing: hourly iteration error", "fragment", fragmentID, "error", err)
+			fail("hourly iteration error", err)
 		}
 		// Store all hourly medians for prediction chart line.
 		for _, h := range hours {
@@ -165,7 +313,7 @@ func (r *Repository) offeringTiming(ctx context.Context, scope league.Scope, nam
 
 	// Today's weekday-specific hourly medians (for prediction accuracy).
 	todayDOW := int(time.Now().UTC().Weekday())
-	todayRows, err := r.pool.Query(ctx, `
+	todayRows, err := q.Query(ctx, `
 		SELECT EXTRACT(HOUR FROM time)::int AS h,
 		       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
 		FROM fragment_snapshots
@@ -174,19 +322,19 @@ func (r *Repository) offeringTiming(ctx context.Context, scope league.Scope, nam
 		GROUP BY 1 HAVING COUNT(*) >= 1
 		ORDER BY h`, scope.ID(), fragmentID, todayDOW)
 	if err != nil {
-		slog.Warn("offering timing: today hourly query failed", "fragment", fragmentID, "error", err)
+		fail("today hourly query failed", err)
 	} else {
 		for todayRows.Next() {
 			var hm offeringHourMedian
 			if err := todayRows.Scan(&hm.Hour, &hm.Median); err != nil {
-				slog.Warn("offering timing: today hourly scan failed", "fragment", fragmentID, "error", err)
+				fail("today hourly scan failed", err)
 				continue
 			}
 			ot.TodayHourMedians = append(ot.TodayHourMedians, OfferingTimingHour{Hour: hm.Hour, Median: math.Round(hm.Median)})
 		}
 		todayRows.Close()
 		if err := todayRows.Err(); err != nil {
-			slog.Warn("offering timing: today hourly iteration error", "fragment", fragmentID, "error", err)
+			fail("today hourly iteration error", err)
 		}
 	}
 
@@ -195,7 +343,7 @@ func (r *Repository) offeringTiming(ctx context.Context, scope league.Scope, nam
 		Day    int
 		Median float64
 	}
-	dayRows, err := r.pool.Query(ctx, `
+	dayRows, err := q.Query(ctx, `
 		SELECT EXTRACT(DOW FROM time)::int AS d,
 		       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
 		FROM fragment_snapshots
@@ -203,20 +351,20 @@ func (r *Repository) offeringTiming(ctx context.Context, scope league.Scope, nam
 		GROUP BY 1 HAVING COUNT(*) >= 5
 		ORDER BY median`, scope.ID(), fragmentID)
 	if err != nil {
-		slog.Warn("offering timing: weekday query failed", "fragment", fragmentID, "error", err)
+		fail("weekday query failed", err)
 	} else {
 		var days []dayMedian
 		for dayRows.Next() {
 			var dm dayMedian
 			if err := dayRows.Scan(&dm.Day, &dm.Median); err != nil {
-				slog.Warn("offering timing: weekday scan failed", "fragment", fragmentID, "error", err)
+				fail("weekday scan failed", err)
 				continue
 			}
 			days = append(days, dm)
 		}
 		dayRows.Close()
 		if err := dayRows.Err(); err != nil {
-			slog.Warn("offering timing: weekday iteration error", "fragment", fragmentID, "error", err)
+			fail("weekday iteration error", err)
 		}
 		if len(days) >= 4 {
 			type dayWithIdx struct {
@@ -243,19 +391,19 @@ func (r *Repository) offeringTiming(ctx context.Context, scope league.Scope, nam
 	}
 
 	// Sparkline: 3-day price history, 1 point per hour.
-	sparkRows, err := r.pool.Query(ctx, `
+	sparkRows, err := q.Query(ctx, `
 		SELECT time_bucket('1 hour', time) AS bucket, AVG(chaos) AS avg_price
 		FROM fragment_snapshots
 		WHERE league = $1 AND fragment_id = $2 AND time > NOW() - INTERVAL '3 days'
 		GROUP BY 1 ORDER BY 1`, scope.ID(), fragmentID)
 	if err != nil {
-		slog.Warn("offering timing: sparkline query failed", "fragment", fragmentID, "error", err)
+		fail("sparkline query failed", err)
 	} else {
 		for sparkRows.Next() {
 			var t time.Time
 			var p float64
 			if err := sparkRows.Scan(&t, &p); err != nil {
-				slog.Warn("offering timing: sparkline scan failed", "fragment", fragmentID, "error", err)
+				fail("sparkline scan failed", err)
 				continue
 			}
 			ot.Sparkline = append(ot.Sparkline, OfferingSparkPoint{
@@ -265,9 +413,9 @@ func (r *Repository) offeringTiming(ctx context.Context, scope league.Scope, nam
 		}
 		sparkRows.Close()
 		if err := sparkRows.Err(); err != nil {
-			slog.Warn("offering timing: sparkline iteration error", "fragment", fragmentID, "error", err)
+			fail("sparkline iteration error", err)
 		}
 	}
 
-	return &ot
+	return &ot, errors.Join(errs...)
 }

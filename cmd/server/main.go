@@ -340,10 +340,8 @@ func main() {
 	runtime.refreshOfferingTiming = func(_ context.Context) {
 		qCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		// Stores the answer even when it is empty — see lab.RefreshOfferingTimings and
-		// the cache-state contract in internal/lab/cache.go. This used to store
-		// only a non-empty result, the writer-side twin of the reader defect
-		// POE-152 fixed.
+		// Shares the market overview's fill and stores even an empty answer —
+		// see lab.RefreshOfferingTimings.
 		n, err := lab.RefreshOfferingTimings(qCtx, labRepo, labCache, scope)
 		if err != nil {
 			slog.Warn("fragment event: offering timing refresh failed", "error", err)

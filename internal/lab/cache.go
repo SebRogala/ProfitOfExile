@@ -149,6 +149,9 @@ type Cache struct {
 	nextFetch      time.Time
 	gcpPrice       float64
 	offeringTiming json.RawMessage // pre-computed offering timing JSON
+	// offeringStale marks offeringTiming as the last complete value after a
+	// later fill failed; SetOfferingTiming clears it.
+	offeringStale bool
 
 	// Dedication lab analysis results, plus the two request-shaped corpora
 	// derived from the same pass. dedicationSet is the COLD/WARM discriminator
@@ -210,6 +213,10 @@ type Cache struct {
 	// fontColdFills shares the cold Font and Dedication overview loads; it
 	// holds them only while in flight — see FontColdFills.
 	fontColdFills *FontColdFills
+
+	// offeringFill shares the market-overview offering fill — see
+	// ServeOfferingTimings.
+	offeringFill *offeringFill
 }
 
 // NewCache creates an empty analysis cache bound to scope. The cache serves and
@@ -219,6 +226,7 @@ func NewCache(scope league.Scope) *Cache {
 		scope:         scope,
 		rankings:      newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes),
 		fontColdFills: newFontColdFills(),
+		offeringFill:  &offeringFill{},
 	}
 }
 
@@ -430,11 +438,31 @@ func (c *Cache) NextFetch() time.Time {
 	return c.nextFetch
 }
 
-// SetOfferingTiming stores pre-computed offering timing JSON.
+// SetOfferingTiming stores a complete offering timing JSON answer and clears
+// the stale mark.
 func (c *Cache) SetOfferingTiming(data json.RawMessage) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.offeringTiming = data
+	c.offeringStale = false
+}
+
+// MarkOfferingTimingStale marks the stored offering timing as stale after a
+// failed fill. Without a stored value there is nothing to mark.
+func (c *Cache) MarkOfferingTimingStale() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.offeringTiming != nil {
+		c.offeringStale = true
+	}
+}
+
+// OfferingTimingState returns the stored offering timing JSON (nil when COLD)
+// and whether it is stale.
+func (c *Cache) OfferingTimingState() (json.RawMessage, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.offeringTiming, c.offeringStale
 }
 
 // OfferingTiming returns cached offering timing JSON, or nil when nothing has

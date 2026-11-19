@@ -155,6 +155,20 @@ analyzer's fields, so the next cold request after it completes loads again.
 Warmth is checked again when the load returns, so an analyzer answer published
 meanwhile is what serves. The last waiter leaving cancels the load.
 
+### The market-overview offering fill
+
+`MarketOverview`'s offerings answer through `lab.ServeOfferingTimings`
+(`internal/lab/offering_timing.go`): the stored offering slot when it holds a
+value, otherwise one fill of the ten offering statements, shared by every
+overlapping cold request and by the `ninja_fragments` refresh
+(`lab.RefreshOfferingTimings`). The fill runs detached from its callers with a
+10-second bound. Only a fill whose every statement succeeded is published, an
+empty answer included, and publishing clears the stale mark. A failed fill is
+never stored: with a stored value it marks that value stale, and the overview
+serves it with `X-Data-Stale: 1`; without one, each waiter of that fill gets
+its partial answer — the offerings the other statements produced — with
+`X-Data-Stale: 1` and normal status, and the next cold request fills again.
+
 ## Other caches on the same contract
 
 `lab.Cache` is not the only in-memory cache the server serves from, and the
