@@ -259,7 +259,9 @@ func offeringTiming(ctx context.Context, q offeringQuerier, scope league.Scope, 
 	if err := q.QueryRow(ctx, `
 		SELECT chaos FROM fragment_snapshots
 		WHERE league = $1 AND fragment_id = $2
-		ORDER BY time DESC LIMIT 1`, scope.ID(), fragmentID).Scan(&currentPrice); err != nil {
+		ORDER BY time DESC LIMIT 1`, scope.ID(), fragmentID).Scan(&currentPrice); errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	} else if err != nil {
 		fail("current price query failed", err)
 		return nil, errors.Join(errs...)
 	}

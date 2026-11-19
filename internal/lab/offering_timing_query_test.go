@@ -96,3 +96,13 @@ func TestKeepCriticalOfferingTimingsEachStatementFailureIsReportedWithThePartial
 		}
 	}
 }
+
+// An offering without snapshot rows is dropped, not a failure: a league with
+// none is a complete empty answer.
+func TestKeepHappyOfferingTimingsNoSnapshotRowsIsACompleteEmptyAnswer(t *testing.T) {
+	q := &fakeOfferingQuerier{failAt: 0, failErr: pgx.ErrNoRows}
+	got, err := offeringTimings(context.Background(), q, league.Historical("Mirage"))
+	if err != nil || len(got) != 1 || got[0].FragmentID != "offer-dedication" {
+		t.Errorf("offerings %+v, error %v; want only offer-dedication and no error", got, err)
+	}
+}
