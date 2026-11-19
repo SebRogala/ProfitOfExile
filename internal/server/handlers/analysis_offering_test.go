@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -118,5 +119,89 @@ func TestMarketOverview_divineRateIsTheAppWideRateRounded(t *testing.T) {
 	}
 	if resp.DivineRate != 200 {
 		t.Errorf("divineRate = %v, want 200 (the app-wide 199.6, rounded)", resp.DivineRate)
+	}
+}
+
+// failingRepo is a repository whose every query fails: its pool is closed.
+func failingRepo(t *testing.T) *lab.Repository {
+	t.Helper()
+	cfg, err := pgxpool.ParseConfig("postgres://u:p@127.0.0.1:1/none")
+	if err != nil {
+		t.Fatalf("parse pool config: %v", err)
+	}
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("open pool: %v", err)
+	}
+	pool.Close()
+	return lab.NewRepository(pool)
+}
+
+func serveOverview(t *testing.T, cache *lab.Cache, repo *lab.Repository) (*httptest.ResponseRecorder, map[string]json.RawMessage) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	MarketOverview(cache, repo, readerWithDivineRate(150), offeringScope).
+		ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/analysis/market-overview", nil))
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v; body: %s", err, w.Body.String())
+	}
+	return w, body
+}
+
+// POE-410 C1: a cold fill that fails keeps today's partial response — normal
+// status, offerings omitted, every other overview field as before — marks it
+// stale and caches nothing, so the next request queries again.
+func TestKeepCriticalMarketOverviewFailedColdFillServesPartialStaleUncached(t *testing.T) {
+	cache := lab.NewCache(offeringScope)
+	w, body := serveOverview(t, cache, failingRepo(t))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if got := w.Header().Get("X-Data-Stale"); got != "1" {
+		t.Errorf("X-Data-Stale = %q, want 1 on the partial response", got)
+	}
+	if _, ok := body["offerings"]; ok {
+		t.Errorf("offerings = %s, want the key omitted as today's partial response does", body["offerings"])
+	}
+	if string(body["divineRate"]) != "150" || string(body["temporalMode"]) != `"none"` {
+		t.Errorf("divineRate %s, temporalMode %s; want 150 and \"none\" unchanged", body["divineRate"], body["temporalMode"])
+	}
+	if stored := cache.For(offeringScope).OfferingTiming(); stored != nil {
+		t.Errorf("a failed fill cached %s; want nothing so the next request queries again", stored)
+	}
+}
+
+// A failed background refresh keeps the last complete offerings and serves
+// them marked stale.
+func TestKeepCriticalMarketOverviewFailedRefreshServesLastCompleteValueStale(t *testing.T) {
+	cache := lab.NewCache(offeringScope)
+	last := `[{"name":"Gift to the Goddess","fragmentId":"offer-gift","currentPrice":42}]`
+	cache.For(offeringScope).SetOfferingTiming(json.RawMessage(last))
+
+	if _, err := lab.RefreshOfferingTimings(context.Background(), failingRepo(t), cache, offeringScope); err == nil {
+		t.Error("RefreshOfferingTimings over a failing repository returned no error")
+	}
+	if got := string(cache.For(offeringScope).OfferingTiming()); got != last {
+		t.Fatalf("cached offering timing = %s after a failed refresh, want the last complete %s", got, last)
+	}
+
+	w, body := serveOverview(t, cache, unusableRepo())
+	if got := w.Header().Get("X-Data-Stale"); got != "1" {
+		t.Errorf("X-Data-Stale = %q, want 1 while the last value is stale", got)
+	}
+	if string(body["offerings"]) != last {
+		t.Errorf("offerings = %s, want the last complete %s", body["offerings"], last)
+	}
+}
+
+// A fresh value carries no stale header.
+func TestKeepHappyMarketOverviewFreshOfferingsCarryNoStaleHeader(t *testing.T) {
+	cache := lab.NewCache(offeringScope)
+	cache.For(offeringScope).SetOfferingTiming(json.RawMessage(`[]`))
+	w, _ := serveOverview(t, cache, unusableRepo())
+	if got := w.Header().Get("X-Data-Stale"); got != "" {
+		t.Errorf("X-Data-Stale = %q on a fresh value, want absent", got)
 	}
 }

@@ -11,9 +11,11 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/lab"
@@ -388,5 +390,136 @@ func TestMarketOverview_NoRowsOnTodaysWeekdayOmitsTodayHourMedians(t *testing.T)
 	onlyGift(t, offerings)
 	if v, ok := raw[0]["todayHourMedians"]; ok {
 		t.Errorf("offering has todayHourMedians = %s with no rows on today's weekday, want the key omitted", v)
+	}
+}
+
+// handlerStatementCounter counts every SQL statement a pool sends.
+type handlerStatementCounter struct {
+	mu    sync.Mutex
+	count int
+}
+
+func (c *handlerStatementCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	c.mu.Lock()
+	c.count++
+	c.mu.Unlock()
+	return ctx
+}
+
+func (c *handlerStatementCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func (c *handlerStatementCounter) reset() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := c.count
+	c.count = 0
+	return n
+}
+
+func countingOfferingPool(t *testing.T) (*pgxpool.Pool, *handlerStatementCounter) {
+	t.Helper()
+	offeringIntegrationPool(t) // skips when the database is absent
+	cfg, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("parse pool config: %v", err)
+	}
+	counter := &handlerStatementCounter{}
+	cfg.ConnConfig.Tracer = counter
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("open counting pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool, counter
+}
+
+// serveOverviewBurst sends n overlapping market-overview requests and returns
+// each response's offerings body and stale header.
+func serveOverviewBurst(t *testing.T, handler http.Handler, n int) ([]string, []string) {
+	t.Helper()
+	bodies := make([]string, n)
+	stale := make([]string, n)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/analysis/market-overview", nil))
+			var resp struct {
+				Offerings json.RawMessage `json:"offerings"`
+			}
+			if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &resp) != nil {
+				bodies[i] = fmt.Sprintf("status %d: %s", w.Code, w.Body.String())
+				return
+			}
+			bodies[i] = string(resp.Offerings)
+			stale[i] = w.Header().Get("X-Data-Stale")
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	return bodies, stale
+}
+
+// POE-410: 300 overlapping cold market-overview requests share one offering
+// fill — ten statements in all, the same as one request — and every response
+// carries the same complete offerings.
+func TestKeepHappyMarketOverviewColdBurstSharesOneOfferingFill(t *testing.T) {
+	pool, counter := countingOfferingPool(t)
+	scope := registerOfferingLeague(t, pool, "POE410-OfferingBurst")
+	now := time.Now().UTC()
+	for _, id := range []string{"offer-gift", "offer-dedication"} {
+		for h := 1; h <= 30; h++ {
+			seedFragment(t, pool, scope, id, now.Add(-time.Duration(h)*time.Hour), float64(10+h%7))
+		}
+	}
+
+	single := lab.NewCache(scope)
+	counter.reset()
+	want, wantStale := serveOverviewBurst(t, MarketOverview(single, lab.NewRepository(pool), nil, scope), 1)
+	if got := counter.reset(); got != 10 {
+		t.Fatalf("one cold request sent %d statements, want 10", got)
+	}
+	if wantStale[0] != "" || want[0] == "" || want[0] == "null" {
+		t.Fatalf("single request: offerings %s, X-Data-Stale %q; want complete offerings, no stale header", want[0], wantStale[0])
+	}
+
+	burst := lab.NewCache(scope)
+	handler := MarketOverview(burst, lab.NewRepository(pool), nil, scope)
+	bodies, stale := serveOverviewBurst(t, handler, 300)
+	if got := counter.reset(); got != 10 {
+		t.Errorf("300 overlapping cold requests sent %d statements, want 10 (one shared fill)", got)
+	}
+	for i := range bodies {
+		if bodies[i] != want[0] || stale[i] != "" {
+			t.Fatalf("request %d: offerings %s, X-Data-Stale %q; want %s with no stale header", i, bodies[i], stale[i], want[0])
+		}
+	}
+
+	serveOverviewBurst(t, handler, 1)
+	if got := counter.reset(); got != 0 {
+		t.Errorf("warm request sent %d statements, want 0", got)
+	}
+}
+
+// With both current prices absent the fill stops after two statements, and a
+// burst still shares that one fill.
+func TestKeepHappyMarketOverviewColdBurstWithoutPricesSendsTwoStatements(t *testing.T) {
+	pool, counter := countingOfferingPool(t)
+	scope := registerOfferingLeague(t, pool, "POE410-OfferingNoPrices")
+	handler := MarketOverview(lab.NewCache(scope), lab.NewRepository(pool), nil, scope)
+
+	counter.reset()
+	bodies, _ := serveOverviewBurst(t, handler, 300)
+	if got := counter.reset(); got != 2 {
+		t.Errorf("300 overlapping cold requests without prices sent %d statements, want 2", got)
+	}
+	for i, b := range bodies {
+		if b != "" {
+			t.Fatalf("request %d: offerings %s, want the key omitted", i, b)
+		}
 	}
 }
