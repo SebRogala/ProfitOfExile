@@ -45,7 +45,10 @@ func main() {
 	analyzer := lab.NewAnalyzer(repo, throttler, cache, nil)
 
 	if *backfill {
-		runBackfill(ctx, pool, repo, analyzer, scope, *hours)
+		if err := runBackfill(ctx, pool, repo, analyzer, scope, *hours); err != nil {
+			fmt.Fprintf(os.Stderr, "Backfill failed: %v\n", err)
+			os.Exit(1)
+		}
 	} else {
 		fmt.Println("Running v2 analysis pipeline (latest snapshot)...")
 		if err := analyzer.RunV2(ctx, scope); err != nil {
@@ -60,15 +63,14 @@ func main() {
 	}
 }
 
-func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, analyzer *lab.Analyzer, scope league.Scope, hours int) {
+func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, analyzer *lab.Analyzer, scope league.Scope, hours int) error {
 	// Get distinct snapshot times.
 	q := fmt.Sprintf(`SELECT DISTINCT time FROM gem_snapshots
 		WHERE league = $1 AND time > NOW() - make_interval(hours => %d)
 		ORDER BY time`, hours)
 	rows, err := pool.Query(ctx, q, scope.ID())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Query snapshot times: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("query snapshot times: %w", err)
 	}
 	var times []time.Time
 	for rows.Next() {
@@ -91,14 +93,17 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 
 		// Load gems at this exact snapshot time.
 		gems, err := loadGemsAtTime(ctx, pool, scope, snapTime)
-		if err != nil || len(gems) == 0 {
+		if err != nil {
+			return fmt.Errorf("snapshot %s: %w", snapTime.Format(time.RFC3339), err)
+		}
+		if len(gems) == 0 {
 			continue
 		}
 
 		// Load history up to this snapshot time (168h lookback from this point).
 		history, err := loadHistoryUpTo(ctx, pool, scope, snapTime, 168)
 		if err != nil {
-			continue
+			return fmt.Errorf("snapshot %s: %w", snapTime.Format(time.RFC3339), err)
 		}
 
 		// Step 0: Unified gem classification.
@@ -136,6 +141,7 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 	}
 
 	fmt.Fprintf(os.Stderr, "Backfill complete: %d snapshots processed\n", len(times))
+	return nil
 }
 
 // querier is the slice of *pgxpool.Pool the snapshot loaders use.
@@ -156,9 +162,12 @@ func loadGemsAtTime(ctx context.Context, pool querier, scope league.Scope, t tim
 	for rows.Next() {
 		var g lab.GemPrice
 		if err := rows.Scan(&g.Name, &g.Variant, &g.Chaos, &g.Listings, &g.IsTransfigured, &g.GemColor, &g.IsCorrupted); err != nil {
-			continue
+			return nil, fmt.Errorf("loadGemsAtTime: scan row: %w", err)
 		}
 		gems = append(gems, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("loadGemsAtTime: iterate rows: %w", err)
 	}
 	return gems, nil
 }
@@ -185,7 +194,7 @@ func loadHistoryUpTo(ctx context.Context, pool querier, scope league.Scope, upTo
 		var chaos float64
 		var listings int
 		if err := rows.Scan(&name, &variant, &color, &t, &chaos, &listings); err != nil {
-			continue
+			return nil, fmt.Errorf("loadHistoryUpTo: scan row: %w", err)
 		}
 		key := name + "|" + variant
 		h, ok := histMap[key]
@@ -194,6 +203,10 @@ func loadHistoryUpTo(ctx context.Context, pool querier, scope league.Scope, upTo
 			histMap[key] = h
 		}
 		h.Points = append(h.Points, lab.PricePoint{Time: t, Chaos: chaos, Listings: listings})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("loadHistoryUpTo: iterate rows: %w", err)
 	}
 
 	result := make([]lab.GemPriceHistory, 0, len(histMap))
