@@ -69,6 +69,9 @@ type PlaysPageQuery struct {
 	// item asset. A search bypasses the page size.
 	Search        string
 	SearchItemIDs []string
+	// NoOffersOnly narrows the set to plays marked noOffers (POE-281); it
+	// filters and never reorders (ADR-018).
+	NoOffersOnly bool
 }
 
 // IsPagedRequest reports whether a request carries pageSize, which selects the
@@ -84,6 +87,7 @@ const (
 	msgPage     = "page must be an integer >= 1"
 	msgSort     = "sort must be one of expected, roi, fastest"
 	msgUnit     = "unit must be one of chaos, divine"
+	msgNoOffers = "noOffers must be only"
 )
 
 // ParsePlaysPageQuery parses a paged request's params and validates the result
@@ -162,6 +166,13 @@ func ParsePlaysPageQuery(values url.Values) (PlaysPageQuery, error) {
 
 	if values.Has("unit") {
 		q.Unit = PlaysUnit(values.Get("unit"))
+	}
+
+	if values.Has("noOffers") {
+		if values.Get("noOffers") != "only" {
+			return PlaysPageQuery{}, fmt.Errorf(msgNoOffers)
+		}
+		q.NoOffersOnly = true
 	}
 
 	q.Search = strings.TrimSpace(values.Get("search"))

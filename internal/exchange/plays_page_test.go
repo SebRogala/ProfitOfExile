@@ -164,3 +164,32 @@ func TestPlaysPageQuery_RejectsNoncanonicalPageSize(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaysPageQuery_NoOffersOnlySetsTheFilter(t *testing.T) {
+	q, err := ParsePlaysPageQuery(url.Values{"pageSize": {"25"}, "noOffers": {"only"}})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !q.NoOffersOnly {
+		t.Fatal("NoOffersOnly = false, want true for noOffers=only")
+	}
+}
+
+func TestPlaysPageQuery_AbsentNoOffersLeavesTheFilterOff(t *testing.T) {
+	q, err := ParsePlaysPageQuery(url.Values{"pageSize": {"25"}})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if q.NoOffersOnly {
+		t.Fatal("NoOffersOnly = true without the param, want false")
+	}
+}
+
+func TestPlaysPageQuery_RejectsEveryOtherNoOffersValue(t *testing.T) {
+	for _, bad := range []string{"", "true", "1", "ONLY", "all"} {
+		_, err := ParsePlaysPageQuery(url.Values{"pageSize": {"25"}, "noOffers": {bad}})
+		if err == nil || err.Error() != msgNoOffers {
+			t.Errorf("noOffers=%q: err = %v, want %q", bad, err, msgNoOffers)
+		}
+	}
+}

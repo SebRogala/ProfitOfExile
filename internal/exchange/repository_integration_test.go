@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1212,5 +1213,53 @@ func TestNewestHourBefore_returnsTheNewestStoredHourBeforeAsOf(t *testing.T) {
 	}
 	if !found || !newest.Equal(earlier) {
 		t.Errorf("NewestHourBefore = (%s, %v), want (%s, true) — %s is after asOf", newest, found, earlier, later)
+	}
+}
+
+func TestPlaysPage_NoOffersOnlyKeepsServedOrder(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newPlaysRepository(t, pool)
+	ctx := context.Background()
+	res := keyedPlays(HorizonRecent, "open1", "empty1", "open2", "empty2", "open3")
+	for i := range res.Plays {
+		if strings.HasPrefix(res.Plays[i].Key, "empty") {
+			res.Plays[i].NoOffers = true
+			res.Plays[i].Legs[0].NoOffers = true
+		}
+	}
+	if err := repo.ReplacePlays(ctx, integrationScope, []Result{res}); err != nil {
+		t.Fatalf("ReplacePlays: %v", err)
+	}
+	q := PlaysPageQuery{Horizon: HorizonRecent, Page: 1, PageSize: PageSizeAll, Sort: SortRoi, Unit: UnitChaos}
+
+	unfiltered, err := repo.PlaysPage(ctx, integrationScope, q)
+	if err != nil {
+		t.Fatalf("PlaysPage unfiltered: %v", err)
+	}
+	q.NoOffersOnly = true
+	filtered, err := repo.PlaysPage(ctx, integrationScope, q)
+	if err != nil {
+		t.Fatalf("PlaysPage noOffers=only: %v", err)
+	}
+
+	want := []string{}
+	for _, p := range unfiltered.Plays {
+		if p.NoOffers {
+			want = append(want, p.Key)
+		}
+	}
+	got := pageKeys(filtered)
+	t.Logf("noOffers=only served %q, Matched=%d", got, filtered.Matched)
+	if !reflect.DeepEqual(want, []string{"empty1", "empty2"}) {
+		t.Fatalf("unfiltered noOffers subsequence = %q, want [empty1 empty2]", want)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("filtered keys = %q, want the unfiltered noOffers subsequence %q", got, want)
+	}
+	if filtered.Matched != 2 {
+		t.Errorf("Matched = %d, want 2", filtered.Matched)
+	}
+	if filtered.Total != unfiltered.Total {
+		t.Errorf("Total = %d, want the unfiltered %d (served after mode)", filtered.Total, unfiltered.Total)
 	}
 }

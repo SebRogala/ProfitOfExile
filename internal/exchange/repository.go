@@ -426,7 +426,7 @@ FROM currency_exchange_play_sets WHERE league = $1 AND horizon = $2`
 // $5 hideItem, $6 onlyCategory, $7 hideCategory, $8 any only rule,
 // $9–$15 the seven gates, $16 the set's divine rate, $17 investMin,
 // $18 investMax, $19 the bound unit's chaos rate, $20 the lowered search
-// needle (empty = no search).
+// needle (empty = no search), $21 noOffers only.
 const playsServedSQL = `SELECT p.* FROM currency_exchange_plays p
 WHERE p.league = $1 AND p.horizon = $2 AND ($3 = 'all' OR p.mode = $3)`
 
@@ -457,12 +457,13 @@ const playsGatesSQL = `(NOT COALESCE(
 	OR ($15::float8 > 0 AND s.roi_pct < $15::float8 / 100), FALSE))`
 
 // playsMatchSQL is applyNumericFilters on the run investment, then
-// matchesSearch over the sides' display names.
+// matchesSearch over the sides' display names, then the noOffers filter.
 const playsMatchSQL = `(NOT COALESCE(
 	   ($17::float8 IS NOT NULL AND s.run_investment < $17::float8 * $19::float8)
 	OR ($18::float8 IS NOT NULL AND s.run_investment > $18::float8 * $19::float8), FALSE)
 	AND ($20 = '' OR EXISTS (
-		SELECT 1 FROM unnest(s.side_names) AS name WHERE strpos(lower(name), $20) > 0)))`
+		SELECT 1 FROM unnest(s.side_names) AS name WHERE strpos(lower(name), $20) > 0))
+	AND (NOT $21::boolean OR COALESCE((s.play->>'noOffers')::boolean, FALSE)))`
 
 const playsStagedSQL = `WITH served AS (` + playsServedSQL + `),
 staged AS (SELECT s.*, ` + playsRulesSQL + ` AS rules_ok, ` + playsGatesSQL + ` AS gates_ok, ` + playsMatchSQL + ` AS match_ok FROM served s)`
@@ -543,7 +544,7 @@ func (r *Repository) PlaysPage(ctx context.Context, scope league.Scope, q PlaysP
 		q.Gates.MinItemPrice, q.Gates.MinItemPriceDiv, q.Gates.MinRoiChaos, q.Gates.MinTurnover,
 		q.Gates.MaxTickPct, q.Gates.MinEdgeTickRatio, q.Gates.MinRoiPct,
 		page.DivineChaosRate, q.InvestMin, q.InvestMax, boundRate,
-		strings.ToLower(strings.TrimSpace(q.Search)),
+		strings.ToLower(strings.TrimSpace(q.Search)), q.NoOffersOnly,
 	}
 
 	if err := tx.QueryRow(ctx, selectPlayCountsSQL, args...).
@@ -582,7 +583,7 @@ func (r *Repository) PlaysPage(ctx context.Context, scope league.Scope, q PlaysP
 	}
 	pageSQL := playsStagedSQL + `
 SELECT play FROM staged WHERE rules_ok AND gates_ok AND match_ok
-ORDER BY ` + order + ` LIMIT $21 OFFSET $22`
+ORDER BY ` + order + ` LIMIT $22 OFFSET $23`
 	plays, err := tx.Query(ctx, pageSQL, append(args, limit, offset)...)
 	if err != nil {
 		return PlaysPage{}, fmt.Errorf("exchange repo: plays page: page: %w", err)
