@@ -62,12 +62,17 @@ fn apply_overlay_focus(app: &AppHandle, overlay_name: &str, gate_met: bool, debu
 
 /// Poll GetForegroundWindow to detect game focus changes.
 /// More reliable than Client.txt log events (no latency, works if PoE crashes).
-/// Runs every 1 second on a dedicated thread.
+/// Runs every [`FOCUS_POLL_INTERVAL`] on a dedicated thread.
 ///
 /// Three-state logic:
 ///   - Foreground is PoE → game focused, show overlay
 ///   - Foreground is our own process (overlay/main window) → neutral, keep current state
 ///   - Foreground is anything else → game not focused, hide overlay
+/// The focus poller's cadence; also the client-rect refresh cadence while the
+/// game is in front. Reversible interim pending the Operator's Windows cost
+/// measurement (POE-272).
+const FOCUS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1000);
+
 pub(crate) fn spawn_focus_poller(app: AppHandle) {
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
     {
@@ -85,7 +90,7 @@ pub(crate) fn spawn_focus_poller(app: AppHandle) {
         let our_pid = std::process::id();
 
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(1000));
+            std::thread::sleep(FOCUS_POLL_INTERVAL);
 
             // Check stop signal
             if stop_rx.try_recv().is_ok() {
@@ -154,8 +159,16 @@ pub(crate) fn spawn_focus_poller(app: AppHandle) {
                 // exactly the wrong-monitor frame POE-237 exists to stop. The
                 // `!was_focused` term is what keeps this on the transition; the
                 // block below owns the assignment to `was_focused`.
+                //
+                // The client rect is a different question: a windowed game
+                // moves or resizes without an alt-tab (POE-268 review), so it
+                // is re-read on EVERY poll while the game is focused, after the
+                // monitor so a transition resolves the monitor first.
                 if is_focused && !was_focused {
                     capture::remember_game_monitor(&app, game_hwnd);
+                }
+                if is_focused {
+                    capture::remember_game_client(&app, game_hwnd);
                 }
 
                 app.state::<AppState>().game_in_foreground.store(is_focused, Ordering::SeqCst);
