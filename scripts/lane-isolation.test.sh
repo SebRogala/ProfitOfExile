@@ -122,4 +122,19 @@ check "teardown keeps the lane's env files when psql cannot read the lane databa
 check "teardown prints no removal when psql cannot read the lane databases" \
 	bash -c '! grep -q "removed" <<<"$1"' _ "$out"
 
+# keep:critical — an unmarked integration database beside an absent dev database
+# belongs to another runner (a leased v1 lane with the same slug); claiming it
+# lets two runners reset one database, and a later teardown drops it.
+for action in setup teardown; do
+	p="$work/unmarked-$action"
+	fresh_project "$p" poe-414
+	printf 'profitofexile_lanepoe414_integration\t\n' >"$FAKE_DBS"
+	check "$action refuses an unmarked integration database when the lane has no dev database" \
+		bash -c '! (cd "$1" && "$2" "$3") 2>/dev/null' _ "$p/.worktrees/poe-414" "$script" "$action"
+	check "$action leaves the unmarked integration database unchanged and creates no database" \
+		test "$(cat "$FAKE_DBS")" = "$(printf 'profitofexile_lanepoe414_integration\t')"
+	check "$action issues no CREATE, COMMENT or DROP when it refuses the unmarked database" \
+		bash -c '! grep -Eq "CREATE|COMMENT|DROP" "$1"' _ "$FAKE_LOG"
+done
+
 exit "$fail"

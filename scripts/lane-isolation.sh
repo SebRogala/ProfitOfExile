@@ -51,6 +51,22 @@ db_owner() {
 	elif [[ ${row#x} == "$marker" ]]; then echo ours
 	else echo "foreign:${row#x}"; fi
 }
+# Reads both lane databases into owner[] before either action changes one, and
+# fails with suffix $1 on a database this lane may not touch. The full
+# integration runner recreates its DB without the comment, so an unmarked
+# integration DB is this lane's only while the dev DB already carries the marker.
+declare -A owner
+read_owners() {
+	local db
+	for db in "$dev_db" "$test_db"; do
+		owner[$db]=$(db_owner "$db") || fail "cannot read $db from postgres"
+		case ${owner[$db]} in
+			absent | ours) ;;
+			"foreign:") [[ $db == "$test_db" && ${owner[$dev_db]} == ours ]] || fail "$db exists without this lane's marker; $1" ;;
+			*) fail "$db belongs to ${owner[$db]#foreign:}; $1" ;;
+		esac
+	done
+}
 compose() { docker compose --project-directory "$checkout" -p "$project" --profile collector -f docker-compose.lane.yml "$@"; }
 
 if [[ $action == teardown ]]; then
@@ -62,16 +78,9 @@ if [[ $action == teardown ]]; then
 	elif [[ -n $(docker container ls -aq --filter "label=com.docker.compose.project=$project") ]]; then
 		fail "containers of $project exist without docker-compose.lane.yml; inspect them"
 	fi
+	read_owners "not dropping it"
 	for db in "$dev_db" "$test_db"; do
-		owner=$(db_owner "$db") || fail "cannot read $db from postgres"
-		case $owner in
-			absent) ;;
-			ours) psql_q "DROP DATABASE \"$db\"" >/dev/null ;;
-			# The full integration runner recreates its DB without the comment.
-			"foreign:") [[ $db == "$test_db" ]] || fail "$db has no lane-isolation marker; not dropping it"
-				psql_q "DROP DATABASE \"$db\"" >/dev/null ;;
-			*) fail "$db belongs to ${owner#foreign:}; not dropping it" ;;
-		esac
+		[[ ${owner[$db]} == absent ]] || psql_q "DROP DATABASE \"$db\"" >/dev/null
 	done
 	rm -rf .env .env.local docker-compose.lane.yml .worktree
 	echo "lane-isolation: removed $project, $dev_db and $test_db"
@@ -90,14 +99,9 @@ for service in "${services[@]}"; do
 		fail "image profitofexile-$service:latest missing; build the main stack first (make up in the main checkout)"
 done
 
+read_owners "refusing to share it"
 for db in "$dev_db" "$test_db"; do
-	owner=$(db_owner "$db") || fail "cannot read $db from postgres"
-	case $owner in
-		absent) psql_q "CREATE DATABASE \"$db\" OWNER profitofexile" >/dev/null ;;
-		ours) ;;
-		"foreign:") [[ $db == "$test_db" ]] || fail "$db exists without this lane's marker; refusing to share it" ;;
-		*) fail "$db belongs to ${owner#foreign:}; refusing to share it" ;;
-	esac
+	[[ ${owner[$db]} != absent ]] || psql_q "CREATE DATABASE \"$db\" OWNER profitofexile" >/dev/null
 	psql_q "COMMENT ON DATABASE \"$db\" IS '$marker'" >/dev/null
 done
 
