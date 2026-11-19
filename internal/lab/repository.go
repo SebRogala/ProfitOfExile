@@ -355,6 +355,51 @@ func (r *Repository) LatestFontResults(ctx context.Context, scope league.Scope, 
 	return results, nil
 }
 
+// FontOverviewRows returns the latest Font snapshot's safe, premium and
+// jackpot rows: the FontOverviewMaxLimit most profitable of each variant ×
+// mode, every one a top-N any LatestFontResults call could answer.
+func (r *Repository) FontOverviewRows(ctx context.Context, scope league.Scope) ([]FontResult, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: font overview rows: %w", err)
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT time, color, variant, pool, priced_gems, winners, p_win, avg_win, ev, input_cost, profit,
+		       mode, thin_pool_gems, liquidity_risk
+		FROM (
+			SELECT time, color, variant, COALESCE(priced_gems, pool) AS priced_gems, pool, winners, p_win, avg_win, ev,
+			       input_cost, profit, mode, COALESCE(thin_pool_gems, 0) AS thin_pool_gems,
+			       COALESCE(liquidity_risk, 'LOW') AS liquidity_risk,
+			       row_number() OVER (PARTITION BY variant, mode ORDER BY profit DESC) AS rank
+			FROM font_snapshots
+			WHERE league = $1 AND time = (SELECT MAX(time) FROM font_snapshots WHERE league = $1)
+			  AND mode IN ('safe', 'premium', 'jackpot')
+		) ranked
+		WHERE rank <= $2
+		ORDER BY profit DESC`, scope.ID(), FontOverviewMaxLimit)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query font overview rows: %w", err)
+	}
+	defer rows.Close()
+
+	var results []FontResult
+	for rows.Next() {
+		var fr FontResult
+		if err := rows.Scan(&fr.Time, &fr.Color, &fr.Variant, &fr.Pool, &fr.PricedGems, &fr.Winners,
+			&fr.PWin, &fr.AvgWin, &fr.EV, &fr.InputCost, &fr.Profit,
+			&fr.Mode, &fr.ThinPoolGems, &fr.LiquidityRisk); err != nil {
+			return nil, fmt.Errorf("lab repo: scan font overview row: %w", err)
+		}
+		if fr.PWin > 0 {
+			fr.FontsToHit = 1.0 / fr.PWin
+		}
+		results = append(results, fr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: font overview rows iteration: %w", err)
+	}
+	return results, nil
+}
+
 // LatestQualityResults returns the most recent quality-roll analysis results, optionally filtered by variant.
 func (r *Repository) LatestQualityResults(ctx context.Context, scope league.Scope, variant string, limit int) ([]QualityResult, error) {
 	if err := scope.Validate(); err != nil {
@@ -1738,6 +1783,64 @@ func (r *Repository) LatestDedicationResults(ctx context.Context, scope league.S
 		return nil, fmt.Errorf("lab repo: dedication rows iteration: %w", err)
 	}
 
+	return results, nil
+}
+
+// DedicationOverviewRows returns the latest Dedication snapshot's rows: the
+// FontOverviewMaxLimit most profitable of each variant × pool × mode, so every
+// top-N across one variant's pool that LatestDedicationResults could answer.
+func (r *Repository) DedicationOverviewRows(ctx context.Context, scope league.Scope) ([]DedicationResult, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: dedication overview rows: %w", err)
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT time, variant, color, gem_type, pool, winners, p_win, avg_win_raw, ev_raw,
+		       input_cost, profit, fonts_to_hit, mode, thin_pool_gems, liquidity_risk,
+		       pool_breakdown, low_confidence_gems
+		FROM (
+			SELECT time, variant, color, gem_type, pool, winners, p_win, avg_win_raw, ev_raw,
+			       input_cost, profit, fonts_to_hit,
+			       COALESCE(mode, 'safe') AS mode, COALESCE(thin_pool_gems, 0) AS thin_pool_gems,
+			       COALESCE(liquidity_risk, 'LOW') AS liquidity_risk,
+			       COALESCE(pool_breakdown, '[]'::jsonb) AS pool_breakdown,
+			       COALESCE(low_confidence_gems, '[]'::jsonb) AS low_confidence_gems,
+			       row_number() OVER (PARTITION BY variant, gem_type, COALESCE(mode, 'safe') ORDER BY profit DESC) AS rank
+			FROM dedication_snapshots
+			WHERE league = $1 AND time = (SELECT MAX(time) FROM dedication_snapshots WHERE league = $1)
+		) ranked
+		WHERE rank <= $2
+		ORDER BY profit DESC`, scope.ID(), FontOverviewMaxLimit)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query dedication overview rows: %w", err)
+	}
+	defer rows.Close()
+
+	var results []DedicationResult
+	for rows.Next() {
+		var dr DedicationResult
+		var poolBreakdownJSON, lowConfJSON []byte
+		if err := rows.Scan(&dr.Time, &dr.Variant, &dr.Color, &dr.GemType, &dr.Pool, &dr.Winners,
+			&dr.PWin, &dr.AvgWinRaw, &dr.EVRaw,
+			&dr.InputCost, &dr.Profit, &dr.FontsToHit,
+			&dr.Mode, &dr.ThinPoolGems, &dr.LiquidityRisk,
+			&poolBreakdownJSON, &lowConfJSON); err != nil {
+			return nil, fmt.Errorf("lab repo: scan dedication overview row: %w", err)
+		}
+		if len(poolBreakdownJSON) > 0 {
+			if err := json.Unmarshal(poolBreakdownJSON, &dr.PoolBreakdown); err != nil {
+				return nil, fmt.Errorf("lab repo: unmarshal pool_breakdown: %w", err)
+			}
+		}
+		if len(lowConfJSON) > 0 {
+			if err := json.Unmarshal(lowConfJSON, &dr.LowConfidenceGems); err != nil {
+				return nil, fmt.Errorf("lab repo: unmarshal low_confidence_gems: %w", err)
+			}
+		}
+		results = append(results, dr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: dedication overview rows iteration: %w", err)
+	}
 	return results, nil
 }
 

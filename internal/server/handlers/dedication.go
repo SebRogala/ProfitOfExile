@@ -18,7 +18,7 @@ import (
 // GET /api/analysis/dedication
 func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		limit, ok := parseLimit(w, r, 50, 500)
+		limit, ok := parseLimit(w, r, 50, lab.FontOverviewMaxLimit)
 		if !ok {
 			return
 		}
@@ -27,37 +27,15 @@ func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 			return
 		}
 
-		var skillResults, transfiguredResults []lab.DedicationResult
-		cacheWarm := false
-
-		// Fast path: serve from cache. The cache holds every analyzed variant, so
-		// the requested one is selected out of it here — and warmth comes from the
-		// cache rather than from what that selection left, because the analyzer
-		// computes every variant in one pass and a warm cache with nothing for
-		// this variant is authoritative.
-		if cache != nil {
-			var ded lab.DedicationAnalysis
-			ded, cacheWarm = cache.For(scope).Dedication()
-			skillResults = lab.FilterDedicationVariant(ded.Skills, variant)
-			transfiguredResults = lab.FilterDedicationVariant(ded.Transfigured, variant)
+		// A warm cache answers alone; a cold one shares one grouped load with
+		// every overlapping request — see lab.DedicationPools.
+		pools, err := lab.DedicationPools(r.Context(), repo, cache, scope, variant, limit)
+		if err != nil {
+			slog.Error("dedication analysis: query failed", "error", err)
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
 		}
-
-		// Slow path: fall back to the database only from a cold cache.
-		if !cacheWarm {
-			var err error
-			skillResults, err = repo.LatestDedicationResults(r.Context(), scope, variant, "skill", "", limit)
-			if err != nil {
-				slog.Error("dedication analysis: query skills failed", "error", err)
-				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-				return
-			}
-			transfiguredResults, err = repo.LatestDedicationResults(r.Context(), scope, variant, "transfigured", "", limit)
-			if err != nil {
-				slog.Error("dedication analysis: query transfigured failed", "error", err)
-				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-				return
-			}
-		}
+		skillResults, transfiguredResults := pools.Skills, pools.Transfigured
 
 		// Split by mode.
 		splitByMode := func(results []lab.DedicationResult) (safe, premium, jackpot []dedicationRow) {

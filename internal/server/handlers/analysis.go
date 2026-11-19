@@ -288,48 +288,20 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := resolve.NormalizeVariant(r.URL.Query().Get("variant"))
 
-		limit, ok := parseLimit(w, r, 50, 500)
+		limit, ok := parseLimit(w, r, 50, lab.FontOverviewMaxLimit)
 		if !ok {
 			return
 		}
 
-		var safeResults, premiumResults, jackpotResults []lab.FontResult
-		cacheHit := false
-
-		// Fast path: serve from cache. One AnalyzeFont pass fills all three modes,
-		// so a run that classified no winner at all stores three empty modes and
-		// that is the answer — three empty slices are not a cold cache.
-		if cache != nil {
-			if analysis, warm := cache.For(scope).Font(); warm {
-				safeResults = filterFont(analysis.Safe, variant, limit)
-				premiumResults = filterFont(analysis.Premium, variant, limit)
-				jackpotResults = filterFont(analysis.Jackpot, variant, limit)
-				cacheHit = true
-			}
+		// A warm cache answers alone; a cold one shares one grouped load with
+		// every overlapping request — see lab.FontModes.
+		modes, err := lab.FontModes(r.Context(), repo, cache, scope, variant, limit)
+		if err != nil {
+			slog.Error("font analysis: query failed", "error", err, "variant", variant)
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
 		}
-
-		// Slow path: fall back to DB query.
-		if !cacheHit {
-			var err error
-			safeResults, err = repo.LatestFontResults(r.Context(), scope, variant, "safe", limit)
-			if err != nil {
-				slog.Error("font analysis: query safe failed", "error", err, "variant", variant)
-				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-				return
-			}
-			premiumResults, err = repo.LatestFontResults(r.Context(), scope, variant, "premium", limit)
-			if err != nil {
-				slog.Error("font analysis: query premium failed", "error", err, "variant", variant)
-				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-				return
-			}
-			jackpotResults, err = repo.LatestFontResults(r.Context(), scope, variant, "jackpot", limit)
-			if err != nil {
-				slog.Error("font analysis: query jackpot failed", "error", err, "variant", variant)
-				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-				return
-			}
-		}
+		safeResults, premiumResults, jackpotResults := modes.Safe, modes.Premium, modes.Jackpot
 
 		type row struct {
 			Time          string               `json:"time"`
@@ -488,27 +460,6 @@ func bestColor(results []lab.FontResult) string {
 		}
 	}
 	return best
-}
-
-// filterFont filters and limits cached font results.
-// Results are sorted by Profit descending (matching the DB query order).
-func filterFont(all []lab.FontResult, variant string, limit int) []lab.FontResult {
-	var filtered []lab.FontResult
-	for _, r := range all {
-		if variant != "" && r.Variant != variant {
-			continue
-		}
-		filtered = append(filtered, r)
-	}
-
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].Profit > filtered[j].Profit
-	})
-
-	if len(filtered) > limit {
-		filtered = filtered[:limit]
-	}
-	return filtered
 }
 
 // TrendAnalysis returns the latest trend analysis results sourced from v2 GemSignals + GemFeatures.

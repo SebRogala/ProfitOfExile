@@ -246,3 +246,32 @@ func TestDedicationAnalysis_WarmCacheWithAnEmptyAnalysisDoesNotQuery(t *testing.
 		t.Errorf("got %d skill and %d transfigured rows, want none", len(body.Skills.Safe), len(body.Transfigured.Safe))
 	}
 }
+
+// The Dedication body served from a warm corpus, pinned whole: both pools of
+// the requested variant split by mode in profit order, cut at the limit per
+// mode, with the entry fee of the cached offering timing.
+func TestDedicationAnalysis_WarmBodyIsPinned(t *testing.T) {
+	at := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	cache := lab.NewCache(dedicationScope)
+	cache.For(dedicationScope).SetOfferingTiming([]byte(`[{"name":"Dedication to the Goddess","currentPrice":12.5}]`))
+	cache.For(dedicationScope).SetDedication(lab.DedicationCorpus{Analysis: lab.DedicationAnalysis{
+		Skills: []lab.DedicationResult{
+			{Time: at, Variant: "21/23c", Color: "RED", GemType: "skill", Mode: "safe", Pool: 4, Profit: 1, LiquidityRisk: "LOW"},
+			{Time: at, Variant: "21/23c", Color: "BLUE", GemType: "skill", Mode: "safe", Pool: 5, Profit: 6, FontsToHit: 2, LiquidityRisk: "LOW"},
+			{Time: at, Variant: "21/23c", Color: "GREEN", GemType: "skill", Mode: "jackpot", Pool: 6, Profit: 3, LiquidityRisk: "HIGH"},
+			{Time: at, Variant: "21/20c", Color: "RED", GemType: "skill", Mode: "safe", Pool: 9, Profit: 50},
+		},
+		Transfigured: []lab.DedicationResult{
+			{Time: at, Variant: "21/23c", Color: "BLUE", GemType: "transfigured", Mode: "premium", Pool: 2, Profit: 4, ThinPoolGems: 1, LiquidityRisk: "MEDIUM"},
+		},
+	}})
+	rec := httptest.NewRecorder()
+	DedicationAnalysis(nil, cache, dedicationScope)(rec, httptest.NewRequest(http.MethodGet, "/api/analysis/dedication?variant=21/23c&limit=1", nil))
+	want := `{"skills":{"safe":[{"time":"2026-11-19T12:00:00Z","variant":"21/23c","color":"BLUE","gemType":"skill","pool":5,"winners":0,"pWin":0,"avgWinRaw":0,"evRaw":0,"inputCost":0,"profit":6,"fontsToHit":2,"thinPoolGems":0,"liquidityRisk":"LOW"}],` +
+		`"premium":[],"jackpot":[{"time":"2026-11-19T12:00:00Z","variant":"21/23c","color":"GREEN","gemType":"skill","pool":6,"winners":0,"pWin":0,"avgWinRaw":0,"evRaw":0,"inputCost":0,"profit":3,"fontsToHit":0,"thinPoolGems":0,"liquidityRisk":"HIGH"}]},` +
+		`"transfigured":{"safe":[],"premium":[{"time":"2026-11-19T12:00:00Z","variant":"21/23c","color":"BLUE","gemType":"transfigured","pool":2,"winners":0,"pWin":0,"avgWinRaw":0,"evRaw":0,"inputCost":0,"profit":4,"fontsToHit":0,"thinPoolGems":1,"liquidityRisk":"MEDIUM"}],"jackpot":[]},` +
+		`"variant":"21/23c","entryFee":12.5}` + "\n"
+	if got := rec.Body.String(); got != want {
+		t.Errorf("body = %s\nwant %s", got, want)
+	}
+}

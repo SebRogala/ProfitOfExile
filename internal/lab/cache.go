@@ -206,12 +206,25 @@ type Cache struct {
 	// rankings holds the ranked collective answers, read from SQL rather than
 	// from the fields above, behind its own locks — see RankingAnswers.
 	rankings *RankingAnswers
+
+	// fontColdFills shares the cold Font and Dedication overview loads; it
+	// holds them only while in flight — see FontColdFills.
+	fontColdFills *FontColdFills
 }
 
 // NewCache creates an empty analysis cache bound to scope. The cache serves and
 // stores only this league's data for its lifetime.
 func NewCache(scope league.Scope) *Cache {
-	return &Cache{scope: scope, rankings: newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)}
+	return &Cache{
+		scope:         scope,
+		rankings:      newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes),
+		fontColdFills: newFontColdFills(),
+	}
+}
+
+// FontColdFills returns this league's in-flight cold Font overview loads.
+func (c *Cache) FontColdFills() *FontColdFills {
+	return c.fontColdFills
 }
 
 // Rankings returns this league's ranked-answer cache.

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -319,4 +320,40 @@ func TestFontAnalysis_MixedChaosAndDivineLensWithoutARateHasNoPrice(t *testing.T
 	setLens(tc, r)
 
 	assertUnconvertibleLens(t, serveLens(t, tc, "/api/analysis/font"), r.FetchedAt)
+}
+
+// The Font body served from a warm corpus, pinned whole: per-mode rows
+// narrowed to the variant in profit order and cut at the limit, best colors,
+// and the all-null lens of a nil trade cache.
+func TestFontAnalysis_WarmBodyIsPinned(t *testing.T) {
+	at := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	c := lab.NewCache(corpusScope)
+	c.For(corpusScope).SetFont(lab.FontAnalysis{
+		Safe: []lab.FontResult{
+			{Time: at, Color: "RED", Variant: "20/20", Pool: 9, PricedGems: 8, Winners: 2, PWin: 0.5, EV: 3, InputCost: 1, Profit: 2, FontsToHit: 2, LiquidityRisk: "LOW"},
+			{Time: at, Color: "BLUE", Variant: "20/20", Pool: 7, PricedGems: 7, Winners: 1, PWin: 0.25, EV: 9, InputCost: 1, Profit: 8, FontsToHit: 4, LiquidityRisk: "HIGH"},
+			{Time: at, Color: "GREEN", Variant: "1", Pool: 5, Profit: 99, LiquidityRisk: "LOW"},
+		},
+		Jackpot: []lab.FontResult{{Time: at, Color: "GREEN", Variant: "20/20", Pool: 3, EV: 1, Profit: 1, ThinPoolGems: 1, LiquidityRisk: "MEDIUM"}},
+	})
+	w := serveWithoutRepository(t, FontAnalysis(nil, c, nil, corpusScope), "/api/analysis/font?variant=20/20&limit=1")
+	var got map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	lens, _ := json.Marshal(lensCraft(nil, corpusScope, time.Now()))
+	var wantLens any
+	_ = json.Unmarshal(lens, &wantLens)
+	var want map[string]any
+	if err := json.Unmarshal([]byte(`{
+		"safe": [{"time":"2026-11-19T12:00:00Z","color":"BLUE","variant":"20/20","pool":7,"pricedGems":7,"winners":1,"pWin":0.25,"avgWin":0,"avgWinRaw":0,"ev":9,"evRaw":0,"inputCost":1,"profit":8,"fontsToHit":4,"thinPoolGems":0,"liquidityRisk":"HIGH"}],
+		"premium": [],
+		"jackpot": [{"time":"2026-11-19T12:00:00Z","color":"GREEN","variant":"20/20","pool":3,"pricedGems":0,"winners":0,"pWin":0,"avgWin":0,"avgWinRaw":0,"ev":1,"evRaw":0,"inputCost":0,"profit":1,"fontsToHit":0,"thinPoolGems":1,"liquidityRisk":"MEDIUM"}],
+		"bestColorSafe": "BLUE", "bestColorPremium": "", "bestColorJackpot": "GREEN"}`), &want); err != nil {
+		t.Fatal(err)
+	}
+	want["lens"] = wantLens
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("body = %v\nwant %v", got, want)
+	}
 }
