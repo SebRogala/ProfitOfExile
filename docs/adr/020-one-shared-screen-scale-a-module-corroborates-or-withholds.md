@@ -150,6 +150,8 @@ windowed client's UI scale is not a function of the capture size and this keying
 cannot express it. The task text was amended to say so rather than leaving the
 gap implicit.
 
+**2026-11-19: superseded for windowed play by ADR-024's [Amendment: POE-272 windowed client rectangle (2026-11-19)](024-module-ocr-positions-are-placed-from-the-screen-slice-not-located.md#amendment-poe-272-windowed-client-rectangle-2026-11-19).**
+
 ### 5. Lifecycle: exactly three re-measures
 
 **Amended by POE-278 below: Recalibrate now MEASURES, and is a fourth writer.**
@@ -375,6 +377,8 @@ placement was wrong would then get no sweep on an AlvaStart or TempleArea arm.
 The predicate is fed `anchors.temple_entrance` instead. Windowed play remains
 out of scope and is unchanged by this: the derivation reads the monitor height,
 while a windowed client scales its UI to the window (POE-267/POE-272).
+
+**2026-11-19: superseded for windowed play by ADR-024's [Amendment: POE-272 windowed client rectangle (2026-11-19)](024-module-ocr-positions-are-placed-from-the-screen-slice-not-located.md#amendment-poe-272-windowed-client-rectangle-2026-11-19).**
 
 ## Amendment: the null-slice sweep has a cadence and runs off the loop (POE-275, 2026-09-11)
 

@@ -60,6 +60,11 @@ fn apply_overlay_focus(app: &AppHandle, overlay_name: &str, gate_met: bool, debu
     }
 }
 
+/// The focus poller's cadence; also the client-rect refresh cadence while the
+/// game is in front. Reversible interim pending the Operator's Windows cost
+/// measurement (POE-272).
+const FOCUS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1000);
+
 /// Poll GetForegroundWindow to detect game focus changes.
 /// More reliable than Client.txt log events (no latency, works if PoE crashes).
 /// Runs every [`FOCUS_POLL_INTERVAL`] on a dedicated thread.
@@ -68,11 +73,6 @@ fn apply_overlay_focus(app: &AppHandle, overlay_name: &str, gate_met: bool, debu
 ///   - Foreground is PoE → game focused, show overlay
 ///   - Foreground is our own process (overlay/main window) → neutral, keep current state
 ///   - Foreground is anything else → game not focused, hide overlay
-/// The focus poller's cadence; also the client-rect refresh cadence while the
-/// game is in front. Reversible interim pending the Operator's Windows cost
-/// measurement (POE-272).
-const FOCUS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1000);
-
 pub(crate) fn spawn_focus_poller(app: AppHandle) {
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
     {

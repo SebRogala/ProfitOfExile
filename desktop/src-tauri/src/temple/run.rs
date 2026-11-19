@@ -3918,26 +3918,17 @@ mod tests {
     /// A 1600x900 game window on a 1920x1080 monitor.
     const WINDOWED_CLIENT: [i32; 4] = [160, 90, 1600, 900];
 
-    fn windowed_anchor() -> Result<crate::ssot::ScreenSlice, String> {
+    /// An anchor at the scale a 900 px client implies, on a 1920x1080 monitor.
+    fn anchor_on_monitor_with_client(client: [i32; 4]) -> Result<crate::ssot::ScreenSlice, String> {
         screen_from_anchor(
             anchor::TEMPLE_SCALE_PER_UI_SCALE * 0.75,
             None,
             (1920, 1080),
             7,
             (0, 0),
-            WINDOWED_CLIENT,
+            client,
             1_700_000_000_000,
         )
-    }
-
-    mod keep_happy {
-        use super::*;
-
-        #[test]
-        fn a_windowed_client_corroborates_its_anchor_against_the_client_height() {
-            let published = windowed_anchor().expect("900 / 1200 is the 0.75 the anchor implies");
-            assert!((published.ui_scale - 0.75).abs() < 1e-3, "ui_scale {}", published.ui_scale);
-        }
     }
 
     mod keep_critical {
@@ -3946,10 +3937,20 @@ mod tests {
         /// Judged by the 1080 monitor height, the same anchor implies a unit
         /// ratio 1080/900 off `k` and is refused: a windowed temple-only machine
         /// could then never publish a scale after a resize dropped the slice.
+        /// The fullscreen client on the same monitor is the contrast: there 1080
+        /// is the client's height, and the same scale is refused.
         #[test]
-        fn a_windowed_anchor_is_not_judged_against_the_monitor_height() {
-            let published = windowed_anchor().expect("judged by the 900 px client, not the monitor");
+        fn a_windowed_anchor_is_judged_against_the_client_height_not_the_monitor() {
+            let published = anchor_on_monitor_with_client(WINDOWED_CLIENT)
+                .expect("900 / 1200 is the 0.75 the anchor implies");
             assert!((published.ui_scale - 0.75).abs() < 1e-3, "ui_scale {}", published.ui_scale);
+
+            let refused = anchor_on_monitor_with_client([0, 0, 1920, 1080])
+                .expect_err("a 1080 px client implies 0.9, not the anchor's 0.75");
+            assert!(
+                refused.contains("not corroborated by the game client"),
+                "the withheld publish has to say why: {refused}",
+            );
         }
     }
 }

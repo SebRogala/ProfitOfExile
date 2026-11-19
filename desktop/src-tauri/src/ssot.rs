@@ -1302,11 +1302,11 @@ where
 /// Everything but the scale is carried straight off the capture; the scale is
 /// [`ui_scale_for_height`] of the game CLIENT's height, not the capture's —
 /// in windowed play the UI scales with the window (POE-272; the interim rule
-/// pending the Operator's POE-267 decision).`anchors` is `None` because a grab has located no
-/// module panel, and on the one path that publishes this the standing anchors
-/// are already gone — [`geometry_recalibrate`] empties the whole slot before it
-/// measures, which is the forgetting half of the press doing exactly what it
-/// says. A remembered Entrance origin is re-found by the temple's own recheck;
+/// pending the Operator's POE-267 decision). `anchors` is `None` because a grab
+/// has located no module panel, and on the one path that publishes this the
+/// standing anchors are already gone — [`geometry_recalibrate`] empties the
+/// whole slot before it measures, which is the forgetting half of the press
+/// doing exactly what it says. A remembered Entrance origin is re-found by the temple's own recheck;
 /// carrying one across a Recalibrate would defeat the button.
 ///
 /// `measured_at_ms` is a parameter rather than a clock read, so the assembly is

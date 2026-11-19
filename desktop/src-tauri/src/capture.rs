@@ -478,7 +478,6 @@ mod platform {
     /// resize drops it (`ssot::drop_if_mismatched`). A failed read or an empty
     /// rect keeps the last value. The first successful read's duration is
     /// logged once per session — the cost the per-tick refresh rests on.
-    #[allow(dead_code)]
     pub fn remember_game_client(app: &AppHandle, hwnd: HWND) {
         let started = Instant::now();
         let mut rect = RECT::default();
