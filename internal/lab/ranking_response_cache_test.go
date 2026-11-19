@@ -292,7 +292,7 @@ func TestRankingAnswers_PublishInvalidatesOnlyTheAnswersReadingThatInput(t *test
 	}
 	readAll()
 	for _, tt := range []struct {
-		input                      RankingInput
+		input                     RankingInput
 		normal, dedication, bases int32
 	}{
 		{RankingInputTransfigure, 1, 0, 1},

@@ -176,6 +176,57 @@ does, while `exchange.Cache` exposes only `Set` and `Snapshot` — it is keyed b
 horizon rather than by league, and the process-scoped `exchange.Service` is its
 only writer.
 
+## The ranked collective answers
+
+Files: `internal/lab/ranking_response_cache.go` (`RankingAnswers`, reached
+through `Cache.Rankings`), its callers `lab.QueryCollective` and
+`serveDedicationCollective` in `internal/server/handlers/collective.go`, and
+the publication points in `internal/lab/analyzer.go` and
+`cmd/server/recompute_runtime.go`.
+
+The collective endpoint ranks in SQL rather than from the corpora above, so it
+has its own cache of the SQL's answers: each Normal page, each Dedication page
+and each GCP base-price map (keyed by the sorted base set). Equal requests share
+one in-flight load per answer generation, and a warm answer runs no ranking SQL.
+The load runs detached from the request that started it, so one waiter giving up
+cancels neither the load nor the others' answer; a request already cancelled
+when it arrives loads on its own, unshared. Only a successful load is retained:
+a failed base-price lookup serves that burst today's partial response (no GCP
+recipe fields) and the next request retries.
+
+- **What is retained.** The undecorated page: sparklines and the trade note are
+  applied fresh, to a copy of the rows, on every request. Sparkline variant is a
+  decoration input and not part of the key; a search's page and page size are
+  not part of the key either, because a search answers its whole match set.
+- **Bounds.** 256 answers or 16 MiB (estimated), whichever is reached first,
+  evicting the least recently used. An answer larger than the byte bound is
+  served to its waiters and never retained. There is no TTL.
+- **Invalidation.** Each answer is retained under the revision of the tables it
+  reads: Normal pages under `transfigure_results`, `gem_signals` and
+  `gem_features`; Dedication pages under `gem_snapshots` and
+  `dedication_snapshots`; base prices under `transfigure_results`. The analyzer
+  advances a revision around every `SaveTransfigureResults`,
+  `SaveDedicationResults`, `SaveGemFeatures` and `SaveGemSignals` (and the
+  `DeleteV2ForSnapshot` of a startup recompute), whether the rest of its run
+  succeeds or not; an accepted `ninja_gems` event advances the `gem_snapshots`
+  revision before any analysis starts, so the Dedication answers refresh even
+  when `RunDedication` fails or never runs. A revision advances even when its
+  write fails, since a failed write may have committed part of its rows.
+- **The publication barrier.** A separate read/write lock, not `Cache`'s data
+  mutex: loads hold it shared across their SQL, and each analyzer write holds it
+  exclusively across its commit and the revision bump. A load therefore never
+  retains rows of one revision under another, and a load in progress when a
+  write or event arrives cannot leave its answer serving afterwards. No SQL runs
+  under either cache's data mutex.
+
+Two limitations follow from the barrier being in-process. The collector commits
+a gem snapshot before it publishes the event, outside the barrier, so a load in
+that window can read the new snapshot and is then invalidated when the event
+lands; until the event lands the old Dedication answer serves. A writer in
+another process (such as `cmd/run-v2`) publishes no revision at all: its rows
+reach the rankings on the next in-process recompute of the same tables, or on
+restart.
+
 ## The sparkline cache
 
 Files: `internal/lab/sparkline_cache.go` (merge and population),
