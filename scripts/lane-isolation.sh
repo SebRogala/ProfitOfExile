@@ -79,7 +79,9 @@ if [[ $action == teardown ]]; then
 		fail "containers of $project exist without docker-compose.lane.yml; inspect them"
 	fi
 	read_owners "not dropping it"
-	for db in "$dev_db" "$test_db"; do
+	# The dev marker must outlive the integration DB: it is what lets a repeat
+	# teardown claim an unmarked integration DB after a failed DROP.
+	for db in "$test_db" "$dev_db"; do
 		[[ ${owner[$db]} == absent ]] || psql_q "DROP DATABASE \"$db\"" >/dev/null
 	done
 	rm -rf .env .env.local docker-compose.lane.yml .worktree

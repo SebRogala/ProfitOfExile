@@ -33,7 +33,8 @@ case "$1 $2" in
 			COMMENT*) comment=$(sed -E "s/.* IS '(.*)'$/\1/" <<<"$sql")
 				awk -F '\t' -v n="$name" -v c="$comment" 'BEGIN { OFS = "\t" } $1 == n { $2 = c } { print }' "$FAKE_DBS" >"$FAKE_DBS.new"
 				mv "$FAKE_DBS.new" "$FAKE_DBS" ;;
-			DROP*) awk -F '\t' -v n="$name" '$1 != n' "$FAKE_DBS" >"$FAKE_DBS.new"; mv "$FAKE_DBS.new" "$FAKE_DBS" ;;
+			DROP*) [[ $name != "${FAKE_DROP_FAIL:-}" ]] || { echo "ERROR:  database \"$name\" is being accessed by other users" >&2; exit 1; }
+			awk -F '\t' -v n="$name" '$1 != n' "$FAKE_DBS" >"$FAKE_DBS.new"; mv "$FAKE_DBS.new" "$FAKE_DBS" ;;
 		esac ;;
 	*) echo "fake docker: unexpected $*" >&2; exit 1 ;;
 esac
@@ -100,6 +101,20 @@ check "a repeat setup marks the recreated integration database as the lane's aga
 	grep -qxF "profitofexile_lanepoe414_integration	lane-isolation:$p/.worktrees/poe-414" "$FAKE_DBS"
 unmark_integration
 check "teardown drops the lane's dev and recreated integration databases" \
+	bash -c '(cd "$1" && "$2" teardown) >/dev/null && test ! -s "$3"' _ "$p/.worktrees/poe-414" "$script" "$FAKE_DBS"
+
+# keep:critical — a teardown whose integration DROP fails must keep the marked dev
+# database; without it the unmarked integration database is refused forever and
+# only a manual drop recovers the lane.
+p="$work/drop-fails"
+fresh_project "$p" poe-414
+in_dir "$p/.worktrees/poe-414" "$script" setup >/dev/null
+unmark_integration
+check "teardown exits non-zero when the integration database cannot be dropped" \
+	bash -c '! (cd "$1" && FAKE_DROP_FAIL=profitofexile_lanepoe414_integration "$2" teardown) >/dev/null 2>&1' _ "$p/.worktrees/poe-414" "$script"
+check "a failed integration DROP leaves the dev database marked as the lane's" \
+	grep -qxF "profitofexile_lanepoe414	lane-isolation:$p/.worktrees/poe-414" "$FAKE_DBS"
+check "a repeat teardown after a failed integration DROP drops both databases" \
 	bash -c '(cd "$1" && "$2" teardown) >/dev/null && test ! -s "$3"' _ "$p/.worktrees/poe-414" "$script" "$FAKE_DBS"
 
 # keep:critical — teardown in the main checkout would drop data; it must refuse.
