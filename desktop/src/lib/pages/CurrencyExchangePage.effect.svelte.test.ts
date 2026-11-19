@@ -5,7 +5,6 @@
  * stubbed `fetchCurrencyExchangePlays`; every call it records is a sent request.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushSync, mount, unmount } from 'svelte';
 import type { CurrencyExchangeResponse, ExchangePageParams } from '$lib/api';
 
 const transport = vi.hoisted(() => ({
@@ -19,7 +18,8 @@ vi.mock('$lib/api', async () => {
 		...actual,
 		fetchCurrencyExchangePlays: vi.fn(async (mode: string, horizon: string, params: ExchangePageParams) => {
 			transport.calls.push({ mode, horizon, params });
-			return transport.responses.shift() ?? transport.responses.at(-1);
+			// [unfiltered, filtered]: mount and prefs hydration each send an unfiltered request.
+			return transport.responses[params.noOffers === 'only' ? 1 : 0];
 		})
 	};
 });
@@ -34,11 +34,13 @@ vi.mock('@tauri-apps/api/core', () => ({
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 
 let CurrencyExchangePage: typeof import('./CurrencyExchangePage.svelte').default;
+let { flushSync, mount, unmount } = await import('svelte');
 
 // prefs.svelte.ts caches the loaded map at module level; fresh modules per case
 // keep one case's chip toggle from hydrating the next case's mount.
 beforeEach(async () => {
 	vi.resetModules();
+	({ flushSync, mount, unmount } = await import('svelte'));
 	CurrencyExchangePage = (await import('./CurrencyExchangePage.svelte')).default;
 	(await import('$lib/stores/number-format.svelte')).setNumberFormat('comma');
 });
@@ -175,7 +177,8 @@ describe('CurrencyExchangePage no offers chip click', () => {
 	it('no offers chip click sends the same sort as the request before it', async () => {
 		const before = await clickChip(['TwoSidedOrb'], ['SellBlockedOrb']);
 
-		expect(transport.calls[before]?.params.sort).toBe(transport.calls[before - 1].params.sort);
+		expect(transport.calls[before - 1].params.sort).toBe('roi');
+		expect(transport.calls[before]?.params.sort).toBe('roi');
 	});
 
 	it('no offers rows keep the order the filtered response answered with', async () => {
