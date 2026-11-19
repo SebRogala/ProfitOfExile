@@ -54,6 +54,10 @@ const (
 	// tattooTwinID is the same market shape with both book sides alive in the
 	// newest hour: the control arm of the stock-gate incident.
 	tattooTwinID = "Metadata/Items/Tattoos/JourneyTattooTwoSided"
+	// tattooNoBidsID is the tattoo's mirror shape (POE-281): in the newest hour
+	// tattoos are on offer and nobody bids chaos for them, so the SELL leg is the
+	// one the book cannot fill.
+	tattooNoBidsID = "Metadata/Items/Tattoos/JourneyTattooNoBids"
 	// spreadless170ID stands in for the market in the 2026-08-23 screenshot whose
 	// newest hour printed low == high == 170.
 	spreadless170ID = "Metadata/Items/Currency/CurrencySpreadless170"
@@ -121,6 +125,7 @@ func corpusRows() []StoredRow {
 			journeyTattooChaosSpec(back),
 			journeyTattooDivineSpec(),
 			tattooTwinSpec(),
+			tattooNoBidsSpec(back),
 			spreadless170Spec(back),
 			mawrBlaiddSpec(back),
 			mawrBlaiddJunkNewestSpec(back),
@@ -198,9 +203,9 @@ func apocalypseSpec(back int) rowSpec {
 // 2026-08-23): in the newest hour 1121 chaos of bids stand against zero asks.
 //
 // Nobody is offering a tattoo, and real money is standing behind the ones that
-// are wanted. A SELL into those bids is postable; a BUY off the empty ask side is
-// not, which is why the direct flip on this market cannot form in that hour and
-// the recipe that survives is the one-hop that sells into it.
+// are wanted. A SELL into those bids executes; a BUY off the empty ask side has
+// nothing to take, so since POE-281 the routes that buy here are served with
+// Leg.NoOffers on that buy rather than dropped.
 func journeyTattooChaosSpec(back int) rowSpec {
 	spec := liquidChaosMarket(tattooID, 100, 130)
 	if back == 0 {
@@ -232,10 +237,21 @@ func journeyTattooDivineSpec() rowSpec {
 
 // tattooTwinSpec is the tattoo market with both book sides alive in every hour,
 // including the newest. It differs from journeyTattooChaosSpec in the stock
-// numbers and in nothing else, so the pair isolates the composition: one is
-// served as a direct flip and the other is not.
+// numbers and in nothing else, so the pair isolates the marks: the twin's flip
+// carries neither NoOffers nor DepletedSide.
 func tattooTwinSpec() rowSpec {
 	return liquidChaosMarket(tattooTwinID, 100, 130)
+}
+
+// tattooNoBidsSpec is the sell-blocked mirror of journeyTattooChaosSpec: in the
+// newest hour 500 tattoos stand on offer and no chaos is bid for them.
+func tattooNoBidsSpec(back int) rowSpec {
+	spec := liquidChaosMarket(tattooNoBidsID, 100, 130)
+	if back == 0 {
+		spec.lowestStock = [2]int64{0, 500}
+		spec.highestStock = [2]int64{0, 500}
+	}
+	return spec
 }
 
 // spreadless170Spec is the 2026-08-23 screenshot case.
@@ -528,6 +544,7 @@ var (
 	tattooTwinKey   = directKey(chaosID, tattooTwinID)
 	tattooSellKey   = oneHopKey(tattooID, divineID, chaosID)
 	tattooBuyKey    = oneHopKey(tattooID, chaosID, divineID)
+	tattooNoBidsKey = directKey(chaosID, tattooNoBidsID)
 	spreadlessKey   = directKey(chaosID, spreadless170ID)
 	mawrKey         = directKey(chaosID, mawrID)
 	mawrJunkKey     = directKey(chaosID, mawrJunkID)
@@ -665,16 +682,16 @@ func TestCorpus_journeyTattooOneSidedBook_theSellSideRouteIsServedAndMarkedDeple
 	//
 	// The recipe that has to survive is the one whose every leg executes against a
 	// side that had stock: buy the tattoo against divine, sell it INTO those chaos
-	// bids, convert the chaos back. A direct flip cannot form on a book with no
-	// asks, which is the next test.
+	// bids, convert the chaos back. The routes that buy off the empty ask side are
+	// served and marked NoOffers (POE-281), which is the next test.
 	play := playByKey(t, corpusResult(t, HorizonRecent), tattooSellKey)
 
 	sell := play.Legs[1]
 	if sell.Action != "sell" || sell.Item != tattooID || sell.Quote != chaosID {
 		t.Fatalf("leg 1 = %s %s in %s, want the tattoo sold into chaos", sell.Action, sell.Item, sell.Quote)
 	}
-	if !sell.DepletedSide {
-		t.Errorf("sell leg DepletedSide = false, want true — no tattoo was on offer this hour")
+	if !sell.DepletedSide || sell.NoOffers {
+		t.Errorf("sell leg DepletedSide/NoOffers = %v/%v, want true/false — no tattoo was on offer, bids stood", sell.DepletedSide, sell.NoOffers)
 	}
 	if sell.Stock != 1121 {
 		t.Errorf("sell leg Stock = %d, want the 1121 chaos of bids it is paid out of", sell.Stock)
@@ -691,35 +708,95 @@ func TestCorpus_journeyTattooOneSidedBook_theSellSideRouteIsServedAndMarkedDeple
 	}
 }
 
-func TestCorpus_journeyTattooOneSidedBook_theBuySideRoutesStayDropped(t *testing.T) {
-	// The boundary that says the gate FOLLOWED the action rather than being
-	// deleted. Both routes below would have to take an ask off a book that had
-	// none: the direct flip's buy leg, and the mirror triangle that enters in
-	// chaos. 1121 chaos of bids buys nobody a tattoo, so neither is served —
-	// serving them would be the opposite regression to the one this file records.
-	served := playKeys(corpusResult(t, HorizonRecent).Plays)
+func TestCorpus_emptyExecutingSide_isServedMarkedNoOffersAndRankedByValue(t *testing.T) {
+	// POE-281. A market that traded but whose EXECUTING side stood empty in the
+	// newest hour is served, not dropped: the reader posts the top order and
+	// waits, and the price comes from realized trades. Buy-blocked: the tattoo's
+	// direct flip and the mirror triangle entering in chaos both buy off an empty
+	// ask side. Sell-blocked: the no-bids tattoo's flip sells into no bids.
+	cases := []struct {
+		name    string
+		key     string
+		blocked int
+	}{
+		{"buy-blocked direct flip", tattooDirectKey, 0},
+		{"buy-blocked triangle", tattooBuyKey, 0},
+		{"sell-blocked direct flip", tattooNoBidsKey, 1},
+	}
+	for _, horizon := range []Horizon{HorizonRecent, HorizonDay} {
+		t.Run(string(horizon), func(t *testing.T) {
+			got := corpusResult(t, horizon)
+			for _, tc := range cases {
+				play := playByKey(t, got, tc.key)
+				if !play.NoOffers {
+					t.Errorf("%s: play NoOffers = false, want true", tc.name)
+				}
+				for i, leg := range play.Legs {
+					if want := i == tc.blocked; leg.NoOffers != want {
+						t.Errorf("%s: leg %d (%s %s in %s) NoOffers = %v, want %v", tc.name, i, leg.Action, leg.Item, leg.Quote, leg.NoOffers, want)
+					}
+				}
+				if blocked := play.Legs[tc.blocked]; blocked.Stock != 0 || blocked.DepletedSide {
+					t.Errorf("%s: blocked leg Stock/DepletedSide = %d/%v, want 0/false — the empty side is its own", tc.name, blocked.Stock, blocked.DepletedSide)
+				}
+				if !play.LastHour.Equal(corpusNewest) {
+					t.Errorf("%s: LastHour = %v, want the newest hour %v", tc.name, play.LastHour, corpusNewest)
+				}
+			}
+			assertRankedByValue(t, got.Plays)
+		})
+	}
+}
 
-	for _, key := range []string{tattooDirectKey, tattooBuyKey} {
-		if indexOf(served, key) >= 0 {
-			t.Errorf("%s was served; nothing may buy off an empty ask side (got %v)", key, served)
+// assertRankedByValue holds the served list to BestPlays' value ranking with
+// NoOffers in no clause of it (ADR-018): every adjacent pair is in comparator
+// order, so a mark that partitioned the list would break some pair.
+func assertRankedByValue(t *testing.T, plays []Play) {
+	t.Helper()
+	before := func(a, b Play) bool {
+		switch {
+		case a.Suspect != b.Suspect:
+			return !a.Suspect
+		case a.LowCoverage != b.LowCoverage:
+			return !a.LowCoverage
+		case a.ExpectedRoi != b.ExpectedRoi:
+			return a.ExpectedRoi > b.ExpectedRoi
+		case a.Turnover != b.Turnover:
+			return a.Turnover > b.Turnover
+		case a.Mode != b.Mode:
+			return modeRank(a.Mode) < modeRank(b.Mode)
+		default:
+			return a.Key < b.Key
 		}
+	}
+	marked, unmarked := false, false
+	for i, p := range plays {
+		marked, unmarked = marked || p.NoOffers, unmarked || !p.NoOffers
+		if i > 0 && !before(plays[i-1], p) {
+			t.Errorf("plays[%d] %s ranks after plays[%d] %s out of value order", i-1, plays[i-1].Key, i, p.Key)
+		}
+	}
+	if !marked || !unmarked {
+		t.Fatalf("served list has marked=%v unmarked=%v plays, want both so the order check means something", marked, unmarked)
 	}
 }
 
 func TestCorpus_journeyTattooTwoSidedTwin_isServedAsAFlipCarryingNoDepletedSide(t *testing.T) {
 	// The control arm. This market is the tattoo's twin — same prices, same
 	// volumes, same hours — differing only in that its newest hour kept stock on
-	// BOTH sides. It is served as a direct flip, which the one-sided market cannot
-	// be, and neither of its legs is marked: a flip's two legs demand the item side
-	// and the quote side between them, so a served flip has both by construction.
+	// BOTH sides. It is served as a direct flip and neither of its legs is
+	// marked: with both sides standing there is no NoOffers and no DepletedSide.
 	play := playByKey(t, corpusResult(t, HorizonRecent), tattooTwinKey)
 
 	if play.Mode != ModeDirect {
 		t.Fatalf("Mode = %q, want %q", play.Mode, ModeDirect)
 	}
+	if play.NoOffers {
+		t.Errorf("play NoOffers = true, want false — both sides of this book were alive")
+	}
 	for i, leg := range play.Legs {
-		if leg.DepletedSide {
-			t.Errorf("leg %d (%s) DepletedSide = true, want false — both sides of this book were alive", i, leg.Action)
+		if leg.DepletedSide || leg.NoOffers {
+			t.Errorf("leg %d (%s) DepletedSide/NoOffers = %v/%v, want false/false — both sides of this book were alive", i, leg.Action, leg.DepletedSide, leg.NoOffers)
 		}
 	}
 	if play.Legs[0].Stock != 500 {

@@ -27,8 +27,9 @@ import "sort"
 // hour's optimistic reading — and the coarser the pair's tick, the more of it
 // is quantization rather than opportunity.
 //
-// Each leg is gated on its own market's depth (gatedLeg) and every price must
-// come back ok, so one thin or unpriced side drops the whole route.
+// Each leg is gated on its own market's liveness (gatedLeg) and every price
+// must come back ok, so one dead or unpriced leg drops the whole route; an empty
+// book side only marks its leg (Leg.NoOffers).
 //
 // Each leg also carries its OWN market's trailing window: gatedLeg reads the
 // view under the row's market id, so a thin leg of a triangle prices from the
@@ -111,7 +112,7 @@ func scoredLeg(byPair map[string]Row, x, y string) legRow {
 // rowXB prices X in B, and rowAB prices B in A.
 //
 // It returns ok == false when any of the three prices is unavailable or any leg
-// fails its depth gate. The mirror route is the same call with a and b (and the
+// fails its liveness gate. The mirror route is the same call with a and b (and the
 // two X rows) swapped.
 func oneHopCandidate(x, a, b string, rowXA, rowXB, rowAB legRow, view windowView, cfg Config) (candidate, bool) {
 	buyX, ok := gatedLeg("buy", x, a, rowXA, view, cfg)

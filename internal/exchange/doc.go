@@ -105,18 +105,19 @@
 // 1/max(a, b), and the coarser of the row's two pairs bounds everything derived
 // from it); the traded units of both sides; and the highest stock of the book
 // side the leg executes against. A leg
-// counts for the hour only when priceIn can price it, at least
-// Config.MinVolumePerHour units of the ITEM side traded, and the side it
-// EXECUTES AGAINST carried stock — the item side for a buy, the quote side for a
-// sell. That gate is liveness, not liquidity, and one failed leg drops the
+// counts for the hour only when priceIn can price it and at least
+// Config.MinVolumePerHour units of the ITEM side traded. That gate is liveness,
+// not liquidity, and one failed leg drops the
 // whole candidate — a recipe is only as executable as its thinnest step.
 //
 // The stock half of that gate followed the action from 2026-08-23. Demanding
 // both sides of every leg dropped the one-sided market a sell leg wants most —
 // Journey Tattoo against chaos, 1121 chaos of bids against zero asks — so the
-// opposite side is now REPORTED, in Leg.DepletedSide, rather than gated on. A
-// direct flip still needs both sides, because its buy and its sell are gated
-// separately on the one row and between them ask for each.
+// opposite side is now REPORTED, in Leg.DepletedSide, rather than gated on.
+// Since POE-281 the executing side is not gated on either: when it is empty the
+// leg is served and marked Leg.NoOffers (Play.NoOffers when any leg is), because
+// the reader can post the top order and the price comes from realized trades.
+// On a direct flip one leg's DepletedSide is therefore the other leg's NoOffers.
 //
 // Two shapes of candidate come out of each hour. A direct flip buys and sells
 // the same item on one market:
@@ -154,8 +155,8 @@
 // reported no volume carries Fair 0, which means "no anchor" and not "free".
 // Tick, Volume and Stock are the same hour's. Stock is oriented to the LEG like
 // the pair is — the Item side on a buy, the Quote side on a sell, the same side
-// the gate read — and DepletedSide beside it says the opposite side of that book
-// stood empty, which is a mark and never a drop. Both are liveness and nothing
+// NoOffers says it stood empty — and DepletedSide beside it says the opposite
+// side of that book stood empty; both are marks and never a drop. Both are liveness and nothing
 // else: the feed's stock columns are the hour's min and max of total book size
 // and say nothing about the extreme (measured corr <= 0.13 against the edge).
 //
@@ -295,8 +296,8 @@
 //
 // The gates, in the order the code applies them, with DefaultConfig's values.
 // Per leg per hour, in gatedLeg: at least MinVolumePerHour (1) unit of the
-// leg's item traded, and stock on the side the leg executes against — the item
-// side of a buy, the quote side of a sell. Per candidate per
+// leg's item traded (an empty book side only marks the leg, Leg.NoOffers or
+// Leg.DepletedSide). Per candidate per
 // hour, in evaluate: a quote that cannot be valued in chaos in this hour, then
 // HideSuspect, then Turnover >= MinTurnoverChaos (0), Tick <= MaxTick (1), and —
 // only when a reader has armed them above 0 — RoiPct >= MinEdgeTickRatio * Tick
@@ -342,12 +343,11 @@
 // loosening. Either way a reader who wants cheap fragments or 1-hop triangles
 // can have them without a redeploy.
 // What stays server-side is only what cannot be PRICED: a leg on which nothing
-// traded (MinVolumePerHour 1) or with no stock on the side it would have
-// executed against, and an entry
+// traded (MinVolumePerHour 1), and an entry
 // currency with no chaos rate that hour. Thinness, persistence, one-sidedness
 // and the spread
 // itself are FLAGS and RANKING KEYS instead — HoursSeen, SimEntries/LowCoverage,
-// Suspect, DepletedSide, LowLiquidity — and
+// Suspect, DepletedSide, NoOffers, LowLiquidity — and
 // MaxPlays (2000) is a payload guard sized above the sane set rather than a gate;
 // the old 500 filled exactly and cut inside the flagged band on 2026-08-22.
 // A losing round trip IS served, flagged LowLiquidity and carrying its negative
@@ -618,7 +618,7 @@
 // every play in the list was valued at, 0 when that hour did not trade the
 // market, in which case no divine-quoted play is in the list), count and plays.
 // Each play carries key, mode, legs, roiPct, edge (its deprecated alias),
-// roiPctRaw, roi, investment, turnover, tick, depth, suspect, lowLiquidity,
+// roiPctRaw, roi, investment, turnover, tick, depth, suspect, lowLiquidity, noOffers,
 // windowPriced, windowHours, windowVolume, hoursSeen,
 // lastHour and the simulation's four — expectedRoi, expectedRoiPct, simEntries
 // and lowCoverage, the ranking's own key and the only fields a client cannot
@@ -640,9 +640,11 @@
 // (ADR-017) — and lastHour, tick and divineChaosRate stay the scored hour's
 // beside it. Each leg carries action, item, quote,
 // price, priceItemQty, priceQuoteQty, fair, fairOk, tick, volume, stock,
-// depletedSide, suspect, windowPriced, windowHours and windowVolume, in that
-// struct order. stock counts the book side the leg EXECUTES AGAINST — the item
-// side of a buy, the quote side of a sell — and depletedSide says the opposite
+// depletedSide, noOffers, suspect, windowPriced, windowHours and windowVolume,
+// in that struct order. stock counts the book side the leg EXECUTES AGAINST — the
+// item side of a buy, the quote side of a sell — noOffers says that side carried
+// nothing (the leg is served and the player posts the order; "no offers - make
+// your own"), and depletedSide says the opposite
 // side of that book carried nothing in the hour, which is a mark on a served row
 // and never a reason one is missing (ADR-017). On a window-priced leg fair is the
 // window's POOLED volume-weighted price rather than one hour's, so the suspect

@@ -17,8 +17,9 @@ package exchange
 // are the two sides' traded units.
 //
 // stock is the book side this leg EXECUTES AGAINST — the item side for a buy,
-// the quote side for a sell (gatedLeg) — and depletedSide says the OTHER side
-// carried none that hour. Both are liveness only: lowest/highest stock are the
+// the quote side for a sell (gatedLeg) — noOffers says that side carried none
+// that hour, and depletedSide says the OTHER side carried none. All three are
+// marks only: lowest/highest stock are the
 // hour's min and max of total book size and say nothing about the extreme
 // (corr <= 0.13 against the edge), so nothing scores on either.
 //
@@ -68,6 +69,7 @@ type obs struct {
 	quoteVolume  float64
 	volume       float64
 	stock        int64
+	noOffers     bool
 	depletedSide bool
 }
 
@@ -156,8 +158,8 @@ func (c candidate) windowRescued() bool {
 // leaves the ratio unchanged.
 //
 // A market contributes only when its leg prices and BOTH legs pass their own
-// gate — alive on the scored hour or on the window behind it, and stock on the
-// side each leg executes against.
+// gate — alive on the scored hour or on the window behind it. Stock gates
+// neither leg: an empty executing side is marked (Leg.NoOffers), not dropped.
 //
 // THE LIST OF MARKETS is no longer the scored hour's rows alone (POE-252). The
 // hour's own rows are walked first, exactly as before, and then every OTHER
@@ -196,13 +198,10 @@ func (c candidate) windowRescued() bool {
 // not. A row publishing quantities the feed cannot price is feed drift, and the
 // relaxation was filed for liveness.
 //
-// The two legs are gated separately rather than one being copied from the other,
-// and that is what keeps a flip's demand for stock on BOTH sides of the market
-// standing after gatedLeg became action-aware (2026-08-23): the buy leg demands
-// the item side and the sell leg the quote side, on the SAME row, so the pair of
-// per-leg demands spells the old both-sides rule without a case for the shape.
-// A direct flip therefore never carries Leg.DepletedSide — a leg's opposite side
-// is the other leg's executing side, and both had to be non-empty to get here.
+// The two legs are gated separately rather than one being copied from the other:
+// the buy leg reads the item side and the sell leg the quote side, on the SAME
+// row, so on a direct flip one leg's DepletedSide is always the other leg's
+// NoOffers — a one-sided market marks both legs, one from each side.
 // Everything else the two legs observe is identical: one market, one row family,
 // and only the end of the spread they execute on differs, which is read from
 // action.
@@ -277,8 +276,7 @@ func directFlip(r legRow, item, quote string, view windowView, cfg Config) (cand
 // reports whether that row priced the pair and was alive enough to count.
 //
 // The gate is liveness, not liquidity: the leg's item must have traded at least
-// Config.MinVolumePerHour units, and the side the leg EXECUTES AGAINST must have
-// carried stock. At the default of 1 the volume half reads as "a trade happened
+// Config.MinVolumePerHour units. At the default of 1 the volume half reads as "a trade happened
 // here", which is the weakest true statement about the leg and deliberately so —
 // the old floor of 10 dropped a live card market in 11 of 24 measured hours
 // (DefaultConfig, and the measurement itself in
@@ -288,9 +286,12 @@ func directFlip(r legRow, item, quote string, view windowView, cfg Config) (cand
 // only as executable as its thinnest step — so both directCandidates and
 // crossQuoteCandidates drop the candidate on the first false.
 //
-// The stock half FOLLOWS THE ACTION, and did not until 2026-08-23. A buy takes
-// units off the item side of the book, so it needs item-side stock; a sell hands
-// units to the quote side, so it needs QUOTE-side stock. Demanding both of every
+// Stock is a MARK, not a gate, since POE-281, and it FOLLOWS THE ACTION since
+// 2026-08-23. A buy takes units off the item side of the book and a sell hands
+// units to the quote side; an empty executing side sets obs.noOffers
+// (Leg.NoOffers) and the leg is still served, because the reader can post the
+// top order and the price comes from realized trades, never the book.
+// Before POE-281 that side had to be non-empty. Demanding both of every
 // leg — what this did before — deleted exactly the one-sided market with the
 // largest edge in it: Journey Tattoo against chaos stood at 1121 chaos of bids
 // and zero asks, which is the shape a seller wants and a buyer cannot touch, and
@@ -299,10 +300,6 @@ func directFlip(r legRow, item, quote string, view windowView, cfg Config) (cand
 // side is REPORTED instead, through obs.depletedSide and Leg.DepletedSide, per
 // the visibility rule (ADR-017): a market the reader could act on is served and
 // marked, never hidden.
-//
-// A direct flip keeps the both-sides demand all the same, because its two legs
-// are gated separately on the one row and between them ask for both — see
-// directCandidates.
 //
 // WHICH HOURS THE LEG READS is what POE-252 added, and there are two questions,
 // answered by the same predicate so one Config field disarms both. An hour that
@@ -316,9 +313,8 @@ func directFlip(r legRow, item, quote string, view windowView, cfg Config) (cand
 // what CARRIES it (windowRescued). At ThinHourVolume 0 nothing is thin, so
 // nothing is window-priced and nothing is rescued: the whole feature is off.
 //
-// The STOCK DEMAND IS UNCHANGED — ADR-017's second amendment stands, and the
-// executing side must still be non-empty. What changes on a rescued hour is the
-// stock READING, which comes from the newest contributing window row, so it is
+// On a rescued hour the stock READING comes from the newest contributing window
+// row, so it is
 // as old as the price it accompanies and no older. Tick, traded volume and quote
 // volume come from that same row: one row family, one hour, one story, which is
 // also what keeps Play.Depth and Play.Turnover positive on a rescued row rather
@@ -383,10 +379,6 @@ func gatedLeg(action, item, quote string, r legRow, view windowView, cfg Config)
 	if action == "sell" {
 		executes, opposite = opposite, executes
 	}
-	if executes <= 0 {
-		return candidateLeg{}, false
-	}
-
 	// A row that traded MinVolumePerHour units has a usable vwap unless the
 	// quote side reported nothing; that hour then has no fair anchor, and vwapOK
 	// carries that through to Leg.FairOK rather than letting a 0 read as a free
@@ -407,6 +399,7 @@ func gatedLeg(action, item, quote string, r legRow, view windowView, cfg Config)
 		quoteVolume:  float64(quoteVolumeOf(src, quote)),
 		volume:       float64(volumeOf(src, item)),
 		stock:        executes,
+		noOffers:     executes <= 0,
 		depletedSide: opposite <= 0,
 	}
 

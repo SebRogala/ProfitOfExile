@@ -733,18 +733,23 @@ func TestBestPlays_convertLegPaidOutOfAOneSidedClosingMarket_isServedAndMarkedDe
 	}
 }
 
-func TestBestPlays_buyLegOnTheSameOneSidedMarket_isNotServed(t *testing.T) {
-	// The boundary that says the gate FOLLOWED the action rather than being
-	// deleted. The mirror route would buy the scarab off that same empty ask
-	// side, and 400 divine of bids buys nobody a scarab, so it stays dropped —
-	// as does the divine-quoted flip, whose buy leg is the same step.
+func TestBestPlays_buyLegOnTheSameOneSidedMarket_isServedAndMarkedNoOffers(t *testing.T) {
+	// POE-281: the mirror route buys the scarab off an empty ask side, and so
+	// does the divine-quoted flip. Both are SERVED — the reader posts the bid
+	// and waits — with noOffers on that buy leg and on the play.
 	rows := oneSidedTriangle(func(_, divineLeg, _ *rowSpec) { divineLeg.highestStock[1] = 0 })
 
 	got := BestPlays("Allflame", rows, DefaultConfig())
 
 	for _, key := range []string{oneHopKey(scarabID, divineID, chaosID), directKey(divineID, scarabID)} {
-		if indexOf(playKeys(got.Plays), key) >= 0 {
-			t.Errorf("%s was served; nothing may buy off an empty ask side (got %v)", key, playKeys(got.Plays))
+		play := playByKey(t, got, key)
+		if !play.NoOffers || !play.Legs[0].NoOffers {
+			t.Errorf("%s play/buy-leg NoOffers = %v/%v, want true/true", key, play.NoOffers, play.Legs[0].NoOffers)
+		}
+		for i := 1; i < len(play.Legs); i++ {
+			if play.Legs[i].NoOffers {
+				t.Errorf("%s leg %d NoOffers = true, want false — its side is standing", key, i)
+			}
 		}
 	}
 }
@@ -2891,7 +2896,7 @@ func TestResult_marshalsWithTheFieldNamesTheHandlerPublishes(t *testing.T) {
 	wantKeys(t, "result", data, "league", "horizon", "from", "to", "hours", "divineChaosRate", "plays")
 	wantKeys(t, "play", mustMarshal(t, envelope.Plays[0]),
 		"key", "mode", "legs", "roiPct", "edge", "roiPctRaw", "roi", "investment",
-		"turnover", "tick", "depth", "suspect", "lowLiquidity", "windowPriced",
+		"turnover", "tick", "depth", "suspect", "lowLiquidity", "noOffers", "windowPriced",
 		"windowHours", "windowVolume", "hoursSeen", "expectedRoi",
 		"expectedRoiPct", "simEntries", "lowCoverage", "lastHour")
 
@@ -2901,7 +2906,7 @@ func TestResult_marshalsWithTheFieldNamesTheHandlerPublishes(t *testing.T) {
 	}
 	wantKeys(t, "leg", mustMarshal(t, legs[0]),
 		"action", "item", "quote", "price", "priceItemQty", "priceQuoteQty",
-		"fair", "fairOk", "tick", "volume", "stock", "depletedSide", "suspect",
+		"fair", "fairOk", "tick", "volume", "stock", "depletedSide", "noOffers", "suspect",
 		"windowPriced", "windowHours", "windowVolume")
 
 	if got := string(envelope.Plays[0]["mode"]); got != `"direct"` {
@@ -3204,9 +3209,9 @@ func TestBestPlays_windowPricedMark_doesNotOrderTheServedList(t *testing.T) {
 	// key order and nothing else. A comparator clause on the mark would group A
 	// with D and break this.
 	//
-	// The five hours behind the newest carry stock on NEITHER side, so no older
-	// hour produces a gated candidate and every market's simulation is empty.
-	// They still price the window, which reads traded volume and never stock.
+	// The five hours behind the newest are identical across the four markets,
+	// so every market's simulation reads the same older hours and only the
+	// newest hour's window pricing tells them apart.
 	const (
 		markA = "Metadata/Items/Currency/CurrencyWindowMarkA"
 		markB = "Metadata/Items/Currency/CurrencyWindowMarkB"
@@ -3218,13 +3223,13 @@ func TestBestPlays_windowPricedMark_doesNotOrderTheServedList(t *testing.T) {
 	var rows []StoredRow
 	for _, item := range []string{markA, markB, markC, markD} {
 		for back := 0; back < 6; back++ {
-			// Same 240 chaos of turnover in the newest hour whichever way it is
-			// priced, so the comparator's Turnover clause cannot separate them.
-			spec := pairedHour(chaosID, item, [2]int64{100, 1}, [2]int64{130, 1}, [2]int64{240, units[item]})
+			// No chaos traded in the newest hour, so every market's Turnover is 0
+			// and its hour has no vwap: the comparator's Turnover clause cannot
+			// separate them, and no simulation entry reads a newest-hour vwap that
+			// the differing unit counts would make unequal.
+			spec := pairedHour(chaosID, item, [2]int64{100, 1}, [2]int64{130, 1}, [2]int64{0, units[item]})
 			if back > 0 {
 				spec = pairedHour(chaosID, item, [2]int64{100, 1}, [2]int64{130, 1}, [2]int64{12000, 100})
-				spec.lowestStock = [2]int64{0, 0}
-				spec.highestStock = [2]int64{0, 0}
 			}
 			rows = append(rows, storedBack(back, spec))
 		}

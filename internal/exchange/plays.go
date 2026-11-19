@@ -105,8 +105,7 @@ type Leg struct {
 	Volume float64 `json:"volume"`
 	// Stock is the highest stock the hour carried on the side this leg EXECUTES
 	// AGAINST: the Item side on a buy leg, the Quote side on a sell leg. It is
-	// the same side gatedLeg gated on, so a served leg's Stock is always
-	// positive, and it is the depth the leg's own order has to find — a sell
+	// zero exactly when NoOffers is set, and it is the depth the leg's own order has to find — a sell
 	// posted into a market with no bids standing is not backed by the item stock
 	// sitting beside it. Before 2026-08-23 this reported the Item side whatever
 	// the action was, which for a sell leg named a book side the order never
@@ -117,8 +116,7 @@ type Leg struct {
 	Stock int64 `json:"stock"`
 	// DepletedSide says the OPPOSITE side of this leg's book carried no stock at
 	// all in the hour: no asks standing behind a sell leg, no bids behind a buy
-	// leg. The leg is served either way — the side it executes against is alive,
-	// which is what makes the order postable — and this is the mark that says the
+	// leg. The leg is served either way, and this is the mark that says the
 	// market was one-sided while it did (ADR-017, amended 2026-08-23).
 	//
 	// It reads as an unusually good sign as often as a bad one: a book that is
@@ -128,9 +126,16 @@ type Leg struct {
 	// about is the return trip — a one-sided market prices one direction only, so
 	// nothing says the flip back exists.
 	//
-	// It is never true on a direct flip, whose two legs demand both sides of the
-	// one market between them (directCandidates).
+	// On a direct flip one leg's DepletedSide is the other leg's NoOffers, since
+	// the two legs read opposite sides of the one market (directCandidates).
 	DepletedSide bool `json:"depletedSide"`
+	// NoOffers says the side this leg EXECUTES AGAINST carried no stock in the
+	// hour: nobody selling behind a buy, nobody buying behind a sell. The leg is
+	// served anyway (POE-281, ADR-017's third amendment) — the reader can post
+	// the top order and wait to be filled, and the price, ROI and expected ROI
+	// come from realized trades rather than the book, so they are computed as
+	// for any other leg. Player-facing: "no offers - make your own".
+	NoOffers bool `json:"noOffers"`
 	// Suspect marks an extreme too far from Fair to trade on: a buy leg whose
 	// low is under Fair*Config.SuspectLowBand, a sell leg whose high is over
 	// Fair*Config.SuspectHighBand. Measured on 221 liquid chaos markets over 24
@@ -305,6 +310,9 @@ type Play struct {
 	// lacks, so a recipe whose quiet hour is an exception keeps its place and a
 	// recipe that never had a spread sinks on its own.
 	LowLiquidity bool `json:"lowLiquidity"`
+	// NoOffers is true when ANY leg's executing book side was empty
+	// (Leg.NoOffers). A mark, never a sort key (ADR-018).
+	NoOffers bool `json:"noOffers"`
 	// WindowPriced says ANY leg was priced from its market's trailing window
 	// rather than from the scored hour, because that hour traded under
 	// Config.ThinHourVolume units and one trade collapses a low and a high onto
@@ -640,13 +648,12 @@ type Config struct {
 // A default that drops a market the reader could have traded is invisible by
 // construction — a dropped play cannot be argued with — so what the engine
 // refuses to serve is only what it cannot PRICE: an hour in which nothing
-// changed hands on a leg, or which carried no stock on the side a leg would have
-// EXECUTED AGAINST — the item side of a buy, the quote side of a sell
-// (MinVolumePerHour 1, beside gatedLeg's action-following stock demand) — or
-// whose entry currency has no chaos rate to value it at. A leg whose OPPOSITE
-// side stood empty is served and marked, in Leg.DepletedSide; demanding both
-// sides of every leg was itself a default that hid a live market, and it was
-// demoted on 2026-08-23 (ADR-017).
+// changed hands on a leg (MinVolumePerHour 1), or whose entry currency has no
+// chaos rate to value it at. Stock is no gate: a leg whose OPPOSITE side stood
+// empty is marked in Leg.DepletedSide (demoted 2026-08-23), and one whose
+// EXECUTING side stood empty — the item side of a buy, the quote side of a
+// sell — is marked in Leg.NoOffers (POE-281); both demands hid a live market
+// (ADR-017).
 //
 // MinEdge 0.001 is the one that used to sit beside those and does not any more
 // (2026-08-22). It is now the level Play.LowLiquidity flags at, so a round trip
@@ -1278,6 +1285,7 @@ func evaluate(c candidate, hour time.Time, hourRate float64, hourRateOK bool, cf
 	depth, turnover, tick, entryRate := 0.0, 0.0, 0.0, 0.0
 	suspect := false
 	windowPriced, windowHours, windowVolume := false, 0, 0.0
+	noOffers := false
 
 	for i, recipe := range c.legs {
 		o := recipe.obs
@@ -1310,6 +1318,7 @@ func evaluate(c candidate, hour time.Time, hourRate float64, hourRateOK bool, cf
 			Volume:        o.volume,
 			Stock:         o.stock,
 			DepletedSide:  o.depletedSide,
+			NoOffers:      o.noOffers,
 			Suspect:       legSuspect,
 			WindowPriced:  o.windowPriced,
 			WindowHours:   o.windowHours,
@@ -1317,6 +1326,7 @@ func evaluate(c candidate, hour time.Time, hourRate float64, hourRateOK bool, cf
 		}
 		raw[i], undercut[i] = point.price, filled
 		suspect = suspect || legSuspect
+		noOffers = noOffers || o.noOffers
 		// The play's span is its WIDEST window-priced leg's, with the volume
 		// that same leg read: two legs of a triangle can look back over
 		// different numbers of hours, and the reader judging the row's age needs
@@ -1401,6 +1411,7 @@ func evaluate(c candidate, hour time.Time, hourRate float64, hourRateOK bool, cf
 		Depth:        depth,
 		Suspect:      suspect,
 		LowLiquidity: lowLiquidity,
+		NoOffers:     noOffers,
 		WindowPriced: windowPriced,
 		WindowHours:  windowHours,
 		WindowVolume: windowVolume,

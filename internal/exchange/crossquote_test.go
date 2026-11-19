@@ -391,35 +391,38 @@ func TestCrossQuoteCandidates_unusableClosingMarket_dropsEveryRouteThroughIt(t *
 	}
 }
 
-func TestCrossQuoteCandidates_closingMarketWithNoStockOfTheCurrencyBeingSold_dropsOnlyThatDirection(t *testing.T) {
-	// The closing leg SELLS one currency for the other, so what it needs on the
-	// book is stock of the currency it is paid in — the quote side. The chaos
-	// side of the chaos/divine market standing empty therefore kills only the
-	// route whose last leg is paid in chaos, and leaves its mirror, whose last
-	// leg sells chaos and is paid in divine, executable.
-	closing := chaosDivineSpec()
-	closing.highestStock[0] = 0
-
-	got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, windowView{}, DefaultConfig())
-
-	want := []string{oneHopKey(cardID, divineID, chaosID)}
-	if !reflect.DeepEqual(candidateKeys(got), want) {
-		t.Errorf("keys = %v, want %v", candidateKeys(got), want)
+func TestCrossQuoteCandidates_closingMarketWithAnEmptySide_servesBothDirectionsAndMarksTheBlockedClose(t *testing.T) {
+	// The closing leg SELLS one currency for the other, so the book side it
+	// executes against is the currency it is paid in. Emptying one side of the
+	// chaos/divine market blocks the close of exactly one direction; since
+	// POE-281 that route is served with noOffers on its closing leg, and its
+	// mirror — whose close executes against the side still standing — carries
+	// depletedSide instead. Both sides are exercised so neither passes by
+	// accident.
+	tests := []struct {
+		name           string
+		emptied        int
+		blocked, clear string
+	}{
+		{"chaos side empty", 0, oneHopKey(cardID, chaosID, divineID), oneHopKey(cardID, divineID, chaosID)},
+		{"divine side empty", 1, oneHopKey(cardID, divineID, chaosID), oneHopKey(cardID, chaosID, divineID)},
 	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			closing := chaosDivineSpec()
+			closing.highestStock[tt.emptied] = 0
 
-func TestCrossQuoteCandidates_closingMarketWithNoStockOfTheCurrencyBeingBought_dropsTheMirrorDirection(t *testing.T) {
-	// The other half of the same rule, so neither direction can be passing by
-	// accident: with the divine side of the closing market empty, the route paid
-	// in divine dies and the one paid in chaos survives.
-	closing := chaosDivineSpec()
-	closing.highestStock[1] = 0
+			got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, windowView{}, DefaultConfig())
 
-	got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, windowView{}, DefaultConfig())
-
-	want := []string{oneHopKey(cardID, chaosID, divineID)}
-	if !reflect.DeepEqual(candidateKeys(got), want) {
-		t.Errorf("keys = %v, want %v", candidateKeys(got), want)
+			blocked := candidateByKey(t, got, tt.blocked).legs[2].obs
+			if !blocked.noOffers || blocked.depletedSide {
+				t.Errorf("%s close noOffers/depletedSide = %v/%v, want true/false", tt.blocked, blocked.noOffers, blocked.depletedSide)
+			}
+			clear := candidateByKey(t, got, tt.clear).legs[2].obs
+			if clear.noOffers || !clear.depletedSide {
+				t.Errorf("%s close noOffers/depletedSide = %v/%v, want false/true", tt.clear, clear.noOffers, clear.depletedSide)
+			}
+		})
 	}
 }
 
@@ -446,23 +449,27 @@ func TestCrossQuoteCandidates_sellLegIntoAMarketWithNoAsksStanding_isGatedAndMar
 	if sell.obs.stock != 900 {
 		t.Errorf("sell leg stock = %d, want the 900 chaos it executes against", sell.obs.stock)
 	}
-	if !sell.obs.depletedSide {
-		t.Errorf("sell leg depletedSide = false, want true — no card was on offer this hour")
+	if !sell.obs.depletedSide || sell.obs.noOffers {
+		t.Errorf("sell leg depletedSide/noOffers = %v/%v, want true/false — no card was on offer, bids stood", sell.obs.depletedSide, sell.obs.noOffers)
 	}
 }
 
-func TestCrossQuoteCandidates_buyLegOnTheSameOneSidedMarket_isStillDropped(t *testing.T) {
-	// The mirror of the case above, and the boundary that says the gate followed
-	// the action rather than being deleted: the route that would BUY the card in
-	// chaos needs a card on offer, there is none, and no depth on the chaos side
-	// substitutes for it.
+func TestCrossQuoteCandidates_buyLegOnTheSameOneSidedMarket_isServedAndMarkedNoOffers(t *testing.T) {
+	// The mirror of the case above: the route that BUYS the card in chaos finds
+	// no card on offer. Since POE-281 it is served — the reader can post the bid
+	// and wait — with noOffers on that buy leg; the depth on the chaos side is
+	// its opposite side, so depletedSide stays false.
 	oneSided := cardChaosSpec()
 	oneSided.highestStock[1] = 0
 
 	got := crossQuoteCandidates([]Row{oneSided.row(), cardDivineSpec().row(), chaosDivineSpec().row()}, windowView{}, DefaultConfig())
 
-	if key := oneHopKey(cardID, chaosID, divineID); indexOf(candidateKeys(got), key) >= 0 {
-		t.Errorf("keys = %v, want no route buying the card off an empty ask side", candidateKeys(got))
+	buy := candidateByKey(t, got, oneHopKey(cardID, chaosID, divineID)).legs[0]
+	if buy.action != "buy" || buy.quote != chaosID {
+		t.Fatalf("leg 0 = %s %s in %s, want the buy in chaos", buy.action, buy.item, buy.quote)
+	}
+	if !buy.obs.noOffers || buy.obs.stock != 0 || buy.obs.depletedSide {
+		t.Errorf("buy noOffers/stock/depletedSide = %v/%d/%v, want true/0/false", buy.obs.noOffers, buy.obs.stock, buy.obs.depletedSide)
 	}
 }
 

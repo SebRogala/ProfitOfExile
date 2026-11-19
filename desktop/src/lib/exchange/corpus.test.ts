@@ -17,7 +17,8 @@
  * closure and filter derivations over those exact bytes. A Go-side change to what
  * is served now breaks a DESKTOP test named after the incident it re-opened.
  *
- * WHAT THE FIXTURES CARRY (sixteen served plays, both horizons):
+ * WHAT THE FIXTURES CARRY (nineteen served plays per horizon; the three carrying
+ * `noOffers` stay out of this file, so sixteen are checked here):
  *
  * - the Apocalypse card's spreadless newest hour (2026-08-22, ADR-017's first
  *   amendment) — a best-case LOSS with a positive measured expectation;
@@ -105,6 +106,7 @@ interface WireLeg {
 	volume: number;
 	stock: number;
 	depletedSide: boolean;
+	noOffers: boolean;
 	suspect: boolean;
 	windowPriced: boolean;
 	windowHours: number;
@@ -126,6 +128,7 @@ interface WirePlay {
 	depth: number;
 	suspect: boolean;
 	lowLiquidity: boolean;
+	noOffers: boolean;
 	windowPriced: boolean;
 	windowHours: number;
 	windowVolume: number;
@@ -218,7 +221,8 @@ function syntheticName(id: string): string {
  * be caught here, because no play in this corpus is filed under a category at all.
  */
 function wrapAsResponse(wire: WireResult): CurrencyExchangeResponse {
-	const plays = wire.plays.map(
+	// noOffers rows: page-parity.json never recorded them and its generator crashes; restore under POE-412.
+	const plays = wire.plays.filter((play) => !play.noOffers).map(
 		(play): CurrencyExchangePlay => ({
 			...play,
 			display: serverDisplay(wire.horizon, play.key),
