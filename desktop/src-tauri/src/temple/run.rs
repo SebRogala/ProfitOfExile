@@ -3936,7 +3936,7 @@ mod tests {
         #[test]
         fn a_windowed_client_corroborates_its_anchor_against_the_client_height() {
             let published = windowed_anchor().expect("900 / 1200 is the 0.75 the anchor implies");
-            assert_eq!(published.source, crate::ssot::ScreenScaleSource::TempleAnchor);
+            assert!((published.ui_scale - 0.75).abs() < 1e-3, "ui_scale {}", published.ui_scale);
         }
     }
 
