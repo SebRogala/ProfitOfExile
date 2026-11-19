@@ -6,13 +6,16 @@ uid: 29c54068-0409-42a1-b73e-3b933601c44b
 
 ## Status
 
-Accepted (POE-193, 2026-08-22), **amended twice**. First the same day — see
+Accepted (POE-193, 2026-08-22), **amended three times**. First the same day — see
 [Amendment: MinEdge is a flag](#amendment-minedge-is-a-flag-2026-08-22), which
 demotes the last default-on drop anyone had counted and therefore replaces the
 final Decision bullet below. Then on 2026-08-23 — see
 [Amendment: the stock gate follows the action](#amendment-the-stock-gate-follows-the-action-2026-08-23),
 which demotes one nobody had counted, and supersedes every "stock on BOTH sides"
-reading in this document, the first Decision bullet's included. Extends
+reading in this document, the first Decision bullet's included. Then on
+2026-11-19 — see
+[Amendment: an empty executing side is a mark](#amendment-an-empty-executing-side-is-a-mark-2026-11-19),
+which demotes the last stock-based drop to the `noOffers` mark (POE-281). Extends
 [ADR-015](015-exchange-quality-gates-live-client-side-the-server-serves-everything-sane.md)
 from the four QUALITY gates to the engine's own remaining floors, and
 **supersedes ADR-015's first Decision bullet in whole** — the floor levels that
@@ -357,6 +360,55 @@ of gated on.**
   reorientation). The wire shape is pinned in
   `TestResult_marshalsWithTheFieldNamesTheHandlerPublishes` and
   `TestCurrencyExchangePlays_legsCarryDisplayDataBesideTheRawFeedIDs`.
+
+## Amendment: an empty executing side is a mark (2026-11-19)
+
+The second amendment left one stock demand standing: a leg whose EXECUTING side
+of the book is empty — a buy with nobody selling, a sell with nobody buying —
+was dropped by `gatedLeg`, and with it every recipe that leg belonged to,
+including the direct flip on a one-sided market. That demand is demoted here
+(POE-281), and it was the last stock-based drop.
+
+### Why
+
+When nothing is offered, the owner posts the top order himself and waits to be
+filled, and an item with no chaos offers is usually still buyable in another
+currency. A row the reader cannot see is a row they cannot post against. The
+value survives the empty book: prices come from realized trades (the hour's, or
+the trailing window's since POE-252), never from the book, so `roiPct` and
+`expectedRoi` are computed exactly as for any other row. Stock fed the gate and
+the depth display and nothing else.
+
+Measured on prod, 2026-09-21 04:00–08:00Z (markets that traded at least one unit
+and priced): **~780 traded markets an hour, ~20 with no asks** (the buy leg
+cannot execute) and **~40–60 with no bids** (the sell leg cannot execute); both
+sides empty is 0–1. Roughly **8% of the served surface**.
+
+### Decision
+
+- **A market that traded and priced is served whatever its book holds.** A leg
+  whose executing side carried no stock that hour is kept and carries
+  `Leg.NoOffers` / `noOffers: true`; the play carries `noOffers: true` when any
+  of its legs does. Player-facing wording: "no offers - make your own".
+- **`depletedSide` keeps its meaning**: the OPPOSITE side was empty. A two-sided
+  book carries neither flag; a direct flip on a one-sided market now serves with
+  `noOffers` on the leg that cannot fill, which supersedes the second
+  amendment's "the direct flip on the one-sided market itself stays dropped" and
+  its "a direct flip still demands both sides".
+- **The flag marks and never orders** ([ADR-018](018-flags-mark-they-never-order.md)).
+  These rows rank by value with every other play; the desktop offers a filter
+  chip that narrows the table to exactly them without reordering anything. No
+  new ranking is added (contrast POE-178).
+- **What still drops** is only what cannot be priced: nothing traded on a leg
+  this hour (`MinVolumePerHour` 1), or an entry currency with no chaos rate.
+
+### Consequences
+
+- The served set grows by the ~8% measured above, concentrated in one-sided
+  markets; the fill simulation gains those hours as entries, as with every
+  earlier demotion, with its thresholds unchanged (ADR-016).
+- `Leg.Stock` keeps its orientation (the side the leg executes against) and
+  reads 0 on a `noOffers` leg; clients render it as information, not an error.
 
 ## References
 
