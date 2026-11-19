@@ -119,17 +119,47 @@ const collectiveSearchPredicate = `($6::text = '' OR transfigured_name ILIKE '%'
 // the top CollectiveSearchLimit rows of its order.
 func collectiveMatched(q CollectiveQuery) string {
 	if q.Legacy && q.Search != "" {
-		return fmt.Sprintf(`, matched AS (SELECT * FROM (SELECT * FROM ranked ORDER BY %s LIMIT %d) top WHERE %s)`,
+		return fmt.Sprintf(`, matched AS MATERIALIZED (SELECT * FROM (SELECT * FROM ranked ORDER BY %s LIMIT %d) top WHERE %s)`,
 			collectiveOrderBy[q.Sort], CollectiveSearchLimit, collectiveSearchPredicate)
 	}
-	return `, matched AS (SELECT * FROM ranked WHERE ` + collectiveSearchPredicate + `)`
+	return `, matched AS MATERIALIZED (SELECT * FROM ranked WHERE ` + collectiveSearchPredicate + `)`
+}
+
+// countedPage completes a ranking CTE whose last stage is matched into one
+// statement answering the total and the bounded page. The outer total row
+// keeps the total when the page is empty (no match, or an offset past the
+// end); that row's page columns are NULL. One statement reads one snapshot.
+func countedPage(cte, columns, orderBy string, limitParam, offsetParam int) string {
+	return cte + fmt.Sprintf(`, total AS (SELECT COUNT(*) AS matched_total FROM matched),
+	page AS (SELECT %s FROM matched ORDER BY %s LIMIT $%d OFFSET $%d)
+	SELECT total.matched_total, page.* FROM total LEFT JOIN page ON true ORDER BY %s`,
+		columns, orderBy, limitParam, offsetParam, orderBy)
+}
+
+// scanCountedPage reads countedPage rows: every row carries the total, and a
+// row whose first page column is NULL is the empty page's total row.
+func scanCountedPage(rows pgx.Rows, total *int, scanRow func(total *int) error) error {
+	defer rows.Close()
+	for rows.Next() {
+		if rows.RawValues()[1] == nil {
+			skip := make([]any, len(rows.FieldDescriptions()))
+			skip[0] = total
+			if err := rows.Scan(skip...); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := scanRow(total); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // CollectivePage counts and pages the Normal collective ranking in one
-// repeatable-read, read-only transaction, so total and page come from the same
-// snapshot. A search ignores Page/PageSize and returns up to
+// statement, so total and page come from the same snapshot. A search ignores Page/PageSize and returns up to
 // CollectiveSearchLimit matches.
 func (r *Repository) CollectivePage(ctx context.Context, scope league.Scope, q CollectiveQuery) (CollectivePage, error) {
 	if err := scope.Validate(); err != nil {
@@ -152,28 +182,18 @@ func (r *Repository) CollectivePage(ctx context.Context, scope league.Scope, q C
 	}
 	args := []any{scope.ID(), q.Variant, q.Color, q.Budget, q.HideLowConfidence, search}
 
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return CollectivePage{}, fmt.Errorf("lab repo: collective page begin: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	var out CollectivePage
-	if err := tx.QueryRow(ctx, collectiveRankedCTE+collectiveMatched(q)+` SELECT COUNT(*) FROM matched`, args...).Scan(&out.Total); err != nil {
-		return CollectivePage{}, fmt.Errorf("lab repo: collective count: %w", err)
-	}
-	rows, err := tx.Query(ctx,
-		collectiveRankedCTE+collectiveMatched(q)+` SELECT `+collectivePageColumns+` FROM matched ORDER BY `+collectiveOrderBy[q.Sort]+` LIMIT $7 OFFSET $8`,
+	rows, err := r.pool.Query(ctx,
+		countedPage(collectiveRankedCTE+collectiveMatched(q), collectivePageColumns, collectiveOrderBy[q.Sort], 7, 8),
 		append(args, limit, offset)...)
 	if err != nil {
 		return CollectivePage{}, fmt.Errorf("lab repo: collective page query: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
+	var out CollectivePage
+	err = scanCountedPage(rows, &out.Total, func(total *int) error {
 		var cr CollectiveResult
 		var hasSignal, hasFeature bool
 		var depth float64
-		if err := rows.Scan(
+		if err := rows.Scan(total,
 			&cr.TransfiguredName, &cr.BaseName, &cr.Variant, &cr.GemColor, &cr.ROI, &cr.ROIPct, &cr.WeightedROI, &cr.WeightedROIPct,
 			&cr.BasePrice, &cr.TransfiguredPrice, &cr.BaseListings, &cr.TransfiguredListings, &cr.Confidence,
 			&hasSignal, &cr.Signal, &cr.WindowSignal, &cr.AdvancedSignal, &cr.PriceTier, &cr.SellUrgency, &cr.SellReason,
@@ -181,7 +201,7 @@ func (r *Repository) CollectivePage(ctx context.Context, scope league.Scope, q C
 			&hasFeature, &cr.PriceVelocity, &cr.ListingVelocity, &cr.CV, &cr.HistPosition, &cr.Low7Days, &cr.High7Days, &depth,
 			&cr.LowConfidence,
 		); err != nil {
-			return CollectivePage{}, fmt.Errorf("lab repo: scan collective row: %w", err)
+			return err
 		}
 		if hasSignal {
 			cr.TierAction = tierAction(cr.Signal, cr.WindowSignal, cr.PriceTier)
@@ -190,12 +210,10 @@ func (r *Repository) CollectivePage(ctx context.Context, scope league.Scope, q C
 			cr.LiquidityTier = liquidityTier(depth)
 		}
 		out.Rows = append(out.Rows, cr)
-	}
-	if err := rows.Err(); err != nil {
-		return CollectivePage{}, fmt.Errorf("lab repo: collective rows: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return CollectivePage{}, fmt.Errorf("lab repo: collective page commit: %w", err)
+		return nil
+	})
+	if err != nil {
+		return CollectivePage{}, fmt.Errorf("lab repo: collective page rows: %w", err)
 	}
 	return out, nil
 }
@@ -324,7 +342,7 @@ WITH g AS (
 		CASE WHEN input_cost <= 0 OR listings >= 5 THEN '' WHEN listings >= 2 THEN 'FAIR' ELSE 'RISKY' END AS sell_confidence,
 		(input_cost <= 0 OR listings < 2) AS low_confidence
 	FROM priced
-), matched AS (
+), matched AS MATERIALIZED (
 	SELECT * FROM ranked
 	WHERE ($3::text = '' OR pool = $3::text)
 	  AND ($4::text = '' OR gem_color = $4::text)
@@ -342,8 +360,11 @@ var dedicationOrderBy = map[CollectiveSort]string{
 	CollectiveSortROIPct:      "roi_pct DESC, chaos DESC, name ASC",
 }
 
+const dedicationPageColumns = `name, pool, COALESCE(gem_color, '') AS gem_color, chaos, listings, base_price, roi, roi_pct,
+	confidence, sell_confidence, low_confidence`
+
 // DedicationCollectivePage counts and pages the Dedication ranking of one
-// variant in one repeatable-read, read-only transaction.
+// variant in one statement.
 func (r *Repository) DedicationCollectivePage(ctx context.Context, scope league.Scope, q DedicationCollectiveQuery) (CollectivePage, error) {
 	if err := scope.Validate(); err != nil {
 		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective page: %w", err)
@@ -360,39 +381,25 @@ func (r *Repository) DedicationCollectivePage(ctx context.Context, scope league.
 	}
 	args := []any{scope.ID(), q.Variant, q.Pool, q.Color, q.Budget, q.HideLowConfidence, likeEscaper.Replace(q.Search)}
 
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective page begin: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	var out CollectivePage
-	if err := tx.QueryRow(ctx, dedicationRankedCTE+` SELECT COUNT(*) FROM matched`, args...).Scan(&out.Total); err != nil {
-		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective count: %w", err)
-	}
-	rows, err := tx.Query(ctx,
-		dedicationRankedCTE+` SELECT name, pool, COALESCE(gem_color, ''), chaos, listings, base_price, roi, roi_pct,
-			confidence, sell_confidence, low_confidence
-		FROM matched ORDER BY `+dedicationOrderBy[q.Sort]+` LIMIT $8 OFFSET $9`,
+	rows, err := r.pool.Query(ctx,
+		countedPage(dedicationRankedCTE, dedicationPageColumns, dedicationOrderBy[q.Sort], 8, 9),
 		append(args, limit, offset)...)
 	if err != nil {
 		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective page query: %w", err)
 	}
-	defer rows.Close()
+	var out CollectivePage
 	variant := strings.TrimSuffix(q.Variant, "c")
-	for rows.Next() {
+	err = scanCountedPage(rows, &out.Total, func(total *int) error {
 		cr := CollectiveResult{Variant: variant}
-		if err := rows.Scan(&cr.TransfiguredName, &cr.BaseName, &cr.GemColor, &cr.TransfiguredPrice, &cr.TransfiguredListings,
+		if err := rows.Scan(total, &cr.TransfiguredName, &cr.BaseName, &cr.GemColor, &cr.TransfiguredPrice, &cr.TransfiguredListings,
 			&cr.BasePrice, &cr.ROI, &cr.ROIPct, &cr.Confidence, &cr.SellConfidence, &cr.LowConfidence); err != nil {
-			return CollectivePage{}, fmt.Errorf("lab repo: scan dedication collective row: %w", err)
+			return err
 		}
 		out.Rows = append(out.Rows, cr)
-	}
-	if err := rows.Err(); err != nil {
-		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective rows: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective page commit: %w", err)
+		return nil
+	})
+	if err != nil {
+		return CollectivePage{}, fmt.Errorf("lab repo: dedication collective page rows: %w", err)
 	}
 	return out, nil
 }

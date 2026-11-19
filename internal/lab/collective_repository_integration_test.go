@@ -640,9 +640,9 @@ func TestCollectivePage_RejectsInvalidScope(t *testing.T) {
 	}
 }
 
-// The page's statement budget: BEGIN + count + page + COMMIT, one sparkline
-// read per distinct variant on the page (4), one GCP base lookup.
-const collectivePageStatementBudget = 4 + 4 + 1
+// The page's statement budget: one ranking statement, one sparkline read per
+// distinct variant on the page (4), one GCP base lookup.
+const collectivePageStatementBudget = 1 + 4 + 1
 
 func TestQueryCollective_StatementCountIsIndependentOfPageSize(t *testing.T) {
 	pool := labIntegrationPool(t)
@@ -1133,8 +1133,8 @@ func TestDedicationCollectivePage_RejectsInvalidScope(t *testing.T) {
 	}
 }
 
-// BEGIN + count + page + COMMIT; Dedication rows carry no decoration reads.
-const dedicationPageStatementBudget = 4
+// One ranking statement; Dedication rows carry no decoration reads.
+const dedicationPageStatementBudget = 1
 
 func TestDedicationCollectivePage_StatementCountIsIndependentOfPageSize(t *testing.T) {
 	pool := labIntegrationPool(t)
