@@ -94,9 +94,13 @@ describe('TempleValueTable room tooltip', () => {
 
 		let opened = 0;
 		for (const wrap of wraps) {
+			// Each room's first hover must create its own popup; a count that
+			// stays put means a previous room's popup is the one still showing.
+			const before = document.querySelectorAll('[role="tooltip"]').length;
 			wrap.dispatchEvent(new Event('mouseenter'));
 			flushSync();
-			if (opensLabelledTip(newestTip())) opened++;
+			const created = document.querySelectorAll('[role="tooltip"]').length === before + 1;
+			if (created && opensLabelledTip(newestTip())) opened++;
 		}
 		expect(opened).toBe(25);
 	});
