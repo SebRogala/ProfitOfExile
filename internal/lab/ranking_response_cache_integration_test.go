@@ -7,74 +7,38 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/league"
 )
 
-// Statement markers: each ranking statement and the GCP base lookup carry one.
-const (
-	normalRankingSQL     = "WITH tr AS"
-	dedicationRankingSQL = "WITH g AS"
-	basePriceSQL         = "DISTINCT ON (base_name)"
-)
-
-// sqlRecorder keeps the text of every statement the pool sends.
-type sqlRecorder struct {
-	mu   sync.Mutex
-	sqls []string
-}
-
-func (r *sqlRecorder) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	r.mu.Lock()
-	r.sqls = append(r.sqls, data.SQL)
-	r.mu.Unlock()
-	return ctx
-}
-
-func (r *sqlRecorder) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
-
-// take returns how many recorded statements contain each marker, and clears.
-func (r *sqlRecorder) take(markers ...string) []int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	out := make([]int, len(markers))
-	for _, sql := range r.sqls {
-		for i, m := range markers {
-			if strings.Contains(sql, m) {
-				out[i]++
-			}
-		}
-	}
-	r.sqls = nil
-	return out
-}
-
-func recordingPool(t *testing.T, dbURL string) (*pgxpool.Pool, *sqlRecorder) {
+// countingRepository counts the statements its pool sends; a warm-up keeps
+// connect-time statements out of the count.
+func countingRepository(t *testing.T, pool *pgxpool.Pool) (*Repository, *statementCounter) {
 	t.Helper()
-	cfg, err := pgxpool.ParseConfig(dbURL)
-	if err != nil {
-		t.Fatalf("parse pool config: %v", err)
+	counted, counter := countingPool(t, pool.Config().ConnString())
+	if _, err := counted.Exec(context.Background(), "SELECT 1"); err != nil {
+		t.Fatalf("warm counting pool: %v", err)
 	}
-	rec := &sqlRecorder{}
-	cfg.ConnConfig.Tracer = rec
-	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("open recording pool: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(context.Background(), "SELECT 1"); err != nil {
-		t.Fatalf("warm recording pool: %v", err)
-	}
-	rec.take()
-	return pool, rec
+	counter.reset()
+	return NewRepository(counted), counter
+}
+
+// baseCountingSource counts the GCP base lookups, so a statement count can be
+// split into ranking and base-price statements.
+type baseCountingSource struct {
+	*Repository
+	lookups atomic.Int32
+}
+
+func (s *baseCountingSource) CollectiveBasePrices(ctx context.Context, scope league.Scope, names []string) (map[string]float64, error) {
+	s.lookups.Add(1)
+	return s.Repository.CollectiveBasePrices(ctx, scope, names)
 }
 
 // rankingLeague registers a league holding both rankings' corpora and removes
@@ -195,30 +159,36 @@ func TestKeepHappyRankingAnswerSharedLoad(t *testing.T) {
 	want := uncachedCollective(t, plain, scope)
 	wantDedication := dedicationPage(t, plain, scope, sharedLoadDedicationQuery)
 
-	recorded, rec := recordingPool(t, pool.Config().ConnString())
-	repo := NewRepository(recorded)
+	counted, counter := countingRepository(t, pool)
+	repo := &baseCountingSource{Repository: counted}
 	cache := NewCache(scope)
 	// Warm sparklines keep the decoration off SQL; uncached and cached bodies
 	// carry the same (empty) series.
 	cache.For(scope).SetSparklinesByName(nil, nil, time.Now())
 
 	for generation := 0; generation < 2; generation++ {
-		collectiveBurst(t, repo, cache, scope, want)
-		if got := rec.take(normalRankingSQL, basePriceSQL); got[0] != 1 || got[1] != 1 {
-			t.Errorf("generation %d cold Normal burst ran %d ranking and %d base-price statements, want 1 and 1", generation, got[0], got[1])
+		// Sparklines are warm, so a Normal burst's statements are its ranking
+		// statements plus its base lookups.
+		normalCounts := func() (ranking, base int) {
+			b := int(repo.lookups.Swap(0))
+			return counter.reset() - b, b
 		}
 		collectiveBurst(t, repo, cache, scope, want)
-		if got := rec.take(normalRankingSQL, basePriceSQL); got[0] != 0 || got[1] != 0 {
-			t.Errorf("generation %d warm Normal burst ran %d ranking and %d base-price statements, want none", generation, got[0], got[1])
+		if ranking, base := normalCounts(); ranking != 1 || base != 1 {
+			t.Errorf("generation %d cold Normal burst ran %d ranking and %d base-price statements, want 1 and 1", generation, ranking, base)
+		}
+		collectiveBurst(t, repo, cache, scope, want)
+		if ranking, base := normalCounts(); ranking != 0 || base != 0 {
+			t.Errorf("generation %d warm Normal burst ran %d ranking and %d base-price statements, want none", generation, ranking, base)
 		}
 
-		dedicationBurst(t, repo, cache, scope, wantDedication)
-		if got := rec.take(dedicationRankingSQL); got[0] != 1 {
-			t.Errorf("generation %d cold Dedication burst ran %d ranking statements, want 1", generation, got[0])
+		dedicationBurst(t, counted, cache, scope, wantDedication)
+		if got := counter.reset(); got != 1 {
+			t.Errorf("generation %d cold Dedication burst ran %d ranking statements, want 1", generation, got)
 		}
-		dedicationBurst(t, repo, cache, scope, wantDedication)
-		if got := rec.take(dedicationRankingSQL); got[0] != 0 {
-			t.Errorf("generation %d warm Dedication burst ran %d ranking statements, want none", generation, got[0])
+		dedicationBurst(t, counted, cache, scope, wantDedication)
+		if got := counter.reset(); got != 0 {
+			t.Errorf("generation %d warm Dedication burst ran %d ranking statements, want none", generation, got)
 		}
 
 		cache.For(scope).Rankings().Publish(RankingInputTransfigure | RankingInputGemSnapshots)
@@ -279,13 +249,15 @@ func TestKeepCriticalRankingAnswerRevision(t *testing.T) {
 			at := time.Now().Add(-time.Hour)
 			seedRankingCorpora(t, pool, scope, at)
 			plain := NewRepository(pool)
-			recorded, rec := recordingPool(t, pool.Config().ConnString())
-			repo := NewRepository(recorded)
+			counted, counter := countingRepository(t, pool)
+			repo := &baseCountingSource{Repository: counted}
 			cache := NewCache(scope)
 			cache.For(scope).SetSparklinesByName(nil, nil, time.Now())
 			analyzer := NewAnalyzer(NewRepository(pool), nil, cache, nil)
 
-			marker := normalRankingSQL
+			// Ranking statements: everything the counted pool sent except the
+			// base lookups (sparklines are warm).
+			rankingStatements := func() int { return counter.reset() - int(repo.lookups.Swap(0)) }
 			read := func() any {
 				got, err := QueryCollective(ctx, repo, cache, scope, sharedLoadQuery)
 				if err != nil {
@@ -295,10 +267,9 @@ func TestKeepCriticalRankingAnswerRevision(t *testing.T) {
 			}
 			uncached := func() any { return uncachedCollective(t, plain, scope).Results }
 			if tc.dedication {
-				marker = dedicationRankingSQL
 				read = func() any {
 					got, err := cache.For(scope).Rankings().DedicationPage(ctx, sharedLoadDedicationQuery, func(ctx context.Context) (CollectivePage, error) {
-						return repo.DedicationCollectivePage(ctx, scope, sharedLoadDedicationQuery)
+						return counted.DedicationCollectivePage(ctx, scope, sharedLoadDedicationQuery)
 					})
 					if err != nil {
 						t.Fatalf("DedicationPage: %v", err)
@@ -310,15 +281,15 @@ func TestKeepCriticalRankingAnswerRevision(t *testing.T) {
 
 			before := read()
 			read()
-			if got := rec.take(marker); got[0] != 1 {
-				t.Fatalf("two reads before the write ran %d ranking statements, want 1", got[0])
+			if got := rankingStatements(); got != 1 {
+				t.Fatalf("two reads before the write ran %d ranking statements, want 1", got)
 			}
 
 			tc.write(t, analyzer, scope, at.Add(time.Minute))
 
 			after := read()
-			if got := rec.take(marker); got[0] != 1 {
-				t.Errorf("first read after the write ran %d ranking statements, want 1 (a fresh load)", got[0])
+			if got := rankingStatements(); got != 1 {
+				t.Errorf("first read after the write ran %d ranking statements, want 1 (a fresh load)", got)
 			}
 			if reflect.DeepEqual(after, before) {
 				t.Fatalf("answer unchanged by the write: the fixture must change it")

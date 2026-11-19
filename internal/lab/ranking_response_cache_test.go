@@ -61,7 +61,7 @@ func notWithin(t *testing.T, ch <-chan struct{}, what string) {
 	}
 }
 
-func TestRankingAnswers_DistinctQueriesNeverCollide(t *testing.T) {
+func TestKeepCriticalRankingAnswers_DistinctQueriesNeverCollide(t *testing.T) {
 	base := CollectiveQuery{Page: 1, PageSize: 20, Sort: CollectiveSortPrice}
 	normal := []CollectiveQuery{base}
 	for _, change := range []func(*CollectiveQuery){
@@ -123,7 +123,7 @@ func TestRankingAnswers_DistinctQueriesNeverCollide(t *testing.T) {
 
 // A search answers its whole match set whatever the page asks for, so equal
 // searches on different pages share one answer.
-func TestRankingAnswers_SearchIgnoresPageInItsKey(t *testing.T) {
+func TestKeepCriticalRankingAnswers_SearchIgnoresPageInItsKey(t *testing.T) {
 	rc := newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)
 	loader := &countingLoader{}
 	q := CollectiveQuery{Page: 1, PageSize: 20, Sort: CollectiveSortPrice, Search: "arc"}
@@ -137,7 +137,7 @@ func TestRankingAnswers_SearchIgnoresPageInItsKey(t *testing.T) {
 
 // A cached page answers only its own query: the next page of the same
 // ranking still loads.
-func TestRankingAnswers_SparsePageNeverMarksTheCorpusWarm(t *testing.T) {
+func TestKeepCriticalRankingAnswers_SparsePageNeverMarksTheCorpusWarm(t *testing.T) {
 	rc := newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)
 	loader := &countingLoader{}
 	loadNormal(t, rc, CollectiveQuery{Page: 1, PageSize: 20, Sort: CollectiveSortPrice}, loader.page("p1"))
@@ -151,7 +151,7 @@ func pageQuery(n int) CollectiveQuery {
 	return CollectiveQuery{Page: n, PageSize: 20, Sort: CollectiveSortPrice}
 }
 
-func TestRankingAnswers_EntryBoundEvictsLeastRecentlyUsed(t *testing.T) {
+func TestKeepCriticalRankingAnswers_EntryBoundEvictsLeastRecentlyUsed(t *testing.T) {
 	rc := newRankingAnswers(3, rankingAnswerMaxBytes)
 	loader := &countingLoader{}
 	for n := 1; n <= 3; n++ {
@@ -179,7 +179,7 @@ func bigPage(tag string) func(context.Context) (CollectivePage, error) {
 	}
 }
 
-func TestRankingAnswers_ByteBoundEvictsBeforeTheEntryBound(t *testing.T) {
+func TestKeepCriticalRankingAnswers_ByteBoundEvictsBeforeTheEntryBound(t *testing.T) {
 	one, _ := bigPage("a")(context.Background())
 	size := rankingPageBytes(one)
 	if size < 1000 {
@@ -205,7 +205,7 @@ func TestRankingAnswers_ByteBoundEvictsBeforeTheEntryBound(t *testing.T) {
 
 // An answer larger than the whole byte bound is served but never retained;
 // equal requests still share its one in-flight load.
-func TestRankingAnswers_OversizedAnswerIsSharedButNotRetained(t *testing.T) {
+func TestKeepCriticalRankingAnswers_OversizedAnswerIsSharedButNotRetained(t *testing.T) {
 	one, _ := bigPage("a")(context.Background())
 	rc := newRankingAnswers(100, rankingPageBytes(one)/2)
 	release := make(chan struct{})
@@ -239,7 +239,7 @@ func TestRankingAnswers_OversizedAnswerIsSharedButNotRetained(t *testing.T) {
 }
 
 // One waiter giving up neither cancels the shared load nor the others' answer.
-func TestRankingAnswers_WaiterCancellationIsIndependent(t *testing.T) {
+func TestKeepCriticalRankingAnswers_WaiterCancellationIsIndependent(t *testing.T) {
 	rc := newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)
 	release := make(chan struct{})
 	var loadErr error
@@ -273,7 +273,7 @@ func TestRankingAnswers_WaiterCancellationIsIndependent(t *testing.T) {
 	}
 }
 
-func TestRankingAnswers_PublishInvalidatesOnlyTheAnswersReadingThatInput(t *testing.T) {
+func TestKeepCriticalRankingAnswers_PublishInvalidatesOnlyTheAnswersReadingThatInput(t *testing.T) {
 	rc := newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)
 	normal, dedication, bases := &countingLoader{}, &countingLoader{}, atomic.Int32{}
 	loadBases := func(context.Context, []string) (map[string]float64, error) {
@@ -316,7 +316,7 @@ func TestRankingAnswers_PublishInvalidatesOnlyTheAnswersReadingThatInput(t *test
 
 // A fill in progress when an event or write arrives cannot leave its
 // (pre-event) answer serving afterwards, and the write waits for the fill.
-func TestRankingAnswers_FillBeforePublishIsNotServedAfterIt(t *testing.T) {
+func TestKeepCriticalRankingAnswers_FillBeforePublishIsNotServedAfterIt(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
 		write func(rc *RankingAnswers, wrote chan<- struct{})
@@ -363,7 +363,7 @@ func TestRankingAnswers_FillBeforePublishIsNotServedAfterIt(t *testing.T) {
 // A request arriving while a write holds the barrier joins a flight of the
 // old generation; once the write lands, new requests start their own and
 // only that new answer is retained.
-func TestRankingAnswers_OldGenerationFlightServesOnlyItsOwnWaiters(t *testing.T) {
+func TestKeepCriticalRankingAnswers_OldGenerationFlightServesOnlyItsOwnWaiters(t *testing.T) {
 	rc := newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)
 	q := pageQuery(1)
 	writing, finish := make(chan struct{}), make(chan struct{})
@@ -402,7 +402,7 @@ func TestRankingAnswers_OldGenerationFlightServesOnlyItsOwnWaiters(t *testing.T)
 }
 
 // A failed load is returned to its waiters and never retained.
-func TestRankingAnswers_FailedLoadIsNotRetained(t *testing.T) {
+func TestKeepCriticalRankingAnswers_FailedLoadIsNotRetained(t *testing.T) {
 	rc := newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)
 	calls := 0
 	load := func(context.Context, []string) (map[string]float64, error) {
@@ -423,7 +423,7 @@ func TestRankingAnswers_FailedLoadIsNotRetained(t *testing.T) {
 
 // Rows handed out are the caller's: decorating them leaves the retained
 // answer as loaded.
-func TestRankingAnswers_ReturnedRowsAreACopy(t *testing.T) {
+func TestKeepCriticalRankingAnswers_ReturnedRowsAreACopy(t *testing.T) {
 	rc := newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)
 	loader := &countingLoader{}
 	first := loadNormal(t, rc, pageQuery(1), loader.page("a"))
@@ -435,7 +435,7 @@ func TestRankingAnswers_ReturnedRowsAreACopy(t *testing.T) {
 
 // With every waiter gone the load is cancelled, as a lone request's would be,
 // and its answer is not retained.
-func TestRankingAnswers_LastWaiterLeavingCancelsTheLoad(t *testing.T) {
+func TestKeepCriticalRankingAnswers_LastWaiterLeavingCancelsTheLoad(t *testing.T) {
 	rc := newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)
 	loadCancelled := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())

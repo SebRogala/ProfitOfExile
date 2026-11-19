@@ -375,7 +375,7 @@ func TestDedicationCollective_PagedRequestRejectsBadParams(t *testing.T) {
 // trade note is decorated fresh onto a copy of its rows each time: a note
 // changed between requests shows on the next body, the ranker's own rows stay
 // undecorated, and the body equals what a fresh (uncached) load serves.
-func TestCollectiveAnalysis_SharedRankedAnswerIsDecoratedFreshOnACopy(t *testing.T) {
+func TestKeepHappyCollectiveAnalysisSharedRankedAnswerIsDecoratedFreshOnACopy(t *testing.T) {
 	const target = "/api/analysis/collective?pageSize=10&variant=20/20"
 	newPager := func() *fakeCollectivePager {
 		return &fakeCollectivePager{page: lab.CollectivePage{
