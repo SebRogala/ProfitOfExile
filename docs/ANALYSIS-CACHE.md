@@ -140,6 +140,21 @@ before adding or reading a cache field; this document deliberately does not
 restate it, because two normative homes is how the rule drifted in the first
 place (POE-158).
 
+### The Font and Dedication overview fallback
+
+`/api/analysis/font` and `/api/analysis/dedication` answer through
+`lab.FontModes` and `lab.DedicationPools` (`internal/lab/font_overview_query.go`).
+A cold corpus reads one grouped statement per corpus
+(`FontOverviewRows`: the top 500 of each variant × mode;
+`DedicationOverviewRows`: the top 500 of each variant × pool × mode), shared by
+every overlapping cold request of any variant and limit through
+`Cache.FontColdFills`. Each request slices its own variant and limit from the
+shared rows, as the per-mode queries did. The load lives only while in flight:
+it is never stored, never marks the corpus warm and never writes the
+analyzer's fields, so the next cold request after it completes loads again.
+Warmth is checked again when the load returns, so an analyzer answer published
+meanwhile is what serves. The last waiter leaving cancels the load.
+
 ## Other caches on the same contract
 
 `lab.Cache` is not the only in-memory cache the server serves from, and the
