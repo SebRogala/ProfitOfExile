@@ -3,9 +3,6 @@ package server
 import (
 	"bufio"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"profitofexile/internal/mercure"
 )
 
 // errStreamClosed is returned when the Mercure hub closes the SSE stream
@@ -182,26 +181,5 @@ func (s *MercureSubscriber) connect(ctx context.Context) (connected bool, err er
 // signSubscriberJWT creates an HS256-signed JWT with subscribe permissions for
 // the Mercure hub. Long-lived (24h) to avoid reconnect churn on expiry.
 func signSubscriberJWT(secret string, topics []string) (string, error) {
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
-
-	now := time.Now()
-	claims := map[string]any{
-		"mercure": map[string]any{
-			"subscribe": topics,
-		},
-		"iat": now.Unix(),
-		"exp": now.Add(24 * time.Hour).Unix(),
-	}
-	claimsJSON, err := json.Marshal(claims)
-	if err != nil {
-		return "", fmt.Errorf("marshal JWT claims: %w", err)
-	}
-	payload := base64.RawURLEncoding.EncodeToString(claimsJSON)
-
-	unsigned := header + "." + payload
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(unsigned))
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-
-	return unsigned + "." + signature, nil
+	return mercure.SignJWT(secret, map[string]any{"subscribe": topics}, 24*time.Hour)
 }

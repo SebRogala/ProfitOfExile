@@ -2,10 +2,6 @@ package mercure
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,28 +37,7 @@ var mercureClient = &http.Client{Timeout: 5 * time.Second}
 // expiry (60s) is included as defense-in-depth; a fresh token is generated per
 // publish call so the short TTL has no operational impact.
 func signMercureJWT(secret string) (string, error) {
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
-
-	now := time.Now()
-	claims := map[string]any{
-		"mercure": map[string]any{
-			"publish": []string{"*"},
-		},
-		"iat": now.Unix(),
-		"exp": now.Add(60 * time.Second).Unix(),
-	}
-	claimsJSON, err := json.Marshal(claims)
-	if err != nil {
-		return "", fmt.Errorf("marshal JWT claims: %w", err)
-	}
-	payload := base64.RawURLEncoding.EncodeToString(claimsJSON)
-
-	unsigned := header + "." + payload
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(unsigned))
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-
-	return unsigned + "." + signature, nil
+	return SignJWT(secret, map[string]any{"publish": []string{"*"}}, 60*time.Second)
 }
 
 // PublishMercureEvent posts an event to the Mercure hub.
