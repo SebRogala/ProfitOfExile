@@ -537,6 +537,12 @@ func (r *recomputeRuntime) dispatch(ev server.MercureEvent) {
 		return
 	}
 
+	if r.labCache != nil {
+		// The collector committed this snapshot before publishing the event, so
+		// the Dedication rankings, which read gem_snapshots directly, are stale
+		// now whether or not RunDedication later succeeds.
+		r.labCache.For(r.scope).Rankings().Publish(lab.RankingInputGemSnapshots)
+	}
 	if r.throttler != nil {
 		// Signal on every gem event; nextFetch is optional enrichment, so a missing or
 		// invalid timestamp remains the zero value rather than suppressing the update.

@@ -76,7 +76,7 @@ func (a *Analyzer) RunTransfigure(ctx context.Context, scope league.Scope) error
 
 	results := AnalyzeTransfigure(snapTime, gems)
 
-	inserted, err := a.repo.SaveTransfigureResults(ctx, scope, results)
+	inserted, err := a.saveTransfigureResults(ctx, scope, results)
 	if err != nil {
 		a.logger.Error("transfigure: failed to save results", "error", err)
 		return err
@@ -290,7 +290,7 @@ func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error 
 	allResults = append(allResults, analysis.Skills...)
 	allResults = append(allResults, analysis.Transfigured...)
 
-	inserted, err := a.repo.SaveDedicationResults(ctx, scope, allResults)
+	inserted, err := a.saveDedicationResults(ctx, scope, allResults)
 	if err != nil {
 		a.logger.Error("dedication: failed to save results", "error", err)
 		return err
@@ -422,7 +422,7 @@ func (a *Analyzer) RunV2(ctx context.Context, scope league.Scope) error {
 		scopedTradeCache = a.tradeCache.For(scope)
 	}
 	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems, scopedTradeCache)
-	inserted, err := a.repo.SaveGemFeatures(ctx, scope, features)
+	inserted, err := a.saveGemFeatures(ctx, scope, features)
 	if err != nil {
 		a.logger.Error("v2: failed to save gem features", "error", err)
 		return err
@@ -449,7 +449,7 @@ func (a *Analyzer) RunV2(ctx context.Context, scope league.Scope) error {
 	}
 
 	signals := ComputeGemSignals(snapTime, features, mc, gems, baseHistory, marketAvgBaseLst)
-	insertedSig, err := a.repo.SaveGemSignals(ctx, scope, signals)
+	insertedSig, err := a.saveGemSignals(ctx, scope, signals)
 	if err != nil {
 		a.logger.Error("v2: failed to save gem signals", "error", err)
 		return err
@@ -502,8 +502,50 @@ func (a *Analyzer) RecomputeLatestV2(ctx context.Context, scope league.Scope) er
 		return nil
 	}
 	a.logger.Info("recomputing latest v2 snapshot", "snapTime", snapTime)
-	if err := a.repo.DeleteV2ForSnapshot(ctx, scope, snapTime); err != nil {
+	if _, err := a.commitRanked(scope, RankingInputGemFeatures|RankingInputGemSignals, func() (int, error) {
+		return 0, a.repo.DeleteV2ForSnapshot(ctx, scope, snapTime)
+	}); err != nil {
 		return fmt.Errorf("recompute: delete old data: %w", err)
 	}
 	return a.RunV2(ctx, scope)
+}
+
+// commitRanked runs one write of a table the collective rankings read under
+// the ranking publication barrier, so no ranked answer read before the write
+// is retained after it. Without a cache there is nothing to invalidate.
+func (a *Analyzer) commitRanked(scope league.Scope, inputs RankingInput, write func() (int, error)) (int, error) {
+	if a.cache == nil {
+		return write()
+	}
+	var n int
+	err := a.cache.For(scope).Rankings().Commit(inputs, func() error {
+		var err error
+		n, err = write()
+		return err
+	})
+	return n, err
+}
+
+func (a *Analyzer) saveTransfigureResults(ctx context.Context, scope league.Scope, results []TransfigureResult) (int, error) {
+	return a.commitRanked(scope, RankingInputTransfigure, func() (int, error) {
+		return a.repo.SaveTransfigureResults(ctx, scope, results)
+	})
+}
+
+func (a *Analyzer) saveDedicationResults(ctx context.Context, scope league.Scope, results []DedicationResult) (int, error) {
+	return a.commitRanked(scope, RankingInputDedication, func() (int, error) {
+		return a.repo.SaveDedicationResults(ctx, scope, results)
+	})
+}
+
+func (a *Analyzer) saveGemFeatures(ctx context.Context, scope league.Scope, features []GemFeature) (int, error) {
+	return a.commitRanked(scope, RankingInputGemFeatures, func() (int, error) {
+		return a.repo.SaveGemFeatures(ctx, scope, features)
+	})
+}
+
+func (a *Analyzer) saveGemSignals(ctx context.Context, scope league.Scope, signals []GemSignal) (int, error) {
+	return a.commitRanked(scope, RankingInputGemSignals, func() (int, error) {
+		return a.repo.SaveGemSignals(ctx, scope, signals)
+	})
 }

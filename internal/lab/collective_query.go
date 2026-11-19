@@ -123,9 +123,18 @@ type CollectiveQueryResult struct {
 
 // QueryCollective ranks one page in SQL, then decorates only that page's rows:
 // sparklines (cache, or one read per variant), the GCP base lookup (one read)
-// and the trade note from the cached signals.
+// and the trade note from the cached signals. With a cache, the ranked page
+// and the base lookup come from its RankingAnswers; the decorations are
+// applied fresh to a copy of the rows on every call.
 func QueryCollective(ctx context.Context, src CollectiveSource, cache *Cache, scope league.Scope, input CollectiveQuery) (CollectiveQueryResult, error) {
-	page, err := src.CollectivePage(ctx, scope, input)
+	loadPage := func(ctx context.Context) (CollectivePage, error) { return src.CollectivePage(ctx, scope, input) }
+	var page CollectivePage
+	var err error
+	if cache != nil {
+		page, err = cache.For(scope).Rankings().NormalPage(ctx, input, loadPage)
+	} else {
+		page, err = loadPage(ctx)
+	}
 	if err != nil {
 		return CollectiveQueryResult{}, &QueryError{Operation: "collective page", Err: err}
 	}
@@ -144,7 +153,15 @@ func QueryCollective(ctx context.Context, src CollectiveSource, cache *Cache, sc
 		}
 	}
 	if len(bases) > 0 {
-		prices, err := src.CollectiveBasePrices(ctx, scope, bases)
+		loadBases := func(ctx context.Context, names []string) (map[string]float64, error) {
+			return src.CollectiveBasePrices(ctx, scope, names)
+		}
+		var prices map[string]float64
+		if cache != nil {
+			prices, err = cache.For(scope).Rankings().BasePrices(ctx, bases, loadBases)
+		} else {
+			prices, err = loadBases(ctx, bases)
+		}
 		if err != nil {
 			slog.Error("collective analysis: GCP base price query failed", "error", err)
 		}

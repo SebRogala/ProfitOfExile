@@ -112,7 +112,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 func collectiveAnalysis(dedication dedicationCollectivePager, src lab.CollectiveSource, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("mode") == "dedication" {
-			serveDedicationCollective(w, r, dedication, scope)
+			serveDedicationCollective(w, r, dedication, cache, scope)
 			return
 		}
 
@@ -332,9 +332,10 @@ func parseDedicationPage(r *http.Request, variant string) (lab.DedicationCollect
 
 // serveDedicationCollective handles ?mode=dedication on the collective endpoint:
 // the corrupted gems of one Dedication variant (?variant=, default 21/23c),
-// ranked, counted and paged in SQL, mapped to the same row shape as the Normal
+// ranked, counted and paged in SQL (shared through the cache's RankingAnswers
+// when there is a cache), mapped to the same row shape as the Normal
 // collective so the ByVariant/BestPlays components work unchanged.
-func serveDedicationCollective(w http.ResponseWriter, r *http.Request, pager dedicationCollectivePager, scope league.Scope) {
+func serveDedicationCollective(w http.ResponseWriter, r *http.Request, pager dedicationCollectivePager, cache *lab.Cache, scope league.Scope) {
 	variant, ok := parseDedicationVariant(w, r)
 	if !ok {
 		return
@@ -359,7 +360,16 @@ func serveDedicationCollective(w http.ResponseWriter, r *http.Request, pager ded
 		return
 	}
 
-	page, err := pager.DedicationCollectivePage(r.Context(), scope, input)
+	load := func(ctx context.Context) (lab.CollectivePage, error) {
+		return pager.DedicationCollectivePage(ctx, scope, input)
+	}
+	var page lab.CollectivePage
+	var err error
+	if cache != nil {
+		page, err = cache.For(scope).Rankings().DedicationPage(r.Context(), input, load)
+	} else {
+		page, err = load(r.Context())
+	}
 	if err != nil {
 		slog.Error("dedication collective: page query failed", "error", err)
 		http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)

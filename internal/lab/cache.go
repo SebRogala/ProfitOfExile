@@ -202,12 +202,21 @@ type Cache struct {
 	gemDictSkills       []string
 	gemDictTransfigured []string
 	gemDictSet          bool
+
+	// rankings holds the ranked collective answers, read from SQL rather than
+	// from the fields above, behind its own locks — see RankingAnswers.
+	rankings *RankingAnswers
 }
 
 // NewCache creates an empty analysis cache bound to scope. The cache serves and
 // stores only this league's data for its lifetime.
 func NewCache(scope league.Scope) *Cache {
-	return &Cache{scope: scope}
+	return &Cache{scope: scope, rankings: newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)}
+}
+
+// Rankings returns this league's ranked-answer cache.
+func (c *Cache) Rankings() *RankingAnswers {
+	return c.rankings
 }
 
 // For returns the cache for access under scope. The cache is bound to a single

@@ -370,3 +370,53 @@ func TestDedicationCollective_PagedRequestRejectsBadParams(t *testing.T) {
 		})
 	}
 }
+
+// A repeated equal request is served from the shared ranked answer, and the
+// trade note is decorated fresh onto a copy of its rows each time: a note
+// changed between requests shows on the next body, the ranker's own rows stay
+// undecorated, and the body equals what a fresh (uncached) load serves.
+func TestCollectiveAnalysis_SharedRankedAnswerIsDecoratedFreshOnACopy(t *testing.T) {
+	const target = "/api/analysis/collective?pageSize=10&variant=20/20"
+	newPager := func() *fakeCollectivePager {
+		return &fakeCollectivePager{page: lab.CollectivePage{
+			Rows:  []lab.CollectiveResult{{TransfiguredName: "Spark of Nova", Variant: "20/20", ROI: 40}},
+			Total: 1,
+		}}
+	}
+	note := func(cache *lab.Cache, text string) {
+		cache.For(sparklineScope).SetGemSignals([]lab.GemSignal{{Name: "Spark of Nova", Variant: "20/20", TradeConfidenceNote: text}})
+	}
+	serve := func(pager *fakeCollectivePager, cache *lab.Cache) string {
+		w := httptest.NewRecorder()
+		collectiveAnalysis(nil, pager, cache, sparklineScope).ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+		}
+		return w.Body.String()
+	}
+
+	pager := newPager()
+	cache := lab.NewCache(sparklineScope)
+	warmSparklines(t, cache, nil, nil)
+	note(cache, "first note")
+	first := serve(pager, cache)
+	note(cache, "second note")
+	second := serve(pager, cache)
+
+	if len(pager.queries) != 1 {
+		t.Errorf("ranker queried %d times for two equal requests, want 1", len(pager.queries))
+	}
+	if got := pager.page.Rows[0].TradeConfidenceNote; got != "" {
+		t.Errorf("ranker's own row carries note %q, want it undecorated", got)
+	}
+	if !strings.Contains(first, `"tradeConfidenceNote":"first note"`) || !strings.Contains(second, `"tradeConfidenceNote":"second note"`) {
+		t.Errorf("bodies = %s / %s, want each to carry the note current at its request", first, second)
+	}
+
+	fresh := lab.NewCache(sparklineScope)
+	warmSparklines(t, fresh, nil, nil)
+	note(fresh, "second note")
+	if uncached := serve(newPager(), fresh); second != uncached {
+		t.Errorf("shared body = %s\nuncached body = %s; want equal", second, uncached)
+	}
+}
