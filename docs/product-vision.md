@@ -453,5 +453,110 @@ assets/views/Compose/Results.vue               — final output shape (only rend
 
 ---
 
+## 11. Lab Farming Requirements (owner, March 2026)
+
+> **Status: owner's requirements, recorded in Mirage (3.28) when the lab
+> dashboard was designed.** Kept complete on purpose: do not simplify or merge
+> the use cases. "State then" describes the app in March 2026, not today.
+
+The owner farms Merciless Lab primarily and considers Gift (Enriched Lab) for
+slower characters.
+
+### 11.1 Font colour/variant selection — "Which Font EV to pick?"
+
+State then: the Font EV matrix showed RED 20/20 as best at 131c EV, 99.94% win
+rate, with BLUE very close. The "safe play" formula (low threshold, every gem
+above 5c counts as a winner) always said RED.
+
+- Keep the safe-play mode: it is the "I have no money, I need guaranteed
+  income" option.
+- Add a "potential winners" mode: a higher threshold (50c+, 100c+, …) showing
+  which colour has the best chance of a jackpot. Fewer winners, lower P(win),
+  much higher average payout: "Which colour gives me the best shot at a big
+  win?"
+- EV uses risk-adjusted values, not raw listed prices. A 785c gem with 30
+  listings is worth more than an 800c gem with 2 listings, because it sells.
+- Font EV updates in real time from live data, not as a static number.
+
+### 11.2 Font gem selection — "I see 3 gems, which do I pick?"
+
+State then: the 3-gem comparator showed ROI, signal and a BEST/OK/AVOID
+recommendation.
+
+- Listed price plus quick-sell price (what an aggressive undercut fetches).
+  The Flame Golem story: listed at 350c, flooded to 60c; a quick-sell estimate
+  would have shown ~180c, still worth picking but with realistic expectations.
+- Sell confidence in three levels: liquid and stable (sells near listed),
+  moderate risk, thin market (may crash or sit unsold).
+- Listing trend: rapidly rising listings show a warning, "supply flooding,
+  price may drop".
+- 7-day floor price: the worst this gem has traded at, the absolute downside.
+- The decision is not "pick the highest price". A 200c gem with 30 listings
+  beats a 500c gem with 3 listings in most cases, and the UI makes that obvious.
+- A confidence score (0–100) is shown on every prediction and recommendation,
+  never hidden: "going to crash — 35% confidence" beats "no recommendation".
+  The human decides.
+
+### 11.3 Direct transfigure target — "Which base gem to target farm?"
+
+- When running lab for the "change to a random transfigured gem of the same
+  colour" enchantment, which base gem gives the best ROI?
+- ROI factors in the full pool of transfigured outcomes per base gem, weighted
+  by risk-adjusted values. A base with one 500c/2-listing outcome and two
+  100c/50-listing outcomes can be worse than a base with two 200c/30-listing
+  outcomes.
+- Show the spread: best case, worst case, expected case.
+
+### 11.4 Gift (8 Fonts) analysis
+
+- Gift gives 8 font uses per run for a 3 Divine entry fee.
+- Compound probability: with 8 tries even a low P(win) becomes a high P(at
+  least one win), so the jackpot play becomes viable on volatile gems.
+- Break-even analysis: "Gift is profitable if single-font EV > X".
+- Comparison: Gift (8 fonts, 3 div entry, slow run) against Merciless spam (1
+  font, no entry, fast run); chaos per hour depends on character speed.
+
+### 11.5 Session planning — "What to farm tonight?"
+
+- Input: the character's average run time per lab tier.
+- Output: which lab × enchantment combination maximises chaos per hour for
+  that character, from current gem prices, sell probability, entry costs and
+  character speed.
+- Time-of-day advice: "EU morning is dead for selling, farm and hoard" against
+  "Saturday evening is peak demand, sell everything now".
+- Multi-horizon: "the next 4–6 hours are useless for selling, set high prices
+  and AFK" against "come back at 19:00 UTC for the demand peak".
+
+### 11.6 Sell timing — "I have gems in inventory, what do I do?"
+
+The Flame Golem scenario: Flame Golem of Hordes listed at 350c with only 2
+listings; the market flooded and the price crashed to 60c by morning.
+
+- The system should have warned: "thin market, high crash risk; if selling,
+  undercut aggressively now".
+- Multi-horizon: "recheck in 10–12 hours when you come back" against "sell now
+  before the crash".
+- Crash detection from gem behavioural profiles (flood history).
+- When the herd has discovered a gem, warn that a supply wave is coming.
+
+### 11.7 Cross-cutting requirements
+
+- **No hardcoded prices or listing counts.** It must work from day 1 of any
+  league to its end: the day-1 top gem is 50c, the mid-league top gem 1500c,
+  and the system adapts on its own.
+- **Data-source agnostic:** works with poe.ninja 30-minute data or a future
+  5–10-minute stream.
+- **Always show confidence;** never hide predictions. "RISING · 34% LOW" beats
+  silence.
+- **Weekend awareness:** the owner expects prices to rise Friday and peak
+  Saturday evening; the system learns weekly cycles, not only daily ones.
+- **League duration matters:** a four-month league matures more slowly; day-1
+  economics last longer and mid-league stabilisation comes later.
+- **The "Baca's dog" rule:** at ~50% accuracy a prediction is useless. Show it
+  as "uncertain", not as actionable, and let the user decide: "I don't know,
+  here's the data" beats a confident wrong answer.
+
+---
+
 *Preserved as product and domain intent. Verify implementation decisions against
 current code, accepted ADRs, and active specifications.*

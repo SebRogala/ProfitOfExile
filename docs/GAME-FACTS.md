@@ -65,10 +65,10 @@ is not mistaken for a fact.
   (`desktop/src-tauri/src/temple/markers.rs`, `seal_position`). Re-checked
   2026-10-03 against four more panels (Gemcutter's Workshop D0, Halls E0, Pits
   C1, Banquet Hall B1).
-- **Walking length is not hop count.** Vertolka (the temple collaborator),
-  2026-10-03: the routes Doryani's Institute → Pits → Conduit of Lightning and
-  Doryani's Institute → Tempest Generator → Conduit of Lightning are both two
-  hops, but the first is a straight walk and the second zig-zags. That follows
+- **Walking length is not hop count.** Vertolka (the temple
+  collaborator; sheet link in POE-124), 2026-10-03: the routes Doryani's
+  Institute → Pits → Conduit of Lightning and Doryani's Institute → Tempest
+  Generator → Conduit of Lightning are both two hops, but the first is a straight walk and the second zig-zags. That follows
   from the door placement above: the straight route enters and leaves each room
   on the same side, and the zig-zag crosses each room diagonally. How much
   longer the zig-zag is in play has not been measured. The builder advisor
@@ -375,6 +375,16 @@ shapes.
   them (community consensus, same date: a mercenary is priced by a desired
   combat skill and the links on that row; a rolled secondary is NOT
   interchangeable — Vaal Ice Shot against Icicle Rain decides a Manyshot).
+
+## Leagues
+
+- **Current league: Covens**, started Friday 2026-11-13 19:00 UTC. Source:
+  `pathofexile.com/api/leagues?type=main`, read 2026-11-19. Before it,
+  Allflame (3.29) from 2026-07-30, and Mirage (3.28) from early March 2026 to
+  2026-07-29, a four-month league. The local `leagues` table still showed
+  Allflame `collecting` on 2026-11-19, so check the table or that endpoint
+  rather than this entry when the current league matters, and update this
+  entry at each league change.
 
 ## Not validated
 

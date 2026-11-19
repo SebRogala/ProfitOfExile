@@ -13,6 +13,8 @@ The Path of Exile developer platform exposes **three distinct APIs** for price/l
 **Server endpoint:** `https://api.pathofexile.com` (OAuth API)
 **Legacy endpoint:** `https://www.pathofexile.com/api/` (session-based, being deprecated)
 
+**Community:** [r/pathofexiledev](https://www.reddit.com/r/pathofexiledev/) — PoE tool developers: trade API integration (authentication, rate limits, endpoints), sanctioned trade access without a POESESSID cookie, and how tools such as Path of Building and Awakened PoE Trade query trade.
+
 ---
 
 ## 1. Trade Search API (pathofexile.com/trade)

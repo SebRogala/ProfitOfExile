@@ -335,3 +335,14 @@ All times shown in user's local timezone (browser locale), no UTC suffix.
 - Accent yellow (HERD/CAUTION): #eab308
 - Accent blue (BREWING): #3b82f6
 - Accent purple (RECOVERY): #a855f7
+
+## Copy vocabulary
+
+Status: current rule (owner, 2026-10-12).
+
+- Public site copy (landing page, meta tags, `llms.txt`) leads with the
+  community's words, "lab farming" and "transfigured gems farming". Most
+  players do not know the font is called "Divine Font"; keep that name for
+  internal docs and code.
+- Search phrases go in low-key spots such as the lab module tagline, never the
+  site title: the lab is not the app's main pitch.
