@@ -191,9 +191,8 @@ pub enum ScreenScaleSource {
 ///
 /// This is the unit note's own number, stated as a constant because POE-278
 /// gave it an arithmetic USER: [`ui_scale_for_height`] is what a Recalibrate
-/// press turns a capture into. `temple::run` deliberately restates it instead
-/// of importing it (see the const there) — that file does not read this slice
-/// and does not want a dependency on it.
+/// press turns a capture into, and `temple::run`'s unit-ratio check divides by
+/// it through that function.
 pub const UI_SCALE_REFERENCE_HEIGHT: f32 = 1200.0;
 
 /// The `ui_scale` a screen of this height implies, under the one assumption

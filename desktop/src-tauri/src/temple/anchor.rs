@@ -224,7 +224,8 @@ const SWEEP_FINE_RADIUS: i32 = FINE_RADIUS + 4;
 /// slack for the resampling difference between the two resolutions.
 const FINE_RADIUS: i32 = COARSE_DIVISOR as i32 + 8;
 
-/// Temple anchor scales MEASURED on a real capture, by capture size.
+/// Temple anchor scales MEASURED on a real capture, by the game's render
+/// (client) size — the capture size in fullscreen.
 ///
 /// This is DATA, not a model: each row is one screenshot somebody anchored and
 /// read the scale off, with the dump it came from. No row is interpolated and
@@ -232,7 +233,7 @@ const FINE_RADIUS: i32 = COARSE_DIVISOR as i32 + 8;
 /// [`REFERENCE_SCREEN_WIDTH`] used to be, and it was 40% wrong on the only
 /// full-screen capture ever checked against it.
 ///
-/// | capture | scale | NCC | provenance |
+/// | render | scale | NCC | provenance |
 /// |---|---|---|---|
 /// | 1920x1080 | 1.00 | 0.99999 | 2026-09-03, laptop dump `temple-debug/1788438639673`; committed as `tests/fixtures/temple/screen-live-1920x1080.png` |
 ///
@@ -246,10 +247,13 @@ const FINE_RADIUS: i32 = COARSE_DIVISOR as i32 + 8;
 /// resolution nobody has measured yet gets.
 const MEASURED_SCALES: &[((u32, u32), f32)] = &[((1920, 1080), 1.00)];
 
-/// The measured scale for a capture of exactly this size, if one exists.
+/// The measured scale for a game render (client) of exactly this size, if one
+/// exists.
 ///
 /// Exact match on BOTH dimensions: the scale is a property of the render
-/// resolution, and 1920x1080 says nothing about 1920x1200.
+/// resolution, and 1920x1080 says nothing about 1920x1200. The key is the
+/// game client's size, not the capture's: a windowed client on a larger monitor
+/// draws at its own size.
 pub fn table_scale(width: u32, height: u32) -> Option<f32> {
     MEASURED_SCALES
         .iter()
@@ -257,7 +261,7 @@ pub fn table_scale(width: u32, height: u32) -> Option<f32> {
         .map(|(_, scale)| *scale)
 }
 
-/// The scales to try for a capture size [`MEASURED_SCALES`] knows: the measured
+/// The scales to try for a render (client) size [`MEASURED_SCALES`] knows: the measured
 /// one and one [`SCALE_STEP`] either side.
 ///
 /// One step of slack, not a band: the measurement is of THIS screen size and
@@ -395,6 +399,7 @@ pub fn anchor_with_hint(
             return Ok(best.expect("a cleared attempt recorded a best"));
         }
     }
+    // Callers pass a whole-client image, so its size is the render size.
     if let Some(band) = table_band(img.width(), img.height()) {
         if take(scene.search(&band), &mut best) {
             return Ok(best.expect("a cleared attempt recorded a best"));
@@ -443,6 +448,10 @@ pub fn anchor_with_hint(
 /// question about the BOARD, open at the time of writing; what is settled is
 /// that the loop takes this one, because the other costs it a minute.
 ///
+/// `render` is the game's render (client) size, which keys only the
+/// [`table_band`] lookup; the search itself runs on the whole capture. In
+/// fullscreen the two are the same size.
+///
 /// This is an explicit fallback, not a per-tick budget. The caller invokes it
 /// only after the placed-origin recheck has failed under the lifecycle rules.
 /// `stop` is polled between the sweep's coarse correlations — one per distinct
@@ -452,6 +461,7 @@ pub fn anchor_with_hint(
 pub fn anchor_for_loop(
     img: &DynamicImage,
     hint: Option<&AnchorCalibration>,
+    render: (u32, u32),
     stop: &dyn Fn() -> bool,
 ) -> Result<Anchor, ReadError> {
     let scene = Scene::of(img);
@@ -472,7 +482,7 @@ pub fn anchor_for_loop(
             return Ok(best.expect("a cleared attempt recorded a best"));
         }
     }
-    if let Some(band) = table_band(img.width(), img.height()) {
+    if let Some(band) = table_band(render.0, render.1) {
         if take(scene.search(&band), &mut best) {
             return Ok(best.expect("a cleared attempt recorded a best"));
         }
@@ -1146,6 +1156,23 @@ mod tests {
         assert!(table_band(1920, 1200).is_none());
     }
 
+    /// The loop's band lookup is keyed by the game's render (client) size, not
+    /// the capture's: a windowed 1920x1080 client on a 2560x1440 monitor gets
+    /// the measured band, and a 1600x900 client on a 1920x1080 monitor gets
+    /// none. Counted as correlations with the sweep stopped, so only the band
+    /// search can score anything.
+    #[test]
+    fn a_measured_render_size_bands_by_client_not_capture() {
+        let stopped = || true;
+        let larger = DynamicImage::ImageRgb8(noise(2560, 1440));
+        let (_, banded) = search_tally(|| anchor_for_loop(&larger, None, (1920, 1080), &stopped));
+        assert!(banded.positions > 0, "a measured client size must search its band");
+
+        let monitor = DynamicImage::ImageRgb8(noise(1920, 1080));
+        let (_, unbanded) = search_tally(|| anchor_for_loop(&monitor, None, (1600, 900), &stopped));
+        assert_eq!(unbanded.positions, 0, "an unmeasured client size has no band, whatever the capture");
+    }
+
     /// The fallback sweep must be able to reach the scale a wide capture
     /// implies. 2560 px seeds at 1.86 and 3840 px at 2.79, both above the fixed
     /// 1.60 ceiling — a sweep that stopped there could never rescue the two
@@ -1722,7 +1749,7 @@ mod tests {
         // exhaustive pass is affordable in a unit test.
         let empty = DynamicImage::ImageRgb8(noise(1400, 200));
 
-        let (bounded, cheap) = search_tally(|| anchor_for_loop(&empty, None, &|| false));
+        let (bounded, cheap) = search_tally(|| anchor_for_loop(&empty, None, (empty.width(), empty.height()), &|| false));
         let (exhaustive, dear) = search_tally(|| anchor_with_hint(&empty, None));
 
         assert!(

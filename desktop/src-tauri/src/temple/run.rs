@@ -1081,7 +1081,7 @@ fn publish_anchor_scale(
 ///    point: a merc-frame-measured screen with a non-default UI slider reaches
 ///    the acceptance rule and is turned down there, instead of being stopped
 ///    here by an arithmetic that knows nothing about the slider.
-/// 2. **The capture's own height**, when the slice is empty and there is nothing
+/// 2. **The game client's own height**, when the slice is empty and there is nothing
 ///    else to ask. At the game's DEFAULT UI scale the temple scale is
 ///    `k * (height / 1200)` by both units' definitions, so a scale more than
 ///    [`K_TOLERANCE`] from it is one the screen does not account for.
@@ -1093,7 +1093,7 @@ fn publish_anchor_scale(
 /// persists a verified seed; it does not teach the slice a new number.**
 ///
 /// Everything else follows from that sentence. An empty slice is filled only
-/// with a value the capture height predicts — which is what a temple-only
+/// with a value the client height predicts — which is what a temple-only
 /// machine at the default slider needs, and it is a real measurement rather
 /// than an assumption, because the anchor had to clear [`anchor::NCC_FLOOR`] to
 /// get here. A slice that already holds something is only ever confirmed. And
@@ -1121,7 +1121,7 @@ fn screen_from_anchor(
 ) -> Result<crate::ssot::ScreenSlice, String> {
     let withheld = match hint {
         Some(hint) => hint_disagreement_line(scale, hint),
-        None => unit_ratio_line(scale, capture.0, capture.1),
+        None => unit_ratio_line(scale, client[2].max(0) as u32, client[3].max(0) as u32),
     };
     match withheld {
         Some(line) => Err(line),
@@ -1483,13 +1483,6 @@ fn clipped_roi_announcement(
     Some(outside.iter().map(|(name, rect)| clipped_roi_line(name, *rect)).collect())
 }
 
-/// The expensive half: 13 plates, the side panel, the diamond, the advisor.
-/// Screen height the shared `ui_scale` unit calls 1.0 — the height of the merc
-/// reference fixture, restated here rather than imported so this file does not
-/// grow a dependency on a slice it deliberately does not read. The number's
-/// owner is [`crate::ssot::ScreenSlice`]'s unit note.
-const UI_SCALE_REFERENCE_HEIGHT: f32 = 1200.0;
-
 /// The `k` CHECK (POE-234 WI-2): the line that fires when the ratio this board
 /// implies disagrees with the constant the app converts through — and, since it
 /// is [`screen_from_anchor`]'s gate, the reason a measurement is withheld from
@@ -1509,7 +1502,9 @@ const UI_SCALE_REFERENCE_HEIGHT: f32 = 1200.0;
 /// to decide about; outside it, the anchor and the screen it came off disagree
 /// about the same fact, and that is worth both a line and a withheld publish.
 ///
-/// The denominator is the shared unit's DEFINITION (`height / 1200`), not the
+/// The denominator is the shared unit's DEFINITION
+/// ([`crate::ssot::ui_scale_for_height`] of the game CLIENT's height — the
+/// screen height fullscreen, the WI-1 interim windowed rule), not the
 /// `ui_scale` standing in the slice. Deliberately, and it is what makes this a
 /// second opinion rather than a mirror: the slice's value may be one the temple
 /// itself published, and dividing a temple scale by a `ui_scale` derived from a
@@ -1517,16 +1512,16 @@ const UI_SCALE_REFERENCE_HEIGHT: f32 = 1200.0;
 ///
 /// Pure, and separated from the log call, so both the arithmetic and the
 /// threshold are testable without a screen or an `AppHandle`.
-fn unit_ratio_line(scale: f32, capture_width: u32, capture_height: u32) -> Option<String> {
-    let k = scale / (capture_height as f32 / UI_SCALE_REFERENCE_HEIGHT);
+fn unit_ratio_line(scale: f32, client_width: u32, client_height: u32) -> Option<String> {
+    let k = scale / crate::ssot::ui_scale_for_height(client_height);
     let off = (k - anchor::TEMPLE_SCALE_PER_UI_SCALE).abs() / anchor::TEMPLE_SCALE_PER_UI_SCALE;
     if off <= K_TOLERANCE {
         return None;
     }
     Some(format!(
-        "temple anchor not corroborated by the capture: unit ratio k={k:.4} differs from \
-         the {:.4} this app converts through by {:.1}% (scale {scale:.3}, capture \
-         {capture_width}x{capture_height}) — the measurement was withheld, and the shared \
+        "temple anchor not corroborated by the game client: unit ratio k={k:.4} differs from \
+         the {:.4} this app converts through by {:.1}% (scale {scale:.3}, client \
+         {client_width}x{client_height}) — the measurement was withheld, and the shared \
          screen scale is left to whatever else measures this screen",
         anchor::TEMPLE_SCALE_PER_UI_SCALE,
         off * 100.0
@@ -1587,7 +1582,12 @@ pub fn probe_frame(
     let (found, located) = match cheap {
         anchor::CheapDetect::Anchored(found) => (found, false),
         anchor::CheapDetect::Nothing { .. } if locate_on_miss(screen.is_some(), anchored) => {
-            match anchor::anchor_for_loop(&grab.image, hint.as_ref(), stop) {
+            match anchor::anchor_for_loop(
+                &grab.image,
+                hint.as_ref(),
+                (grab.client[2].max(0) as u32, grab.client[3].max(0) as u32),
+                stop,
+            ) {
                 Ok(found) => (found, true),
                 Err(super::ReadError::AnchorNotFound { .. }) => return Ok(None),
             }
@@ -1896,7 +1896,7 @@ mod tests {
     /// the ratio agreeing with itself and the line must not fire.
     #[test]
     fn a_board_that_agrees_with_the_constant_says_nothing() {
-        let scale = anchor::scale_for_ui_scale(1080.0 / UI_SCALE_REFERENCE_HEIGHT);
+        let scale = anchor::scale_for_ui_scale(1080.0 / crate::ssot::UI_SCALE_REFERENCE_HEIGHT);
 
         assert_eq!(unit_ratio_line(scale, 1920, 1080), None);
     }
@@ -1929,7 +1929,7 @@ mod tests {
     /// edited without its threshold cannot pass this by accident.
     #[test]
     fn only_a_ratio_outside_the_tolerance_is_worth_a_line() {
-        let agrees = 1080.0 / UI_SCALE_REFERENCE_HEIGHT;
+        let agrees = 1080.0 / crate::ssot::UI_SCALE_REFERENCE_HEIGHT;
 
         assert_eq!(
             unit_ratio_line(
@@ -3174,7 +3174,7 @@ mod tests {
         )
             .expect_err("2.05 on a 1080p capture is 2.28 of unit ratio against k's 1.11");
         assert!(
-            refused.contains("not corroborated by the capture"),
+            refused.contains("not corroborated by the game client"),
             "the withheld publish has to say why: {refused}",
         );
 
@@ -3279,7 +3279,7 @@ mod tests {
             1_700_000_000_000,
         );
 
-        let definition = 1080.0 / UI_SCALE_REFERENCE_HEIGHT;
+        let definition = 1080.0 / crate::ssot::UI_SCALE_REFERENCE_HEIGHT;
         assert!(
             (next.ui_scale - definition).abs() <= definition * 0.01,
             "the temple's {measured} on a 1080p screen is {definition} in the shared unit, \
@@ -3913,5 +3913,44 @@ mod tests {
         screen.anchors = Some(crate::ssot::Anchors { temple_entrance: Some([100,100]), merc_panel: None });
         assert!(probe_frame(&frame, Some(screen), &|| false).unwrap().is_none());
         assert_eq!(screen.anchors.unwrap().temple_entrance, Some([100,100]));
+    }
+
+    /// A 1600x900 game window on a 1920x1080 monitor.
+    const WINDOWED_CLIENT: [i32; 4] = [160, 90, 1600, 900];
+
+    fn windowed_anchor() -> Result<crate::ssot::ScreenSlice, String> {
+        screen_from_anchor(
+            anchor::TEMPLE_SCALE_PER_UI_SCALE * 0.75,
+            None,
+            (1920, 1080),
+            7,
+            (0, 0),
+            WINDOWED_CLIENT,
+            1_700_000_000_000,
+        )
+    }
+
+    mod keep_happy {
+        use super::*;
+
+        #[test]
+        fn a_windowed_client_corroborates_its_anchor_against_the_client_height() {
+            let published = windowed_anchor().expect("900 / 1200 is the 0.75 the anchor implies");
+            assert!((published.ui_scale - 0.75).abs() < 1e-3, "ui_scale {}", published.ui_scale);
+        }
+    }
+
+    mod keep_critical {
+        use super::*;
+
+        /// Judged by the 1080 monitor height, the same anchor implies a unit
+        /// ratio 1080/900 off `k` and is refused: a windowed temple-only machine
+        /// could then never publish a scale after a resize dropped the slice.
+        #[test]
+        fn a_windowed_anchor_is_not_judged_against_the_monitor_height() {
+            let scale = anchor::TEMPLE_SCALE_PER_UI_SCALE * 0.75;
+            assert!(unit_ratio_line(scale, 1920, 1080).is_some(), "the monitor height refuses it");
+            assert!(windowed_anchor().is_ok(), "the client height is what judges it");
+        }
     }
 }
