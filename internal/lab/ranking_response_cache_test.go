@@ -123,7 +123,7 @@ func TestKeepCriticalRankingAnswers_DistinctQueriesNeverCollide(t *testing.T) {
 
 // A search answers its whole match set whatever the page asks for, so equal
 // searches on different pages share one answer.
-func TestKeepCriticalRankingAnswers_SearchIgnoresPageInItsKey(t *testing.T) {
+func TestKeepHappyRankingAnswers_SearchIgnoresPageInItsKey(t *testing.T) {
 	rc := newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)
 	loader := &countingLoader{}
 	q := CollectiveQuery{Page: 1, PageSize: 20, Sort: CollectiveSortPrice, Search: "arc"}
@@ -151,7 +151,7 @@ func pageQuery(n int) CollectiveQuery {
 	return CollectiveQuery{Page: n, PageSize: 20, Sort: CollectiveSortPrice}
 }
 
-func TestKeepCriticalRankingAnswers_EntryBoundEvictsLeastRecentlyUsed(t *testing.T) {
+func TestKeepHappyRankingAnswers_EntryBoundEvictsLeastRecentlyUsed(t *testing.T) {
 	rc := newRankingAnswers(3, rankingAnswerMaxBytes)
 	loader := &countingLoader{}
 	for n := 1; n <= 3; n++ {
@@ -179,7 +179,7 @@ func bigPage(tag string) func(context.Context) (CollectivePage, error) {
 	}
 }
 
-func TestKeepCriticalRankingAnswers_ByteBoundEvictsBeforeTheEntryBound(t *testing.T) {
+func TestKeepHappyRankingAnswers_ByteBoundEvictsBeforeTheEntryBound(t *testing.T) {
 	one, _ := bigPage("a")(context.Background())
 	size := rankingPageBytes(one)
 	if size < 1000 {
@@ -205,7 +205,7 @@ func TestKeepCriticalRankingAnswers_ByteBoundEvictsBeforeTheEntryBound(t *testin
 
 // An answer larger than the whole byte bound is served but never retained;
 // equal requests still share its one in-flight load.
-func TestKeepCriticalRankingAnswers_OversizedAnswerIsSharedButNotRetained(t *testing.T) {
+func TestKeepHappyRankingAnswers_OversizedAnswerIsSharedButNotRetained(t *testing.T) {
 	one, _ := bigPage("a")(context.Background())
 	rc := newRankingAnswers(100, rankingPageBytes(one)/2)
 	release := make(chan struct{})
@@ -239,7 +239,7 @@ func TestKeepCriticalRankingAnswers_OversizedAnswerIsSharedButNotRetained(t *tes
 }
 
 // One waiter giving up neither cancels the shared load nor the others' answer.
-func TestKeepCriticalRankingAnswers_WaiterCancellationIsIndependent(t *testing.T) {
+func TestKeepHappyRankingAnswers_WaiterCancellationIsIndependent(t *testing.T) {
 	rc := newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)
 	release := make(chan struct{})
 	var loadErr error
@@ -435,7 +435,7 @@ func TestKeepCriticalRankingAnswers_ReturnedRowsAreACopy(t *testing.T) {
 
 // With every waiter gone the load is cancelled, as a lone request's would be,
 // and its answer is not retained.
-func TestKeepCriticalRankingAnswers_LastWaiterLeavingCancelsTheLoad(t *testing.T) {
+func TestKeepHappyRankingAnswers_LastWaiterLeavingCancelsTheLoad(t *testing.T) {
 	rc := newRankingAnswers(rankingAnswerMaxEntries, rankingAnswerMaxBytes)
 	loadCancelled := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
