@@ -23,7 +23,10 @@
 //!   tiers, with no chance roll; the 40% / 10% upgrade-chance nodes are gone;
 //!   a tier-0 room offers two changes and always lands at tier 1; a map holds
 //!   4 incursions with Artefacts of the Vaal, 3 without; a room visited in the
-//!   current map cannot be drawn again in that map.
+//!   current map cannot be drawn again in that map; a fresh temple has 12
+//!   incursions ([`SimulationParams::budget`]); the next incursion's room is
+//!   drawn when one completes and survives leaving the map (see
+//!   [`play_temple`]).
 //! - Not validated (POE-415 "Inferred"): under option 2 a change lands at the
 //!   killed room's tier + 1 ([`ResidentCarry::TierPlusOne`]); without option 2
 //!   a change lands at tier 1. [`ResidentCarry::TierKept`] is the sensitivity
@@ -32,8 +35,8 @@
 //!   is uniform over every non-Apex, non-Entrance room below tier 3; a change
 //!   offer is uniform over the 25 lines of `rooms::LINES` minus the current
 //!   line (a line already elsewhere in the temple can be offered again).
-//! - Assumed here: a fresh temple has 12 incursions (the `12 Incursions
-//!   Remaining` panel fixture in `panel.rs`), set by [`SimulationParams::budget`].
+//! - Assumed here: the last incursion of a map generates no pending room;
+//!   the player sees the pending room before choosing to leave.
 //!
 //! # Player policy
 //!
@@ -93,11 +96,14 @@ pub enum SkipPolicy {
     Never,
     /// The temple stops spending once every target is reached.
     WhenDone,
-    /// As [`Self::WhenDone`], and the rest of a map is skipped once every
-    /// unfinished target room still in the drop pool was visited in it: the
-    /// advisor's R5 (leave after using the target room), widened to several
-    /// targets.
+    /// As [`Self::WhenDone`], and the map is left once every open target
+    /// room was visited in it or is the pending room, at least one of them
+    /// visited: the advisor's R5 (leave after using the target room), widened
+    /// to several targets. See [`leaves_map`].
     WhenDoneOrTargetsVisited,
+    /// As [`Self::WhenDone`], and the map is left as soon as any open target
+    /// room was visited in it. More maps, fewer blocked draws.
+    WhenDoneOrAnyTargetVisited,
 }
 
 /// One scenario.
@@ -238,11 +244,9 @@ pub fn drawable(board: &TempleBoard, visited: SlotMask) -> Vec<usize> {
         .collect()
 }
 
-/// Whether the map's remaining incursions can no longer reach a target room
-/// directly: an unfinished target's room below its goal exists, and every
-/// such room was visited this map.
-fn targets_visited(board: &TempleBoard, visited: SlotMask, targets: &[Target]) -> bool {
-    let open: Vec<usize> = (0..13)
+/// The rooms of unfinished targets that are still below their goal tier.
+fn open_target_rooms(board: &TempleBoard, targets: &[Target]) -> SlotMask {
+    (0..13)
         .filter(|s| {
             targets.iter().any(|t| {
                 board.line[*s] == t.tag
@@ -250,19 +254,47 @@ fn targets_visited(board: &TempleBoard, visited: SlotMask, targets: &[Target]) -
                     && board.best_tier(t.tag) < t.goal
             })
         })
-        .collect();
-    !open.is_empty() && open.iter().all(|s| visited & (1 << s) != 0)
+        .fold(0, |mask, s| mask | 1 << s)
 }
 
-/// Whether [`SkipPolicy`] leaves the current map before its next incursion.
+/// Whether [`SkipPolicy`] leaves the current map with `pending` generated.
+///
+/// Leaving keeps `pending` as the next map's first incursion, so what it buys
+/// is the incursions after it: they are drawn excluding only `pending`
+/// instead of every room visited in this map. That gains something only when
+/// an open target room is among the visited ones, and never when `pending`
+/// is this map's last incursion: staying then ends the map with nothing
+/// excluded afterwards, which leaving cannot beat.
 pub fn leaves_map(
     skip: SkipPolicy,
     board: &TempleBoard,
     visited: SlotMask,
+    pending: usize,
+    pending_is_last: bool,
     targets: &[(Line, Tier)],
 ) -> bool {
-    skip == SkipPolicy::WhenDoneOrTargetsVisited
-        && targets_visited(board, visited, &compile_targets(targets))
+    let targets = compile_targets(targets);
+    leaves(skip, board, visited, pending, pending_is_last, &targets)
+}
+
+fn leaves(
+    skip: SkipPolicy,
+    board: &TempleBoard,
+    visited: SlotMask,
+    pending: usize,
+    pending_is_last: bool,
+    targets: &[Target],
+) -> bool {
+    let open = open_target_rooms(board, targets);
+    let blocked = open & visited;
+    if pending_is_last || blocked == 0 {
+        return false;
+    }
+    match skip {
+        SkipPolicy::Never | SkipPolicy::WhenDone => false,
+        SkipPolicy::WhenDoneOrTargetsVisited => open & !(visited | 1 << pending) == 0,
+        SkipPolicy::WhenDoneOrAnyTargetVisited => true,
+    }
 }
 
 fn play_incursion(
@@ -290,64 +322,93 @@ fn play_incursion(
     board.line[slot] = tag;
 }
 
+/// One map's incursions, in play order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapPlay {
+    pub rooms: Vec<usize>,
+    /// The player left with a pending room, which opened the next map.
+    pub left: bool,
+}
+
 /// One temple played to its end.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TempleOutcome {
     /// Per target, in [`SimulationParams::targets`] order.
     pub reached: Vec<bool>,
     pub incursions: u8,
-    /// Maps with at least one incursion played.
-    pub maps: u32,
+    pub maps: Vec<MapPlay>,
     /// The temple stopped with budget left because every target was reached.
     pub stopped_when_done: bool,
-    /// Map entrances left unplayed by [`SkipPolicy::WhenDoneOrTargetsVisited`]
-    /// leaving a map early. These cost a map, not budget.
+    /// Map entrances left unplayed by leaving a map early. These cost a map,
+    /// not budget.
     pub entrances_abandoned: u32,
 }
 
 /// Play one temple from `board`.
+///
+/// The next incursion's room is drawn the moment one completes, under the
+/// current map's exclusions, while the map has an entrance left (owner, in
+/// game, 2026-11-19). Leaving the map carries that room into the next map as
+/// its first incursion. **Assumed:** the last incursion of a map generates no
+/// pending room, so the next map's first room is drawn fresh.
 pub fn play_temple(
     mut board: TempleBoard,
     params: &SimulationParams,
     rng: &mut Rng,
 ) -> TempleOutcome {
     let targets = compile_targets(&params.targets);
-    let entrances = params.config.entrances_per_map() as u32;
+    let entrances = params.config.entrances_per_map() as usize;
+    let stops_when_done = params.skip != SkipPolicy::Never;
     let mut remaining = params.budget;
-    let mut maps = 0u32;
+    let mut maps: Vec<MapPlay> = Vec::new();
     let mut stopped_when_done = false;
     let mut entrances_abandoned = 0u32;
+    let mut carried: Option<usize> = None;
     'temple: while remaining > 0 {
+        if stops_when_done && done(&board, &targets) {
+            stopped_when_done = true;
+            break;
+        }
+        let first = carried.take().or_else(|| {
+            let pool = drawable(&board, 0);
+            (!pool.is_empty()).then(|| pool[rng.below(pool.len())])
+        });
+        let Some(mut slot) = first else {
+            break;
+        };
+        maps.push(MapPlay {
+            rooms: Vec::new(),
+            left: false,
+        });
+        let map = maps.len() - 1;
         let mut visited: SlotMask = 0;
         for entrance in 0..entrances {
+            play_incursion(&mut board, slot, &targets, params.consolidation, rng);
+            maps[map].rooms.push(slot);
+            visited |= 1 << slot;
+            remaining -= 1;
             if remaining == 0 {
                 break 'temple;
             }
-            if params.skip != SkipPolicy::Never && done(&board, &targets) {
+            if stops_when_done && done(&board, &targets) {
                 stopped_when_done = true;
                 break 'temple;
             }
-            if entrance > 0
-                && params.skip == SkipPolicy::WhenDoneOrTargetsVisited
-                && targets_visited(&board, visited, &targets)
-            {
-                entrances_abandoned += entrances - entrance;
+            if entrance + 1 == entrances {
                 continue 'temple;
             }
             let pool = drawable(&board, visited);
             if pool.is_empty() {
-                if visited == 0 {
-                    break 'temple;
-                }
                 continue 'temple;
             }
-            if entrance == 0 {
-                maps += 1;
+            slot = pool[rng.below(pool.len())];
+            let pending_is_last = entrance + 2 == entrances;
+            if leaves(params.skip, &board, visited, slot, pending_is_last, &targets) {
+                maps[map].left = true;
+                entrances_abandoned += (entrances - entrance - 1) as u32;
+                carried = Some(slot);
+                continue 'temple;
             }
-            let slot = pool[rng.below(pool.len())];
-            play_incursion(&mut board, slot, &targets, params.consolidation, rng);
-            visited |= 1 << slot;
-            remaining -= 1;
         }
     }
     TempleOutcome {
@@ -438,7 +499,7 @@ pub fn simulate(params: &SimulationParams) -> Summary {
         for (count, reached) in summary.each_reached.iter_mut().zip(&outcome.reached) {
             *count += *reached as u32;
         }
-        let maps = outcome.maps as usize;
+        let maps = outcome.maps.len();
         if summary.maps_histogram.len() <= maps {
             summary.maps_histogram.resize(maps + 1, 0);
         }
@@ -564,7 +625,7 @@ mod tests {
             &params(Consolidation::NotTaken, SkipPolicy::Never, 4),
             &mut Rng::seeded(3),
         );
-        assert_eq!((outcome.incursions, outcome.maps), (4, 2));
+        assert_eq!((outcome.incursions, outcome.maps.len()), (4, 2));
     }
 
     fn board_with_cradle_at_d2() -> TempleBoard {
@@ -574,32 +635,107 @@ mod tests {
         board
     }
 
-    #[test]
-    fn the_map_is_left_once_every_open_target_room_was_visited() {
-        let targets = params(Consolidation::NotTaken, SkipPolicy::Never, 1).targets;
-        let board = board_with_cradle_at_d2();
-        let visited = 1 << D2.index();
-        let leaves = leaves_map(SkipPolicy::WhenDoneOrTargetsVisited, &board, visited, &targets);
-        assert!(leaves);
+    fn targets() -> Vec<(Line, Tier)> {
+        params(Consolidation::NotTaken, SkipPolicy::Never, 1).targets
     }
 
     #[test]
+    fn the_map_is_left_once_every_open_target_room_was_visited() {
+        let board = board_with_cradle_at_d2();
+        let visited = 1 << D2.index();
+        let skip = SkipPolicy::WhenDoneOrTargetsVisited;
+        assert!(leaves_map(skip, &board, visited, D3.index(), false, &targets()));
+    }
+
+    // A Locus room at D0 is still drawable in this map, so the all-visited
+    // rule stays.
+    #[test]
     fn the_map_is_kept_while_a_target_room_is_unvisited() {
-        let targets = params(Consolidation::NotTaken, SkipPolicy::Never, 1).targets;
+        let mut board = board_with_cradle_at_d2();
+        board.line[D0.index()] = tag(&Line::Corruption);
+        board.tier[D0.index()] = 1;
+        let visited = 1 << D2.index();
+        let skip = SkipPolicy::WhenDoneOrTargetsVisited;
+        assert!(!leaves_map(skip, &board, visited, D3.index(), false, &targets()));
+    }
+
+    // The same board with the Locus room pending: it is played next either
+    // way, so every open target room is spent for this map.
+    #[test]
+    fn the_map_is_left_when_the_unvisited_target_room_is_the_pending_one() {
+        let mut board = board_with_cradle_at_d2();
+        board.line[D0.index()] = tag(&Line::Corruption);
+        board.tier[D0.index()] = 1;
+        let visited = 1 << D2.index();
+        let skip = SkipPolicy::WhenDoneOrTargetsVisited;
+        assert!(leaves_map(skip, &board, visited, D0.index(), false, &targets()));
+    }
+
+    // The same board: the any-visited rule leaves because Cradle is blocked.
+    #[test]
+    fn the_any_visited_rule_leaves_with_a_target_room_still_unvisited() {
+        let mut board = board_with_cradle_at_d2();
+        board.line[D0.index()] = tag(&Line::Corruption);
+        board.tier[D0.index()] = 1;
+        let visited = 1 << D2.index();
+        let skip = SkipPolicy::WhenDoneOrAnyTargetVisited;
+        assert!(leaves_map(skip, &board, visited, D3.index(), false, &targets()));
+    }
+
+    // Staying through the map's last incursion leaves nothing excluded after
+    // it, which leaving cannot beat.
+    #[test]
+    fn the_map_is_kept_when_the_pending_room_is_its_last_incursion() {
+        let board = board_with_cradle_at_d2();
+        let visited = 1 << D2.index();
+        let skip = SkipPolicy::WhenDoneOrAnyTargetVisited;
+        assert!(!leaves_map(skip, &board, visited, D3.index(), true, &targets()));
+    }
+
+    // The target is the pending room itself: it is played next either way, so
+    // leaving frees nothing.
+    #[test]
+    fn the_map_is_kept_when_the_only_target_room_is_pending() {
         let board = board_with_cradle_at_d2();
         let visited = 1 << D3.index();
-        let leaves = leaves_map(SkipPolicy::WhenDoneOrTargetsVisited, &board, visited, &targets);
-        assert!(!leaves);
+        let skip = SkipPolicy::WhenDoneOrAnyTargetVisited;
+        assert!(!leaves_map(skip, &board, visited, D2.index(), false, &targets()));
     }
 
     // With no target room on the board a fresh map draws from the same pool,
     // so leaving would gain nothing.
     #[test]
     fn the_map_is_kept_while_no_target_room_exists() {
-        let targets = params(Consolidation::NotTaken, SkipPolicy::Never, 1).targets;
         let board = TempleBoard::fresh();
-        let leaves = leaves_map(SkipPolicy::WhenDoneOrTargetsVisited, &board, u16::MAX, &targets);
-        assert!(!leaves);
+        let skip = SkipPolicy::WhenDoneOrAnyTargetVisited;
+        assert!(!leaves_map(skip, &board, u16::MAX, D3.index(), false, &targets()));
+    }
+
+    // Owner, 2026-11-19: the pending room was drawn under the left map's
+    // exclusions and opens the next map, so it is never a room of the map
+    // just left. A fresh draw would land on a room of that map at least a
+    // quarter of the time.
+    #[test]
+    fn leaving_a_map_keeps_its_pending_room_as_the_next_maps_first() {
+        let mut board = board_with_cradle_at_d2();
+        for slot in Slot::ALL {
+            if ![D0, D1, D2, D3, Slot::APEX, Slot::ENTRANCE].contains(&slot) {
+                board.tier[slot.index()] = 3;
+            }
+        }
+        let params = params(Consolidation::NotTaken, SkipPolicy::WhenDoneOrAnyTargetVisited, 12);
+        let mut transitions = 0;
+        for seed in 0..100u64 {
+            let outcome = play_temple(board.clone(), &params, &mut Rng::seeded(seed));
+            for pair in outcome.maps.windows(2) {
+                if pair[0].left {
+                    transitions += 1;
+                    let first = pair[1].rooms[0];
+                    assert!(!pair[0].rooms.contains(&first), "seed {seed}: {pair:?}");
+                }
+            }
+        }
+        assert!(transitions > 50, "too few maps were left: {transitions}");
     }
 
     fn finished_board() -> TempleBoard {
@@ -655,6 +791,7 @@ mod tests {
             ("never", SkipPolicy::Never),
             ("when done", SkipPolicy::WhenDone),
             ("done + leave map", SkipPolicy::WhenDoneOrTargetsVisited),
+            ("done + leave on any", SkipPolicy::WhenDoneOrAnyTargetVisited),
         ];
         println!(
             "| scenario | AoV | skip | P(both) | P(Cradle) | P(Locus) | maps mean | maps median \
