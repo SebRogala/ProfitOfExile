@@ -39,9 +39,10 @@ pub struct Capture {
     /// future build drops PMv2 the two APIs report different (virtualised)
     /// spaces and that lookup is the thing that breaks first.
     pub origin: (i32, i32),
-    /// The capture rectangle in this capture's physical pixels: x, y, w, h.
-    /// POE-268 treats the capture as fullscreen, so this is always the whole
-    /// image. POE-272 will add the live client offset for windowed support.
+    /// The game window's client rectangle in this capture's physical pixels:
+    /// x, y, w, h. Built only by [`client_in_capture`] from the live client
+    /// rect the focus poller last read; the whole image while that is unknown
+    /// or does not lie inside this capture (fullscreen, or another display).
     pub client: [i32; 4],
     /// Where this grab's time went, for callers that log their own stages.
     pub timing: GrabTiming,
@@ -153,9 +154,32 @@ impl AffinityLedger {
     }
 }
 
+/// The game's client rect made relative to a capture of the monitor at
+/// `origin` sized `size`. `game_client` is virtual-desktop physical px
+/// `[x, y, w, h]`. A rect that is unknown, empty or not fully inside the
+/// capture yields the whole capture: OCR crops from these pixels, and a rect
+/// past the image would read the wrong ones.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn client_in_capture(game_client: Option<[i32; 4]>, origin: (i32, i32), size: (u32, u32)) -> [i32; 4] {
+    let (cw, ch) = (size.0 as i64, size.1 as i64);
+    let whole = [0, 0, size.0 as i32, size.1 as i32];
+    let Some([x, y, w, h]) = game_client else { return whole };
+    let (rx, ry) = (x as i64 - origin.0 as i64, y as i64 - origin.1 as i64);
+    let (w64, h64) = (w as i64, h as i64);
+    if w64 > 0 && h64 > 0 && rx >= 0 && ry >= 0 && rx + w64 <= cw && ry + h64 <= ch {
+        [rx as i32, ry as i32, w, h]
+    } else {
+        whole
+    }
+}
+
 #[cfg(windows)]
 mod platform {
-    use super::{AffinityLedger, Capture, GameMonitor, GrabTiming};
+    use super::{client_in_capture, AffinityLedger, Capture, GameMonitor, GrabTiming};
+    use std::sync::Mutex;
+    use windows::Win32::Foundation::{POINT, RECT};
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
     use std::time::Instant;
     use image::DynamicImage;
     use tauri::{AppHandle, Emitter, Manager};
@@ -212,6 +236,14 @@ mod platform {
     static AFFINITY_ARMED_REPORTED: AtomicBool = AtomicBool::new(false);
 
     static LEDGER: LazyLock<AffinityLedger> = LazyLock::new(AffinityLedger::default);
+
+    /// The game window's client rect, virtual-desktop physical px
+    /// `[x, y, w, h]`, as [`remember_game_client`] last read it. Read and
+    /// written only in this module.
+    static GAME_CLIENT: Mutex<Option<[i32; 4]>> = Mutex::new(None);
+
+    static CLIENT_READ_FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
+    static CLIENT_READ_TIMED: AtomicBool = AtomicBool::new(false);
 
     impl ExcludedFromCapture {
         fn hold(app: &AppHandle) -> Self {
@@ -358,7 +390,8 @@ mod platform {
         timing.call_ms = ms(call_started);
         let img = grabbed.map_err(|e| format!("Screen capture failed: {}", e))?;
 
-        let client = [0, 0, img.width() as i32, img.height() as i32];
+        let game_client = *GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
+        let client = client_in_capture(game_client, origin, (img.width(), img.height()));
         Ok(Capture { image: DynamicImage::ImageRgba8(img), monitor_id, origin, client, timing })
     }
 
@@ -436,6 +469,55 @@ mod platform {
         // it (`docs/OVERLAY-GUIDE.md`, runtime-earned observations).
         if let Err(e) = app.emit_to("main", "game-monitor-changed", next) {
             log::warn!("emit game-monitor-changed failed: {}", e);
+        }
+    }
+
+    /// Read `hwnd`'s client rect (`GetClientRect` + `ClientToScreen` on its
+    /// origin) and remember it as the game's. On a change with a known game
+    /// monitor, re-checks the published slice at once: a move re-places it, a
+    /// resize drops it (`ssot::drop_if_mismatched`). A failed read or an empty
+    /// rect keeps the last value. The first successful read's duration is
+    /// logged once per session — the cost the per-tick refresh rests on.
+    #[allow(dead_code)]
+    pub fn remember_game_client(app: &AppHandle, hwnd: HWND) {
+        let started = Instant::now();
+        let mut rect = RECT::default();
+        let mut corner = POINT { x: 0, y: 0 };
+        let ok = unsafe { GetClientRect(hwnd, &mut rect) }.is_ok()
+            && unsafe { ClientToScreen(hwnd, &mut corner) }.as_bool();
+        let elapsed = started.elapsed();
+        let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
+        if !ok || w <= 0 || h <= 0 {
+            if !CLIENT_READ_FAILURE_REPORTED.swap(true, Ordering::Relaxed) {
+                crate::app_log(
+                    app,
+                    "capture: could not read the game window's client rect — keeping the last known one"
+                        .to_string(),
+                );
+            }
+            return;
+        }
+        if !CLIENT_READ_TIMED.swap(true, Ordering::Relaxed) {
+            crate::app_log(app, format!("capture: game client read took {} µs", elapsed.as_micros()));
+        }
+
+        let abs = [corner.x, corner.y, w, h];
+        {
+            let mut held = GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
+            if *held == Some(abs) {
+                return;
+            }
+            *held = Some(abs);
+        }
+        let monitor = *app
+            .state::<crate::AppState>()
+            .game_monitor
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(mon) = monitor {
+            let origin = (mon.x, mon.y);
+            let size = (mon.width, mon.height);
+            crate::ssot::drop_if_mismatched(app, size, origin, client_in_capture(Some(abs), origin, size));
         }
     }
 }
@@ -646,6 +728,39 @@ fn preprocess_with(
 mod tests {
     use super::{ocr_upscale_factor, ocr_upscaled_size, preprocess_for_ocr, preprocess_for_ocr_fast};
     use image::{DynamicImage, ImageBuffer, Luma};
+
+    mod keep_happy {
+        use super::super::client_in_capture;
+
+        #[test]
+        fn a_windowed_client_is_carried_capture_relative() {
+            let client = client_in_capture(Some([2080, 90, 1600, 900]), (1920, 0), (1920, 1080));
+            assert_eq!(client, [160, 90, 1600, 900]);
+        }
+    }
+
+    mod keep_critical {
+        use super::super::client_in_capture;
+
+        /// Silent consequence if this broke: a client rect outside the image
+        /// would crop OCR from the wrong pixels and return a plausible wrong
+        /// read instead of failing.
+        #[test]
+        fn a_client_off_the_captured_monitor_falls_back_to_the_whole_capture() {
+            let whole = [0, 0, 1920, 1080];
+            assert_eq!(client_in_capture(None, (1920, 0), (1920, 1080)), whole, "unknown client");
+            assert_eq!(
+                client_in_capture(Some([3500, 90, 1600, 900]), (1920, 0), (1920, 1080)),
+                whole,
+                "client running past the right edge"
+            );
+            assert_eq!(
+                client_in_capture(Some([100, 90, 1600, 900]), (1920, 0), (1920, 1080)),
+                whole,
+                "client on another monitor"
+            );
+        }
+    }
 
     /// A vertical step edge: the left half `dark`, the right half `light`.
     /// The one input that separates two resamplers — a flat field upscales
