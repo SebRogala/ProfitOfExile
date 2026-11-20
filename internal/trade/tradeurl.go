@@ -5,9 +5,19 @@ import (
 	"strings"
 )
 
+// leaguePathSegment is the single league path-escaping rule for trade URLs.
+func leaguePathSegment(league string) string {
+	return url.PathEscape(league)
+}
+
 // tradeSearchURL returns the trade-site search prefix for league, path-escaped.
 func tradeSearchURL(league string) string {
-	return "https://www.pathofexile.com/trade/search/" + url.PathEscape(league)
+	return "https://www.pathofexile.com/trade/search/" + leaguePathSegment(league)
+}
+
+// tradeAPISearchURL returns the trade API search endpoint under baseURL for league.
+func tradeAPISearchURL(baseURL, league string) string {
+	return baseURL + "/api/trade/search/" + leaguePathSegment(league)
 }
 
 // LeagueFromTradeURL recovers the captured identity of installed clients that

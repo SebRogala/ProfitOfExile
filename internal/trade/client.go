@@ -157,9 +157,7 @@ func (c *Client) SearchFixedTarget(ctx context.Context, target FixedTarget) (*Se
 }
 
 func (c *Client) postSearch(ctx context.Context, body []byte) (*SearchResponse, http.Header, error) {
-	url := fmt.Sprintf("%s/api/trade/search/%s", c.baseURL, c.leagueName)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tradeAPISearchURL(c.baseURL, c.leagueName), bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, fmt.Errorf("trade search: create request: %w", err)
 	}

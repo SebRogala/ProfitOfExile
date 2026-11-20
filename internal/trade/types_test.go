@@ -31,10 +31,11 @@ func readTradePriceVectors(t *testing.T) []tradePriceVector {
 }
 
 type tradeURLVector struct {
-	Name     string `json:"name"`
-	League   string `json:"league"`
-	QueryID  string `json:"queryId"`
-	TradeURL string `json:"tradeUrl"`
+	Name          string `json:"name"`
+	League        string `json:"league"`
+	QueryID       string `json:"queryId"`
+	TradeURL      string `json:"tradeUrl"`
+	APISearchPath string `json:"apiSearchPath"`
 }
 
 func readTradeURLVectors(t *testing.T) []tradeURLVector {

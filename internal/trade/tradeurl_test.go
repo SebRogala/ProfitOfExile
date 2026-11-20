@@ -1,6 +1,12 @@
 package trade
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestLeagueFromTradeURL(t *testing.T) {
 	for _, tc := range []struct{ name, input, want string }{
@@ -24,6 +30,32 @@ func TestLeagueFromTradeURL(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := LeagueFromTradeURL(tc.input); got != tc.want {
 				t.Fatalf("LeagueFromTradeURL(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestKeepHappy_SearchPostsToPathEscapedLeague(t *testing.T) {
+	vectors := readTradeURLVectors(t)
+	if len(vectors) == 0 {
+		t.Fatal("no trade URL vectors")
+	}
+	for _, vector := range vectors {
+		t.Run(vector.Name, func(t *testing.T) {
+			var gotPath string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.EscapedPath()
+				json.NewEncoder(w).Encode(tradeSearchResp{ID: vector.QueryID})
+			}))
+			defer server.Close()
+			c := NewClient(TradeConfig{LeagueName: vector.League})
+			c.SetBaseURL(server.URL)
+
+			if _, _, err := c.Search(context.Background(), "Arc", "20/20"); err != nil {
+				t.Fatal(err)
+			}
+			if gotPath != vector.APISearchPath {
+				t.Fatalf("search path = %q, want %q", gotPath, vector.APISearchPath)
 			}
 		})
 	}
