@@ -371,12 +371,14 @@ describe('test isolation', () => {
 	// These two run in order. The first leaves a debounced write pending; the
 	// second waits past the debounce on the real clock and must not receive it.
 	// On real timers the first test's write fires into the second.
+	// keep:regression — POE-250 flake repro
 	it('leaves a navView write pending when it ends', async () => {
 		const mod = await loadStoreWith({});
 		mod.nav.go('/settings');
 		expect(callsOf('set_ui_pref')).toEqual([]);
 	});
 
+	// keep:regression — POE-250 flake repro
 	it("does not receive the previous test's pending navView write", async () => {
 		await loadStoreWith({});
 		vi.useRealTimers();
