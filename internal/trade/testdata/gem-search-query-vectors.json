@@ -1,0 +1,603 @@
+{
+  "_notes": [
+    "One shared home for the GGG gem trade-search request body (POE-429 D08). Each case: gem + variant + mode -> full expected body.",
+    "mode 'normal' cases come from Go buildSearchQuery (internal/trade/client.go); mode 'dedication' cases come from Rust build_search_query_with_mode(..., true) (desktop/src-tauri/src/trade/query.rs).",
+    "Deliberate difference 1: TS baseGemTradeUrl omits the empty query.stats clause ([{\"type\":\"and\",\"filters\":[]}]) that Go and Rust emit, so TS compares against the expected body minus query.stats.",
+    "Deliberate difference 2: Go has no Dedication mode, so Go skips mode 'dedication'.",
+    "Deliberate difference 3: TS's Dedication link (cheapestCorruptedTradeUrl) is a colour search with no gem name, not this query, so TS skips mode 'dedication'.",
+    "Deliberate difference 4: TS baseGemTradeUrl is the 'Buy Base' link and searches the base gem by type, so TS skips normal-mode cases whose gem contains ' of '."
+  ],
+  "cases": [
+    {
+      "name": "base-1-0",
+      "gem": "Kinetic Blast",
+      "variant": "1/0",
+      "mode": "normal",
+      "query": {
+        "query": {
+          "type": "Kinetic Blast",
+          "stats": [
+            {
+              "type": "and",
+              "filters": []
+            }
+          ],
+          "filters": {
+            "type_filters": {
+              "filters": {
+                "category": {
+                  "option": "gem"
+                }
+              }
+            },
+            "misc_filters": {
+              "filters": {
+                "corrupted": {
+                  "option": "false"
+                }
+              }
+            },
+            "trade_filters": {
+              "filters": {
+                "sale_type": {
+                  "option": "priced"
+                },
+                "collapse": {
+                  "option": "true"
+                }
+              }
+            }
+          },
+          "status": {
+            "option": "securable"
+          }
+        },
+        "sort": {
+          "price": "asc"
+        }
+      }
+    },
+    {
+      "name": "base-1-20",
+      "gem": "Kinetic Blast",
+      "variant": "1/20",
+      "mode": "normal",
+      "query": {
+        "query": {
+          "type": "Kinetic Blast",
+          "stats": [
+            {
+              "type": "and",
+              "filters": []
+            }
+          ],
+          "filters": {
+            "type_filters": {
+              "filters": {
+                "category": {
+                  "option": "gem"
+                }
+              }
+            },
+            "misc_filters": {
+              "filters": {
+                "corrupted": {
+                  "option": "false"
+                },
+                "quality": {
+                  "min": 20,
+                  "max": 20
+                }
+              }
+            },
+            "trade_filters": {
+              "filters": {
+                "sale_type": {
+                  "option": "priced"
+                },
+                "collapse": {
+                  "option": "true"
+                }
+              }
+            }
+          },
+          "status": {
+            "option": "securable"
+          }
+        },
+        "sort": {
+          "price": "asc"
+        }
+      }
+    },
+    {
+      "name": "base-20-0",
+      "gem": "Kinetic Blast",
+      "variant": "20/0",
+      "mode": "normal",
+      "query": {
+        "query": {
+          "type": "Kinetic Blast",
+          "stats": [
+            {
+              "type": "and",
+              "filters": []
+            }
+          ],
+          "filters": {
+            "type_filters": {
+              "filters": {
+                "category": {
+                  "option": "gem"
+                }
+              }
+            },
+            "misc_filters": {
+              "filters": {
+                "corrupted": {
+                  "option": "false"
+                },
+                "gem_level": {
+                  "min": 20,
+                  "max": 20
+                }
+              }
+            },
+            "trade_filters": {
+              "filters": {
+                "sale_type": {
+                  "option": "priced"
+                },
+                "collapse": {
+                  "option": "true"
+                }
+              }
+            }
+          },
+          "status": {
+            "option": "securable"
+          }
+        },
+        "sort": {
+          "price": "asc"
+        }
+      }
+    },
+    {
+      "name": "base-20-20",
+      "gem": "Kinetic Blast",
+      "variant": "20/20",
+      "mode": "normal",
+      "query": {
+        "query": {
+          "type": "Kinetic Blast",
+          "stats": [
+            {
+              "type": "and",
+              "filters": []
+            }
+          ],
+          "filters": {
+            "type_filters": {
+              "filters": {
+                "category": {
+                  "option": "gem"
+                }
+              }
+            },
+            "misc_filters": {
+              "filters": {
+                "corrupted": {
+                  "option": "false"
+                },
+                "gem_level": {
+                  "min": 20,
+                  "max": 20
+                },
+                "quality": {
+                  "min": 20,
+                  "max": 20
+                }
+              }
+            },
+            "trade_filters": {
+              "filters": {
+                "sale_type": {
+                  "option": "priced"
+                },
+                "collapse": {
+                  "option": "true"
+                }
+              }
+            }
+          },
+          "status": {
+            "option": "securable"
+          }
+        },
+        "sort": {
+          "price": "asc"
+        }
+      }
+    },
+    {
+      "name": "transfigured-20-20",
+      "gem": "Kinetic Blast of Clustering",
+      "variant": "20/20",
+      "mode": "normal",
+      "query": {
+        "query": {
+          "term": "Kinetic Blast of Clustering",
+          "stats": [
+            {
+              "type": "and",
+              "filters": []
+            }
+          ],
+          "filters": {
+            "type_filters": {
+              "filters": {
+                "category": {
+                  "option": "gem"
+                }
+              }
+            },
+            "misc_filters": {
+              "filters": {
+                "corrupted": {
+                  "option": "false"
+                },
+                "gem_level": {
+                  "min": 20,
+                  "max": 20
+                },
+                "quality": {
+                  "min": 20,
+                  "max": 20
+                }
+              }
+            },
+            "trade_filters": {
+              "filters": {
+                "sale_type": {
+                  "option": "priced"
+                },
+                "collapse": {
+                  "option": "true"
+                }
+              }
+            }
+          },
+          "status": {
+            "option": "securable"
+          }
+        },
+        "sort": {
+          "price": "asc"
+        }
+      }
+    },
+    {
+      "name": "diacritic-20-20",
+      "gem": "Maelström Support",
+      "variant": "20/20",
+      "mode": "normal",
+      "query": {
+        "query": {
+          "type": "Maelstrom Support",
+          "stats": [
+            {
+              "type": "and",
+              "filters": []
+            }
+          ],
+          "filters": {
+            "type_filters": {
+              "filters": {
+                "category": {
+                  "option": "gem"
+                }
+              }
+            },
+            "misc_filters": {
+              "filters": {
+                "corrupted": {
+                  "option": "false"
+                },
+                "gem_level": {
+                  "min": 20,
+                  "max": 20
+                },
+                "quality": {
+                  "min": 20,
+                  "max": 20
+                }
+              }
+            },
+            "trade_filters": {
+              "filters": {
+                "sale_type": {
+                  "option": "priced"
+                },
+                "collapse": {
+                  "option": "true"
+                }
+              }
+            }
+          },
+          "status": {
+            "option": "securable"
+          }
+        },
+        "sort": {
+          "price": "asc"
+        }
+      }
+    },
+    {
+      "name": "dedication-base-21-20",
+      "gem": "Kinetic Blast",
+      "variant": "21/20",
+      "mode": "dedication",
+      "query": {
+        "query": {
+          "type": "Kinetic Blast",
+          "stats": [
+            {
+              "type": "and",
+              "filters": []
+            }
+          ],
+          "filters": {
+            "type_filters": {
+              "filters": {
+                "category": {
+                  "option": "gem.activegem"
+                }
+              }
+            },
+            "misc_filters": {
+              "filters": {
+                "gem_level": {
+                  "min": 21
+                },
+                "quality": {
+                  "min": 20,
+                  "max": 20
+                }
+              }
+            },
+            "trade_filters": {
+              "filters": {
+                "sale_type": {
+                  "option": "priced"
+                },
+                "collapse": {
+                  "option": "true"
+                }
+              }
+            }
+          },
+          "status": {
+            "option": "securable"
+          }
+        },
+        "sort": {
+          "price": "asc"
+        }
+      }
+    },
+    {
+      "name": "dedication-base-21-23",
+      "gem": "Kinetic Blast",
+      "variant": "21/23",
+      "mode": "dedication",
+      "query": {
+        "query": {
+          "type": "Kinetic Blast",
+          "stats": [
+            {
+              "type": "and",
+              "filters": []
+            }
+          ],
+          "filters": {
+            "type_filters": {
+              "filters": {
+                "category": {
+                  "option": "gem.activegem"
+                }
+              }
+            },
+            "misc_filters": {
+              "filters": {
+                "gem_level": {
+                  "min": 21
+                },
+                "quality": {
+                  "min": 23,
+                  "max": 23
+                }
+              }
+            },
+            "trade_filters": {
+              "filters": {
+                "sale_type": {
+                  "option": "priced"
+                },
+                "collapse": {
+                  "option": "true"
+                }
+              }
+            }
+          },
+          "status": {
+            "option": "securable"
+          }
+        },
+        "sort": {
+          "price": "asc"
+        }
+      }
+    },
+    {
+      "name": "dedication-transfigured-21-20",
+      "gem": "Kinetic Blast of Clustering",
+      "variant": "21/20",
+      "mode": "dedication",
+      "query": {
+        "query": {
+          "term": "Kinetic Blast of Clustering",
+          "stats": [
+            {
+              "type": "and",
+              "filters": []
+            }
+          ],
+          "filters": {
+            "type_filters": {
+              "filters": {
+                "category": {
+                  "option": "gem.activegem"
+                }
+              }
+            },
+            "misc_filters": {
+              "filters": {
+                "gem_level": {
+                  "min": 21
+                },
+                "quality": {
+                  "min": 20,
+                  "max": 20
+                }
+              }
+            },
+            "trade_filters": {
+              "filters": {
+                "sale_type": {
+                  "option": "priced"
+                },
+                "collapse": {
+                  "option": "true"
+                }
+              }
+            }
+          },
+          "status": {
+            "option": "securable"
+          }
+        },
+        "sort": {
+          "price": "asc"
+        }
+      }
+    },
+    {
+      "name": "dedication-transfigured-21-23",
+      "gem": "Kinetic Blast of Clustering",
+      "variant": "21/23",
+      "mode": "dedication",
+      "query": {
+        "query": {
+          "term": "Kinetic Blast of Clustering",
+          "stats": [
+            {
+              "type": "and",
+              "filters": []
+            }
+          ],
+          "filters": {
+            "type_filters": {
+              "filters": {
+                "category": {
+                  "option": "gem.activegem"
+                }
+              }
+            },
+            "misc_filters": {
+              "filters": {
+                "gem_level": {
+                  "min": 21
+                },
+                "quality": {
+                  "min": 23,
+                  "max": 23
+                }
+              }
+            },
+            "trade_filters": {
+              "filters": {
+                "sale_type": {
+                  "option": "priced"
+                },
+                "collapse": {
+                  "option": "true"
+                }
+              }
+            }
+          },
+          "status": {
+            "option": "securable"
+          }
+        },
+        "sort": {
+          "price": "asc"
+        }
+      }
+    },
+    {
+      "name": "dedication-db-form-21-20c",
+      "gem": "Kinetic Blast",
+      "variant": "21/20c",
+      "mode": "dedication",
+      "query": {
+        "query": {
+          "type": "Kinetic Blast",
+          "stats": [
+            {
+              "type": "and",
+              "filters": []
+            }
+          ],
+          "filters": {
+            "type_filters": {
+              "filters": {
+                "category": {
+                  "option": "gem.activegem"
+                }
+              }
+            },
+            "misc_filters": {
+              "filters": {
+                "gem_level": {
+                  "min": 21
+                },
+                "quality": {
+                  "min": 20,
+                  "max": 20
+                }
+              }
+            },
+            "trade_filters": {
+              "filters": {
+                "sale_type": {
+                  "option": "priced"
+                },
+                "collapse": {
+                  "option": "true"
+                }
+              }
+            }
+          },
+          "status": {
+            "option": "securable"
+          }
+        },
+        "sort": {
+          "price": "asc"
+        }
+      }
+    }
+  ]
+}

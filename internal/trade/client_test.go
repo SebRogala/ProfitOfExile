@@ -554,3 +554,49 @@ func TestKeepHappy_BuildSearchQueryFoldsGemNameVectors(t *testing.T) {
 		})
 	}
 }
+
+func TestKeepHappy_BuildSearchQueryMatchesSharedQueryVectors(t *testing.T) {
+	data, err := os.ReadFile("testdata/gem-search-query-vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Cases []struct {
+			Name    string          `json:"name"`
+			Gem     string          `json:"gem"`
+			Variant string          `json:"variant"`
+			Mode    string          `json:"mode"`
+			Query   json.RawMessage `json:"query"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	normal := 0
+	for _, c := range file.Cases {
+		if c.Mode != "normal" {
+			continue
+		}
+		normal++
+		t.Run(c.Name, func(t *testing.T) {
+			level, quality := parseVariant(c.Variant)
+			body, err := buildSearchQuery(c.Gem, level, quality)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got, want interface{}
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(c.Query, &want); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("query mismatch\n got: %s\nwant: %s", body, c.Query)
+			}
+		})
+	}
+	if normal == 0 {
+		t.Fatal("no normal-mode cases in gem-search-query-vectors.json")
+	}
+}
