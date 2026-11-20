@@ -138,7 +138,6 @@ afterEach(() => {
 	if (app) unmount(app);
 	app = null;
 	document.body.innerHTML = '';
-	localStorage.clear();
 	transport.calls.length = 0;
 	transport.responses.length = 0;
 });
