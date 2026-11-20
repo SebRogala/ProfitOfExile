@@ -1,45 +1,26 @@
-# Lane provisioning (POE-303)
+# Lane provisioning
 
-Status: current implementation; live guarded acceptance belongs to the Supervisor.
-The provisioning contract is Pipeforge's `lib/herdr-session-recipes.md`
-§ Worktree provisioning. This target is called by guarded creation, not directly
-as a substitute for that command:
+Create a lane from the main checkout or any worktree:
 
 ```sh
-make worktree-create LANE=laneexample BASE=dev
+make worktree-create name=laneexample            # base defaults to dev
+make worktree-create name=laneexample base=main
 ```
 
-Prerequisites: Node, Git, Docker Compose, the running shared local infrastructure,
-the existing local `profitofexile` PostgreSQL role, and built main containers
-`profitofexile_app`, `profitofexile_frontend`, `profitofexile_collector`, and
-`profitofexile_desktop` supplying their existing images. Export
-`WORKTREE_DB_PASSWORD` with that role's local password through the caller's
-environment. No primary environment file is copied. Pipeforge must be installed
-at `/root/repos/pipeforge/plugin/bin/pipeforge`; PATH lookup is not used.
-`PIPEFORGE_LANE_RESOURCE_HANDLE` must be supplied by guarded provisioning.
+`scripts/worktree-create.sh` checks that `name` matches `LANE_NAME_PATTERN`
+in `scripts/lib/lane-name.sh` and that `base` resolves to a commit, refuses an
+existing `.worktrees/<name>` path or `<name>` branch, runs
+`git worktree add -b <name> .worktrees/<name> <base>` from the main checkout,
+then runs `pipeforge init --cwd .worktrees/<name>`. Init runs the project's
+`laneSetup` argv, `["make","lane-setup"]`, inside the new lane (§ Lane
+isolation). When init fails the worktree is kept; rerun `make lane-setup` in
+the lane or `pipeforge init --cwd <lane>`.
 
-Passwords are percent-encoded once from their raw value, including dollar
-characters. Template values use literal callback replacement; any remaining
-dollars in Compose string values are doubled for Compose interpolation.
-The private integration password file uses the same percent-encoded value.
-
-Save these base `deliver` settings before guarded acceptance:
-
-```json
-{
-  "worktreeCreate": {
-    "target": "worktree-create",
-    "arguments": { "LANE": "name", "BASE": "base" },
-    "baseMode": "argument"
-  },
-  "worktreeResourceCommands": {
-    "postgres-database": [
-      "docker", "--host", "unix:///var/run/docker.sock",
-      "exec", "-i", "postgres", "psql", "-U", "postgres"
-    ]
-  }
-}
-```
+Prerequisites: Git, Bash, `pipeforge` on PATH, and lane-setup's own
+prerequisites: Docker Compose, the running shared local infrastructure
+(`postgres` container on the `infra` network), the local `profitofexile`
+PostgreSQL role, and main images `profitofexile-<service>:latest` built by
+`make up` in the main checkout. No primary environment file is copied.
 
 ## Lane isolation in an existing worktree (`make lane-setup`)
 
@@ -65,19 +46,14 @@ Each lane database carries the comment `lane-isolation:<checkout path>`.
 Setup reuses a database with its own comment and refuses one with any other
 comment; teardown drops only its own. The full integration runner recreates
 the integration DB without a comment; both commands accept that. A lane made
-by `make worktree-create` (64-hex allocation labels) is left unchanged by
+by the v1 guarded provisioner (64-hex allocation labels) is left unchanged by
 setup and refused by teardown. `WORKTREE_DB_PASSWORD` (default: the
 documented local `profitofexile`) must use URL-unreserved characters.
 Without Docker or PostgreSQL: `bash scripts/lane-isolation.test.sh`.
 
 ## Created resources
 
-The target creates `.worktrees/<lane>` on new branch `<lane>` from the resolved
-base commit. Lane names match `LANE_NAME_PATTERN` in `scripts/lib/lane-name.sh`. Existing paths, branches,
-databases, container names, or Compose members are refused; failed allocation
-is retained rather than retried or deleted.
-
-Two databases are created on the shared `postgres` container:
+`make lane-setup` creates two databases on the shared `postgres` container:
 `profitofexile_<lane>` for the app and collector, and
 `profitofexile_<lane>_integration` for integration tests. The separate dev DB
 keeps the app out of the integration runner's destructive reset. Neither main
@@ -87,37 +63,29 @@ The Compose project is `profitofexile-<lane>`; its four container names are
 `profitofexile_<lane>_{app,frontend,collector,desktop}`. API and frontend router
 and service names are `profitofexile-<lane>-api` and
 `profitofexile-<lane>-frontend`. The host is
-`https://profitofexile-<lane>.dev.localhost`. The shared infra README documents
-wildcard TLS for `*.dev.localhost`; this host uses that wildcard and differs
-from main's explicitly covered `profitofexile.localhost`. No certificate or
-shared infra configuration changes are needed by this target.
+`https://profitofexile-<lane>.dev.localhost`, covered by the shared infra's
+wildcard TLS for `*.dev.localhost`; no certificate or shared infra
+configuration changes are needed.
 
-The standalone Compose template publishes no host ports, allocates no named or
-anonymous volumes, and joins only the existing external `infra` network. Mutable
-caches are bind mounts under the lane's `.worktree/`, owned by Pipeforge's
-existing lane-boundary subtree. Existing images are reused without builds or
-pulls. Image-declared volumes and unexpected Compose inventory are refused.
-Database comments and container labels carry private allocation tokens.
-Each DB/container has an intent before creation and an observation afterward;
-the Compose group registers its exact observed members. The exact allocation
-set is completed last. Git and lane/scratch boundaries are already registered
-by the calling command.
+`docker-compose.lane.yml`, rendered from `docker-compose.worktree.yml`,
+publishes no host ports, allocates no named or anonymous volumes, and joins
+only the existing external `infra` network. Mutable caches are bind mounts
+under the lane's `.worktree/`. Existing images are reused without builds or
+pulls.
 
 The generated `.env` selects `docker-compose.lane.yml` and the lane project for
 ordinary Compose calls within the lane. The rendered service database URLs are
 fixed to the lane dev DB, so an exported main `DATABASE_URL` cannot override
 them. The generated Vite config selects the lane host and proxies to its exact
-app container name, avoiding main's shared `app` network alias. App migrations
-run at creation. App and frontend start; collector and desktop are created but
-stay stopped until used. Creation does not prove HTTP readiness, upstream data
-availability, or a populated market cache.
+app container name, avoiding main's shared `app` network alias. Setup migrates
+the lane dev DB in a one-off container and leaves no container running; `make
+up` in the lane starts app and frontend. Setup does not prove HTTP readiness,
+upstream data availability, or a populated market cache.
 
 Frontend dependencies install on every container start (`npm ci`, then
 `svelte-kit sync`) into the lane's `.worktree/frontend_node_modules` bind
-mount, never main's `frontend/node_modules`. Start-time install was chosen over
-install-at-create because creation would otherwise need an extra recorded
-container run, and `npm ci` keeps the cache exact to the lane's own lockfile
-after a branch changes it. The generated Vite config is
+mount, never main's `frontend/node_modules`, so the cache follows the lane's
+own lockfile after a branch changes it. The generated Vite config is
 `.worktree/vite.config.mts`: outside `frontend/` there is no `"type": "module"`
 package, so a `.ts` config there was bundled as CommonJS and failed to load the
 ESM-only `@sveltejs/kit/vite`.
@@ -126,10 +94,8 @@ ESM-only `@sveltejs/kit/vite`.
 
 The collector polls poe.ninja and GGG trade, sharing the machine's rate-limit
 budget, so it sits behind the Compose profile `collector` and is not started by
-creation or by a plain `docker compose up`; `node --test
-scripts/worktree-create.test.mjs` checks the rendered service list both ways.
-Start it only when the Operator explicitly allows that start. To start it, run
-from the lane root:
+lane setup, `make up` or a plain `docker compose up`. Start it only when the
+Operator explicitly allows that start. To start it, run from the lane root:
 
 ```sh
 docker compose --profile collector start collector
@@ -153,28 +119,6 @@ DB and launches its Go tests with that DB URL. Calling the integration scripts
 directly requires explicitly supplying the same environment; `.env` is read
 by Compose, not by Bash. Do not override these lane settings with main's values.
 
-When the requested base predates POE-303, creation replaces its recognized
-legacy integration guard and adds missing lane-local ignore entries. These
-appear as tracked lane diffs; the requested base commit is preserved. An unknown
-guard is refused. A base commit tracking either file as a symlink is refused,
-naming the path, before the worktree is created. In the lane, each file is
-opened with `O_NOFOLLOW` and its descriptor's `/proc/self/fd` link must equal
-the expected lane path before the first read, so a symlinked file or parent
-directory (including one swapped in after creation) is refused with a
-diagnostic naming the path. The regression test needs the Docker Compose CLI
-but creates or starts no containers and needs no database or lane:
-
-```sh
-node --test scripts/worktree-create.test.mjs
-```
-
-The full integration runner drops and recreates its database, changing the OID
-and removing its allocation comment. **After a full integration run, guarded
-removal needs owner-reviewed ownership reconciliation of that DB against fresh
-evidence.** A retained token does not authorize blindly re-tagging a changed
-database. The targeted runner uses the existing DB without recreating it.
-This target does not change the integration runner or bypass ownership checks.
-
 The guard regression test needs no Docker or database:
 
 ```sh
@@ -196,41 +140,18 @@ live event checks are not provisioned. Supplying shared Mercure credentials
 later requires accepting shared-topic cross-delivery; this target provides no
 topic isolation. Shared Mailpit is not configured by the lane template.
 
-## Diagnostics, dry run and removal
+## Removal
 
-After validating the handle and the observed scratch identity, every step is
-logged to `<registered lane-scratch locator>/worktree-create.log` (mode 0600),
-normally `/tmp/pipeforge-lanes-<uid>/<operationId>/worktree-create.log`.
-Child failures retain status, stdout and stderr, with handles, known tokens,
-passwords and database URLs redacted. Logs survive failed make calls even when
-the caller drops stderr. Invalid handles or changed scratch identities report
-to stderr only because no validated log location exists.
+From inside the lane, `make lane-teardown` removes the lane's containers,
+databases and generated env files (`.env`, `.env.local`,
+`docker-compose.lane.yml`, `.worktree/`). Then remove the checkout from the
+main checkout with `git worktree remove .worktrees/<name>` and delete its
+branch when no longer needed. No refresh target is provided.
 
-```sh
-LANE=lanexyz BASE=dev DRY_RUN=1 PIPEFORGE_LANE_RESOURCE_HANDLE=fake node scripts/worktree-create.mjs
-LANE=lanexyz BASE=dev DRY_RUN=1 PIPEFORGE_LANE_RESOURCE_HANDLE=fake WORKTREE_DB_PASSWORD='synthetic-$NAME' node scripts/worktree-create.mjs
-LANE=lanexyz BASE=dev DRY_RUN=1 PIPEFORGE_LANE_RESOURCE_HANDLE=fake WORKTREE_DB_PASSWORD='synthetic-$&' node scripts/worktree-create.mjs
-make -n worktree-create LANE=lanexyz BASE=dev
-```
+## v1-provisioned lanes
 
-Dry run resolves the base, checks lane/path/branch availability and template
-substitution, then prints the planned inventory. It verifies that both rendered
-service DB URLs contain no interpolation dollars and decode to the supplied
-password, and checks literal replacement and Compose dollar escaping separately.
-It reports only `passwordRenderingVerified: true`, never the password or URL.
-Without a supplied password it checks a dummy value. It ignores the fake handle
-and contacts neither Docker, PostgreSQL nor registration. It does not prove
-runtime setup, actual Compose parsing or diagnostics.
-
-Pipeforge's `herdr-worktree --action remove` owns removal: it verifies ownership
-and usage, drops registered PostgreSQL databases through the pinned argv above,
-removes registered Docker members, and completes the Compose group without
-broad `compose down`. Therefore no `worktree-teardown` target is provided.
-After all lane sessions finish, the Supervisor must stop the exact lane
-containers (for example `docker compose stop` from the lane with its generated
-Compose selection), then use guarded removal and its closure evidence. Active
-containers/DB clients and unresolved process scans refuse removal. Preserve
-all resources until that closure; do not manually drop databases or remove
-containers/volumes/worktrees. Recovery after partial setup requires review of
-the original record and fresh ownership evidence; create is not a resume tool.
-No refresh target is provided.
+A lane created by the v1 guarded provisioner carries 64-hex allocation labels
+in its `docker-compose.lane.yml`. `make lane-setup` leaves it unchanged and
+`make lane-teardown` refuses it. Its removal is manual and owner-reviewed:
+inspect its containers and databases against fresh evidence, stop and remove
+them by hand, then `git worktree remove` the checkout.
