@@ -72,7 +72,8 @@ logs must keep the user aware of what the data is used for.
   the saved frame, once; each probe then compares only its banked region, and a
   miss moves to the next reader. `app.log` gets one
   `Read key: <reader> probe — no match` line per miss and one
-  `Read key: <result> in N ms (grab, calibration, probes)` line per press.
+  `Read key: <result> in N ms (grab, calibration, probes)` line per captured
+  press.
   `read_hotkey::dispatch_press` is the home of this order and these lines.
 - **No match.** A successfully captured frame that matches no reader publishes
   exactly: “Nothing detected. If a mechanic is open, check Settings → OCR
