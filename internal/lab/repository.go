@@ -1058,44 +1058,18 @@ type SignalChange struct {
 // for a gem, matching the ring cache's seed window.
 // Queries gem_signals joined with gem_features for velocity and price data.
 func (r *Repository) SignalHistory(ctx context.Context, scope league.Scope, name, variant string, limit int) ([]SignalChange, error) {
-	if err := scope.Validate(); err != nil {
-		return nil, fmt.Errorf("lab repo: signal history: %w", err)
-	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT s.time, s.signal, s.window_signal, COALESCE(s.advanced_signal, ''),
-		       COALESCE(f.vel_long_price, 0), COALESCE(f.vel_long_listing, 0),
-		       COALESCE(f.chaos, 0), COALESCE(f.listings, 0)
-		FROM gem_signals s
-		LEFT JOIN gem_features f ON f.league = s.league AND f.time = s.time AND f.name = s.name AND f.variant = s.variant
-		  AND f.time > NOW() - make_interval(days => $5)
-		WHERE s.league = $1 AND s.name = $2 AND s.variant = $3
-		  AND s.time > NOW() - make_interval(days => $5)
-		ORDER BY s.time DESC
-		LIMIT $4`, scope.ID(), name, variant, limit, signalHistorySeedMaxDays)
+	key := SignalHistoryKey{Name: name, Variant: variant}
+	history, err := r.SignalHistoryBulk(ctx, scope, []SignalHistoryKey{key}, limit)
 	if err != nil {
-		return nil, fmt.Errorf("lab repo: signal history: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-
-	var changes []SignalChange
-	for rows.Next() {
-		var c SignalChange
-		if err := rows.Scan(&c.Time, &c.Signal, &c.Window, &c.Advanced,
-			&c.PriceVel, &c.ListVel, &c.Price, &c.Listings); err != nil {
-			return nil, fmt.Errorf("lab repo: scan signal history: %w", err)
-		}
-		changes = append(changes, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("lab repo: signal history iteration: %w", err)
-	}
-
-	return changes, nil
+	return history[key], nil
 }
 
-// SignalHistoryBulk returns SignalHistory for every key in one statement: each
-// key runs the single-series predicate, ordering and limit as a lateral
-// subquery. Keys without rows are absent from the result.
+// SignalHistoryBulk returns each key's newest limit signal snapshots within
+// signalHistorySeedMaxDays in one statement: each key runs the per-series
+// predicate, ordering and limit as a lateral subquery. Keys without rows are
+// absent from the result. SignalHistory is its one-key form.
 func (r *Repository) SignalHistoryBulk(ctx context.Context, scope league.Scope, keys []SignalHistoryKey, limit int) (map[SignalHistoryKey][]SignalChange, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, fmt.Errorf("lab repo: signal history bulk: %w", err)

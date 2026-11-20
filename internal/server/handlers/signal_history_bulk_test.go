@@ -24,10 +24,20 @@ type recordingHistorySource struct {
 	limit int
 }
 
+// SignalHistoryBulk serves each key a deep series priced by its name and
+// variant, cut to the limit as the repository does.
 func (s *recordingHistorySource) SignalHistoryBulk(_ context.Context, _ league.Scope, keys []lab.SignalHistoryKey, limit int) (map[lab.SignalHistoryKey][]lab.SignalChange, error) {
 	s.calls = append(s.calls, keys)
 	s.limit = limit
-	return nil, nil
+	out := make(map[lab.SignalHistoryKey][]lab.SignalChange, len(keys))
+	for _, k := range keys {
+		out[k] = sourceSeries(k)[:limit]
+	}
+	return out, nil
+}
+
+func sourceSeries(k lab.SignalHistoryKey) []lab.SignalChange {
+	return historyRing(25, float64(len(k.Name)*100+len(k.Variant)))
 }
 
 func historyRing(n int, price float64) []lab.SignalChange {
@@ -86,7 +96,9 @@ func serveBulkHistory(t *testing.T, h http.HandlerFunc, target string) (int, []b
 
 // TestKeepCriticalSignalHistoryBulkAdmission: a malformed key, a missing key
 // part, no key or more than twelve keys rejects the whole request before any
-// read, as does a limit the single route rejects.
+// read, as does a limit the single route rejects. Admitting them would let one
+// public request put an unbounded key set on the shared 15-backend pool, or
+// silently answer a key the caller never meant with another gem's history.
 func TestKeepCriticalSignalHistoryBulkAdmission(t *testing.T) {
 	thirteen := make([]string, 13)
 	for i := range thirteen {
@@ -124,29 +136,36 @@ func TestKeepCriticalSignalHistoryBulkAdmission(t *testing.T) {
 	})
 }
 
-// TestKeepHappySignalHistoryBulkLimit: the bulk route applies the single
-// route's limit default, clamp and normalized variant to every key, in
-// request order.
+// TestKeepHappySignalHistoryBulkLimit: the bulk route serves every key at
+// the single route's limit default and clamp, under its normalized variant,
+// in request order.
 func TestKeepHappySignalHistoryBulkLimit(t *testing.T) {
+	keys := []string{"Spark|20/0", "Arc|1/20c"}
 	for name, tc := range map[string]struct {
 		extra string
 		want  int
 	}{"default": {"", 4}, "explicit": {"limit=7", 7}, "clamped": {"limit=99", 20}} {
-		t.Run(name, func(t *testing.T) {
-			src := &recordingHistorySource{}
-			_, data := serveBulkHistory(t, SignalHistoryBulk(src, lab.NewCache(historyScope), historyScope), bulkHistoryURL([]string{"Spark|20/0", "Arc|1/20c"}, tc.extra))
-			if src.limit != tc.want {
-				t.Errorf("read limit %d, want %d", src.limit, tc.want)
-			}
-			wantKeys := []lab.SignalHistoryKey{{Name: "Spark", Variant: "20"}, {Name: "Arc", Variant: "1/20c"}}
-			if len(src.calls) != 1 || !reflect.DeepEqual(src.calls[0], wantKeys) {
-				t.Errorf("read keys %v, want %v", src.calls, wantKeys)
-			}
-			if len(data) != 2 || data[0].Name != "Spark" || data[1].Name != "Arc" {
-				t.Errorf("entries %+v, want Spark then Arc", data)
+		t.Run(name+" depth", func(t *testing.T) {
+			_, data := serveBulkHistory(t, SignalHistoryBulk(&recordingHistorySource{}, lab.NewCache(historyScope), historyScope), bulkHistoryURL(keys, tc.extra))
+			for _, e := range data {
+				if want := sourceSeries(lab.SignalHistoryKey{Name: e.Name, Variant: e.Variant})[:tc.want]; !reflect.DeepEqual(e.History, want) || e.Count != tc.want {
+					t.Errorf("%s entry = %d rows (count %d), want its %d newest", e.Name, len(e.History), e.Count, tc.want)
+				}
 			}
 		})
 	}
+	t.Run("normalized variants", func(t *testing.T) {
+		_, data := serveBulkHistory(t, SignalHistoryBulk(&recordingHistorySource{}, lab.NewCache(historyScope), historyScope), bulkHistoryURL(keys, ""))
+		if len(data) != 2 || data[0].Variant != "20" || data[1].Variant != "1/20c" {
+			t.Errorf("entries %+v, want variants 20 and 1/20c", data)
+		}
+	})
+	t.Run("request order", func(t *testing.T) {
+		_, data := serveBulkHistory(t, SignalHistoryBulk(&recordingHistorySource{}, lab.NewCache(historyScope), historyScope), bulkHistoryURL([]string{"Arc|1/20c", "Spark|20/0"}, ""))
+		if len(data) != 2 || data[0].Name != "Arc" || data[1].Name != "Spark" {
+			t.Errorf("entries %+v, want Arc then Spark", data)
+		}
+	})
 }
 
 // TestKeepHappySignalHistoryBulkMatchesSingle: each bulk entry is the single
@@ -190,12 +209,16 @@ func TestKeepHappySignalHistoryBulkEntryError(t *testing.T) {
 	if code != http.StatusOK || len(data) != 3 {
 		t.Fatalf("status %d with %d entries, want 200 with 3", code, len(data))
 	}
-	if data[1].Error == "" || data[1].History != nil {
-		t.Errorf("broken entry = %+v, want an error and no history", data[1])
-	}
-	if !reflect.DeepEqual(data[0].History, historyRing(3, 10)) || !reflect.DeepEqual(data[2].History, historyRing(2, 40)) {
-		t.Errorf("siblings = %+v / %+v, want their rings", data[0], data[2])
-	}
+	t.Run("broken entry carries an error", func(t *testing.T) {
+		if data[1].Error == "" || data[1].History != nil {
+			t.Errorf("broken entry = %+v, want an error and no history", data[1])
+		}
+	})
+	t.Run("siblings keep their history", func(t *testing.T) {
+		if !reflect.DeepEqual(data[0].History, historyRing(3, 10)) || !reflect.DeepEqual(data[2].History, historyRing(2, 40)) {
+			t.Errorf("siblings = %+v / %+v, want their rings", data[0], data[2])
+		}
+	})
 }
 
 // TestKeepHappySignalHistoryLegacyRoute: the single-key route keeps its
@@ -214,11 +237,16 @@ func TestKeepHappySignalHistoryLegacyRoute(t *testing.T) {
 			t.Errorf("%s: count %d, %d rows (err %v), want %d", target, body.Count, len(body.History), err, want)
 		}
 	}
-	for _, target := range []string{"variant=20/20", "name=Spark", "name=Spark&variant=20/20&limit=0"} {
+	for target, wantErr := range map[string]string{
+		"variant=20/20":                    "name and variant are required",
+		"name=Spark":                       "name and variant are required",
+		"name=Spark&variant=20/20&limit=0": "limit must be a positive integer (max 20)",
+	} {
 		rec := httptest.NewRecorder()
 		SignalHistory(nil, cache, historyScope)(rec, httptest.NewRequest(http.MethodGet, "/api/analysis/history?"+target, nil))
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("%s: status %d, want 400", target, rec.Code)
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); rec.Code != http.StatusBadRequest || err != nil || body["error"] != wantErr {
+			t.Errorf("%s: status %d, body %s; want 400 with error %q", target, rec.Code, rec.Body.String(), wantErr)
 		}
 	}
 }

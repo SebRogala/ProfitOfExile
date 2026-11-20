@@ -90,16 +90,35 @@ func signalHistoryBulkFixture(t *testing.T, pool *pgxpool.Pool, scope league.Sco
 	return keys
 }
 
-// referenceSignalHistory is the single route's read the bulk read replaces:
-// one SignalHistory query per key, keys without rows absent.
-func referenceSignalHistory(t *testing.T, repo *Repository, scope league.Scope, keys []SignalHistoryKey, limit int) map[SignalHistoryKey][]SignalChange {
+// referenceSignalHistory is the per-key read the bulk read replaced: the
+// single route's original query, run once per key, keys without rows absent.
+func referenceSignalHistory(t *testing.T, pool *pgxpool.Pool, scope league.Scope, keys []SignalHistoryKey, limit int) map[SignalHistoryKey][]SignalChange {
 	t.Helper()
 	out := make(map[SignalHistoryKey][]SignalChange)
 	for _, k := range keys {
-		changes, err := repo.SignalHistory(context.Background(), scope, k.Name, k.Variant, limit)
+		rows, err := pool.Query(context.Background(), `
+			SELECT s.time, s.signal, s.window_signal, COALESCE(s.advanced_signal, ''),
+			       COALESCE(f.vel_long_price, 0), COALESCE(f.vel_long_listing, 0),
+			       COALESCE(f.chaos, 0), COALESCE(f.listings, 0)
+			FROM gem_signals s
+			LEFT JOIN gem_features f ON f.league = s.league AND f.time = s.time AND f.name = s.name AND f.variant = s.variant
+			  AND f.time > NOW() - make_interval(days => $5)
+			WHERE s.league = $1 AND s.name = $2 AND s.variant = $3
+			  AND s.time > NOW() - make_interval(days => $5)
+			ORDER BY s.time DESC
+			LIMIT $4`, scope.ID(), k.Name, k.Variant, limit, signalHistorySeedMaxDays)
 		if err != nil {
-			t.Fatalf("reference SignalHistory %v: %v", k, err)
+			t.Fatalf("reference history %v: %v", k, err)
 		}
+		var changes []SignalChange
+		for rows.Next() {
+			var c SignalChange
+			if err := rows.Scan(&c.Time, &c.Signal, &c.Window, &c.Advanced, &c.PriceVel, &c.ListVel, &c.Price, &c.Listings); err != nil {
+				t.Fatalf("reference scan %v: %v", k, err)
+			}
+			changes = append(changes, c)
+		}
+		rows.Close()
 		if len(changes) > 0 {
 			out[k] = changes
 		}
@@ -118,7 +137,7 @@ func TestKeepHappySignalHistoryBulk(t *testing.T) {
 	counted, counter := countingRepository(t, pool)
 
 	for _, limit := range []int{1, 4, 20} {
-		want := referenceSignalHistory(t, plain, scope, keys, limit)
+		want := referenceSignalHistory(t, pool, scope, keys, limit)
 		counter.reset()
 		got, err := LoadSignalHistoryBulk(context.Background(), counted, NewCache(scope), scope, keys, limit)
 		statements := counter.reset()
@@ -137,14 +156,18 @@ func TestKeepHappySignalHistoryBulk(t *testing.T) {
 		})
 	}
 
-	want := referenceSignalHistory(t, plain, scope, keys, 4)
-	t.Run("fixture spans clamp, window and variants", func(t *testing.T) {
-		if n := len(referenceSignalHistory(t, plain, scope, keys[:1], 20)[keys[0]]); n != 20 {
+	want := referenceSignalHistory(t, pool, scope, keys, 4)
+	t.Run("deep series is clamped to the limit", func(t *testing.T) {
+		if n := len(referenceSignalHistory(t, pool, scope, keys[:1], 20)[keys[0]]); n != 20 {
 			t.Errorf("deep series serves %d rows at limit 20, want 20", n)
 		}
+	})
+	t.Run("rows past the 14-day window are dropped", func(t *testing.T) {
 		if n := len(want[SignalHistoryKey{"History Aged", "20/20"}]); n != 1 {
 			t.Errorf("aged series serves %d rows, want only its in-window row", n)
 		}
+	})
+	t.Run("a key without rows is absent", func(t *testing.T) {
 		if _, ok := want[SignalHistoryKey{"History Missing", "20/20"}]; ok {
 			t.Error("a key without rows has history")
 		}
@@ -193,31 +216,34 @@ func TestKeepHappySignalHistoryBulk(t *testing.T) {
 		}
 	})
 
-	t.Run("warm cache runs no statement and keeps ring depth", func(t *testing.T) {
-		ring := make([]SignalChange, 6)
-		for i := range ring {
-			ring[i] = SignalChange{Time: time.Unix(int64(1000-i), 0).UTC(), Signal: "RISING", Price: float64(i)}
+	ring := make([]SignalChange, 6)
+	for i := range ring {
+		ring[i] = SignalChange{Time: time.Unix(int64(1000-i), 0).UTC(), Signal: "RISING", Price: float64(i)}
+	}
+	warm := NewCache(scope)
+	warm.For(scope).SetSignalHistoryByName(map[string]map[string][]SignalChange{"History Gem 00": {"20/20": ring}})
+	counter.reset()
+	warmGot, err := LoadSignalHistoryBulk(context.Background(), counted, warm, scope, keys, 4)
+	warmStatements := counter.reset()
+	if err != nil {
+		t.Fatalf("warm LoadSignalHistoryBulk: %v", err)
+	}
+	t.Run("warm cache runs no statement", func(t *testing.T) {
+		if warmStatements != 0 {
+			t.Errorf("warm request ran %d statements, want 0", warmStatements)
 		}
-		warm := NewCache(scope)
-		warm.For(scope).SetSignalHistoryByName(map[string]map[string][]SignalChange{"History Gem 00": {"20/20": ring}})
-		counter.reset()
-		got, err := LoadSignalHistoryBulk(context.Background(), counted, warm, scope, keys, 4)
-		if err != nil {
-			t.Fatalf("LoadSignalHistoryBulk: %v", err)
-		}
-		if n := counter.reset(); n != 0 {
-			t.Errorf("warm request ran %d statements, want 0", n)
-		}
+	})
+	t.Run("warm cache serves the ring truncated to the limit", func(t *testing.T) {
 		wantWarm := map[SignalHistoryKey][]SignalChange{{"History Gem 00", "20/20"}: ring[:4]}
-		if !reflect.DeepEqual(got, wantWarm) {
-			t.Errorf("warm history = %v, want the ring truncated to the limit %v", got, wantWarm)
+		if !reflect.DeepEqual(warmGot, wantWarm) {
+			t.Errorf("warm history = %v, want %v", warmGot, wantWarm)
 		}
 	})
 }
 
 // TestKeepCriticalSignalHistoryBulkWindow: nothing outlives a flight, so a
-// later cold request reads again and drops a row that has aged past the
-// 14-day window meanwhile.
+// later cold request drops rows older than 14 days, preventing expired
+// history from silently appearing as current comparator history.
 func TestKeepCriticalSignalHistoryBulkWindow(t *testing.T) {
 	pool := labIntegrationPool(t)
 	scope := collectiveLeague(t, pool, "POE410-HistoryWindow")

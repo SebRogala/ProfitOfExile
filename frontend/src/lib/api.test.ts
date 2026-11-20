@@ -241,13 +241,25 @@ describe('fetchCompare signal history (keep:happy)', () => {
 		return Promise.all(ROWS.map((r) => fetchSignalHistory(r.transfiguredName, r.variant)));
 	}
 
+	const bulkUrl = (fetchMock: ReturnType<typeof vi.fn>) =>
+		fetchMock.mock.calls.map((c) => new URL(String(c[0]))).find((u) => u.pathname === '/api/analysis/history/bulk');
+
 	it('a three-card compare issues one compare and one bulk history request', async () => {
 		const fetchMock = serve();
 		await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
 		expect(paths(fetchMock)).toEqual(['/api/analysis/compare', '/api/analysis/history/bulk']);
-		const bulk = new URL(String(fetchMock.mock.calls[1][0]));
-		expect(bulk.searchParams.getAll('key')).toEqual(['Arc of Surging|20/20', 'Spark of Nova|20/20', 'Cold Snap of Power|1/20']);
-		expect(bulk.searchParams.get('limit')).toBe('4');
+	});
+
+	it('sends each card as a name|variant key in card order', async () => {
+		const fetchMock = serve();
+		await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
+		expect(bulkUrl(fetchMock)?.searchParams.getAll('key')).toEqual(['Arc of Surging|20/20', 'Spark of Nova|20/20', 'Cold Snap of Power|1/20']);
+	});
+
+	it("asks for the single route's default depth of 4", async () => {
+		const fetchMock = serve();
+		await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
+		expect(bulkUrl(fetchMock)?.searchParams.get('limit')).toBe('4');
 	});
 
 	it('enriches every card with the history the single route derives', async () => {
@@ -266,16 +278,37 @@ describe('fetchCompare signal history (keep:happy)', () => {
 		expect(bulks.map((u) => u.searchParams.getAll('key').length)).toEqual([12, 2]);
 	});
 
-	it('a failed bulk request maps its cards to [] and keeps the compare rows', async () => {
-		serve(ROWS, () => ({ ok: false, status: 500, statusText: 'Internal Server Error', json: async () => ({}) }));
+	const failBulk = () => serve(ROWS, () => ({ ok: false, status: 500, statusText: 'Internal Server Error', json: async () => ({}) }));
+
+	it('a failed bulk request keeps the compare rows', async () => {
+		failBulk();
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const got = await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
 		warn.mockRestore();
-		expect(got.map((g) => [g.name, g.roi, g.signalHistory])).toEqual([
-			['Arc of Surging', 10, []],
-			['Spark of Nova', 20, []],
-			['Cold Snap of Power', 30, []],
+		expect(got.map((g) => [g.name, g.roi])).toEqual([
+			['Arc of Surging', 10],
+			['Spark of Nova', 20],
+			['Cold Snap of Power', 30],
 		]);
+	});
+
+	it('a failed bulk request maps its cards to []', async () => {
+		failBulk();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const got = await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
+		warn.mockRestore();
+		expect(got.map((g) => g.signalHistory)).toEqual([[], [], []]);
+	});
+
+	it('a failed bulk request warns with its cards and the failure', async () => {
+		failBulk();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
+		const calls = warn.mock.calls;
+		warn.mockRestore();
+		expect(calls).toHaveLength(1);
+		expect(calls[0][0]).toBe('[Comparator] Signal history failed for Arc of Surging, Spark of Nova, Cold Snap of Power:');
+		expect(String(calls[0][1])).toContain('500');
 	});
 
 	it('an error entry maps only its own card to []', async () => {
@@ -288,7 +321,9 @@ describe('fetchCompare signal history (keep:happy)', () => {
 		);
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const got = await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
+		const calls = warn.mock.calls;
 		warn.mockRestore();
 		expect(got.map((g) => g.signalHistory)).toEqual([[], want[1], want[2]]);
+		expect(calls).toEqual([['[Comparator] Signal history failed for Arc of Surging:', 'encode failed']]);
 	});
 });
