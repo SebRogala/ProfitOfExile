@@ -23,6 +23,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"profitofexile/internal/db"
+	"profitofexile/internal/gemrule"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
@@ -188,7 +189,7 @@ func loadHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, scope league.Scope
 		 FROM gem_snapshots
 		 WHERE league = $1 AND is_transfigured = true AND NOT is_corrupted AND chaos > 5
 		   AND time >= $2 AND time <= $3
-		   AND name NOT LIKE '%Trarthus%'
+		   AND `+gemrule.SQLNotHeistOnly+`
 		 ORDER BY name, variant, time
 		 LIMIT 500000`, scope.ID(), cutoff, upTo)
 	if err != nil {
@@ -228,7 +229,7 @@ func loadBaseHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, scope league.S
 		 FROM gem_snapshots
 		 WHERE league = $1 AND NOT is_transfigured AND NOT is_corrupted AND chaos > 0
 		   AND time >= $2 AND time <= $3
-		   AND name NOT LIKE '%Trarthus%'
+		   AND `+gemrule.SQLNotHeistOnly+`
 		 ORDER BY name, time
 		 LIMIT 500000`, scope.ID(), cutoff, upTo)
 	if err != nil {
