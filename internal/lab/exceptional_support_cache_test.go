@@ -62,27 +62,34 @@ func TestKeepCriticalExceptionalSupportsGeneration(t *testing.T) {
 	scope := league.Historical("Mirage")
 	publishGemSnapshot := func(c *Cache) { c.Rankings().Publish(RankingInputGemSnapshots) }
 
-	t.Run("an accepted gem snapshot invalidates and missing support never carries forward", func(t *testing.T) {
+	// invalidated warms a cache at an hour-1 snapshot holding Enhance and
+	// Enlighten, swaps the source to an hour-2 snapshot without Enlighten and
+	// accepts a gem snapshot.
+	invalidated := func(t *testing.T) (*ExceptionalSupportCache, *snapshotSource) {
 		src := &snapshotSource{snap: snapshotAt(1, map[string]float64{"Enhance Support": 9, "Enlighten Support": 185})}
 		labCache := NewCache(scope)
 		c := NewExceptionalSupportCache(src.read, labCache)
 		pollSnapshot(t, c, scope)
-
 		src.set(snapshotAt(2, map[string]float64{"Enhance Support": 11}))
-		if got := pollSnapshot(t, c, scope); !got.AsOf.Equal(snapshotAt(1, nil).AsOf) {
-			t.Fatalf("before the event asOf = %v, want the cached hour-1 snapshot", got.AsOf)
-		}
 		publishGemSnapshot(labCache)
+		return c, src
+	}
+
+	t.Run("an accepted gem snapshot serves the new snapshot", func(t *testing.T) {
+		c, src := invalidated(t)
+
 		got := pollSnapshot(t, c, scope)
 
-		if !got.AsOf.Equal(snapshotAt(2, nil).AsOf) || got.Chaos["Enhance Support"] != 11 {
-			t.Errorf("after the event = %+v, want the hour-2 snapshot", got)
+		if !got.AsOf.Equal(snapshotAt(2, nil).AsOf) || got.Chaos["Enhance Support"] != 11 || src.readCount() != 2 {
+			t.Errorf("after the event = %+v after %d reads, want the hour-2 snapshot after 2", got, src.readCount())
 		}
-		if chaos, ok := got.Chaos["Enlighten Support"]; ok {
+	})
+
+	t.Run("a support missing from the new snapshot never carries forward", func(t *testing.T) {
+		c, _ := invalidated(t)
+
+		if chaos, ok := pollSnapshot(t, c, scope).Chaos["Enlighten Support"]; ok {
 			t.Errorf("Enlighten = %v carried forward, want no price", chaos)
-		}
-		if n := src.readCount(); n != 2 {
-			t.Errorf("reads = %d, want 2", n)
 		}
 	})
 
@@ -114,16 +121,22 @@ func TestKeepCriticalExceptionalSupportsGeneration(t *testing.T) {
 		}
 	})
 
-	t.Run("an empty league stays warm until invalidation", func(t *testing.T) {
+	t.Run("an empty league stays warm", func(t *testing.T) {
+		src := &snapshotSource{}
+		c := NewExceptionalSupportCache(src.read, NewCache(scope))
+		pollSnapshot(t, c, scope)
+		pollSnapshot(t, c, scope)
+
+		if n := src.readCount(); n != 1 {
+			t.Errorf("reads = %d, want 1", n)
+		}
+	})
+
+	t.Run("an empty league refills on invalidation", func(t *testing.T) {
 		src := &snapshotSource{}
 		labCache := NewCache(scope)
 		c := NewExceptionalSupportCache(src.read, labCache)
 		pollSnapshot(t, c, scope)
-		pollSnapshot(t, c, scope)
-		if n := src.readCount(); n != 1 {
-			t.Fatalf("reads before the event = %d, want 1", n)
-		}
-
 		src.set(snapshotAt(3, map[string]float64{"Empower Support": 43.2}))
 		publishGemSnapshot(labCache)
 
@@ -132,20 +145,65 @@ func TestKeepCriticalExceptionalSupportsGeneration(t *testing.T) {
 		}
 	})
 
-	t.Run("a suppressed event keeps the prior snapshot and the next event heals it", func(t *testing.T) {
+	t.Run("without an accepted event the prior snapshot stays", func(t *testing.T) {
+		src := &snapshotSource{snap: snapshotAt(1, map[string]float64{"Enhance Support": 9})}
+		c := NewExceptionalSupportCache(src.read, NewCache(scope))
+		pollSnapshot(t, c, scope)
+		src.set(snapshotAt(2, map[string]float64{"Enhance Support": 11}))
+
+		if got := pollSnapshot(t, c, scope); !got.AsOf.Equal(snapshotAt(1, nil).AsOf) {
+			t.Errorf("without an event asOf = %v, want the prior hour-1 snapshot", got.AsOf)
+		}
+	})
+
+	t.Run("the next accepted event after a suppressed one heals the snapshot", func(t *testing.T) {
 		src := &snapshotSource{snap: snapshotAt(1, map[string]float64{"Enhance Support": 9})}
 		labCache := NewCache(scope)
 		c := NewExceptionalSupportCache(src.read, labCache)
 		pollSnapshot(t, c, scope)
-
 		src.set(snapshotAt(2, map[string]float64{"Enhance Support": 11}))
-		if got := pollSnapshot(t, c, scope); !got.AsOf.Equal(snapshotAt(1, nil).AsOf) {
-			t.Fatalf("without an event asOf = %v, want the prior hour-1 snapshot", got.AsOf)
-		}
+		pollSnapshot(t, c, scope)
 		publishGemSnapshot(labCache)
 
 		if got := pollSnapshot(t, c, scope); !got.AsOf.Equal(snapshotAt(2, nil).AsOf) {
 			t.Errorf("after the next event asOf = %v, want the hour-2 snapshot", got.AsOf)
+		}
+	})
+
+	t.Run("the last waiter leaving cancels the fill and releases the publication barrier", func(t *testing.T) {
+		src := &snapshotSource{started: make(chan struct{}, 1)}
+		labCache := NewCache(scope)
+		cancelled := make(chan struct{})
+		c := NewExceptionalSupportCache(func(ctx context.Context, s league.Scope) (ExceptionalSupportSnapshot, error) {
+			src.read(ctx, s)
+			<-ctx.Done()
+			close(cancelled)
+			return ExceptionalSupportSnapshot{}, ctx.Err()
+		}, labCache)
+		ctx, cancel := context.WithCancel(context.Background())
+		polled := make(chan error)
+		go func() {
+			_, err := c.ExceptionalSupportPrices(ctx, scope)
+			polled <- err
+		}()
+		<-src.started
+		cancel()
+		<-polled
+
+		published := make(chan struct{})
+		go func() {
+			publishGemSnapshot(labCache)
+			close(published)
+		}()
+		select {
+		case <-cancelled:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the abandoned fill was not cancelled")
+		}
+		select {
+		case <-published:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Publish stayed blocked behind the abandoned fill")
 		}
 	})
 }

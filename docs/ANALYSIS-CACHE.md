@@ -358,7 +358,8 @@ latest `gem_snapshots` time, then the three level-1 uncorrupted prices) through
 `lab.ExceptionalSupportCache` (`internal/lab/exceptional_support_cache.go`).
 The snapshot is retained until the gem-snapshot revision of the ranked answers
 advances, which `cmd/server/recompute_runtime.go` publishes on each accepted
-`ninja_gems` event. Overlapping cold polls share one read; warm polls send no
+`ninja_gems` event. Overlapping cold polls share one read, which the last
+waiter leaving cancels (releasing the barrier, retaining nothing); warm polls send no
 SQL; a league without a snapshot is retained too. A fill holds the ranking
 publication barrier across its SQL and is retained only when no gem snapshot
 was accepted since it began. Failed reads are not retained. The divine rate is

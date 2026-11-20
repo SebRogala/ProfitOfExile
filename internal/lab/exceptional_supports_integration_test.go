@@ -178,13 +178,15 @@ func TestKeepHappyExceptionalSupportsSharedSnapshot(t *testing.T) {
 				t.Fatalf("uncached poll sent %d statements, want %d", n, tc.coldSQL)
 			}
 
-			single := NewExceptionalSupportCache(repo.ExceptionalSupportPrices, NewCache(scope))
-			if _, err := single.ExceptionalSupportPrices(ctx, scope); err != nil {
-				t.Fatalf("cold poll: %v", err)
-			}
-			if n := counter.reset(); n != tc.coldSQL {
-				t.Errorf("one cold poll sent %d statements, want %d", n, tc.coldSQL)
-			}
+			t.Run("one cold poll", func(t *testing.T) {
+				single := NewExceptionalSupportCache(repo.ExceptionalSupportPrices, NewCache(scope))
+				if _, err := single.ExceptionalSupportPrices(ctx, scope); err != nil {
+					t.Fatalf("cold poll: %v", err)
+				}
+				if n := counter.reset(); n != tc.coldSQL {
+					t.Errorf("one cold poll sent %d statements, want %d", n, tc.coldSQL)
+				}
+			})
 
 			burst := NewExceptionalSupportCache(repo.ExceptionalSupportPrices, NewCache(scope))
 			const polls = 300
@@ -202,40 +204,52 @@ func TestKeepHappyExceptionalSupportsSharedSnapshot(t *testing.T) {
 			}
 			close(start)
 			wg.Wait()
-			if n := counter.reset(); n != tc.coldSQL {
-				t.Errorf("%d overlapping cold polls sent %d statements, want %d", polls, n, tc.coldSQL)
-			}
-			for i := range polls {
-				if errs[i] != nil || !reflect.DeepEqual(got[i], want) {
-					t.Fatalf("poll %d = (%+v, %v), want %+v", i, got[i], errs[i], want)
-				}
-			}
+			burstSQL := counter.reset()
 
-			for range 5 {
-				if _, err := burst.ExceptionalSupportPrices(ctx, scope); err != nil {
-					t.Fatalf("warm poll: %v", err)
+			t.Run("overlapping cold polls share one read", func(t *testing.T) {
+				if burstSQL != tc.coldSQL {
+					t.Errorf("%d overlapping cold polls sent %d statements, want %d", polls, burstSQL, tc.coldSQL)
 				}
-			}
-			if n := counter.reset(); n != 0 {
-				t.Errorf("warm polls sent %d statements, want 0", n)
-			}
+			})
+			t.Run("every poll equals the uncached read", func(t *testing.T) {
+				for i := range polls {
+					if errs[i] != nil || !reflect.DeepEqual(got[i], want) {
+						t.Fatalf("poll %d = (%+v, %v), want %+v", i, got[i], errs[i], want)
+					}
+				}
+			})
+			t.Run("warm polls send no SQL", func(t *testing.T) {
+				for range 5 {
+					if _, err := burst.ExceptionalSupportPrices(ctx, scope); err != nil {
+						t.Fatalf("warm poll: %v", err)
+					}
+				}
+				if n := counter.reset(); n != 0 {
+					t.Errorf("warm polls sent %d statements, want 0", n)
+				}
+			})
 
-			if !got[0].AsOf.Equal(tc.wantAsOf) {
-				t.Errorf("asOf = %v, want %v", got[0].AsOf, tc.wantAsOf)
-			}
-			prices := got[0].Prices()
-			var names []string
-			for _, p := range prices {
-				names = append(names, p.Name)
-			}
-			if !reflect.DeepEqual(names, ExceptionalSupportNames[:]) {
-				t.Errorf("names = %v, want %v", names, ExceptionalSupportNames)
-			}
-			if tc.id == priced {
-				if prices[0].Chaos == nil || !valuesClose(*prices[0].Chaos, 9) || prices[1].Chaos != nil || prices[2].Chaos == nil || !valuesClose(*prices[2].Chaos, 43.2) {
-					t.Errorf("prices = %v %v %v, want Enhance 9, Enlighten null, Empower 43.2", prices[0].Chaos, prices[1].Chaos, prices[2].Chaos)
-				}
-			}
+			t.Run("the snapshot keeps the served shape", func(t *testing.T) {
+				checkExceptionalShape(t, got[0], tc.wantAsOf, tc.id == priced)
+			})
 		})
+	}
+}
+
+func checkExceptionalShape(t *testing.T, snap ExceptionalSupportSnapshot, wantAsOf time.Time, priced bool) {
+	t.Helper()
+	if !snap.AsOf.Equal(wantAsOf) {
+		t.Errorf("asOf = %v, want %v", snap.AsOf, wantAsOf)
+	}
+	prices := snap.Prices()
+	var names []string
+	for _, p := range prices {
+		names = append(names, p.Name)
+	}
+	if !reflect.DeepEqual(names, ExceptionalSupportNames[:]) {
+		t.Errorf("names = %v, want %v", names, ExceptionalSupportNames)
+	}
+	if priced && (prices[0].Chaos == nil || !valuesClose(*prices[0].Chaos, 9) || prices[1].Chaos != nil || prices[2].Chaos == nil || !valuesClose(*prices[2].Chaos, 43.2)) {
+		t.Errorf("prices = %v %v %v, want Enhance 9, Enlighten null, Empower 43.2", prices[0].Chaos, prices[1].Chaos, prices[2].Chaos)
 	}
 }
