@@ -1,0 +1,13 @@
+[
+  {"name": "eight sellers read as normal", "uniqueAccounts": 8, "cheapestAgeMinutes": 0, "chaosPrices": [10, 10, 10], "sellerConcentration": "NORMAL", "cheapestStaleness": "FRESH", "priceOutlier": false},
+  {"name": "seven sellers read as concentrated", "uniqueAccounts": 7, "cheapestAgeMinutes": 0, "chaosPrices": [10, 10, 10], "sellerConcentration": "CONCENTRATED", "cheapestStaleness": "FRESH", "priceOutlier": false},
+  {"name": "five sellers read as concentrated", "uniqueAccounts": 5, "cheapestAgeMinutes": 0, "chaosPrices": [10, 10, 10], "sellerConcentration": "CONCENTRATED", "cheapestStaleness": "FRESH", "priceOutlier": false},
+  {"name": "four sellers read as monopoly", "uniqueAccounts": 4, "cheapestAgeMinutes": 0, "chaosPrices": [10, 10, 10], "sellerConcentration": "MONOPOLY", "cheapestStaleness": "FRESH", "priceOutlier": false},
+  {"name": "cheapest 59 minutes old reads as fresh", "uniqueAccounts": 8, "cheapestAgeMinutes": 59, "chaosPrices": [10, 10, 10], "sellerConcentration": "NORMAL", "cheapestStaleness": "FRESH", "priceOutlier": false},
+  {"name": "cheapest 61 minutes old reads as aging", "uniqueAccounts": 8, "cheapestAgeMinutes": 61, "chaosPrices": [10, 10, 10], "sellerConcentration": "NORMAL", "cheapestStaleness": "AGING", "priceOutlier": false},
+  {"name": "cheapest 359 minutes old reads as aging", "uniqueAccounts": 8, "cheapestAgeMinutes": 359, "chaosPrices": [10, 10, 10], "sellerConcentration": "NORMAL", "cheapestStaleness": "AGING", "priceOutlier": false},
+  {"name": "cheapest 361 minutes old reads as stale", "uniqueAccounts": 8, "cheapestAgeMinutes": 361, "chaosPrices": [10, 10, 10], "sellerConcentration": "NORMAL", "cheapestStaleness": "STALE", "priceOutlier": false},
+  {"name": "cheapest at exactly half the median is not an outlier", "uniqueAccounts": 8, "cheapestAgeMinutes": 0, "chaosPrices": [5, 10, 10], "sellerConcentration": "NORMAL", "cheapestStaleness": "FRESH", "priceOutlier": false},
+  {"name": "cheapest just below half the median is an outlier", "uniqueAccounts": 8, "cheapestAgeMinutes": 0, "chaosPrices": [4.99, 10, 10], "sellerConcentration": "NORMAL", "cheapestStaleness": "FRESH", "priceOutlier": true},
+  {"name": "no listings read as normal, fresh and no outlier", "uniqueAccounts": 0, "cheapestAgeMinutes": 0, "chaosPrices": [], "sellerConcentration": "NORMAL", "cheapestStaleness": "FRESH", "priceOutlier": false}
+]

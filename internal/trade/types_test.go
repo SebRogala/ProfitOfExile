@@ -256,3 +256,48 @@ func TestUsableQuote_OtherCurrencyListingIsUnusable(t *testing.T) {
 		t.Fatalf("chaos = %v, want nil", *q.Chaos)
 	}
 }
+
+type tradeSignalVector struct {
+	Name                string    `json:"name"`
+	UniqueAccounts      int       `json:"uniqueAccounts"`
+	CheapestAgeMinutes  int       `json:"cheapestAgeMinutes"`
+	ChaosPrices         []float64 `json:"chaosPrices"`
+	SellerConcentration string    `json:"sellerConcentration"`
+	CheapestStaleness   string    `json:"cheapestStaleness"`
+	PriceOutlier        bool      `json:"priceOutlier"`
+}
+
+func TestKeepHappy_ComputeSignalsMatchesSharedSignalVectors(t *testing.T) {
+	data, err := os.ReadFile("testdata/trade-signal-vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors []tradeSignalVector
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	for _, vector := range vectors {
+		t.Run(vector.Name, func(t *testing.T) {
+			now := time.Now()
+			listings := make([]TradeListingDetail, len(vector.ChaosPrices))
+			for i, price := range vector.ChaosPrices {
+				listings[i] = TradeListingDetail{ChaosPrice: price, IndexedAt: now}
+			}
+			wantUnique := 0
+			if len(listings) > 0 {
+				listings[0].IndexedAt = now.Add(-time.Duration(vector.CheapestAgeMinutes) * time.Minute)
+				wantUnique = vector.UniqueAccounts
+			}
+			got := ComputeSignals(listings, vector.UniqueAccounts)
+			want := TradeSignals{
+				SellerConcentration: vector.SellerConcentration,
+				CheapestStaleness:   vector.CheapestStaleness,
+				PriceOutlier:        vector.PriceOutlier,
+				UniqueAccounts:      wantUnique,
+			}
+			if got != want {
+				t.Errorf("ComputeSignals = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
