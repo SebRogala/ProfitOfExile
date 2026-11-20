@@ -237,19 +237,26 @@ func TestKeepHappyExceptionalSupportsSharedSnapshot(t *testing.T) {
 }
 
 func checkExceptionalShape(t *testing.T, snap ExceptionalSupportSnapshot, wantAsOf time.Time, priced bool) {
-	t.Helper()
-	if !snap.AsOf.Equal(wantAsOf) {
-		t.Errorf("asOf = %v, want %v", snap.AsOf, wantAsOf)
-	}
 	prices := snap.Prices()
-	var names []string
-	for _, p := range prices {
-		names = append(names, p.Name)
-	}
-	if !reflect.DeepEqual(names, ExceptionalSupportNames[:]) {
-		t.Errorf("names = %v, want %v", names, ExceptionalSupportNames)
-	}
-	if priced && (prices[0].Chaos == nil || !valuesClose(*prices[0].Chaos, 9) || prices[1].Chaos != nil || prices[2].Chaos == nil || !valuesClose(*prices[2].Chaos, 43.2)) {
-		t.Errorf("prices = %v %v %v, want Enhance 9, Enlighten null, Empower 43.2", prices[0].Chaos, prices[1].Chaos, prices[2].Chaos)
+	t.Run("asOf is the latest snapshot time", func(t *testing.T) {
+		if !snap.AsOf.Equal(wantAsOf) {
+			t.Errorf("asOf = %v, want %v", snap.AsOf, wantAsOf)
+		}
+	})
+	t.Run("supports keep the fixed order", func(t *testing.T) {
+		var names []string
+		for _, p := range prices {
+			names = append(names, p.Name)
+		}
+		if !reflect.DeepEqual(names, ExceptionalSupportNames[:]) {
+			t.Errorf("names = %v, want %v", names, ExceptionalSupportNames)
+		}
+	})
+	if priced {
+		t.Run("prices are level-1 uncorrupted, null when unpriced", func(t *testing.T) {
+			if prices[0].Chaos == nil || !valuesClose(*prices[0].Chaos, 9) || prices[1].Chaos != nil || prices[2].Chaos == nil || !valuesClose(*prices[2].Chaos, 43.2) {
+				t.Errorf("prices = %v %v %v, want Enhance 9, Enlighten null, Empower 43.2", prices[0].Chaos, prices[1].Chaos, prices[2].Chaos)
+			}
+		})
 	}
 }

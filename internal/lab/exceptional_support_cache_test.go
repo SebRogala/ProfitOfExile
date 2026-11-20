@@ -75,13 +75,29 @@ func TestKeepCriticalExceptionalSupportsGeneration(t *testing.T) {
 		return c, src
 	}
 
-	t.Run("an accepted gem snapshot serves the new snapshot", func(t *testing.T) {
+	t.Run("an accepted gem snapshot serves the new snapshot time", func(t *testing.T) {
+		c, _ := invalidated(t)
+
+		if got := pollSnapshot(t, c, scope); !got.AsOf.Equal(snapshotAt(2, nil).AsOf) {
+			t.Errorf("asOf = %v, want hour 2", got.AsOf)
+		}
+	})
+
+	t.Run("an accepted gem snapshot serves the new price", func(t *testing.T) {
+		c, _ := invalidated(t)
+
+		if got := pollSnapshot(t, c, scope).Chaos["Enhance Support"]; got != 11 {
+			t.Errorf("Enhance = %v, want 11", got)
+		}
+	})
+
+	t.Run("an accepted gem snapshot costs one refill", func(t *testing.T) {
 		c, src := invalidated(t)
+		pollSnapshot(t, c, scope)
+		pollSnapshot(t, c, scope)
 
-		got := pollSnapshot(t, c, scope)
-
-		if !got.AsOf.Equal(snapshotAt(2, nil).AsOf) || got.Chaos["Enhance Support"] != 11 || src.readCount() != 2 {
-			t.Errorf("after the event = %+v after %d reads, want the hour-2 snapshot after 2", got, src.readCount())
+		if n := src.readCount(); n != 2 {
+			t.Errorf("reads = %d, want 2", n)
 		}
 	})
 
@@ -140,8 +156,9 @@ func TestKeepCriticalExceptionalSupportsGeneration(t *testing.T) {
 		src.set(snapshotAt(3, map[string]float64{"Empower Support": 43.2}))
 		publishGemSnapshot(labCache)
 
-		if got := pollSnapshot(t, c, scope); got.AsOf.IsZero() {
-			t.Errorf("after the event asOf is zero, want the hour-3 snapshot")
+		want := snapshotAt(3, map[string]float64{"Empower Support": 43.2})
+		if got := pollSnapshot(t, c, scope); !got.AsOf.Equal(want.AsOf) || len(got.Chaos) != 1 || got.Chaos["Empower Support"] != 43.2 {
+			t.Errorf("after the event = %+v, want %+v", got, want)
 		}
 	})
 
@@ -170,40 +187,87 @@ func TestKeepCriticalExceptionalSupportsGeneration(t *testing.T) {
 		}
 	})
 
-	t.Run("the last waiter leaving cancels the fill and releases the publication barrier", func(t *testing.T) {
-		src := &snapshotSource{started: make(chan struct{}, 1)}
+	// abandonFill starts a fill blocked until cancelled, lets its only waiter
+	// leave, and returns the channel closed when the fill sees cancellation.
+	abandonFill := func(t *testing.T) (*Cache, <-chan struct{}) {
+		started, cancelled := make(chan struct{}), make(chan struct{})
 		labCache := NewCache(scope)
-		cancelled := make(chan struct{})
-		c := NewExceptionalSupportCache(func(ctx context.Context, s league.Scope) (ExceptionalSupportSnapshot, error) {
-			src.read(ctx, s)
+		c := NewExceptionalSupportCache(func(ctx context.Context, _ league.Scope) (ExceptionalSupportSnapshot, error) {
+			close(started)
 			<-ctx.Done()
 			close(cancelled)
 			return ExceptionalSupportSnapshot{}, ctx.Err()
 		}, labCache)
 		ctx, cancel := context.WithCancel(context.Background())
-		polled := make(chan error)
+		polled := make(chan struct{})
 		go func() {
-			_, err := c.ExceptionalSupportPrices(ctx, scope)
-			polled <- err
+			c.ExceptionalSupportPrices(ctx, scope)
+			close(polled)
 		}()
-		<-src.started
+		<-started
 		cancel()
 		<-polled
+		return labCache, cancelled
+	}
 
-		published := make(chan struct{})
-		go func() {
-			publishGemSnapshot(labCache)
-			close(published)
-		}()
+	t.Run("the last waiter leaving cancels the fill", func(t *testing.T) {
+		_, cancelled := abandonFill(t)
+
 		select {
 		case <-cancelled:
 		case <-time.After(5 * time.Second):
 			t.Fatal("the abandoned fill was not cancelled")
 		}
+	})
+
+	t.Run("an abandoned fill releases the publication barrier", func(t *testing.T) {
+		labCache, _ := abandonFill(t)
+		published := make(chan struct{})
+		go func() {
+			publishGemSnapshot(labCache)
+			close(published)
+		}()
+
 		select {
 		case <-published:
 		case <-time.After(5 * time.Second):
 			t.Fatal("Publish stayed blocked behind the abandoned fill")
+		}
+	})
+
+	t.Run("an abandoned fill displaced by a newer flight is still cancelled", func(t *testing.T) {
+		started, cancelled := make(chan struct{}, 2), make(chan struct{}, 2)
+		labCache := NewCache(scope)
+		c := NewExceptionalSupportCache(func(ctx context.Context, _ league.Scope) (ExceptionalSupportSnapshot, error) {
+			started <- struct{}{}
+			<-ctx.Done()
+			cancelled <- struct{}{}
+			return ExceptionalSupportSnapshot{}, ctx.Err()
+		}, labCache)
+		poll := func() (context.CancelFunc, chan struct{}) {
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() {
+				c.ExceptionalSupportPrices(ctx, scope)
+				close(done)
+			}()
+			<-started
+			return cancel, done
+		}
+		cancelOld, oldDone := poll()
+		c.answers.advance(RankingInputGemSnapshots)
+		cancelNew, newDone := poll()
+		cancelOld()
+		<-oldDone
+		cancelNew()
+		<-newDone
+
+		for i := range 2 {
+			select {
+			case <-cancelled:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("%d of 2 abandoned fills cancelled", i)
+			}
 		}
 	})
 }

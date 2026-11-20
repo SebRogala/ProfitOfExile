@@ -55,8 +55,10 @@ func (c *ExceptionalSupportCache) ExceptionalSupportPrices(ctx context.Context, 
 	if c.answers == nil || scope.ID() != c.scopeID || ctx.Err() != nil {
 		return c.load(ctx, scope)
 	}
-	generation := c.answers.gemSnapshotGeneration()
 	c.mu.Lock()
+	// Read under mu, so a request holding an older generation cannot displace
+	// a newer flight.
+	generation := c.answers.gemSnapshotGeneration()
 	if c.warm && c.generation == generation {
 		snap := c.snap
 		c.mu.Unlock()
@@ -80,8 +82,10 @@ func (c *ExceptionalSupportCache) ExceptionalSupportPrices(ctx context.Context, 
 		f.waiters--
 		// The last waiter gone stops the read and releases the publication
 		// barrier; a later poll starts a fresh flight.
-		if f.waiters == 0 && c.flight == f {
-			c.flight = nil
+		if f.waiters == 0 {
+			if c.flight == f {
+				c.flight = nil
+			}
 			f.cancel()
 		}
 		c.mu.Unlock()
