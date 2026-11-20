@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"profitofexile/internal/gemrule"
 	"profitofexile/internal/price/gemcolor"
 )
 
@@ -368,8 +369,8 @@ func convertFragmentLines(lines []ninjaCurrencyLine) []FragmentSnapshot {
 func (f *NinjaFetcher) convertGemLines(lines []ninjaGemLine) []GemSnapshot {
 	snapshots := make([]GemSnapshot, 0, len(lines))
 	for _, line := range lines {
-		// Skip Heist-exclusive gems (identified by "Trarthus" in name) -- not obtainable in standard league play.
-		if strings.Contains(line.Name, "Trarthus") {
+		// Skip Heist-exclusive gems -- not obtainable in standard league play.
+		if gemrule.IsHeistOnlyName(line.Name) {
 			continue
 		}
 

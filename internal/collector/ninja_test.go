@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"profitofexile/internal/gemrule"
 	"profitofexile/internal/price/gemcolor"
 )
 
@@ -1120,5 +1121,39 @@ func TestFetchGemsEndpoint_sparklineEmpty(t *testing.T) {
 				t.Errorf("SparklineEmpty = %t, want %t", *got, tc.want)
 			}
 		})
+	}
+}
+
+// keep:critical — AC-3 drift pin: the collector must drop exactly the names the
+// shared Heist-only rule drops, or it stores rows the lab treats as ineligible.
+func TestKeepCritical_fetchGemsDropsExactlyTheSharedHeistOnlyNames(t *testing.T) {
+	names := []string{"Arc", "Sunder of Trarthus", "Trarthus Ire", "Cyclone"}
+	lines := make([]ninjaGemLine, 0, len(names))
+	var want []string
+	for _, n := range names {
+		lines = append(lines, gemLine(n, "20/20", 10, 100, "gem"))
+		if !gemrule.IsHeistOnlyName(n) {
+			want = append(want, n)
+		}
+	}
+	if strings.Join(want, ",") != "Arc,Cyclone" {
+		t.Fatalf("shared rule keeps %v, want [Arc Cyclone]", want)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(ninjaResponse[ninjaGemLine]{Lines: lines})
+	}))
+	defer server.Close()
+
+	result, err := testNinjaFetcher(t, server).FetchGemsEndpoint(context.Background(), "Standard", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := make([]string, 0, len(result.GemData))
+	for _, g := range result.GemData {
+		got = append(got, g.Name)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("stored names = %v, want %v", got, want)
 	}
 }
