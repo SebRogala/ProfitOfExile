@@ -787,17 +787,21 @@ pub(crate) mod tests {
         assert!(stub.requests()[0].starts_with("POST /api/trade/search/Mirage "));
     }
 
-    /// The search call site path-escapes the league (a space must not reach the wire raw).
-    #[tokio::test]
-    async fn search_request_escapes_league_with_space() {
-        let stub = stub_api(search_ok(), fetch_ok()).await;
-        let client = stub_client(&stub);
-        client.lookup_gem(Some("Hardcore Allflame".into()), "Spark", "20/20", 0.0, |_| {}).await.unwrap();
-        let request = &stub.requests()[0];
-        assert!(
-            request.contains("/api/trade/search/Hardcore%20Allflame"),
-            "search request line: {request}"
-        );
+    mod keep_happy {
+        use super::*;
+
+        /// The search call site path-escapes the league (a space must not reach the wire raw).
+        #[tokio::test]
+        async fn search_request_escapes_league_with_space() {
+            let stub = stub_api(search_ok(), fetch_ok()).await;
+            let client = stub_client(&stub);
+            client.lookup_gem(Some("Hardcore Allflame".into()), "Spark", "20/20", 0.0, |_| {}).await.unwrap();
+            let request = &stub.requests()[0];
+            assert!(
+                request.contains("/api/trade/search/Hardcore%20Allflame"),
+                "search request line: {request}"
+            );
+        }
     }
 
     /// GGG's developer docs require an identifiable User-Agent with contact;
