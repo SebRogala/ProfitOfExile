@@ -86,24 +86,12 @@ function rewriteTracked(path, transform) {
     if (after !== before) { ftruncateSync(fd, 0); writeSync(fd, after, 0); }
   } finally { closeSync(fd); }
 }
-// Creates a file the base lacks; O_EXCL refuses a leaf symlink and the
-// descriptor check refuses a symlinked directory, as rewriteTracked does.
-function writeTrackedNew(path, content) {
-  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
-  try {
-    check(readlinkSync(`/proc/self/fd/${fd}`) === path, `Refusing lane write through a symlinked directory: ${path}`);
-    writeSync(fd, content, 0);
-  } finally { closeSync(fd); }
-}
-// guard.laneName, when set, is the lane-name.sh body a base without it needs
-// for the replaced guard to source.
 export function patchLaneFiles(destination, guard) {
   rewriteTracked(join(destination, '.gitignore'), ignore => {
     const missing = ['.worktrees/', '.worktree/', 'docker-compose.lane.yml'].filter(line => !ignore.split('\n').includes(line));
     return missing.length ? `${ignore}\n${missing.join('\n')}\n` : ignore;
   });
   if (guard) rewriteTracked(join(destination, GUARD_PATH), env => env.replace(guard.oldGuard, () => guard.newGuard));
-  if (guard?.laneName) writeTrackedNew(join(destination, LANE_NAME_PATH), guard.laneName);
 }
 // A committed symlink's blob is its target path; refuse it by tree mode
 // before any content check reads that blob as a guard.
@@ -223,21 +211,20 @@ function main() {
     check(rows.length === 1 && !Object.keys(rows[0].Config.Volumes ?? {}).length, 'Image-declared volumes require explicit registration support');
     replacements[`${service.toUpperCase()}_IMAGE`] = image;
   }
-  // Older bases carry the original guard. Update only that guard in the lane;
-  // the requested base commit and all other source bytes stay authoritative.
+  // Older bases carry the original guard and no lane-name.sh. Update only that
+  // guard in the lane, to the inlined form, so provisioning creates no file; the
+  // requested base commit and all other source bytes stay authoritative.
   checkBaseTrackedFiles(root, oid);
   const baseEnv = run('git', ['show', `${oid}:${GUARD_PATH}`], { label: 'inspect base integration guard' });
   const oldGuard = 'if [ "$DB_NAME" != profitofexile_integration ]; then\n\techo "FAIL: database rule requires profitofexile_integration; other INTEGRATION_DB values are refused." >&2\n\texit 1\nfi';
   const { newGuard, inlinedGuard } = currentGuards(root);
   check(newGuard && (baseEnv.includes(oldGuard) || baseEnv.includes(newGuard) || baseEnv.includes(inlinedGuard)), 'Unknown base integration guard; refusing unsafe adaptation');
-  const baseHasLaneName = run('git', ['ls-tree', oid, '--', LANE_NAME_PATH], { label: `inspect base ${LANE_NAME_PATH}` }) !== '';
-  const laneName = baseHasLaneName ? null : readFileSync(join(root, LANE_NAME_PATH), 'utf8');
 
   mkdirSync(join(root, '.worktrees'), { recursive: true });
   run('git', ['worktree', 'add', '-b', lane, destination, oid], { label: 'create lane worktree' });
   mkdirSync(join(destination, '.worktree'), { mode: 0o700 });
   for (const cache of ['go-pkg', 'frontend_node_modules', 'desktop_cargo_registry', 'desktop_cargo_git', 'desktop_target', 'desktop_node_modules']) mkdirSync(join(destination, '.worktree', cache));
-  patchLaneFiles(destination, baseEnv.includes(oldGuard) ? { oldGuard, newGuard, laneName } : null);
+  patchLaneFiles(destination, baseEnv.includes(oldGuard) ? { oldGuard, newGuard: inlinedGuard } : null);
   for (const [index, db] of databases.entries()) {
     const allocation = intent(`database-${index}`, 'postgres-database', { clusterId, endpoint: 'postgres', database: db, maintenanceDatabase: 'postgres' });
     pg(`CREATE DATABASE "${db}" OWNER profitofexile;\nCOMMENT ON DATABASE "${db}" IS 'pipeforge-allocation:${allocation.token}';`);

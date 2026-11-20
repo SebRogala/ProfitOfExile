@@ -152,8 +152,8 @@ test('keep:critical guard patch from a base without lane-name.sh still accepts t
   mkdirSync(join(lane, 'scripts', 'lib'), { recursive: true });
   writeFileSync(join(lane, '.gitignore'), ignoreBody);
   writeFileSync(join(lane, ENV_PATH), `#!/usr/bin/env bash\nDB_NAME="\${INTEGRATION_DB:-profitofexile_integration}"\n${originalGuard}\n`);
-  const { newGuard } = currentGuards(repoRoot);
-  patchLaneFiles(lane, { oldGuard: originalGuard, newGuard, laneName: laneNameHome() });
+  const { inlinedGuard } = currentGuards(repoRoot);
+  patchLaneFiles(lane, { oldGuard: originalGuard, newGuard: inlinedGuard });
   const source = db => spawnSync('bash', ['-c', `source ${ENV_PATH}`], { cwd: lane, encoding: 'utf8', env: { ...process.env, INTEGRATION_DB: db } });
   const accepted = source('profitofexile_lanex1_integration');
   assert.equal(accepted.status, 0, accepted.stderr);
