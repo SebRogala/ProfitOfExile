@@ -113,10 +113,10 @@ function makeHarness(deferDestroy: boolean) {
 		setTimer: (callback) => {
 			const timer = { id: 100 + timers.length, callback, canceled: false };
 			timers.push(timer);
-			return timer.id as ReturnType<typeof setTimeout>;
+			return timer.id as unknown as ReturnType<typeof setTimeout>;
 		},
 		clearTimer: vi.fn((timer: ReturnType<typeof setTimeout>) => {
-			const entry = timers.find((candidate) => candidate.id === timer);
+			const entry = timers.find((candidate) => candidate.id === (timer as unknown as number));
 			if (entry) entry.canceled = true;
 		}),
 		warn: vi.fn(),

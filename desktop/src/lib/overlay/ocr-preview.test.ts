@@ -93,7 +93,7 @@ function makeHarness() {
 		onOuterSize: undefined as (() => void) | undefined,
 		destroyRemovesActive: true,
 		clearTimer: vi.fn((timer: ReturnType<typeof setTimeout>) => {
-			const entry = harness.timers.find((item) => item.id === timer);
+			const entry = harness.timers.find((item) => item.id === (timer as unknown as number));
 			if (entry) entry.canceled = true;
 		}),
 		primaryMonitor: async (): Promise<PreviewMonitor> => ({ position: { x: 100, y: 200 }, scaleFactor: 1.5 }),
@@ -137,7 +137,7 @@ function makeHarness() {
 		setTimer: (callback, ms) => {
 			const timer = { id: harness.timers.length + 1, callback, ms, canceled: false };
 			harness.timers.push(timer);
-			return timer.id as ReturnType<typeof setTimeout>;
+			return timer.id as unknown as ReturnType<typeof setTimeout>;
 		},
 		clearTimer: harness.clearTimer,
 		warn: harness.logs.warn,
