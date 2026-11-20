@@ -37,7 +37,7 @@
 		font-size: 0.9375rem;
 		font-family: inherit;
 		cursor: pointer;
-		width: 100%;
+		width: var(--select-width, auto);
 		-webkit-appearance: none;
 		-moz-appearance: none;
 		appearance: none;

@@ -49,7 +49,7 @@ const ROOTS: MirrorRoot[] = [
 		name: 'lib',
 		desktop: byRelativePath(desktopLib, DESKTOP_LIB),
 		web: byRelativePath(webLib, WEB_LIB),
-		identical: ['trade-utils.ts', 'trade-utils.test.ts', 'price.svelte.ts', 'session-queue.ts', 'tooltips.ts', 'trade-types.ts', 'comparator/league-fence.ts', 'comparator/league-fence.test.ts', 'privacy/notice.json'],
+		identical: ['trade-utils.ts', 'trade-utils.test.ts', 'price.svelte.ts', 'session-queue.ts', 'tooltips.ts', 'trade-types.ts', 'comparator/league-fence.ts', 'comparator/league-fence.test.ts', 'privacy/notice.json', 'components/Select.svelte'],
 		divergent: {
 			'api.ts':
 				'shared open contract (MercureHandlers names, onOpen on every open after onConnectionChange(true)); bodies differ by topic set (desktop 5, web 2), web trade dispatch, and token base/headers (desktop Tauri, web same-origin)',
@@ -57,7 +57,6 @@ const ROOTS: MirrorRoot[] = [
 			'tradeApi.ts': 'platform part only (shared wire types live in trade-types.ts): desktop native trade queue, merc and listing-row types vs web HTTP lookup, listener registry and poll',
 			'icons.ts': 'desktop configured server base vs web same-origin /api',
 			'prefs.svelte.ts': 'desktop persists through the Rust ui_prefs map (load, buffered pre-load writes, debounce); web uses localStorage',
-			'components/Select.svelte': 'desktop `id` prop + full width',
 		},
 	},
 	{

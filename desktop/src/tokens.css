@@ -41,4 +41,8 @@
 	--color-lab-cyan: #22d3ee;
 	--color-lab-purple: #a855f7;
 	--color-lab-green-muted: #6b9e7a;
+
+	/* The shared lib Select.svelte reads this; the web declares none, so its
+	   Selects keep their intrinsic width. */
+	--select-width: 100%;
 }
