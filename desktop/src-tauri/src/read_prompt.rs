@@ -1,8 +1,9 @@
 //! The detected-mechanic and completed no-match prompt's state.
 //!
 //! Client.txt seams arm a mechanic, a successful read or the context's end
-//! clears it, and the SSOT carries the most recent active arm or no-match
-//! presentation. Nothing here grabs the screen; a read happens only on the read key
+//! clears it, and the SSOT carries the newest active arm that is presented
+//! (a `DivineFont` arm is recorded for the read but never presented) or the
+//! no-match presentation. Nothing here grabs the screen; a read happens only on the read key
 //! (`crate::read_hotkey`). Policy: docs/OVERLAY-GUIDE.md § "Screen reading
 //! (GGG policy)".
 use serde::Serialize;
@@ -60,7 +61,8 @@ pub struct ReadPromptState {
 }
 
 impl ReadPromptState {
-    /// Shows `mechanic` as a new prompt, even when it was already active.
+    /// Records `mechanic` as the newest arm, even when it was already active;
+    /// `snapshot` presents it unless it is a `DivineFont` arm.
     pub fn arm(&mut self, mechanic: Mechanic) {
         self.last_client_mechanic = Some(mechanic);
         self.arm_generation += 1;

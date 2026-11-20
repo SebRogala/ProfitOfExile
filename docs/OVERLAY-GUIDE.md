@@ -1657,11 +1657,13 @@ touching the named path.
   be on THAT cell and no other.
 - **The read prompt, per mechanic** (POE-388): with the game focused, trigger
   each mechanic once — Alva's start line (or entering the temple), an Izaro kill
-  or a Divine Font opening, and a mercenary Inspect line. Each must show one
-  line at the TOP CENTRE (or wherever it was dragged), exactly `Detected
-  Incursion - press <key> to read`, `Detected Divine Font - …` or `Detected
-  Mercenary - …`, with `<key>` the bound read key. Rebind the read key and the
-  shown text must follow. A completed read or the context's end (zone change,
+  or a Divine Font opening, and a mercenary Inspect line. Incursion and
+  Mercenary must each show one line at the TOP CENTRE (or wherever it was
+  dragged), exactly `Detected Incursion - press <key> to read` or `Detected
+  Mercenary - …`, with `<key>` the bound read key. The Divine Font arm must
+  show no prompt (POE-438, [Overlay types](#overlay-types)), yet pressing the
+  read key at the Font must still read and look it up. Rebind the read key and
+  the shown text must follow. A completed read or the context's end (zone change,
   Alva's END line) must take it down. Then take a debug frame dump while the
   prompt is up: the prompt must be ABSENT from the dumped frame (it is in
   `EXCLUDED_WHILE_GRABBING`). No capture may happen until the read key is
