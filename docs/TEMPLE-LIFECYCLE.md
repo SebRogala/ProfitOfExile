@@ -64,8 +64,9 @@ Related: [Overlay Guide](OVERLAY-GUIDE.md) (windows, click-through, smoke items)
 
 ## Per press
 
-Current as amended 2026-11-16 (POE-409). Homes: `temple/press.rs` (`TempleReader`, `press_reason`) and
-`temple/run.rs` (`worker_loop`, `read_press`, `locate_on_miss`).
+Current as amended 2026-11-20 (POE-440). Homes: `temple/press.rs` (`TempleReader`, `press_reason`,
+`TemplePending::calibrate`) and `temple/run.rs` (`worker_loop`, `read_press`, `calibrate_frame`,
+`probe_frame`, `locate_on_miss`).
 
 - **Client.txt arms; it does not capture.** An Alva START line arms `AlvaStart`, entering The
   Temple of Atzoatl arms `TempleArea` (`temple/trigger.rs`). Neither grabs the screen.
@@ -77,15 +78,19 @@ Current as amended 2026-11-16 (POE-409). Homes: `temple/press.rs` (`TempleReader
 - **Selection reuses evidence.** Only a matching selected reader hands recognition
   evidence to the worker's read transaction. A losing probe publishes nothing;
   no synthetic Client.txt reason is created for an unarmed read.
-- **The read.** A placed-origin recheck on that frame first. On a miss, the full-frame locate
-  (`anchor::anchor_for_loop`) runs on the same frame only when the slice is null or has no
-  anchored Entrance origin (`locate_on_miss`); a placed miss publishes no-panel with no search.
+- **The read.** An uncalibrated slice (null, or no anchored Entrance origin; `locate_on_miss`) is
+  calibrated once, first, by the full-frame locate (`anchor::anchor_for_loop`) on the pressed frame.
+  A calibrated slice runs only the placed-origin recheck on the Entrance crop, with no sweep. A
+  miss is "no match" and the next reader probes. The one banked Entrance region serves the open
+  sheet and the pre-Incursion read: they are the same screen.
 - **A full selected read follows**, with no retry rounds and no merge with an earlier read.
   A partial read stays published until the next selected read. A routing miss leaves
   temple state unchanged; global no-match presentation belongs to the prompt owner.
-- **Geometry.** Only a located anchor that fills or contradicts the placement is remembered, and
-  only after the read has published (`run::finish`, ADR-025). Recalibrate is the manual fix for a
-  wrong placement.
+- **Geometry.** A calibration that finds the plate banks its origin at once through
+  `ssot::remember_anchor_if_current`, only into the screen it was found on, whether or not it
+  confirms the seed and whatever the read's outcome. A later located read still replaces a
+  contradicted placement after it publishes (`run::finish`, ADR-025). Recalibrate is the manual fix
+  for a wrong placement.
 - **app.log** gets one `Temple: read on press (<reason>) — <outcome>` line per read: `read`,
   `read, unclean`, `no panel`, `capture failed`, `OCR failed` or `cancelled`.
 

@@ -565,11 +565,10 @@ fn recheck(img: &DynamicImage, hint: &CheapHint) -> Option<Anchor> {
         (tmpl.height() as f32 * scale) as u32,
     );
     // Before `full_level`, not after: a hint whose template cannot fit must not
-    // buy a full-resolution integral pass to find that out.
+    // buy an integral pass to find that out.
     if tw == 0 || th == 0 || tw >= img.width() || th >= img.height() {
         return None;
     }
-    let level = full_level(img);
     let scaled = Gray::from_rgb(&image::imageops::resize(tmpl, tw, th, FilterType::Triangle));
     // `hint.origin` is the plate CENTRE, as `Anchor::origin` reports it, and
     // `locate` works in top-left coordinates.
@@ -577,9 +576,16 @@ fn recheck(img: &DynamicImage, hint: &CheapHint) -> Option<Anchor> {
         hint.origin.0 - tw as i32 / 2,
         hint.origin.1 - th as i32 / 2,
     );
-    let (x, y, score) = locate(&level, &scaled, Some(box_around(top_left, FINE_RADIUS)))?;
+    // Only the crop the window can reach is levelled (POE-440): the template
+    // plus `FINE_RADIUS` around the hint, clamped to the frame.
+    let x0 = (top_left.0 - FINE_RADIUS).clamp(0, img.width() as i32);
+    let y0 = (top_left.1 - FINE_RADIUS).clamp(0, img.height() as i32);
+    let x1 = (top_left.0 + FINE_RADIUS + tw as i32).clamp(x0, img.width() as i32);
+    let y1 = (top_left.1 + FINE_RADIUS + th as i32).clamp(y0, img.height() as i32);
+    let level = full_level(&img.crop_imm(x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32));
+    let (x, y, score) = locate(&level, &scaled, Some(box_around((top_left.0 - x0, top_left.1 - y0), FINE_RADIUS)))?;
     Some(Anchor {
-        origin: (x + tw as i32 / 2, y + th as i32 / 2),
+        origin: (x0 + x + tw as i32 / 2, y0 + y + th as i32 / 2),
         scale,
         ncc: score,
     })
@@ -1857,6 +1863,31 @@ mod tests {
             ..cal
         }
         .applies_to(&img));
+    }
+
+    mod keep_critical {
+        use super::*;
+
+        /// Silent consequence of a crop offset error: every temple overlay
+        /// would be placed at a wrong origin with nothing on screen to say so.
+        #[test]
+        fn the_cropped_recheck_equals_the_full_frame_correlation() {
+            let img = full_screen_1080p();
+            let hint = CheapHint {
+                calibration: AnchorCalibration { screen_w: 1920, screen_h: 1080, scale: LIVE_SCREEN_SCALE },
+                origin: (LIVE_SCREEN_ORIGIN.0 + 5, LIVE_SCREEN_ORIGIN.1 - 4),
+            };
+            let tmpl = template();
+            let (tw, th) = ((tmpl.width() as f32 * hint.calibration.scale) as u32, (tmpl.height() as f32 * hint.calibration.scale) as u32);
+            let scaled = Gray::from_rgb(&image::imageops::resize(tmpl, tw, th, FilterType::Triangle));
+            let top_left = (hint.origin.0 - tw as i32 / 2, hint.origin.1 - th as i32 / 2);
+            let (x, y, ncc) = locate(&full_level(&img), &scaled, Some(box_around(top_left, FINE_RADIUS))).unwrap();
+
+            let cropped = recheck(&img, &hint).unwrap();
+
+            assert_eq!(cropped.origin, (x + tw as i32 / 2, y + th as i32 / 2));
+            assert_eq!(cropped.ncc, ncc);
+        }
     }
 
     mod keep_happy {

@@ -1204,6 +1204,44 @@ pub fn remember_anchor(app: &AppHandle, module: AnchorModule, origin: [i32; 2]) 
     remember_anchor_effects(changed, || crate::persist_settings(app), || emit_ssot(app))
 }
 
+/// Bank a module's origin into `current` only while it is still the screen the
+/// origin was found on (POE-440): a slot of the pressed frame's geometry
+/// ([`client_change`] is `Same`) at `ui_scale` within [`UI_SCALE_EPS`]. An
+/// empty, replaced or rescaled slot is left unchanged and returns `false`.
+pub(crate) fn set_anchor_if_current(
+    current: &mut Option<ScreenSlice>,
+    capture: (u32, u32),
+    origin: (i32, i32),
+    client: [i32; 4],
+    ui_scale: f32,
+    module: AnchorModule,
+    anchor: [i32; 2],
+) -> bool {
+    current.as_mut().is_some_and(|live| {
+        client_change(live, capture, origin, client) == ClientChange::Same
+            && (live.ui_scale - ui_scale).abs() < UI_SCALE_EPS
+            && set_anchor(&mut live.anchors, module, anchor)
+    })
+}
+
+/// [`set_anchor_if_current`] against the app's screen owner, check and write
+/// under one `screen` lock, then [`remember_anchor`]'s persist and emit.
+pub fn remember_anchor_if_current(
+    app: &AppHandle,
+    module: AnchorModule,
+    anchor: [i32; 2],
+    frame: &crate::capture::Capture,
+    ui_scale: f32,
+) -> bool {
+    let changed = {
+        let state = app.state::<AppState>();
+        let mut screen = state.screen.lock().unwrap_or_else(|e| e.into_inner());
+        let capture = (frame.image.width(), frame.image.height());
+        set_anchor_if_current(&mut screen, capture, frame.origin, frame.client, ui_scale, module, anchor)
+    };
+    remember_anchor_effects(changed, || crate::persist_settings(app), || emit_ssot(app))
+}
+
 fn remember_anchor_effects<P, E>(changed: bool, persist: P, emit: E) -> bool
 where
     P: FnOnce(),
@@ -3215,6 +3253,36 @@ mod tests {
 
     mod keep_critical {
         use super::*;
+
+        fn slice_1080(ui_scale: f32) -> ScreenSlice {
+            ScreenSlice { ui_scale, ..screen_from_geometry(1920, 1080, 1, (0, 0), [0, 0, 1920, 1080], 0) }
+        }
+
+        /// Silent consequence of banking into the wrong owner: old-frame
+        /// coordinates would place every later temple overlay off the sheet.
+        #[test]
+        fn a_calibration_banks_only_into_the_screen_it_was_found_on() {
+            let bank = |slot: &mut Option<ScreenSlice>| {
+                set_anchor_if_current(slot, (1920, 1080), (0, 0), [0, 0, 1920, 1080], 0.90, AnchorModule::TempleEntrance, [960, 713])
+            };
+            let mut matching = Some(slice_1080(0.90));
+            assert!(bank(&mut matching));
+            assert_eq!(matching.unwrap().anchors.unwrap().temple_entrance, Some([960, 713]));
+
+            let mut empty = None;
+            assert!(!bank(&mut empty));
+            assert!(empty.is_none());
+
+            for other in [
+                screen_from_geometry(2560, 1440, 1, (0, 0), [0, 0, 2560, 1440], 0),
+                screen_from_geometry(1920, 1080, 1, (0, 0), [0, 0, 1600, 900], 0),
+                slice_1080(0.90 + 2.0 * UI_SCALE_EPS),
+            ] {
+                let mut slot = Some(other);
+                assert!(!bank(&mut slot));
+                assert!(slot.unwrap().anchors.is_none());
+            }
+        }
 
         /// Silent consequence if this were treated as a move: the slice would
         /// keep another monitor's scale and place every rect from it, with

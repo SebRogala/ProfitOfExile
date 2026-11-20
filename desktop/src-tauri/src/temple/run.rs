@@ -19,13 +19,15 @@
 //!
 //! # What one press reads
 //!
-//! One full-resolution windowed NCC at the Entrance origin supplied by
-//! [`crate::ssot::placements`] ([`anchor::detect_cheap`]) is the presence test.
-//! When it misses, [`locate_on_miss`] decides whether the pressed frame is
-//! searched with [`anchor::anchor_for_loop`]'s pyramid: only for a null or
-//! unplaced slice. A placed miss is the sheet not being open, and
-//! Recalibrate is the manual fix for a wrong placement. Nothing is searched on
-//! any frame but the pressed one.
+//! A press first calibrates ([`calibrate_frame`], POE-440): only while the
+//! slice is null or has no anchored Entrance origin ([`locate_on_miss`]) is
+//! the pressed frame searched with [`anchor::anchor_for_loop`]'s pyramid, once;
+//! a found plate is banked at once. Then one full-resolution windowed NCC on
+//! the crop around the Entrance origin supplied by [`crate::ssot::placements`]
+//! ([`anchor::detect_cheap`], [`probe_frame`]) is the presence test, with no
+//! sweep. A placed miss is the sheet not being open, and Recalibrate is the
+//! manual fix for a wrong placement. Nothing is searched on any frame but the
+//! pressed one.
 //!
 //! A hit reads the whole board once — two bounded text crops and two crops per
 //! plate, 28 OCR calls ([`read_board`]) — with no merge and no retry. A press
@@ -869,8 +871,9 @@ fn hint_from_slice(
     (hint, screen.map(|s| s.source), screen.is_some(), anchored)
 }
 
-/// Whether a press whose placed recheck missed searches the pressed frame with
-/// [`anchor::anchor_for_loop`] (POE-389, Coordinator ruling 2026-11-13).
+/// Whether a press calibrates: searches the pressed frame with
+/// [`anchor::anchor_for_loop`] before any probe (POE-389, Coordinator ruling
+/// 2026-11-13; calibrate-first since POE-440).
 ///
 /// True only for a null slice or one with no ANCHORED Entrance origin: there is
 /// no placement to trust, so the frame is the only way to find the sheet. A
@@ -1562,6 +1565,54 @@ pub struct TempleProbe {
     locate_time: Duration,
 }
 
+/// The press's calibration of the Entrance (POE-440): the whole-frame
+/// [`anchor::anchor_for_loop`] locate on the pressed frame, run only while the
+/// matching slice has no anchored Entrance origin ([`locate_on_miss`]).
+/// `Ok(None)` when the slice is calibrated or the plate is not on the frame;
+/// a found plate is `located` evidence the probe selects without a second
+/// correlation.
+pub fn calibrate_frame(
+    grab: &crate::capture::Capture,
+    screen: Option<crate::ssot::ScreenSlice>,
+    stop: &dyn Fn() -> bool,
+) -> Result<Option<TempleProbe>, super::ReadError> {
+    if stop() || is_calibrated(grab, screen) { return Ok(None); }
+    let size = (grab.image.width(), grab.image.height());
+    let screen = screen.filter(|s| crate::ssot::screen_matches(&Some(*s), size, grab.origin, grab.client));
+    let cheap_hint = cheap_hint_from_screen(screen.as_ref(), size, grab.origin, grab.client);
+    let hint = cheap_hint.map(|h| h.calibration);
+    let locating = Instant::now();
+    let found = match anchor::anchor_for_loop(
+        &grab.image,
+        hint.as_ref(),
+        (grab.client[2].max(0) as u32, grab.client[3].max(0) as u32),
+        stop,
+    ) {
+        Ok(found) => found,
+        Err(super::ReadError::AnchorNotFound { .. }) => return Ok(None),
+    };
+    if stop() { return Ok(None); }
+    Ok(Some(TempleProbe { found, located: true, hint, placed_origin: cheap_hint.map(|h| h.origin), cheap_ncc: f32::NAN,
+        cheap_time: Duration::ZERO, locate_time: locating.elapsed() }))
+}
+
+/// Whether `screen` matches the pressed frame and holds an anchored Entrance
+/// origin, so the press needs no calibration ([`locate_on_miss`]).
+pub fn is_calibrated(grab: &crate::capture::Capture, screen: Option<crate::ssot::ScreenSlice>) -> bool {
+    let size = (grab.image.width(), grab.image.height());
+    let screen = screen.filter(|s| crate::ssot::screen_matches(&Some(*s), size, grab.origin, grab.client));
+    !locate_on_miss(screen.is_some(), screen.and_then(|s| s.anchors).and_then(|a| a.temple_entrance))
+}
+
+impl TempleProbe {
+    /// The located Entrance origin, capture-relative.
+    pub fn origin(&self) -> (i32, i32) { self.found.origin }
+    /// Whether the Entrance was located by calibration's sweep.
+    pub fn located(&self) -> bool { self.located }
+}
+
+/// The press's presence test: one windowed recheck at the placed Entrance
+/// origin. A miss is `Ok(None)`; nothing here searches the frame (POE-440).
 pub fn probe_frame(
     grab: &crate::capture::Capture,
     screen: Option<crate::ssot::ScreenSlice>,
@@ -1573,30 +1624,13 @@ pub fn probe_frame(
     let cheap_hint = cheap_hint_from_screen(screen.as_ref(), size, grab.origin, grab.client);
     let hint = cheap_hint.map(|h| h.calibration);
     let placed_origin = cheap_hint.map(|h| h.origin);
-    let anchored = screen.and_then(|s| s.anchors).and_then(|a| a.temple_entrance);
     let started = Instant::now();
     let cheap = anchor::detect_cheap(&grab.image, cheap_hint.as_ref());
     let cheap_time = started.elapsed();
     let cheap_ncc = cheap.ncc();
-    let locating = Instant::now();
-    let (found, located) = match cheap {
-        anchor::CheapDetect::Anchored(found) => (found, false),
-        anchor::CheapDetect::Nothing { .. } if locate_on_miss(screen.is_some(), anchored) => {
-            match anchor::anchor_for_loop(
-                &grab.image,
-                hint.as_ref(),
-                (grab.client[2].max(0) as u32, grab.client[3].max(0) as u32),
-                stop,
-            ) {
-                Ok(found) => (found, true),
-                Err(super::ReadError::AnchorNotFound { .. }) => return Ok(None),
-            }
-        }
-        _ => return Ok(None),
-    };
+    let anchor::CheapDetect::Anchored(found) = cheap else { return Ok(None) };
     if stop() { return Ok(None); }
-    Ok(Some(TempleProbe { found, located, hint, placed_origin, cheap_ncc, cheap_time,
-        locate_time: if located { locating.elapsed() } else { Duration::ZERO } }))
+    Ok(Some(TempleProbe { found, located: false, hint, placed_origin, cheap_ncc, cheap_time, locate_time: Duration::ZERO }))
 }
 
 /// A selected anchor is read once; only a successful located read may persist
@@ -3881,29 +3915,10 @@ mod tests {
         assert!(!locate_on_miss(true, Some([960, 713])));
     }
 
-    /// The live frame with no placement: the locate that a null slice buys
-    /// finds the sheet at the live origin, on that same frame.
-    #[test]
-    fn the_locate_finds_the_panel_on_the_live_frame() {
-        let img = live_capture();
-        let frame = crate::capture::Capture { image: img, monitor_id: 1, origin:(0,0), client:[0,0,1920,1080], timing:Default::default() };
-        let proof = probe_frame(&frame, None, &|| false).unwrap().expect("the live sheet is found without a Client.txt arm or geometry");
-        assert!(proof.located);
-        let found = proof.found;
-        let tol = slice::FRAME_ORIGIN_TOLERANCE;
-        assert!(
-            (found.origin.0 - 960).abs() <= tol && (found.origin.1 - 713).abs() <= tol,
-            "found {:?}",
-            found.origin,
-        );
-        let layout = reader::read_layout_at(&frame.image, found);
-        assert_eq!(layout.origin, found.origin, "selected read consumes the proved anchor");
-    }
-
     #[test]
     fn a_cancelled_probe_cannot_select_a_visible_panel() {
         let frame = crate::capture::Capture { image: live_capture(), monitor_id: 1, origin:(0,0), client:[0,0,1920,1080], timing:Default::default() };
-        assert!(probe_frame(&frame, None, &|| true).unwrap().is_none());
+        assert!(calibrate_frame(&frame, None, &|| true).unwrap().is_none());
     }
 
     #[test]
@@ -3911,6 +3926,7 @@ mod tests {
         let frame = crate::capture::Capture { image: live_capture(), monitor_id: 1, origin:(0,0), client:[0,0,1920,1080], timing:Default::default() };
         let mut screen = crate::ssot::screen_from_geometry(1920,1080,1,(0,0),frame.client,0);
         screen.anchors = Some(crate::ssot::Anchors { temple_entrance: Some([100,100]), merc_panel: None });
+        assert!(calibrate_frame(&frame, Some(screen), &|| false).unwrap().is_none());
         assert!(probe_frame(&frame, Some(screen), &|| false).unwrap().is_none());
         assert_eq!(screen.anchors.unwrap().temple_entrance, Some([100,100]));
     }
@@ -3929,6 +3945,30 @@ mod tests {
             client,
             1_700_000_000_000,
         )
+    }
+
+    mod keep_regression {
+        use super::*;
+
+        /// The escaped bug (POE-409, 7d02570d): the probe swept the whole frame
+        /// on every unanchored press. Calibration alone locates the live sheet;
+        /// the probe on the same unplaced frame never sweeps.
+        #[test]
+        fn the_locate_finds_the_panel_on_the_live_frame() {
+            let frame = crate::capture::Capture { image: live_capture(), monitor_id: 1, origin:(0,0), client:[0,0,1920,1080], timing:Default::default() };
+            let proof = calibrate_frame(&frame, None, &|| false).unwrap().expect("the live sheet is found without a Client.txt arm or geometry");
+            assert!(proof.located);
+            let found = proof.found;
+            let tol = slice::FRAME_ORIGIN_TOLERANCE;
+            assert!(
+                (found.origin.0 - 960).abs() <= tol && (found.origin.1 - 713).abs() <= tol,
+                "found {:?}",
+                found.origin,
+            );
+            let layout = reader::read_layout_at(&frame.image, found);
+            assert_eq!(layout.origin, found.origin, "selected read consumes the proved anchor");
+            assert!(probe_frame(&frame, None, &|| false).unwrap().is_none(), "the probe must not sweep");
+        }
     }
 
     mod keep_critical {
