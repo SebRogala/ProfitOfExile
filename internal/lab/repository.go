@@ -652,7 +652,7 @@ func (r *Repository) SparklineData(ctx context.Context, scope league.Scope, name
 	}
 
 	query := `
-		SELECT name, time, COALESCE(chaos, 0), COALESCE(listings, 0)
+		SELECT name, time, ` + rawSparklineValues("") + `
 		FROM gem_snapshots
 		WHERE name = ANY($2) AND ` + rawSparklineFilter("", "$3")
 	args := []any{scope.ID(), names, hours}
@@ -703,6 +703,15 @@ func rawSparklineFilter(alias, hoursParam string) string {
 		alias + "time > NOW() - make_interval(hours => " + hoursParam + ")"
 }
 
+// rawSparklineValues projects a raw point's price and listings, missing values
+// read as zero, as the columns chaos and listings.
+func rawSparklineValues(alias string) string {
+	if alias != "" {
+		alias += "."
+	}
+	return "COALESCE(" + alias + "chaos, 0) AS chaos, COALESCE(" + alias + "listings, 0) AS listings"
+}
+
 // rawSparklinePoint is a served sparkline point: raw chaos, RFC 3339 UTC time.
 func rawSparklinePoint(t time.Time, chaos float64, listings int) SparklinePoint {
 	return SparklinePoint{Time: t.UTC().Format(time.RFC3339), Price: chaos, Listings: listings}
@@ -731,7 +740,7 @@ func (r *Repository) SparklineSeries(ctx context.Context, scope league.Scope, ke
 		WITH requested AS (
 			SELECT DISTINCT name, variant FROM unnest($2::text[], $3::text[]) AS k(name, variant)
 		), windowed AS (
-			SELECT g.name, g.variant, g.time, COALESCE(g.chaos, 0) AS chaos, COALESCE(g.listings, 0) AS listings,
+			SELECT g.name, g.variant, g.time, `+rawSparklineValues("g")+`,
 			       row_number() OVER (PARTITION BY g.variant ORDER BY g.name, g.time) AS rn
 			FROM gem_snapshots g
 			JOIN requested k ON k.name = g.name AND k.variant = g.variant
