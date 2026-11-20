@@ -105,7 +105,6 @@
 	import WidgetHost from '$lib/overlay/widgets/WidgetHost.svelte';
 	import WidgetActions from '$lib/overlay/widgets/WidgetActions.svelte';
 	import { TEMPLE_WINDOW_LABEL } from '$lib/overlay/manager';
-	import { dismissShortcutLabel } from '$lib/boss-loot/native-adapters';
 	import type { OverlayDefaultGeometry } from '$lib/overlay/overlay-defaults';
 	import type { HostFrame, WidgetRect } from '$lib/overlay/widgets/widget-geometry';
 	import type { WidgetSpec } from '$lib/overlay/widgets/widget-registry';
@@ -342,7 +341,7 @@
 		{#if spec.id === 'temple.offers' && offersVisible && !offersDismissal.hidden}
 			{@const obstacles = neverCoverRects(temple.layout, frame.scaleFactor)}
 			<!-- No `interact`: it would restart the countdown the keep stops. -->
-			<WidgetActions widget={spec.id} actions={{ 'temple.keep': () => offersDismissal.pause() }} />
+			<WidgetActions widget={spec.id} actions={{ 'temple.keep': () => offersDismissal.pause(), 'temple.close': () => offersDismissal.close() }} />
 			{#if leaveBanner}
 				{@const at = bannerPlacement({
 					box: { w: bannerWidth, h: bannerHeight },
@@ -377,7 +376,6 @@
 				seconds={offersDismissal.seconds}
 				startedAt={offersDismissal.startedAt}
 				paused={offersDismissal.paused}
-				keyLabel={offersDismissal.shortcut ? dismissShortcutLabel(offersDismissal.shortcut) : null}
 			/>
 		{/if}
 	{/snippet}

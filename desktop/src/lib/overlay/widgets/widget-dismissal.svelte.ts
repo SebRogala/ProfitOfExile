@@ -62,6 +62,11 @@ export function createDismissal({ spec, shown, contentKey, settings, contentRead
 			if (!spec.dismiss?.timeout || !shown() || hidden) return;
 			paused = true;
 		},
+		close() {
+			if (!shown() || hidden) return;
+			hidden = true;
+			paused = false;
+		},
 		get ready() { return settings() !== null && contentReady(); },
 		applyKey(pressed: BossLootShortcut) {
 			const effective = shortcut;

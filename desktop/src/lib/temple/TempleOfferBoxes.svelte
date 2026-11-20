@@ -161,7 +161,6 @@
 		seconds = 0,
 		startedAt = null,
 		paused = false,
-		keyLabel = null,
 		boxes,
 		blocks,
 		panel,
@@ -190,8 +189,6 @@
 		startedAt?: number | null;
 		/** Kept on screen: the timeout no longer hides the boxes. */
 		paused?: boolean;
-		/** The effective dismissal key's label, or null without one. */
-		keyLabel?: string | null;
 	} = $props();
 
 	let widths = $state<number[]>([]);
@@ -600,23 +597,29 @@
 		</div>
 		<div class="kw-row">
 			{#if paused}
-				<span class="lb">Close with</span>
-				{#if keyLabel}<span class="kw-key">{keyLabel}</span>{/if}
+				<span class="lb kw-stopped">Timer stopped</span>
 			{:else}
 				<span class="lb">Hides in</span>
 				<span class="kw-sec">{remaining} s</span>
 			{/if}
 		</div>
-		{#if paused}
-			<div class="kw-btn">{@render keepGlyph()}Kept on screen</div>
-		{:else}
-			<div class="kw-btn" data-hot data-action="temple.keep">{@render keepGlyph()}Keep on screen</div>
-		{/if}
+		<div class="kw-btns">
+			{#if paused}
+				<div class="kw-btn kw-keep">{@render keepGlyph()}Kept</div>
+			{:else}
+				<div class="kw-btn kw-keep" data-hot data-action="temple.keep">{@render keepGlyph()}Keep</div>
+			{/if}
+			<div class="kw-btn kw-close" data-hot data-action="temple.close">{@render closeGlyph()}Close</div>
+		</div>
 	</div>
 {/if}
 
 {#snippet keepGlyph()}
 	<span class="glyph"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="1" width="2.4" height="8" rx=".6" fill="currentColor" /><rect x="6.1" y="1" width="2.4" height="8" rx=".6" fill="currentColor" /></svg></span>
+{/snippet}
+
+{#snippet closeGlyph()}
+	<span class="glyph"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2 L8 8 M8 2 L2 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none" /></svg></span>
 {/snippet}
 
 <style>
@@ -1191,7 +1194,7 @@
 
 	/* POE-439 variant C: 164x66 fixed (border 4 + padding 16 + row 18 + gap 6 +
 	   button 22), the `.box` ground and muted frame. Click-through except the
-	   button's own hot rect. */
+	   buttons' own hot rects (Keep before the click, Close in both states). */
 	.keepwin {
 		position: absolute;
 		box-sizing: border-box;
@@ -1249,29 +1252,19 @@
 		line-height: 18px;
 		font-variant-numeric: tabular-nums;
 	}
-	.kw-key {
-		box-sizing: border-box;
-		min-width: 0;
-		max-width: 92px;
-		height: 18px;
-		padding: 0 6px;
-		font-size: 12px;
-		font-weight: 600;
-		line-height: 16px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		color: var(--color-lab-text);
-		border: 1px solid rgb(228 228 231 / 14%);
-		border-radius: 3px;
-		background: rgb(255 255 255 / 4%);
+	.kw-stopped {
+		color: var(--color-lab-yellow);
+	}
+	.kw-btns {
+		display: flex;
+		gap: 6px;
+		height: 22px;
 	}
 	.kw-btn {
 		box-sizing: border-box;
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		width: 148px;
+		gap: 4px;
 		height: 22px;
 		padding: 0 8px 0 4px;
 		border-radius: 4px;
@@ -1283,21 +1276,27 @@
 		white-space: nowrap;
 		color: var(--color-lab-text);
 	}
+	.kw-keep {
+		width: 72px;
+	}
+	.kw-close {
+		width: 66px;
+	}
 	.kw-btn .glyph {
-		width: 16px;
-		height: 16px;
+		width: 10px;
+		height: 10px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		flex: 0 0 auto;
 		color: #9ca3af;
 	}
-	.kept .kw-btn {
+	.kept .kw-keep {
 		border-color: rgb(234 179 8 / 55%);
 		background: rgb(234 179 8 / 8%);
 		color: var(--color-lab-yellow);
 	}
-	.kept .kw-btn .glyph {
+	.kept .kw-keep .glyph {
 		color: var(--color-lab-yellow);
 	}
 </style>

@@ -1,7 +1,7 @@
 <script module lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
 	import { ssot, fetchSsot, type BossLootShortcut, type DismissSettings, type OverlayDismiss } from '$lib/stores/ssot.svelte';
-	import { dismissShortcutLabel, parseShortcut } from '$lib/boss-loot/native-adapters';
+	import { parseShortcut, shortcutLabel } from '$lib/boss-loot/native-adapters';
 	import { keyboardShortcut, mouseShortcut, type ShortcutKeyInput, type ShortcutMouseInput } from '$lib/boss-loot/page-view';
 	import { WIDGETS } from '$lib/overlay/widgets/widget-registry';
 
@@ -13,6 +13,9 @@
 	const nativeDeps: OverlayDismissDeps = { current: () => ssot.overlayDismiss, call: invoke, refresh: () => fetchSsot('write') };
 	const timeoutOptions = [0, 5, 10, 20, 30];
 	const timeoutLabel = (seconds: number) => seconds === 0 ? 'Off' : `${seconds} s`;
+	function dismissShortcutLabel(shortcut: BossLootShortcut): string {
+		return shortcut.key === 27 ? shortcutLabel(shortcut).replace('Key 27', 'Esc') : shortcutLabel(shortcut);
+	}
 
 	export function createOverlayDismissEditor(deps: OverlayDismissDeps = nativeDeps) {
 		let listening = $state<string | null>(null);
