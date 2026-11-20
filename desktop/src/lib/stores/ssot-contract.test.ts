@@ -58,6 +58,7 @@ const overlayDismissKeys: Record<keyof DismissSnapshot, true> = {
 const readPromptKeys: Record<keyof ReadPromptSnapshot, true> = {
 	mechanic: true,
 	noMatch: true,
+	recalibrating: true,
 	seq: true
 };
 

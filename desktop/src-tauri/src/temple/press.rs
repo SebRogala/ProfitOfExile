@@ -49,6 +49,31 @@ pub trait PressContext {
     fn bank_entrance(&self, _origin: [i32; 2], _frame: &Capture, _ui_scale: f32) -> bool {
         false
     }
+    /// Whether this frame's screen setup already spent its one sweep.
+    fn sweep_spent(&self, _frame: &Capture) -> bool {
+        false
+    }
+    /// Records that this frame's screen setup spent its one sweep.
+    fn spend_sweep(&self, _frame: &Capture) {}
+}
+
+/// One screen setup for the sweep budget: capture size, display origin, client
+/// size and the Recalibrate generation. A change in any allows one more sweep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SweepKey {
+    capture: (u32, u32),
+    display: (i32, i32),
+    client_size: (i32, i32),
+    rearm: u64,
+}
+
+pub(crate) fn sweep_key(frame: &Capture, rearm: u64) -> SweepKey {
+    SweepKey {
+        capture: (frame.image.width(), frame.image.height()),
+        display: frame.origin,
+        client_size: (frame.client[2], frame.client[3]),
+        rearm,
+    }
 }
 
 impl PressContext for AppHandle {
@@ -84,6 +109,17 @@ impl PressContext for AppHandle {
     fn bank_entrance(&self, origin: [i32; 2], frame: &Capture, ui_scale: f32) -> bool {
         crate::ssot::remember_anchor_if_current(self, crate::ssot::AnchorModule::TempleEntrance, origin, frame, ui_scale)
     }
+    fn sweep_spent(&self, frame: &Capture) -> bool {
+        let temple = &self.state::<crate::AppState>().temple_state;
+        let key = sweep_key(frame, temple.rearm.load(std::sync::atomic::Ordering::SeqCst));
+        let spent = *temple.sweep_spent.lock().unwrap_or_else(|e| e.into_inner()) == Some(key);
+        spent
+    }
+    fn spend_sweep(&self, frame: &Capture) {
+        let temple = &self.state::<crate::AppState>().temple_state;
+        let key = sweep_key(frame, temple.rearm.load(std::sync::atomic::Ordering::SeqCst));
+        *temple.sweep_spent.lock().unwrap_or_else(|e| e.into_inner()) = Some(key);
+    }
 }
 
 /// The reason a press reads the temple at `now_ms`, or `None` when Client.txt
@@ -104,6 +140,7 @@ pub struct TemplePending {
     screen: Option<crate::ssot::ScreenSlice>,
     probe: Option<super::run::TempleProbe>,
     epoch: u64,
+    reconciled: bool,
 }
 
 impl<C: PressContext> ScreenReader<C> for TempleReader {
@@ -112,17 +149,26 @@ impl<C: PressContext> ScreenReader<C> for TempleReader {
     fn prepare(&self, ctx: &C, _press: &Press) -> Option<Box<dyn PendingRead<C>>> {
         let tx = ctx.press_sender()?;
         let reason = press_reason(ctx.arm_state(), super::run::now_ms());
-        Some(Box::new(TemplePending { tx, reason, prompt: ctx.prompt_arm(), screen: ctx.screen(), probe: None, epoch: ctx.epoch() }))
+        Some(Box::new(TemplePending { tx, reason, prompt: ctx.prompt_arm(), screen: ctx.screen(), probe: None, epoch: ctx.epoch(), reconciled: false }))
     }
 }
 
 impl<C: PressContext> PendingRead<C> for TemplePending {
+    fn needs_calibration(&mut self, frame: &Arc<Capture>, ctx: &C) -> bool {
+        let stopped = ctx.epoch() != self.epoch || ctx.press_sender().is_none();
+        !stopped && !super::run::is_calibrated(frame, self.screen) && !ctx.sweep_spent(frame)
+    }
     fn calibrate(&mut self, frame: &Arc<Capture>, ctx: &C) -> Option<String> {
         let started = std::time::Instant::now();
-        self.screen = ctx.reconcile_screen(frame);
+        if !self.reconciled { self.reconciled = true; self.screen = ctx.reconcile_screen(frame); }
         if super::run::is_calibrated(frame, self.screen) { return None; }
         let stop = || ctx.epoch() != self.epoch || ctx.press_sender().is_none();
-        let found = match super::run::calibrate_frame(frame, self.screen, &stop) {
+        let found = super::run::calibrate_frame(frame, self.screen, &stop);
+        if stop() {
+            return Some(format!("Temple: calibration — cancelled, {} ms", started.elapsed().as_millis()));
+        }
+        ctx.spend_sweep(frame);
+        let found = match found {
             Ok(found) => found,
             Err(e) => return Some(format!("Temple: calibration — failed ({e:?}), {} ms", started.elapsed().as_millis())),
         };
@@ -130,13 +176,12 @@ impl<C: PressContext> PendingRead<C> for TemplePending {
             return Some(format!("Temple: calibration — no Entrance plate on this frame, {} ms", started.elapsed().as_millis()));
         };
         let (x, y) = found.origin();
-        if !stop() {
-            if let Some(screen) = self.screen { ctx.bank_entrance([x, y], frame, screen.ui_scale); }
-            self.probe = Some(found);
-        }
+        if let Some(screen) = self.screen { ctx.bank_entrance([x, y], frame, screen.ui_scale); }
+        self.probe = Some(found);
         Some(format!("Temple: calibration — Entrance found at ({x}, {y}), {} ms", started.elapsed().as_millis()))
     }
     fn probe(&mut self, frame: &Arc<Capture>, ctx: &C) -> Result<bool, String> {
+        if !self.reconciled { self.reconciled = true; self.screen = ctx.reconcile_screen(frame); }
         if self.probe.is_some() {
             if ctx.epoch() != self.epoch || ctx.press_sender().is_none() { self.probe = None; return Ok(false); }
             return Ok(true);
@@ -172,6 +217,8 @@ mod tests {
         /// A slice that replaces the owner right after reconciliation, standing
         /// in for a geometry recalibration during the sweep.
         replaced_by: Mutex<Option<crate::ssot::ScreenSlice>>,
+        sweep: Mutex<Option<SweepKey>>,
+        rearm: Mutex<u64>,
     }
     impl PressContext for World {
         fn screen(&self) -> Option<crate::ssot::ScreenSlice> {
@@ -202,6 +249,12 @@ mod tests {
                 ui_scale, crate::ssot::AnchorModule::TempleEntrance, origin,
             )
         }
+        fn sweep_spent(&self, frame: &Capture) -> bool {
+            *self.sweep.lock().unwrap() == Some(sweep_key(frame, *self.rearm.lock().unwrap()))
+        }
+        fn spend_sweep(&self, frame: &Capture) {
+            *self.sweep.lock().unwrap() = Some(sweep_key(frame, *self.rearm.lock().unwrap()));
+        }
     }
 
     /// The 1920x1080 slice at UI scale 0.90, whose seed is the live origin.
@@ -222,7 +275,8 @@ mod tests {
     fn world(arm: ArmState) -> (World, Receiver<PressedFrame>) {
         let (tx, rx) = mpsc::channel();
         (World { sender: Mutex::new(Some(tx)), arm: Mutex::new(arm), prompt: Mutex::new(None),
-            slot: Mutex::new(Some(slice_1080(None))), replaced_by: Mutex::new(None) }, rx)
+            slot: Mutex::new(Some(slice_1080(None))), replaced_by: Mutex::new(None),
+            sweep: Mutex::new(None), rearm: Mutex::new(0) }, rx)
     }
 
     #[test]
@@ -419,6 +473,15 @@ mod tests {
         }
     }
 
+    /// The live sheet moved 40 px right of the seeded origin, past the banked
+    /// probe's fine window, so only the sweep finds its Entrance.
+    fn shifted_capture() -> Capture {
+        let live = capture(1);
+        let mut screen = image::DynamicImage::new_rgb8(1920, 1080);
+        image::imageops::overlay(&mut screen, &live.image, 40, 0);
+        Capture { image: screen, ..live }
+    }
+
     /// One press through `dispatch_press` with only the temple reader, no
     /// Client.txt reason; returns the outcome and the press's log lines.
     fn press(world: &World, frame: fn() -> Capture) -> (crate::read_hotkey::DispatchOutcome, Vec<String>) {
@@ -467,16 +530,18 @@ mod tests {
         }
 
         #[test]
-        fn an_unanchored_press_calibrates_once_and_the_next_press_does_not() {
+        fn a_sheet_the_banked_probe_misses_is_found_by_one_sweep_and_then_read_from_its_bank() {
             let (world, rx) = world(ArmState::default());
             *world.slot.lock().unwrap() = Some(crate::ssot::screen_from_geometry(1920, 1080, 1, (0, 0), [0, 0, 1920, 1080], 0));
 
-            let (first, lines) = press(&world, || capture(1));
+            let (first, lines) = press(&world, shifted_capture);
             assert_eq!(first, DispatchOutcome::Selected(ReaderId::Temple));
-            assert_eq!(lines.iter().filter(|l| l.starts_with("Temple: calibration — Entrance found")).count(), 1, "{lines:?}");
+            assert!(lines[0].starts_with("Read key: Temple probe — no match"), "{lines:?}");
+            assert_eq!(lines[1], "Read key: no mechanics found — running a recalibration sweep now");
+            assert!(lines[2].starts_with("Temple: calibration — Entrance found"), "{lines:?}");
             assert!(rx.try_recv().unwrap().probe.unwrap().located());
 
-            let (second, lines) = press(&world, || capture(2));
+            let (second, lines) = press(&world, shifted_capture);
             assert_eq!(second, DispatchOutcome::Selected(ReaderId::Temple));
             assert_eq!(calibrations(&lines), 0, "{lines:?}");
         }
@@ -531,8 +596,8 @@ mod tests {
         fn a_seed_confirming_calibration_with_no_read_still_calibrates_the_screen() {
             let (world, _rx) = world(ArmState::default());
 
-            assert_eq!(calibrations(&press(&world, || capture(1)).1), 1);
-            let (second, lines) = press(&world, || capture(2));
+            assert_eq!(calibrations(&press(&world, shifted_capture).1), 1);
+            let (second, lines) = press(&world, shifted_capture);
 
             assert_eq!(second, DispatchOutcome::Selected(ReaderId::Temple));
             assert_eq!(calibrations(&lines), 0, "{lines:?}");
@@ -546,12 +611,12 @@ mod tests {
             let (world, _rx) = world(ArmState::default());
             *world.slot.lock().unwrap() = Some(crate::ssot::screen_from_geometry(2560, 1440, 1, (0, 0), [0, 0, 2560, 1440], 0));
 
-            assert_eq!(calibrations(&press(&world, || capture(1)).1), 1);
+            assert_eq!(calibrations(&press(&world, shifted_capture).1), 1);
             let live = world.slot.lock().unwrap().unwrap();
             assert_eq!((live.width, live.height), (1920, 1080));
             assert!(live.anchors.and_then(|a| a.temple_entrance).is_some());
 
-            assert_eq!(calibrations(&press(&world, || capture(2)).1), 0);
+            assert_eq!(calibrations(&press(&world, shifted_capture).1), 0);
         }
 
         /// Silent consequence: a module turned off after calibration would
@@ -568,6 +633,26 @@ mod tests {
             assert_eq!(pending.probe(&frame, &world), Ok(false));
         }
 
+        /// Silent consequence: a budget that never re-opens leaves a moved or
+        /// recalibrated screen with no way to find the sheet.
+        #[test]
+        fn a_recalibrate_or_a_new_capture_size_reopens_one_sweep_and_a_same_size_move_does_not() {
+            let (world, _rx) = world(ArmState::default());
+            assert_eq!(calibrations(&press(&world, merc_capture).1), 1);
+            assert_eq!(calibrations(&press(&world, merc_capture).1), 0);
+
+            *world.rearm.lock().unwrap() += 1;
+            assert_eq!(calibrations(&press(&world, merc_capture).1), 1);
+            assert_eq!(calibrations(&press(&world, merc_capture).1), 0);
+
+            fn small() -> Capture { Capture { image: image::DynamicImage::new_rgb8(1280, 720), client: [0, 0, 1280, 720], ..merc_capture() } }
+            fn moved() -> Capture { Capture { client: [50, 30, 1280, 720], ..small() } }
+            assert_eq!(calibrations(&press(&world, small).1), 1);
+            assert_eq!(calibrations(&press(&world, small).1), 0);
+
+            assert_eq!(calibrations(&press(&world, moved).1), 0);
+        }
+
         /// Silent consequence: old-frame coordinates banked into a replacement
         /// slice would misplace every later temple overlay.
         #[test]
@@ -575,10 +660,10 @@ mod tests {
             let (world, _rx) = world(ArmState::default());
             *world.replaced_by.lock().unwrap() = Some(crate::ssot::screen_from_geometry(2560, 1440, 1, (0, 0), [0, 0, 2560, 1440], 0));
 
-            let (outcome, lines) = press(&world, || capture(1));
+            let (outcome, lines) = press(&world, shifted_capture);
 
             assert_eq!(outcome, DispatchOutcome::Selected(ReaderId::Temple));
-            assert_eq!(lines.iter().filter(|l| l.starts_with("Temple: calibration — Entrance found")).count(), 1);
+            assert_eq!(lines.iter().filter(|l| l.starts_with("Temple: calibration — Entrance found")).count(), 1, "{lines:?}");
             let live = world.slot.lock().unwrap().unwrap();
             assert_eq!(live.width, 2560);
             assert!(live.anchors.and_then(|a| a.temple_entrance).is_none());

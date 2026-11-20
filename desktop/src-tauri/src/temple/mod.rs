@@ -254,10 +254,13 @@ pub struct TempleState {
     /// game, and a player who switches the module on inside a temple must get a
     /// read without pressing anything.
     pub(crate) arm: std::sync::Mutex<trigger::ArmState>,
-    /// Bumped only by `ssot::geometry_recalibrate`; nothing reads it since
-    /// POE-389 removed the temple loop and Re-arm. Kept because that writer
-    /// lives outside the temple module's POE-389 WI-2 scope.
+    /// The Recalibrate generation, bumped only by `ssot::geometry_recalibrate`;
+    /// the read key's sweep budget ([`Self::sweep_spent`]) reads it, so a
+    /// Recalibrate allows one more sweep (POE-440).
     pub(crate) rearm: std::sync::atomic::AtomicU64,
+    /// The screen setup whose one recalibration sweep a press already spent
+    /// (POE-440); a press on the same setup runs no further sweep.
+    pub(crate) sweep_spent: std::sync::Mutex<Option<press::SweepKey>>,
     /// Bumped by `temple::trigger::on_client_line` on every CYCLE BOUNDARY
     /// (`trigger::ends_epoch`: a start line, any other Alva line, a zone change
     /// out of the temple) — POE-249.
@@ -294,6 +297,7 @@ impl TempleState {
             valuation: std::sync::Mutex::new(None),
             arm: std::sync::Mutex::new(trigger::ArmState::default()),
             rearm: std::sync::atomic::AtomicU64::new(0),
+            sweep_spent: std::sync::Mutex::new(None),
             epoch: std::sync::atomic::AtomicU64::new(0),
             press: std::sync::Mutex::new(None),
         }

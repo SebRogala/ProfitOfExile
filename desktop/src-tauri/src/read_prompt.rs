@@ -37,6 +37,8 @@ pub enum Change {
 pub struct ReadPromptSnapshot {
     pub mechanic: Option<Mechanic>,
     pub no_match: bool,
+    /// A recalibration sweep is running for the newest press.
+    pub recalibrating: bool,
     pub seq: u64,
 }
 
@@ -55,6 +57,7 @@ pub struct ReadPromptState {
     lab_context: u64,
     last_client_mechanic: Option<Mechanic>,
     no_match: bool,
+    recalibrating: bool,
     arm_generation: u64,
     accepted: u64,
     finished: u64,
@@ -101,8 +104,9 @@ impl ReadPromptState {
     }
     pub fn snapshot(&self) -> ReadPromptSnapshot {
         ReadPromptSnapshot {
-            mechanic: if self.no_match { None } else { self.active.iter().rev().map(|(m, _)| *m).find(|m| !UNPRESENTED.contains(m)) },
+            mechanic: if self.no_match || self.recalibrating { None } else { self.active.iter().rev().map(|(m, _)| *m).find(|m| !UNPRESENTED.contains(m)) },
             no_match: self.no_match,
+            recalibrating: self.recalibrating,
             seq: self.seq,
         }
     }
@@ -110,8 +114,15 @@ impl ReadPromptState {
         self.accepted += 1;
         PressStamp { id: self.accepted, arm_generation: self.arm_generation }
     }
+    /// A press found no mechanic and started the recalibration sweep.
+    pub fn begin_sweep(&mut self) {
+        self.recalibrating = true;
+        self.no_match = false;
+        self.seq += 1;
+    }
     pub fn finish_read(&mut self, stamp: PressStamp, outcome: crate::read_hotkey::DispatchOutcome) {
         use crate::read_hotkey::DispatchOutcome;
+        if std::mem::take(&mut self.recalibrating) { self.seq += 1; }
         if stamp.id <= self.finished { return; }
         self.finished = stamp.id;
         if stamp.arm_generation != self.arm_generation { return; }
@@ -243,6 +254,12 @@ pub fn accept_press_in(state: &crate::AppState) -> PressStamp {
 pub fn finish_read_in(state: &crate::AppState, stamp: PressStamp, outcome: crate::read_hotkey::DispatchOutcome) -> bool {
     edit_in(state, |p| p.finish_read(stamp, outcome))
 }
+pub fn begin_sweep_in(state: &crate::AppState) -> bool {
+    edit_in(state, ReadPromptState::begin_sweep)
+}
+pub fn begin_sweep(app: &AppHandle) {
+    emit_if(app, begin_sweep_in(&app.state::<crate::AppState>()));
+}
 pub fn accept_press(app: &AppHandle) -> PressStamp {
     accept_press_in(&app.state::<crate::AppState>())
 }
@@ -300,7 +317,7 @@ mod tests {
         let arm = prompt.armed_id(Mechanic::Incursion);
         let stamp = prompt.accept_press();
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2 });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2, recalibrating: false });
         assert_eq!(prompt.armed_id(Mechanic::Incursion), arm);
         assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Incursion));
     }
@@ -312,7 +329,7 @@ mod tests {
         prompt.finish_read(first, crate::read_hotkey::DispatchOutcome::NoMatch);
         let second = prompt.accept_press();
         prompt.finish_read(second, crate::read_hotkey::DispatchOutcome::NoMatch);
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2 });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2, recalibrating: false });
     }
 
     #[test]
@@ -323,7 +340,7 @@ mod tests {
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
         let stamp = prompt.accept_press();
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Mercenary));
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Incursion), no_match: false, seq: 3 });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Incursion), no_match: false, seq: 3, recalibrating: false });
         assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Incursion));
     }
 
@@ -346,7 +363,7 @@ mod tests {
         let newer = prompt.accept_press();
         prompt.finish_read(newer, crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Temple));
         prompt.finish_read(older, crate::read_hotkey::DispatchOutcome::NoMatch);
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: false, seq: 1 });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: false, seq: 1, recalibrating: false });
     }
 
     #[test]
@@ -355,7 +372,7 @@ mod tests {
         let stamp = prompt.accept_press();
         prompt.arm(Mechanic::Mercenary);
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, seq: 1 });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, seq: 1, recalibrating: false });
     }
 
     #[test]
@@ -367,7 +384,7 @@ mod tests {
         prompt.arm(Mechanic::Incursion);
         prompt.read_done(Mechanic::Incursion, arm);
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Temple));
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Incursion), no_match: false, seq: 2 });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Incursion), no_match: false, seq: 2, recalibrating: false });
         assert_eq!(prompt.armed_id(Mechanic::Incursion), Some(2));
     }
 
@@ -377,7 +394,7 @@ mod tests {
         let stamp = prompt.accept_press();
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
         prompt.arm(Mechanic::Mercenary);
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, seq: 2 });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, seq: 2, recalibrating: false });
     }
 
     #[test]
@@ -747,6 +764,20 @@ mod tests {
 
     mod keep_happy {
         use super::*;
+        use crate::read_hotkey::DispatchOutcome;
+
+        #[test]
+        fn a_sweep_presents_recalibrating_until_its_no_match_finishes() {
+            let mut prompt = ReadPromptState::default();
+            prompt.arm(Mechanic::Incursion);
+            let stamp = prompt.accept_press();
+            prompt.begin_sweep();
+            assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: false, recalibrating: true, seq: 2 });
+            prompt.finish_read(stamp, DispatchOutcome::NoMatch);
+            let done = prompt.snapshot();
+            assert!(!done.recalibrating && done.no_match && done.mechanic.is_none(), "{done:?}");
+            assert!(done.seq > 2);
+        }
 
         #[test]
         fn a_lab_font_arm_raises_no_prompt_and_keeps_its_read_identity() {
@@ -769,6 +800,31 @@ mod tests {
             apply_in(&state, Change::Arm(Mechanic::DivineFont));
             assert!(armed_id_in(&state, Mechanic::DivineFont).is_some());
             assert_eq!(shown_in(&state), Some(Mechanic::Mercenary));
+        }
+    }
+
+    mod keep_critical {
+        use super::*;
+        use crate::read_hotkey::{DispatchOutcome, ReaderId};
+
+        /// Silent consequence: a status stuck on "running a recalibration sweep".
+        #[test]
+        fn every_finish_path_clears_the_sweep_status() {
+            let finish: [fn(&mut ReadPromptState); 4] = [
+                |p| { let s = p.accept_press(); p.begin_sweep(); p.finish_read(s, DispatchOutcome::Failed("x".into())); },
+                |p| { let s = p.accept_press(); p.begin_sweep(); p.finish_read(s, DispatchOutcome::Suppressed); },
+                |p| {
+                    let old = p.accept_press(); let new = p.accept_press();
+                    p.finish_read(new, DispatchOutcome::NoMatch); p.begin_sweep();
+                    p.finish_read(old, DispatchOutcome::Selected(ReaderId::Temple));
+                },
+                |p| { let s = p.accept_press(); p.begin_sweep(); p.arm(Mechanic::Mercenary); p.finish_read(s, DispatchOutcome::NoMatch); },
+            ];
+            for run in finish {
+                let mut prompt = ReadPromptState::default();
+                run(&mut prompt);
+                assert!(!prompt.snapshot().recalibrating, "{:?}", prompt.snapshot());
+            }
         }
     }
 }

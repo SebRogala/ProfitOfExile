@@ -39,7 +39,7 @@ async function settle() {
 }
 function setup(loaded = true) {
 	const input = client.proxy({
-		readPrompt: { mechanic: null, noMatch: true, seq: 1 } as ReadPromptSnapshot,
+		readPrompt: { mechanic: null, noMatch: true, recalibrating: false, seq: 1 } as ReadPromptSnapshot,
 		readHotkey: { shortcut: { key: 65, shift: false, ctrl: true, alt: false }, delayMs: 0 },
 		overlayDismiss: loaded ? { timeoutSeconds: 10, shortcut: esc, overlays: {}, pending: [] } as DismissSnapshot : null
 	});
@@ -93,25 +93,25 @@ describe('read prompt presentation', () => {
 	it.each(['timeout', 'key'])('keeps the same sequence hidden across polls after %s dismissal', async (how) => {
 		const h = setup(); await settle();
 		if (how === 'key') { h.deliver(1); await settle(); } else vi.advanceTimersByTime(10000);
-		flushSync(); h.input.readPrompt = { mechanic: null, noMatch: true, seq: 1 };
+		flushSync(); h.input.readPrompt = { mechanic: null, noMatch: true, recalibrating: false, seq: 1 };
 		h.input.overlayDismiss = { ...h.input.overlayDismiss! }; flushSync();
 		expect(h.presentation.text).toBeNull(); expect(vi.getTimerCount()).toBe(0);
 	});
 	it('shows a fresh no-match sequence with a fresh deadline', () => {
 		const h = setup(); vi.advanceTimersByTime(10000); flushSync();
-		h.input.readPrompt = { mechanic: null, noMatch: true, seq: 2 }; flushSync();
+		h.input.readPrompt = { mechanic: null, noMatch: true, recalibrating: false, seq: 2 }; flushSync();
 		expect(h.presentation.text).toBe(MESSAGE);
 		vi.advanceTimersByTime(9999); expect(h.presentation.text).toBe(MESSAGE);
 		vi.advanceTimersByTime(1); expect(h.presentation.text).toBeNull();
 	});
 	it('a selected result replaces the no-match', () => {
 		const h = setup();
-		h.input.readPrompt = { mechanic: null, noMatch: false, seq: 2 }; flushSync();
+		h.input.readPrompt = { mechanic: null, noMatch: false, recalibrating: false, seq: 2 }; flushSync();
 		expect(h.presentation.text).toBeNull(); expect(vi.getTimerCount()).toBe(0);
 	});
 	it('keeps detected text outside the no-match timeout and key', async () => {
 		const h = setup(); vi.advanceTimersByTime(10000); flushSync();
-		h.input.readPrompt = { mechanic: 'incursion', noMatch: false, seq: 2 }; await settle();
+		h.input.readPrompt = { mechanic: 'incursion', noMatch: false, recalibrating: false, seq: 2 }; await settle();
 		h.deliver(1); await settle(); vi.advanceTimersByTime(60000);
 		expect(h.presentation.text).toBe(DETECTED); expect(vi.getTimerCount()).toBe(0);
 	});

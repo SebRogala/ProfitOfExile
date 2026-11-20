@@ -411,6 +411,7 @@
   "readPrompt": {
     "mechanic": "divineFont",
     "noMatch": false,
+    "recalibrating": false,
     "seq": 3
   }
 }

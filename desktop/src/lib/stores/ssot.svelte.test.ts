@@ -1694,29 +1694,29 @@ describe('the overlayDismiss slice', () => {
 describe('the readPrompt slice', () => {
 	it('shows no prompt before Rust answers', async () => {
 		const mod = await import('./ssot.svelte');
-		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: false, seq: 0 });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: false, recalibrating: false, seq: 0 });
 	});
 
 	it('takes the armed mechanic and its seq from a snapshot, and its clear', async () => {
 		const mod = await import('./ssot.svelte');
-		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: 'incursion', noMatch: false, seq: 4 } });
-		expect(mod.ssot.readPrompt).toEqual({ mechanic: 'incursion', noMatch: false, seq: 4 });
-		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, noMatch: false, seq: 4 } });
-		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: false, seq: 4 });
+		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: 'incursion', noMatch: false, recalibrating: false, seq: 4 } });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: 'incursion', noMatch: false, recalibrating: false, seq: 4 });
+		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, noMatch: false, recalibrating: false, seq: 4 } });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: false, recalibrating: false, seq: 4 });
 	});
 
 	it('applies a no-match result and retains it across partial snapshots', async () => {
 		const mod = await import('./ssot.svelte');
-		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, noMatch: true, seq: 5 } });
+		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, noMatch: true, recalibrating: false, seq: 5 } });
 		mod.applySnapshot({ league: { name: null } });
-		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: true, seq: 5 });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: true, recalibrating: false, seq: 5 });
 	});
 
 	it('takes the default no-match flag from the native wire fixture', async () => {
 		const mod = await import('./ssot.svelte');
-		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, noMatch: true, seq: 5 } });
+		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, noMatch: true, recalibrating: false, seq: 5 } });
 		mod.applySnapshot({ league: { name: null }, readPrompt: golden.readPrompt as SsotSnapshot['readPrompt'] });
-		expect(mod.ssot.readPrompt).toEqual({ mechanic: 'divineFont', noMatch: false, seq: 3 });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: 'divineFont', noMatch: false, recalibrating: false, seq: 3 });
 	});
 });
 

@@ -42,13 +42,13 @@ function render(): HTMLElement {
 
 describe('read prompt page', () => {
 	it('draws no prompt when no mechanic is presented', () => {
-		ssot.readPrompt = { mechanic: null, noMatch: false, seq: 1 };
+		ssot.readPrompt = { mechanic: null, noMatch: false, recalibrating: false, seq: 1 };
 		const target = render();
 		expect(target.querySelector('.prompt')).toBeNull();
 	});
 
 	it('draws the detected text for a mercenary arm', () => {
-		ssot.readPrompt = { mechanic: 'mercenary', noMatch: false, seq: 2 };
+		ssot.readPrompt = { mechanic: 'mercenary', noMatch: false, recalibrating: false, seq: 2 };
 		const target = render();
 		const prompts = target.querySelectorAll('.prompt');
 		expect(prompts).toHaveLength(1);

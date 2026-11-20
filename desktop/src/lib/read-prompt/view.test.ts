@@ -6,12 +6,12 @@ const CTRL_A: ReadHotkeySettings = { shortcut: { key: 65, shift: false, ctrl: tr
 const MOUSE_4: ReadHotkeySettings = { shortcut: { key: 5, shift: false, ctrl: false, alt: false }, delayMs: 0 };
 
 function text(mechanic: ReadPromptMechanic | null, readHotkey: ReadHotkeySettings | null) {
-	return readPromptText({ readPrompt: { mechanic, noMatch: false, seq: 1 }, readHotkey });
+	return readPromptText({ readPrompt: { mechanic, noMatch: false, recalibrating: false, seq: 1 }, readHotkey });
 }
 
 describe('readPromptText', () => {
 	it.each([CTRL_A, MOUSE_4, null])('shows the exact no-match message independently of the read key (%s)', (readHotkey) => {
-		expect(readPromptText({ readPrompt: { mechanic: null, noMatch: true, seq: 2 }, readHotkey }))
+		expect(readPromptText({ readPrompt: { mechanic: null, noMatch: true, recalibrating: false, seq: 2 }, readHotkey }))
 			.toBe('Nothing detected. If a mechanic is open, check Settings → OCR Regions → Preview, and press Recalibrate if a region is off.');
 	});
 	it.each([

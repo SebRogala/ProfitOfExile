@@ -3497,6 +3497,7 @@ mod tests {
         snapshot.read_prompt = crate::read_prompt::ReadPromptSnapshot {
             mechanic: Some(crate::read_prompt::Mechanic::DivineFont),
             no_match: false,
+            recalibrating: false,
             seq: 3,
         };
         snapshot
@@ -3548,7 +3549,7 @@ mod tests {
     fn ssot_snapshot_contract_default_read_prompt() {
         let state = crate::settings::tests::test_app_state();
         let wire = serde_json::to_value(build_snapshot(&state)).unwrap();
-        assert_eq!(wire["readPrompt"], serde_json::json!({ "mechanic": null, "noMatch": false, "seq": 0 }));
+        assert_eq!(wire["readPrompt"], serde_json::json!({ "mechanic": null, "noMatch": false, "recalibrating": false, "seq": 0 }));
     }
 
     #[test]
@@ -3557,6 +3558,6 @@ mod tests {
         let stamp = crate::read_prompt::accept_press_in(&state);
         crate::read_prompt::finish_read_in(&state, stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
         let wire = serde_json::to_value(build_snapshot(&state)).unwrap();
-        assert_eq!(wire["readPrompt"], serde_json::json!({ "mechanic": null, "noMatch": true, "seq": 1 }));
+        assert_eq!(wire["readPrompt"], serde_json::json!({ "mechanic": null, "noMatch": true, "recalibrating": false, "seq": 1 }));
     }
 }
