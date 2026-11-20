@@ -19,6 +19,10 @@ pub enum Mechanic {
     Mercenary,
 }
 
+// POE-438, Operator 2026-11-20: the Lab per-craft prompt is hidden for now
+// because the lookup replaces it; its arm is kept so the read path is unchanged.
+const UNPRESENTED: &[Mechanic] = &[Mechanic::DivineFont];
+
 /// What one Client.txt seam does to the prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Change {
@@ -95,7 +99,7 @@ impl ReadPromptState {
     }
     pub fn snapshot(&self) -> ReadPromptSnapshot {
         ReadPromptSnapshot {
-            mechanic: if self.no_match { None } else { self.active.last().map(|(m, _)| *m) },
+            mechanic: if self.no_match { None } else { self.active.iter().rev().map(|(m, _)| *m).find(|m| !UNPRESENTED.contains(m)) },
             no_match: self.no_match,
             seq: self.seq,
         }
@@ -411,11 +415,12 @@ mod tests {
     }
 
     #[test]
-    fn izaros_defeat_shows_the_divine_font_prompt() {
+    fn izaros_defeat_arms_the_divine_font() {
         let mut prompt = ReadPromptState::default();
         lab_line(&mut prompt, &mut crate::lab_state::LabStateMachine::new(),
             "[INFO Client 1] Izaro: I die for the Empire!");
-        assert_eq!(prompt.snapshot().mechanic, Some(Mechanic::DivineFont));
+        assert!(prompt.armed_id(Mechanic::DivineFont).is_some());
+        assert_eq!(prompt.snapshot().mechanic, None);
     }
 
     #[test]
@@ -432,11 +437,13 @@ mod tests {
     fn a_zone_change_ends_the_font_prompt() {
         let mut prompt = ReadPromptState::default();
         prompt.arm(Mechanic::DivineFont);
+        assert!(prompt.armed_id(Mechanic::DivineFont).is_some());
         let mut sm = crate::lab_state::LabStateMachine::new();
         sm.process_line(FONT_OPEN);
         let event = sm.process_line(r#"Generating level 69 area "2_10_town" with seed 1"#).unwrap();
         assert!(matches!(event, crate::lab_state::LabEvent::ZoneChanged { .. }));
         if let Some(change) = lab_event_change(&event) { prompt.apply(change); }
+        assert_eq!(prompt.armed_id(Mechanic::DivineFont), None);
         assert_eq!(prompt.snapshot().mechanic, None);
     }
 
@@ -444,8 +451,10 @@ mod tests {
     fn a_lab_exit_ends_the_font_prompt_without_a_font_open() {
         let mut prompt = ReadPromptState::default();
         prompt.arm(Mechanic::DivineFont);
+        assert!(prompt.armed_id(Mechanic::DivineFont).is_some());
         lab_line(&mut prompt, &mut crate::lab_state::LabStateMachine::new(),
             "[INFO Client 1] : You have entered Lioneye's Watch.");
+        assert_eq!(prompt.armed_id(Mechanic::DivineFont), None);
         assert_eq!(prompt.snapshot().mechanic, None);
     }
 
@@ -513,7 +522,7 @@ mod tests {
 
     #[test]
     fn each_armed_mechanic_is_the_one_shown() {
-        for mechanic in [Mechanic::DivineFont, Mechanic::Incursion, Mechanic::Mercenary] {
+        for mechanic in [Mechanic::Incursion, Mechanic::Mercenary] {
             let mut prompt = ReadPromptState::default();
             prompt.arm(mechanic);
             assert_eq!(prompt.snapshot().mechanic, Some(mechanic));
@@ -524,11 +533,10 @@ mod tests {
     fn each_font_round_arm_is_a_new_prompt() {
         let mut prompt = ReadPromptState::default();
         prompt.arm(Mechanic::DivineFont);
-        let first = prompt.snapshot();
+        let first = prompt.armed_id(Mechanic::DivineFont).unwrap();
         prompt.arm(Mechanic::DivineFont);
-        let second = prompt.snapshot();
-        assert_eq!(second.mechanic, Some(Mechanic::DivineFont));
-        assert_ne!(first.seq, second.seq);
+        let second = prompt.armed_id(Mechanic::DivineFont).unwrap();
+        assert_ne!(first, second);
     }
 
     #[test]
@@ -546,7 +554,9 @@ mod tests {
     fn a_context_end_hides_its_prompt() {
         let mut prompt = ReadPromptState::default();
         prompt.arm(Mechanic::DivineFont);
+        assert!(prompt.armed_id(Mechanic::DivineFont).is_some());
         prompt.end(Mechanic::DivineFont);
+        assert_eq!(prompt.armed_id(Mechanic::DivineFont), None);
         assert_eq!(prompt.snapshot().mechanic, None);
     }
 
@@ -559,7 +569,8 @@ mod tests {
         prompt.area_changed();
         assert_eq!(prompt.snapshot().mechanic, Some(Mechanic::Incursion));
         prompt.end(Mechanic::Incursion);
-        assert_eq!(prompt.snapshot().mechanic, Some(Mechanic::DivineFont));
+        assert!(prompt.armed_id(Mechanic::DivineFont).is_some());
+        assert_eq!(prompt.snapshot().mechanic, None);
     }
 
     #[test]
@@ -675,7 +686,11 @@ mod tests {
                 crate::lab::font_context::arm_font_context(&state);
             }
             assert!(apply_in(&state, Change::Arm(mechanic)));
-            assert_eq!(shown_in(&state), Some(mechanic));
+            if mechanic == Mechanic::DivineFont {
+                assert!(armed_id_in(&state, mechanic).is_some());
+            } else {
+                assert_eq!(shown_in(&state), Some(mechanic));
+            }
         }
     }
 
@@ -726,5 +741,32 @@ mod tests {
         assert!(area_changed_in(&state));
         assert!(!area_changed_in(&state));
         assert_eq!(state.read_prompt.lock().unwrap().snapshot().mechanic, None);
+    }
+
+    mod keep_happy {
+        use super::*;
+
+        #[test]
+        fn a_lab_font_arm_raises_no_prompt_and_keeps_its_read_identity() {
+            let state = crate::settings::tests::test_app_state();
+            set_module(&state, Mechanic::DivineFont, true);
+            crate::lab::font_context::arm_font_context(&state);
+            apply_in(&state, Change::Arm(Mechanic::DivineFont));
+            assert_eq!(shown_in(&state), None);
+            assert!(armed_id_in(&state, Mechanic::DivineFont).is_some());
+            assert_eq!(last_client_mechanic_in(&state), Some(Mechanic::DivineFont));
+        }
+
+        #[test]
+        fn a_mercenary_arm_still_raises_its_prompt_over_a_live_lab_arm() {
+            let state = crate::settings::tests::test_app_state();
+            set_module(&state, Mechanic::Mercenary, true);
+            set_module(&state, Mechanic::DivineFont, true);
+            crate::lab::font_context::arm_font_context(&state);
+            apply_in(&state, Change::Arm(Mechanic::Mercenary));
+            apply_in(&state, Change::Arm(Mechanic::DivineFont));
+            assert!(armed_id_in(&state, Mechanic::DivineFont).is_some());
+            assert_eq!(shown_in(&state), Some(Mechanic::Mercenary));
+        }
     }
 }

@@ -279,7 +279,10 @@ amendment): no module flag governs it, so its `createModuleWindows` row is
 always granted and enabled, and its route draws the single `prompt.read`
 widget through `createReadPromptPresentation`: detected text while
 `ssot.readPrompt.mechanic` is set, or the no-match result described in
-[Screen reading](#screen-reading-ggg-policy). It is
+[Screen reading](#screen-reading-ggg-policy). Since POE-438 a Divine
+Font arm is kept for the read but not presented, so the prompt shows detected
+text for Incursion and Mercenary only; the no-match result still shows for
+every read. It is
 display only, and it is in `capture.rs` `EXCLUDED_WHILE_GRABBING`
 ([ADR-023](adr/023-a-window-excluded-from-the-grab-may-cover-what-its-module-reads.md)
 amendment), so it is never in a read frame. The lab widget window is governed by `lab_overlays_enabled`; its compass, map

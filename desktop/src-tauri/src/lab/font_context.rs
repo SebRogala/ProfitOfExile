@@ -276,7 +276,8 @@ mod tests {
     }
 
     fn shown(state: &AppState) -> Option<crate::read_prompt::Mechanic> {
-        state.read_prompt.lock().unwrap().snapshot().mechanic
+        crate::read_prompt::armed_id_in(state, crate::read_prompt::Mechanic::DivineFont)
+            .map(|_| crate::read_prompt::Mechanic::DivineFont)
     }
 
     #[test]
@@ -338,7 +339,7 @@ mod tests {
         prompt(&state);
         crate::read_prompt::end_lab_context_in(&state, upload.ended_token);
         assert_eq!(shown(&state), Some(crate::read_prompt::Mechanic::DivineFont));
-        assert!(crate::read_prompt::end_lab_context_in(&state, new.token), "replacement token must own the prompt");
+        assert!(!crate::read_prompt::end_lab_context_in(&state, new.token), "a hidden arm's end changes no presentation");
         assert_eq!(shown(&state), None);
     }
 

@@ -230,8 +230,10 @@ mod prompt_tests {
         set_lab_overlays_enabled_in(&state, true);
         super::super::font_context::arm_font_context(&state);
         read_prompt::apply_in(&state, Change::Arm(Mechanic::DivineFont));
-        assert_eq!(state.read_prompt.lock().unwrap().snapshot().mechanic, Some(Mechanic::DivineFont));
+        assert!(read_prompt::armed_id_in(&state, Mechanic::DivineFont).is_some());
+        assert_eq!(state.read_prompt.lock().unwrap().snapshot().mechanic, None);
         set_lab_overlays_enabled_in(&state, false);
+        assert_eq!(read_prompt::armed_id_in(&state, Mechanic::DivineFont), None);
         assert_eq!(state.read_prompt.lock().unwrap().snapshot().mechanic, None);
     }
 }
