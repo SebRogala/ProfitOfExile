@@ -16,6 +16,7 @@ fn build_search_query(gem: &str, variant: &str) -> serde_json::Value {
 ///   markets: a minimum would price the cheaper pool off the dearer one's listings.
 /// - Uses `gem.activegem` category (skills only, no supports)
 pub fn build_search_query_with_mode(gem: &str, variant: &str, dedication: bool) -> serde_json::Value {
+    let gem = strip_diacritics(gem);
     let (gem_level, gem_quality) = parse_variant(variant);
 
     let misc_filters = if dedication {
@@ -81,6 +82,16 @@ pub fn build_search_query_with_mode(gem: &str, variant: &str, dedication: bool) 
         "query": query_inner,
         "sort": {"price": "asc"}
     })
+}
+
+/// Mirrors Go's `stripDiacritics` table (internal/trade/client.go), pinned by internal/trade/testdata/gem-name-fold-vectors.json.
+fn strip_diacritics(s: &str) -> String {
+    s.chars().map(|c| match c {
+        'ö' => 'o', 'ä' => 'a', 'ü' => 'u', 'é' => 'e', 'è' => 'e', 'ê' => 'e',
+        'á' => 'a', 'à' => 'a', 'â' => 'a', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
+        'Ö' => 'O', 'Ä' => 'A', 'Ü' => 'U', 'É' => 'E',
+        other => other,
+    }).collect()
 }
 
 /// Parse variant "20/20" → (level, quality). "20" → (20, 0).
