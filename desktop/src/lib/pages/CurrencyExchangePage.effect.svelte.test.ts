@@ -190,3 +190,25 @@ describe('CurrencyExchangePage no offers chip click', () => {
 		]);
 	});
 });
+
+describe('CurrencyExchangePage column tooltips', () => {
+	// keep:happy
+	it('hovering the Investment header shows the exchange Investment tooltip', async () => {
+		const { EXCHANGE_TOOLTIPS } = await import('$lib/exchange/tooltips');
+		transport.responses.push(answer(['TwoSidedOrb']), answer(['TwoSidedOrb']));
+		app = mount(CurrencyExchangePage, { target: document.body });
+		await settle();
+		const trigger = [...document.querySelectorAll<HTMLElement>('thead .tooltip-wrap')].find(
+			(wrap) => wrap.textContent?.trim() === 'Investment'
+		);
+		if (!trigger) throw new Error('the Investment header tooltip trigger did not render');
+
+		trigger.dispatchEvent(new MouseEvent('mouseenter'));
+		flushSync();
+
+		const shown = [...document.querySelectorAll<HTMLElement>('[role="tooltip"]')].find(
+			(tip) => tip.style.visibility === 'visible'
+		);
+		expect(shown?.textContent).toBe(EXCHANGE_TOOLTIPS.Investment);
+	});
+});

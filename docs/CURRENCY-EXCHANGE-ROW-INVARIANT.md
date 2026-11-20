@@ -4,7 +4,7 @@ Status: CURRENT. Normative for the desktop Currency Exchange table.
 
 Last verified: 2026-09-05 against `main@62d2104` — `desktop/src/lib/exchange/view.ts`,
 `filters.ts`, `desktop/src/lib/pages/CurrencyExchangePage.svelte`,
-`desktop/src/lib/components/ExchangeRoute.svelte`, `desktop/src/lib/tooltips.ts`,
+`desktop/src/lib/components/ExchangeRoute.svelte`, `desktop/src/lib/exchange/tooltips.ts`,
 `internal/exchange/plays.go`, `internal/exchange/direct.go`. EVERY `file:line`
 reference below was re-checked against that commit and re-pointed where it had
 drifted — the earlier `poe-252@6f76efd` re-stamp moved the date without moving
@@ -27,7 +27,7 @@ This document is the single normative statement of what the numbers on one
 Currency Exchange row mean and how they must agree. It is normative because the
 invariant spans five emitters and one wire contract — `desktop/src/lib/exchange/view.ts`,
 `desktop/src/lib/exchange/filters.ts`, `desktop/src/lib/pages/CurrencyExchangePage.svelte`,
-`desktop/src/lib/components/ExchangeRoute.svelte`, `desktop/src/lib/tooltips.ts`, and the
+`desktop/src/lib/components/ExchangeRoute.svelte`, `desktop/src/lib/exchange/tooltips.ts`, and the
 field docs in `internal/exchange/plays.go` — and no one of those files can hold
 it without the other five drifting away from it silently. That is the whole
 history this document exists to end: three rounds of "the numbers on one row
@@ -458,7 +458,7 @@ the reason this table exists (ADR-016).
 
 Measured across 960 top-20 play-hours that difference is negative and large: the
 best case overstates the measurement by four to eight times
-(`EXCHANGE_TOOLTIPS['Exp. ROI']`, `tooltips.ts:89`).
+(`EXCHANGE_TOOLTIPS['Exp. ROI']`, `exchange/tooltips.ts:28`).
 Nothing in the arithmetic guarantees the SIGN, though, and no emitter, no
 formatter and no closure test may assume `chainEnd > get`. A row whose measured
 expectation beats its hour's best case is a legal row, and the matrix carries
@@ -542,7 +542,7 @@ The deeper reason is that a gate asks a different question. A gate asks whether
 this MARKET is worth trading; the columns ask what one posting or one run of it
 returns. So the split is not a seam to be closed but two questions with two
 right answers, and the tooltips for `Min item price` and `Min profit`
-(`tooltips.ts`) already say the uncomfortable half out loud: *no column prints
+(`exchange/tooltips.ts`) already say the uncomfortable half out loud: *no column prints
 the figure this compares against*. That sentence is load-bearing and must not be
 edited away — and the display-scale change narrowed rather than removed its
 scope, on BOTH of those gates and by one rule. A row whose display scale is ONE
@@ -611,7 +611,7 @@ delete the only reading that prices the undercut.
 
 Neither number is what the table is ranked by (that is `ExpectedRoi`), and NET
 is what the Gates row judges — both already stated at
-`EXCHANGE_TOOLTIPS['ROI%']` (`tooltips.ts:86-87`).
+`EXCHANGE_TOOLTIPS['ROI%']` (`exchange/tooltips.ts:25-26`).
 
 ### 6.3 Depth (outside SCALE and BASIS)
 
@@ -640,7 +640,7 @@ the row used for the best-case price basis. Two different senses of one word on
 one row is how numbers come to disagree in a reader's head, so the word is
 retired from this surface. The price basis is **BEST CASE**. The whole-book
 hours are **UNCONTESTED**. The retired word appears nowhere on the row surface:
-`tooltips.ts`, `view.ts` and its tests, `filters.ts` and its tests, the page
+`exchange/tooltips.ts`, `view.ts` and its tests, `filters.ts` and its tests, the page
 caption, `ExchangeRoute.svelte` and `ExchangeFilterBar.svelte` are all swept to
 zero hits. The one recorded exclusion is `api.ts`'s wire-type docs, which
 mirror the Go wire docs and say so in place.

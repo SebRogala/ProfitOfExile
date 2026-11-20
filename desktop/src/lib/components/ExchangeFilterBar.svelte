@@ -53,7 +53,7 @@
 	import ExchangeItemPicker from './ExchangeItemPicker.svelte';
 	import ItemIcon from './ItemIcon.svelte';
 	import Tooltip from './Tooltip.svelte';
-	import { EXCHANGE_TOOLTIPS } from '$lib/tooltips';
+	import { EXCHANGE_TOOLTIPS } from '$lib/exchange/tooltips';
 
 	let {
 		categories,

@@ -64,7 +64,7 @@
 		type CategoryRuleState,
 		type Gates
 	} from '$lib/exchange/filters';
-	import { EXCHANGE_TOOLTIPS } from '$lib/tooltips';
+	import { EXCHANGE_TOOLTIPS } from '$lib/exchange/tooltips';
 	import { persisted, type PersistedString } from '$lib/prefs.svelte';
 	import ExchangeFilterBar from '$lib/components/ExchangeFilterBar.svelte';
 	import ExchangeRoute from '$lib/components/ExchangeRoute.svelte';
