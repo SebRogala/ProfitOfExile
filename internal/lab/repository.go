@@ -455,7 +455,7 @@ func (r *Repository) BasePriceHistory(ctx context.Context, scope league.Scope, v
 		  AND is_corrupted = false
 		  AND ` + sqlNotHeistOnly + `
 		  AND variant = ANY($3)`
-	args := []any{scope.ID(), hours, []string{"1", "1/20", "20", "20/20"}}
+	args := []any{scope.ID(), hours, sparklineVariants}
 
 	if variant != "" {
 		query += ` AND variant = $4`
@@ -504,7 +504,7 @@ func (r *Repository) MarketAvgBaseListings(ctx context.Context, scope league.Sco
 		  AND is_corrupted = false
 		  AND ` + sqlNotHeistOnly + `
 		  AND variant = ANY($2)`
-	args := []any{scope.ID(), []string{"1", "1/20", "20", "20/20"}}
+	args := []any{scope.ID(), sparklineVariants}
 
 	if variant != "" {
 		query = `
@@ -550,7 +550,7 @@ func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, scope league.
 		  AND ` + sqlNotHeistOnly + `
 		  AND COALESCE(chaos, 0) > 5
 		  AND variant = ANY($3)`
-	args := []any{scope.ID(), hours, []string{"1", "1/20", "20", "20/20"}}
+	args := []any{scope.ID(), hours, sparklineVariants}
 
 	if variant != "" {
 		query += ` AND variant = $4`
@@ -772,7 +772,9 @@ func (r *Repository) SparklineSeries(ctx context.Context, scope league.Scope, ke
 	return result, nil
 }
 
-// sparklineVariants are the non-corrupted variants sparkline consumers ask for.
+// sparklineVariants are the non-corrupted variants sparkline consumers ask for,
+// and the Normal variants BasePriceHistory, MarketAvgBaseListings and
+// GemPriceHistoryByVariant bind.
 // Prices for different variants are different markets, so the variant is part
 // of the series identity rather than something merged away.
 var sparklineVariants = []string{"1", "1/20", "20", "20/20"}
