@@ -124,9 +124,17 @@ describe('widget dismissal', () => {
 		dismissal.applyKey(esc); expect(dismissal.hidden).toBe(true);
 	});
 	// keep:critical
-	it('a pause ends with its read when the content key changes', () => {
+	it('a pause survives a re-read with the countdown still stopped', () => {
 		const { input, dismissal } = setup(); dismissal.pause(); flushSync();
-		input.key++; flushSync(); expect(dismissal.paused).toBe(false);
+		input.key++; flushSync(); expect(dismissal.paused).toBe(true);
+		vi.advanceTimersByTime(60000);
+		expect(dismissal.hidden).toBe(false); expect(vi.getTimerCount()).toBe(0);
+	});
+	// keep:critical
+	it('the dismissal key ends a pause so the next read counts down again', () => {
+		const { input, dismissal } = setup(); dismissal.pause(); flushSync();
+		dismissal.applyKey(esc); flushSync(); expect(dismissal.paused).toBe(false);
+		input.key++; flushSync(); expect(dismissal.hidden).toBe(false);
 		vi.advanceTimersByTime(9999); expect(dismissal.hidden).toBe(false);
 		vi.advanceTimersByTime(1); expect(dismissal.hidden).toBe(true);
 	});
