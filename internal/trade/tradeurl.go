@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+// tradeSearchURL returns the trade-site search prefix for league, path-escaped.
+func tradeSearchURL(league string) string {
+	return "https://www.pathofexile.com/trade/search/" + url.PathEscape(league)
+}
+
 // LeagueFromTradeURL recovers the captured identity of installed clients that
 // predate the explicit league field. Invalid or absent search URLs fail closed.
 func LeagueFromTradeURL(raw string) string {

@@ -30,6 +30,41 @@ func readTradePriceVectors(t *testing.T) []tradePriceVector {
 	return vectors
 }
 
+type tradeURLVector struct {
+	Name     string `json:"name"`
+	League   string `json:"league"`
+	QueryID  string `json:"queryId"`
+	TradeURL string `json:"tradeUrl"`
+}
+
+func readTradeURLVectors(t *testing.T) []tradeURLVector {
+	t.Helper()
+	data, err := os.ReadFile("testdata/trade-url-vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors []tradeURLVector
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	return vectors
+}
+
+func TestKeepHappy_BuildResultTradeURLMatchesSharedVectors(t *testing.T) {
+	vectors := readTradeURLVectors(t)
+	if len(vectors) == 0 {
+		t.Fatal("no trade URL vectors")
+	}
+	for _, vector := range vectors {
+		t.Run(vector.Name, func(t *testing.T) {
+			result := BuildResult("Arc", "20/20", vector.League, SearchResponse{QueryID: vector.QueryID}, nil, 0, 0)
+			if result.TradeURL != vector.TradeURL {
+				t.Errorf("TradeURL = %q, want %q", result.TradeURL, vector.TradeURL)
+			}
+		})
+	}
+}
+
 func TestBuildResult_TradePriceVectors(t *testing.T) {
 	for _, vector := range readTradePriceVectors(t) {
 		t.Run(vector.Name, func(t *testing.T) {

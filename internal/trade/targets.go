@@ -92,7 +92,7 @@ func (t FixedTarget) TradeURL(leagueName string) string {
 	if err != nil {
 		return ""
 	}
-	return "https://www.pathofexile.com/trade/search/" + url.PathEscape(leagueName) + "?q=" + url.QueryEscape(string(body))
+	return tradeSearchURL(leagueName) + "?q=" + url.QueryEscape(string(body))
 }
 
 // FixedTargets returns the registry in scheduling order.

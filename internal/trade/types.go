@@ -181,7 +181,7 @@ func BuildResult(gem, variant, league string, sr SearchResponse, listings []Trad
 
 	tradeURL := ""
 	if sr.QueryID != "" && league != "" {
-		tradeURL = "https://www.pathofexile.com/trade/search/" + league + "/" + sr.QueryID
+		tradeURL = tradeSearchURL(league) + "/" + sr.QueryID
 	}
 
 	result := &TradeLookupResult{
