@@ -482,6 +482,44 @@ mod tests {
         }
     }
 
+    mod keep_regression {
+        use super::*;
+        use crate::read_hotkey::DispatchOutcome;
+
+        /// Escaped bug (audit A2): while no plate was ever found, every press
+        /// re-ran the whole-frame sweep.
+        #[test]
+        fn a_second_press_on_an_unanchored_screen_without_the_sheet_runs_no_sweep() {
+            let (world, _rx) = world(ArmState::default());
+            *world.slot.lock().unwrap() = Some(slice_1080(None));
+
+            let (first, lines) = press(&world, merc_capture);
+            assert_eq!(first, DispatchOutcome::NoMatch);
+            assert_eq!(calibrations(&lines), 1, "{lines:?}");
+
+            let (second, lines) = press(&world, merc_capture);
+            assert_eq!(second, DispatchOutcome::NoMatch);
+            assert_eq!(calibrations(&lines), 0, "{lines:?}");
+            assert_eq!(lines.iter().filter(|l| l.starts_with("Read key: Temple probe — no match")).count(), 1, "{lines:?}");
+        }
+
+        /// Escaped bug (audit A4): a stopped calibration logged "Entrance found".
+        #[test]
+        fn a_calibration_stopped_before_it_runs_logs_cancelled_and_banks_nothing() {
+            let (world, _rx) = world(ArmState::default());
+            *world.slot.lock().unwrap() = Some(slice_1080(None));
+            let frame = Arc::new(capture(1));
+            let mut pending = TEMPLE_READER.prepare(&world, &Press { cursor: None }).unwrap();
+            *world.sender.lock().unwrap() = None;
+
+            let line = pending.calibrate(&frame, &world).unwrap();
+
+            assert!(line.starts_with("Temple: calibration — cancelled"), "{line}");
+            assert!(world.slot.lock().unwrap().unwrap().anchors.and_then(|a| a.temple_entrance).is_none());
+            assert_eq!(pending.probe(&frame, &world), Ok(false));
+        }
+    }
+
     mod keep_critical {
         use super::*;
         use crate::read_hotkey::{DispatchOutcome, ReaderId};

@@ -835,17 +835,14 @@ mod dispatch_tests {
         }
 
         #[test]
-        fn a_press_calibrates_every_uncalibrated_reader_before_the_first_probe() {
+        fn banked_probes_run_before_any_calibration_and_a_hit_skips_it() {
             let world = Arc::new(World::default());
             *world.uncalibrated.lock().unwrap() = vec!["a", "b"];
             *world.misses.lock().unwrap() = vec!["a"];
             let (outcome, lines) = logged_press(&world, &[&A, &B]);
             assert_eq!(outcome, DispatchOutcome::Selected(ReaderId::Mercenary));
-            assert_eq!(*world.trace.lock().unwrap(), vec!["grab", "calibrate", "calibrate", "probe", "probe", "consume"]);
-            assert_eq!(lines.iter().filter(|l| *l == "calibrated a").count(), 1);
-            assert_eq!(lines.iter().filter(|l| *l == "calibrated b").count(), 1);
-            let first_miss = lines.iter().position(|l| l.contains("probe — no match")).expect("a miss line");
-            assert!(lines.iter().position(|l| l == "calibrated b").unwrap() < first_miss);
+            assert_eq!(*world.trace.lock().unwrap(), vec!["grab", "probe", "probe", "consume"]);
+            assert!(!lines.iter().any(|l| l.starts_with("calibrated")), "{lines:?}");
         }
 
         #[test]
