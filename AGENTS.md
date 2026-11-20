@@ -61,14 +61,6 @@ and the documentation index before acting on them.
   says deploy, because a push to `main` deploys; [docs/DEPLOY.md](docs/DEPLOY.md)
   holds the deploy mechanics. Push `dev` without asking; a `dev` push deploys
   nothing (owner, 2026-11-12 and 2026-11-19).
-- Agent-profile upgrades: when asked to upgrade or refresh the profiles in
-  `.claude/agents/` (including "mine git"), run Pipeforge's
-  `integrate-agent-learnings` skill instead of mining git by hand. Run
-  `pipeforge lookup integrate-agent-learnings <args>`, then follow the SKILL.md
-  it returns. Start the git window at the sha in the local, gitignored
-  `.claude/pipeforge/learnings/git-cursor.txt`, and end it at `dev`, not `main`.
-  Pass `--no-merges` in place of the skill's `--first-parent`: first-parent
-  drops side-branch commits merged into `dev`.
 
 ## Durable rules
 
