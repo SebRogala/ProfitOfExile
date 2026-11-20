@@ -155,7 +155,7 @@ export function initDivineRateStore(): () => void {
 	}, CLOCK_MS);
 
 	// Debounced AND jittered (`refetchDelay`): every client receives the same
-	// publish at once — see the constants' comment in `$lib/exchange/view`.
+	// publish at once — see the constants' comment in `$lib/stores/mercure.svelte`.
 	const unlisten = listen('currency-exchange-updated', () => {
 		if (cancelled) return;
 		if (refetchTimer) clearTimeout(refetchTimer);
