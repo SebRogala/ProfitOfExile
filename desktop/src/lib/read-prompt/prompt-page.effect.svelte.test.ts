@@ -2,7 +2,7 @@
 // keep:happy
 /**
  * The production read-prompt page mounted under happy-dom (POE-438): a
- * Lab-only arm (no mechanic) draws no prompt, a mercenary arm draws its text.
+ * snapshot presenting no mechanic draws no prompt, a mercenary arm draws its text.
  * Only WidgetHost placement is doubled; the page's own content conditional decides.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -41,7 +41,7 @@ function render(): HTMLElement {
 }
 
 describe('read prompt page', () => {
-	it('draws no prompt for a Lab-only arm', () => {
+	it('draws no prompt when no mechanic is presented', () => {
 		ssot.readPrompt = { mechanic: null, noMatch: false, seq: 1 };
 		const target = render();
 		expect(target.querySelector('.prompt')).toBeNull();

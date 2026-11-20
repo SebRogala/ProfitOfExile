@@ -275,7 +275,7 @@ mod tests {
         crate::read_prompt::apply_in(state, crate::read_prompt::Change::Arm(crate::read_prompt::Mechanic::DivineFont));
     }
 
-    fn shown(state: &AppState) -> Option<crate::read_prompt::Mechanic> {
+    fn armed(state: &AppState) -> Option<crate::read_prompt::Mechanic> {
         crate::read_prompt::armed_id_in(state, crate::read_prompt::Mechanic::DivineFont)
             .map(|_| crate::read_prompt::Mechanic::DivineFont)
     }
@@ -289,9 +289,9 @@ mod tests {
 
         prompt(&state);
 
-        assert_eq!(shown(&state), None);
+        assert_eq!(armed(&state), None);
         crate::read_prompt::end_lab_context_in(&state, upload.ended_token);
-        assert_eq!(shown(&state), None);
+        assert_eq!(armed(&state), None);
     }
 
     #[test]
@@ -304,7 +304,7 @@ mod tests {
 
         prompt(&state);
 
-        assert_eq!(shown(&state), None);
+        assert_eq!(armed(&state), None);
     }
 
     #[test]
@@ -315,7 +315,7 @@ mod tests {
         let upload = take_font_upload(&state, Some(arm.idle_seq)).unwrap();
         assert_eq!(upload.ended_token, arm.token);
         crate::read_prompt::end_lab_context_in(&state, upload.ended_token);
-        assert_eq!(shown(&state), None);
+        assert_eq!(armed(&state), None);
     }
 
     #[test]
@@ -325,7 +325,7 @@ mod tests {
         arm_font_context(&state);
         prompt(&state);
         assert_eq!(take_font_upload(&state, Some(old.idle_seq)), None);
-        assert_eq!(shown(&state), Some(crate::read_prompt::Mechanic::DivineFont));
+        assert_eq!(armed(&state), Some(crate::read_prompt::Mechanic::DivineFont));
     }
 
     #[test]
@@ -338,9 +338,9 @@ mod tests {
         assert_ne!(new.token, old.token);
         prompt(&state);
         crate::read_prompt::end_lab_context_in(&state, upload.ended_token);
-        assert_eq!(shown(&state), Some(crate::read_prompt::Mechanic::DivineFont));
+        assert_eq!(armed(&state), Some(crate::read_prompt::Mechanic::DivineFont));
         assert!(!crate::read_prompt::end_lab_context_in(&state, new.token), "a hidden arm's end changes no presentation");
-        assert_eq!(shown(&state), None);
+        assert_eq!(armed(&state), None);
     }
 
     /// What the reader does with a current read: alerts under their own lock,
