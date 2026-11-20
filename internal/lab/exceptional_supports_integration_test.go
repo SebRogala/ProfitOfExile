@@ -4,7 +4,10 @@ package lab
 
 import (
 	"context"
+	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -137,5 +140,102 @@ func TestExceptionalSupportPrices_leagueWithoutSnapshotsReturnsZeroTime(t *testi
 
 	if err != nil || !snap.AsOf.IsZero() || len(snap.Chaos) != 0 {
 		t.Errorf("got (%v, %v, err %v), want zero snapshot and nil error", snap.AsOf, snap.Chaos, err)
+	}
+}
+
+// TestKeepHappyExceptionalSupportsSharedSnapshot proves one poll reads the
+// snapshot in two statements (one without a snapshot), a cold burst shares one
+// read, warm polls read nothing, and the cached snapshot equals the
+// repository's own.
+func TestKeepHappyExceptionalSupportsSharedSnapshot(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	priced, empty := "POE-410-esp-shared", "POE-410-esp-empty"
+	registerLeague(t, pool, priced)
+	registerLeague(t, pool, empty)
+	cleanupAtTime(t, pool, futureTime(68), "gem_snapshots")
+	seedExceptionalSupport(t, pool, priced, 68, "Enhance Support", "1", false, 9)
+	seedExceptionalSupport(t, pool, priced, 68, "Enhance Support", "1", true, 50)
+	seedExceptionalSupport(t, pool, priced, 68, "Enhance Support", "4", false, 70)
+	seedExceptionalSupport(t, pool, priced, 68, "Empower Support", "1", false, 43.2)
+
+	for _, tc := range []struct {
+		id       string
+		coldSQL  int
+		wantAsOf time.Time
+	}{
+		{id: priced, coldSQL: 2, wantAsOf: futureTime(68)},
+		{id: empty, coldSQL: 1},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			scope := league.Historical(tc.id)
+			repo, counter := countingRepository(t, pool)
+			want, err := repo.ExceptionalSupportPrices(ctx, scope)
+			if err != nil {
+				t.Fatalf("uncached read: %v", err)
+			}
+			if n := counter.reset(); n != tc.coldSQL {
+				t.Fatalf("uncached poll sent %d statements, want %d", n, tc.coldSQL)
+			}
+
+			single := NewExceptionalSupportCache(repo.ExceptionalSupportPrices, NewCache(scope))
+			if _, err := single.ExceptionalSupportPrices(ctx, scope); err != nil {
+				t.Fatalf("cold poll: %v", err)
+			}
+			if n := counter.reset(); n != tc.coldSQL {
+				t.Errorf("one cold poll sent %d statements, want %d", n, tc.coldSQL)
+			}
+
+			burst := NewExceptionalSupportCache(repo.ExceptionalSupportPrices, NewCache(scope))
+			const polls = 300
+			got := make([]ExceptionalSupportSnapshot, polls)
+			errs := make([]error, polls)
+			var wg sync.WaitGroup
+			start := make(chan struct{})
+			for i := range polls {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					got[i], errs[i] = burst.ExceptionalSupportPrices(ctx, scope)
+				}()
+			}
+			close(start)
+			wg.Wait()
+			if n := counter.reset(); n != tc.coldSQL {
+				t.Errorf("%d overlapping cold polls sent %d statements, want %d", polls, n, tc.coldSQL)
+			}
+			for i := range polls {
+				if errs[i] != nil || !reflect.DeepEqual(got[i], want) {
+					t.Fatalf("poll %d = (%+v, %v), want %+v", i, got[i], errs[i], want)
+				}
+			}
+
+			for range 5 {
+				if _, err := burst.ExceptionalSupportPrices(ctx, scope); err != nil {
+					t.Fatalf("warm poll: %v", err)
+				}
+			}
+			if n := counter.reset(); n != 0 {
+				t.Errorf("warm polls sent %d statements, want 0", n)
+			}
+
+			if !got[0].AsOf.Equal(tc.wantAsOf) {
+				t.Errorf("asOf = %v, want %v", got[0].AsOf, tc.wantAsOf)
+			}
+			prices := got[0].Prices()
+			var names []string
+			for _, p := range prices {
+				names = append(names, p.Name)
+			}
+			if !reflect.DeepEqual(names, ExceptionalSupportNames[:]) {
+				t.Errorf("names = %v, want %v", names, ExceptionalSupportNames)
+			}
+			if tc.id == priced {
+				if prices[0].Chaos == nil || !valuesClose(*prices[0].Chaos, 9) || prices[1].Chaos != nil || prices[2].Chaos == nil || !valuesClose(*prices[2].Chaos, 43.2) {
+					t.Errorf("prices = %v %v %v, want Enhance 9, Enlighten null, Empower 43.2", prices[0].Chaos, prices[1].Chaos, prices[2].Chaos)
+				}
+			}
+		})
 	}
 }

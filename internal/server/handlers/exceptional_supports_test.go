@@ -133,3 +133,27 @@ func TestExceptionalSupportPrices_readsTheProcessLeague(t *testing.T) {
 		t.Errorf("repository read league %q, want Mirage", got)
 	}
 }
+
+func TestExceptionalSupportPrices_divineRateStaysFreshOverACachedSnapshot(t *testing.T) {
+	fake := &fakeExceptionalPricer{snap: lab.ExceptionalSupportSnapshot{AsOf: fixtureAsOf}}
+	reads := 0
+	cached := lab.NewExceptionalSupportCache(func(ctx context.Context, scope league.Scope) (lab.ExceptionalSupportSnapshot, error) {
+		reads++
+		return fake.ExceptionalSupportPrices(ctx, scope)
+	}, lab.NewCache(exceptionalTestScope))
+	serve := func(rate float64) string {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/analysis/exceptional-supports", nil)
+		ExceptionalSupportPrices(cached, readerWithDivineRate(rate), exceptionalTestScope)(rec, req)
+		return string(decodeExceptionalFields(t, rec)["divineRate"])
+	}
+
+	first, second := serve(230), serve(245)
+
+	if first != "230" || second != "245" {
+		t.Errorf("divineRate = %s then %s, want 230 then 245", first, second)
+	}
+	if reads != 1 {
+		t.Errorf("snapshot reads = %d, want 1 (the second poll is warm)", reads)
+	}
+}
