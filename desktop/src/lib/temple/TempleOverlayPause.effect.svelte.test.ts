@@ -16,6 +16,7 @@ import { applySnapshot, type SsotSnapshot } from '$lib/stores/ssot.svelte';
 import { templeSliceDefault, type CaptureRect, type TempleSlice } from '$lib/temple/slice';
 
 const calls: [string, unknown][] = [];
+const emissions: [string, unknown][] = [];
 const busHandlers: Record<string, (event: { payload: unknown }) => void> = {};
 const windowHandlers: Record<string, (event: { payload: unknown }) => void> = {};
 
@@ -28,6 +29,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 	})
 }));
 vi.mock('@tauri-apps/api/event', () => ({
+	emit: vi.fn(async (event: string, payload?: unknown) => { emissions.push([event, payload ?? null]); }),
 	listen: vi.fn(async (event: string, handler: (event: { payload: unknown }) => void) => {
 		busHandlers[event] = handler;
 		return () => { if (busHandlers[event] === handler) delete busHandlers[event]; };
@@ -36,7 +38,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('@tauri-apps/api/webviewWindow', () => ({
 	getCurrentWebviewWindow: () => ({
 		scaleFactor: async () => 1,
-		emit: async () => {},
+		emit: async (event: string, payload?: unknown) => { emissions.push([event, payload ?? null]); },
 		listen: async (event: string, handler: (event: { payload: unknown }) => void) => {
 			windowHandlers[event] = handler;
 			return () => { if (windowHandlers[event] === handler) delete windowHandlers[event]; };
@@ -109,6 +111,7 @@ function patch<T extends object, K extends keyof T>(target: T, key: K, descripto
 beforeEach(() => {
 	vi.useFakeTimers();
 	calls.length = 0;
+	emissions.length = 0;
 	const size = (axis: 'w' | 'h') => function (this: HTMLElement) {
 		return this.classList.contains('box') ? BOX[axis] : 0;
 	};
@@ -248,9 +251,15 @@ describe('temple keep window', () => {
 		target.querySelector('.widget')!.append(button);
 		patch(document, 'elementFromPoint', { writable: true, value: () => button });
 		calls.length = 0;
+		emissions.length = 0;
 		windowHandlers['overlay-click']({ payload: { label: 'temple', x: 1, y: 1 } });
 		button.click();
 		await settle();
-		expect(calls.filter(([name]) => name === 'app_log_from_frontend')).toEqual([]);
+		expect(emissions).toEqual([]);
+		expect(calls.filter(([name]) => ['app_log_from_frontend', 'trade_cancel', 'request_trade_refresh'].includes(name))).toEqual([]);
+		target.querySelector('.config-btn.cancel')!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+		await settle();
+		expect(target.querySelector('.config-bar')).toBeNull();
+		expect(calls.some(([name, args]) => name === 'set_overlay_config_mode' && (args as { on: boolean }).on === false)).toBe(true);
 	});
 });
