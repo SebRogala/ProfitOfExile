@@ -962,12 +962,18 @@ func GemDictionary(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 		if names == nil {
 			names = []string{}
 		}
+		if len(names) == 0 {
+			slog.Error("gem dictionary: empty answer", "league", scope.ID(), "transfigured", transfigured)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		// The dictionary only ever grows, so an hour-stale copy is missing names
 		// rather than wrong about them. Inert for the desktop, which has no HTTP
-		// cache; kept for any browser or proxy in front of this.
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		// cache; kept for any browser or proxy in front of this. An empty answer
+		// is not cached: it must not outlive the fault that produced it.
+		if len(names) > 0 {
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+		}
 		if err := json.NewEncoder(w).Encode(map[string]any{"names": names}); err != nil {
 			slog.Error("gem dictionary: encode response", "error", err)
 		}
