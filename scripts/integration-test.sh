@@ -64,7 +64,7 @@ trap 'exit 143' TERM
 # The phase split mirrors the `go test` invocations below: phase 1 runs
 # ./internal/db/migrations/..., phase 2 runs everything else.
 #
-# `./.worktrees`, `./.claude/worktrees` and `./.claude/pipeforge` join
+# `./.worktrees` and `./.claude/worktrees` join
 # node_modules/target/.git in the prune set here and in the two finds below —
 # one prune set, three copies of it. Pruned by PATH rather than by the `.claude`
 # name: these paths hold nested checkouts; pruning all of `.claude` would also
@@ -86,7 +86,7 @@ expected_tests() {
 	else
 		mapfile -t files < <(find . \
 			\( -name node_modules -o -name target -o -name .git \
-			   -o -path ./.worktrees -o -path ./.claude/worktrees -o -path ./.claude/pipeforge \) -prune -o \
+			   -o -path ./.worktrees -o -path ./.claude/worktrees \) -prune -o \
 			-name '*_integration_test.go' -not -path './internal/db/migrations/*' -print |
 			sort)
 	fi
@@ -122,7 +122,7 @@ expected_tests() {
 # skipped everywhere.
 integration_files_by_name() {
 	find . \( -name node_modules -o -name target -o -name .git \
-		   -o -path ./.worktrees -o -path ./.claude/worktrees -o -path ./.claude/pipeforge \) -prune -o \
+		   -o -path ./.worktrees -o -path ./.claude/worktrees \) -prune -o \
 		-name '*_integration_test.go' -print | sed 's|^\./||' | sort
 }
 
@@ -133,7 +133,7 @@ integration_files_by_tag() {
 	local -a gofiles=()
 	mapfile -t gofiles < <(find . \
 		\( -name node_modules -o -name target -o -name .git \
-		   -o -path ./.worktrees -o -path ./.claude/worktrees -o -path ./.claude/pipeforge \) -prune -o \
+		   -o -path ./.worktrees -o -path ./.claude/worktrees \) -prune -o \
 		-name '*.go' -print)
 	[ ${#gofiles[@]} -gt 0 ] || return 0
 	grep -lx -- '//go:build integration' "${gofiles[@]}" | sed 's|^\./||' | sort
