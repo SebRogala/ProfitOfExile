@@ -3,7 +3,12 @@ import { baseGemTradeUrl, cheapestCorruptedTradeUrl, buyBaseUrl, baseGemNoQualit
 // Shared with the Go (internal/trade) and Rust (desktop/src-tauri trade::query) tests.
 import foldVectorsRaw from '../../../internal/trade/testdata/gem-name-fold-vectors.json?raw';
 
+import queryVectorsRaw from '../../../internal/trade/testdata/gem-search-query-vectors.json?raw';
+
 const foldVectors: { name: string; gem: string; tradeName: string }[] = JSON.parse(foldVectorsRaw);
+const queryVectors: { name: string; gem: string; variant: string; mode: string; query: any }[] =
+	JSON.parse(queryVectorsRaw).cases;
+const baseQueryVectors = queryVectors.filter((c) => c.mode === 'normal' && !c.gem.includes(' of '));
 
 const name = 'Kinetic Blast of Clustering';
 const builders = [
@@ -108,5 +113,22 @@ describe('gem-name fold vectors', () => {
 	it.each(foldVectors)('folds $name for both base-gem builders', ({ gem, tradeName }) => {
 		expect(query(baseGemTradeUrl(gem, '20/20', 'New League')).type).toBe(tradeName);
 		expect(query(baseGemNoQualityUrl(gem, 'New League')).type).toBe(tradeName);
+	});
+});
+
+// keep:happy
+describe('gem search-query vectors', () => {
+	it('exercises at least one shared case', () => {
+		expect(baseQueryVectors.length).toBeGreaterThan(0);
+	});
+
+	it.each(baseQueryVectors)('builds the shared $name body', ({ gem, variant, query: expectedBody }) => {
+		const url = baseGemTradeUrl(gem, variant, 'New League');
+		expect(url).not.toBeNull();
+		const actual = JSON.parse(new URL(url!).searchParams.get('q')!);
+		expect(actual.query).not.toHaveProperty('stats');
+		const expected = structuredClone(expectedBody);
+		delete expected.query.stats;
+		expect(actual).toEqual(expected);
 	});
 });
