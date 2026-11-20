@@ -22,6 +22,6 @@ const (
 	CollectorCurrencyTopic   = CollectorTopicPrefix + CollectorCurrencySuffix
 	CollectorFragmentsTopic  = CollectorTopicPrefix + CollectorFragmentsSuffix
 
-	TradeTickTopic       = CollectorTopicPrefix + "trade-tick"
-	AdminRecomputeTopic  = "poe/admin/recompute"
+	TradeTickTopic      = CollectorTopicPrefix + "trade-tick"
+	AdminRecomputeTopic = "poe/admin/recompute"
 )

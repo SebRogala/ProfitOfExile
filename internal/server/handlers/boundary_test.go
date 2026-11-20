@@ -24,8 +24,7 @@ var forbiddenImportPrefixes = []string{
 // importBaseline lists the files that still import a forbidden path, each with
 // the task that removes it. The baseline ratchets: an entry whose file no longer
 // imports a forbidden path fails the build until it is removed.
-var importBaseline = map[string]string{
-}
+var importBaseline = map[string]string{}
 
 // guardFiles must be among the parsed files so the walk cannot pass vacuously.
 // health.go mentions pgxpool only in a comment, so its absence from any
