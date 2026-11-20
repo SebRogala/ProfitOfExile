@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -479,6 +480,46 @@ func TestCollectiveAnalysis_ColdSparklineCacheFallsBackToRepository(t *testing.T
 		"/api/analysis/collective?variant=20/20") {
 		t.Error("cold sparkline cache served without a repository query, want the database fallback")
 	}
+}
+
+// bulkSparklinePager answers the cold fallback's bulk read with fixed series.
+type bulkSparklinePager struct {
+	*fakeCollectivePager
+	series map[lab.CollectiveSparklineKey][]lab.SparklinePoint
+}
+
+func (p bulkSparklinePager) SparklineSeries(context.Context, league.Scope, []lab.CollectiveSparklineKey, int) (map[lab.CollectiveSparklineKey][]lab.SparklinePoint, error) {
+	return p.series, nil
+}
+
+// A cold all-variants page decorates each row with its own market's series
+// from the one bulk read; a row with no series serves an empty sparkline.
+func TestCollectiveAnalysis_ColdSparklineFallbackServesEachRowsOwnSeries(t *testing.T) {
+	gems := []sparklineGem{
+		{name: "Spark of Nova", variant: "20/20", roi: 40},
+		{name: "Spark of Nova", variant: "1", roi: 30},
+		{name: "Arc of Surging", variant: "20", roi: 20},
+	}
+	now := time.Now()
+	nova2020 := []lab.SparklinePoint{sparkAt(now, 2*time.Hour, 51, 5), sparkAt(now, time.Hour, 52, 6)}
+	nova1 := []lab.SparklinePoint{sparkAt(now, time.Hour, 3, 40)}
+	pager := bulkSparklinePager{fakeCollectivePager: gemPager(gems...), series: map[lab.CollectiveSparklineKey][]lab.SparklinePoint{
+		{Name: "Spark of Nova", Variant: "20/20"}: nova2020,
+		{Name: "Spark of Nova", Variant: "1"}:     nova1,
+	}}
+
+	w := serveWithoutRepository(t, collectiveAnalysis(nil, pager, warmAnalysisCache(t, gems...), sparklineScope), "/api/analysis/collective")
+
+	got := map[string][]lab.SparklinePoint{}
+	for _, row := range decodeCollectiveSparklineRows(t, w) {
+		got[row.TransfiguredName+" "+row.Variant] = row.Sparkline
+	}
+	if len(got) != 3 {
+		t.Fatalf("rows = %v, want the three ranked rows", got)
+	}
+	assertSparkline(t, got["Spark of Nova 20/20"], nova2020)
+	assertSparkline(t, got["Spark of Nova 1"], nova1)
+	assertSparkline(t, got["Arc of Surging 20"], nil)
 }
 
 // A tick whose sparkline stage retained no series at all has still answered.

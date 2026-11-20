@@ -274,6 +274,21 @@ including per variant, because the read's own filter is the variant allowlist
 the handlers admit. The cache-state rule that predicate answers to lives at the
 top of `internal/lab/cache.go`.
 
+### The cold collective-page fallback
+
+File: `internal/lab/sparkline_fallback_query.go`. While `HasSparklines` is false,
+a collective page reads its rows' series with one `Repository.SparklineSeries`
+statement whatever the page's variant mix: each row's own variant, or the raw
+request `SparkVariant` when set, with the series served under the row's own
+variant. Each variant keeps the per-variant selection `SparklineData` makes, its
+first 10,000 window rows by (name, time), shared across that variant's names.
+Equal overlapping misses (same cache and league, SparkVariant, window and
+requested series, in any order) share one in-flight read. Nothing is retained:
+the 12-hour window is evaluated by each load's `NOW()`, a failed read serves the
+page without sparklines and the next request reads again, and the page-limited
+result never fills the corpus or sets `HasSparklines`, which stays the
+analyzer's.
+
 ### Window and tail
 
 - `SparklineWindowHours = 12` — the rolling window served to consumers.

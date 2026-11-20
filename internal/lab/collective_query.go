@@ -122,7 +122,7 @@ type CollectiveQueryResult struct {
 }
 
 // QueryCollective ranks one page in SQL, then decorates only that page's rows:
-// sparklines (cache, or one read per variant), the GCP base lookup (one read)
+// sparklines (cache, or one shared bulk read), the GCP base lookup (one read)
 // and the trade note from the cached signals. With a cache, the ranked page
 // and the base lookup come from its RankingAnswers; the decorations are
 // applied fresh to a copy of the rows on every call.
@@ -227,37 +227,5 @@ func loadCollectiveSparklines(ctx context.Context, src CollectiveSource, cache *
 		return sparklines
 	}
 
-	if sparkVariant != "" {
-		names := make([]string, 0, len(results))
-		for _, result := range results {
-			names = append(names, result.TransfiguredName)
-		}
-		points, err := src.SparklineData(ctx, scope, names, sparkVariant, SparklineWindowHours)
-		if err != nil {
-			slog.Error("collective analysis: sparkline query failed", "error", err)
-		} else {
-			for _, result := range results {
-				if series, ok := points[result.TransfiguredName]; ok {
-					sparklines[CollectiveSparklineKey{Name: result.TransfiguredName, Variant: result.Variant}] = series
-				}
-			}
-		}
-		return sparklines
-	}
-
-	byVariant := make(map[string][]string)
-	for _, result := range results {
-		byVariant[result.Variant] = append(byVariant[result.Variant], result.TransfiguredName)
-	}
-	for variant, names := range byVariant {
-		points, err := src.SparklineData(ctx, scope, names, variant, SparklineWindowHours)
-		if err != nil {
-			slog.Error("collective analysis: sparkline query failed", "variant", variant, "error", err)
-			continue
-		}
-		for name, series := range points {
-			sparklines[CollectiveSparklineKey{Name: name, Variant: variant}] = series
-		}
-	}
-	return sparklines
+	return loadCollectiveSparklineFallback(ctx, src, cache, scope, sparkVariant, results)
 }

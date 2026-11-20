@@ -31,6 +31,20 @@ func (s fixedPageSource) CollectiveBasePrices(context.Context, league.Scope, []s
 	return nil, nil
 }
 
+// overlappingPageSource holds each bulk read until joiners requests wait on
+// the sparkline flight, so a burst overlaps the read whatever its speed.
+type overlappingPageSource struct {
+	fixedPageSource
+	joiners int
+}
+
+func (s overlappingPageSource) SparklineSeries(ctx context.Context, scope league.Scope, keys []CollectiveSparklineKey, hours int) (map[CollectiveSparklineKey][]SparklinePoint, error) {
+	for deadline := time.Now().Add(10 * time.Second); sparklineFallbackFlights.waiting() < s.joiners && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
+	return s.Repository.SparklineSeries(ctx, scope, keys, hours)
+}
+
 // seedSparkPoints inserts one gem_snapshots row per age, timed against the
 // database clock the sparkline read compares with.
 func seedSparkPoints(t *testing.T, pool *pgxpool.Pool, scope league.Scope, name, variant string, corrupted bool, ages ...time.Duration) {
@@ -162,7 +176,7 @@ func TestKeepHappySparklineFallbackBulk(t *testing.T) {
 	cold := NewCache(scope)
 	counter.reset()
 	for i, o := range burst(300, func() collectiveOutcome {
-		got, err := QueryCollective(context.Background(), src, cold, scope, sparkQuery(""))
+		got, err := QueryCollective(context.Background(), overlappingPageSource{src, 300}, cold, scope, sparkQuery(""))
 		return collectiveOutcome{got, err}
 	}) {
 		if o.err != nil {

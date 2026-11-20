@@ -693,6 +693,66 @@ func (r *Repository) SparklineData(ctx context.Context, scope league.Scope, name
 	return result, nil
 }
 
+// SparklineSeries reads the raw non-corrupted points of every requested
+// (name, variant) series in one statement. Each variant keeps the selection
+// SparklineData makes for it: its own first 10,000 window rows by (name, time),
+// shared across that variant's requested names, not a per-series cap. The
+// primary key makes (name, time) unique within a variant, so that selection is
+// deterministic. Series with no points are omitted.
+func (r *Repository) SparklineSeries(ctx context.Context, scope league.Scope, keys []CollectiveSparklineKey, hours int) (map[CollectiveSparklineKey][]SparklinePoint, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: sparkline series: %w", err)
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	names := make([]string, len(keys))
+	variants := make([]string, len(keys))
+	for i, k := range keys {
+		names[i], variants[i] = k.Name, k.Variant
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		WITH requested AS (
+			SELECT DISTINCT name, variant FROM unnest($2::text[], $3::text[]) AS k(name, variant)
+		), windowed AS (
+			SELECT g.name, g.variant, g.time, COALESCE(g.chaos, 0) AS chaos, COALESCE(g.listings, 0) AS listings,
+			       row_number() OVER (PARTITION BY g.variant ORDER BY g.name, g.time) AS rn
+			FROM gem_snapshots g
+			JOIN requested k ON k.name = g.name AND k.variant = g.variant
+			WHERE g.league = $1 AND g.is_corrupted = false
+			  AND g.time > NOW() - make_interval(hours => $4)
+		)
+		SELECT name, variant, time, chaos, listings
+		FROM windowed
+		WHERE rn <= 10000
+		ORDER BY variant, name, time`, scope.ID(), names, variants, hours)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query sparkline series: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[CollectiveSparklineKey][]SparklinePoint)
+	for rows.Next() {
+		var k CollectiveSparklineKey
+		var t time.Time
+		var chaos float64
+		var listings int
+		if err := rows.Scan(&k.Name, &k.Variant, &t, &chaos, &listings); err != nil {
+			return nil, fmt.Errorf("lab repo: scan sparkline series point: %w", err)
+		}
+		result[k] = append(result[k], SparklinePoint{
+			Time:     t.UTC().Format(time.RFC3339),
+			Price:    chaos,
+			Listings: listings,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: sparkline series rows iteration: %w", err)
+	}
+	return result, nil
+}
+
 // sparklineVariants are the non-corrupted variants sparkline consumers ask for.
 // Prices for different variants are different markets, so the variant is part
 // of the series identity rather than something merged away.
