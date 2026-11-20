@@ -901,7 +901,8 @@
 	/* A button a widget declares. `pointer-events: auto` is not what lets the
 	   player click it — the window is click-through at the OS level — it is what
 	   lets `document.elementFromPoint` find it when the hook forwards the click. */
-	.widget :global([data-hot]) {
+	.widget :global([data-hot]),
+	.anchored-layer :global([data-hot]) {
 		pointer-events: auto;
 	}
 

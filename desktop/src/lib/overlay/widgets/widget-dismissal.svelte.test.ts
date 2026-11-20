@@ -76,6 +76,15 @@ describe('widget dismissal', () => {
 		dismissal.applyKey(input.settings!.shortcut); expect(dismissal.hidden).toBe(false);
 		dismissal.applyKey(f); expect(dismissal.hidden).toBe(true);
 	});
+	// keep:happy
+	it('the effective shortcut reads the override, else the global key', () => {
+		const { input, dismissal } = setup();
+		expect(dismissal.shortcut).toEqual(esc);
+		input.settings!.overlays['temple.offers'] = { timeout: 'inherit', shortcut: { override: f } }; flushSync();
+		expect(dismissal.shortcut).toEqual(f);
+		input.settings = null; flushSync();
+		expect(dismissal.shortcut).toBeNull();
+	});
 	it('timeout off never hides', () => {
 		const { input, dismissal } = setup(); input.settings!.timeoutSeconds = 0; flushSync();
 		vi.advanceTimersByTime(60000); expect(dismissal.hidden).toBe(false);

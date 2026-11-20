@@ -28,7 +28,7 @@
  * rect computed here from `origin` and `scale` would be a second answer to
  * where the module is looking, and the two would drift in silence.
  */
-import { avoidRects } from '$lib/overlay/widgets/widget-avoid';
+import { avoidRects, rectIsClear } from '$lib/overlay/widgets/widget-avoid';
 import type { HostSize, WidgetRect } from '$lib/overlay/widgets/widget-geometry';
 import type {
 	CaptureRect,
@@ -251,6 +251,32 @@ export function offerStackPlacement(input: {
 		if (at !== null) previous = at;
 	}
 	return placed;
+}
+
+/** The keep window's fixed size, CSS px (POE-439 variant C). */
+export const KEEP_WINDOW_CSS = { w: 164, h: 66 };
+
+/**
+ * The keep window beside the upper offer box: centred in the band left of it,
+ * `upper.x - STACK_STAGGER_CSS` to `upper.x - STACK_GAP_CSS`, and level with its
+ * middle. The wanted rect or nothing, never a nearest free spot: a keep window
+ * moved away from the boxes reads as an orphan.
+ */
+export function keepWindowPlacement(input: {
+	upper: WidgetRect | null;
+	obstacles: readonly WidgetRect[];
+	placedBoxes: readonly WidgetRect[];
+}): WidgetRect | null {
+	const { upper, obstacles, placedBoxes } = input;
+	if (upper === null || obstacles.length === 0) return null;
+	const band = STACK_STAGGER_CSS - STACK_GAP_CSS;
+	const rect = {
+		x: upper.x - STACK_STAGGER_CSS + Math.round((band - KEEP_WINDOW_CSS.w) / 2),
+		y: Math.round(upper.y + (upper.h - KEEP_WINDOW_CSS.h) / 2),
+		...KEEP_WINDOW_CSS
+	};
+	if (rect.x < 0 || !rectIsClear(rect, [...obstacles, ...placedBoxes])) return null;
+	return rect;
 }
 
 /**

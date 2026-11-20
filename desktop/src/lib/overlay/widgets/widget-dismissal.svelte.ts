@@ -25,8 +25,8 @@ export function createDismissal({ spec, shown, contentKey, settings, contentRead
 		const visible = shown();
 		const key = contentKey();
 		if (visible && (!wasShown || !Object.is(key, previousKey))) {
+			if (!wasShown) paused = false;
 			hidden = false;
-			paused = false;
 			startedAt = Date.now();
 		} else if (!visible) {
 			hidden = false;
@@ -43,8 +43,20 @@ export function createDismissal({ spec, shown, contentKey, settings, contentRead
 		return () => clearTimeout(timer);
 	});
 
+	const shortcut = $derived.by((): BossLootShortcut | null => {
+		const configured = settings();
+		if (!configured || !spec.dismiss?.key) return null;
+		// Read through the property first: a key added later is then a tracked dependency.
+		const own = configured.overlays[spec.id];
+		const value = own && Object.hasOwn(configured.overlays, spec.id) ? own.shortcut : 'inherit';
+		return value === 'inherit' ? configured.shortcut : value.override;
+	});
+
 	return {
 		get hidden() { return hidden; },
+		get seconds() { return seconds; },
+		get startedAt() { return startedAt; },
+		get shortcut() { return shortcut; },
 		get paused() { return paused; },
 		pause() {
 			if (!spec.dismiss?.timeout || !shown() || hidden) return;
@@ -52,13 +64,12 @@ export function createDismissal({ spec, shown, contentKey, settings, contentRead
 		},
 		get ready() { return settings() !== null && contentReady(); },
 		applyKey(pressed: BossLootShortcut) {
-			const configured = settings();
-			if (!configured || !spec.dismiss?.key || !shown() || hidden) return false;
-			const value = Object.hasOwn(configured.overlays, spec.id) ? configured.overlays[spec.id].shortcut : 'inherit';
-			const effective = value === 'inherit' ? configured.shortcut : value.override;
+			const effective = shortcut;
+			if (!effective || !shown() || hidden) return false;
 			if (pressed.key === effective.key && pressed.shift === effective.shift &&
 				pressed.ctrl === effective.ctrl && pressed.alt === effective.alt) {
 				hidden = true;
+				paused = false;
 				return true;
 			}
 			return false;

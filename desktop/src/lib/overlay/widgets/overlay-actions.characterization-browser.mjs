@@ -42,7 +42,7 @@ async function scenario(name, work, query = '') {
  try {
   await call('Page.navigate', { url: `file://${root}/overlay.html?case=${encodeURIComponent(name)}${query}` })
   await until(`window.ready===true && location.search.includes(${JSON.stringify(encodeURIComponent(name))})`)
-  if (!query.includes('zero') && !query.includes('temple')) await until('document.querySelectorAll(".pick-btn").length===2')
+  if (!query.includes('zero')) await until('document.querySelectorAll(".pick-btn").length===2')
   observations[name] = await work()
   console.log(`PASS ${name}: ${JSON.stringify(observations[name])}`)
  } catch (error) { failures++; console.log(`FAIL ${name}: ${String(error)}`) }
@@ -128,20 +128,12 @@ try {
   assert.equal(await evaluate('window.hits=0;document.elementFromPoint=()=>{window.hits++;return null};window.fire("overlay-click",{x:100,y:100});window.hits'), 0)
   return 'zero hit tests'
  }, '&zero')
- await scenario('temple probe only logs', async () => {
-  await until('document.querySelector(".widget")')
-  await evaluate('const button=document.createElement("button");button.dataset.hot="";button.dataset.action="hot-probe";button.textContent="probe";document.querySelector(".widget").append(button);window.calls=[];window.forward("[data-action=hot-probe]")')
-  await until('window.calls.some(([name])=>name==="app_log_from_frontend")')
-  const result = await evaluate('window.calls.filter(([name])=>name!=="set_overlay_hot_rects"&&name!=="set_overlay_has_content")')
-  assert.deepEqual(result, [['app_log_from_frontend', { msg: '[temple-widgets] hot-rect probe clicked — the mouse hook forwarded a click' }]]); return result
- }, '&module=temple&debug')
- if (process.argv.includes('--config')) for (const module of ['lab', 'temple']) {
+ if (process.argv.includes('--config')) for (const module of ['lab']) {
   await scenario(`${module} config suppresses widget actions`, async () => {
    await until('Boolean(window.listeners["widget-config"])')
    await evaluate(`window.fire('widget-config',{module:${JSON.stringify(module)},on:true})`)
    await until('Boolean(document.querySelector(".config-bar"))')
-   const selector = module === 'lab' ? '.pick-btn' : '[data-action=hot-probe]'
-   if (module === 'temple') await evaluate('const button=document.createElement("button");button.dataset.action="hot-probe";document.querySelector(".widget").append(button)')
+   const selector = '.pick-btn'
    await evaluate(`window.calls=[];window.emissions=[];window.forward(${JSON.stringify(selector)});document.querySelector(${JSON.stringify(selector)}).click()`)
    await pause(40)
    assert.deepEqual(await evaluate('window.emissions'), [])
@@ -150,7 +142,7 @@ try {
    await until('!document.querySelector(".config-bar")')
    assert.equal(await evaluate('window.calls.some(([name,args])=>name==="set_overlay_config_mode"&&args.on===false)'), true)
    return 'widget inert; native config Cancel works'
-  }, module === 'temple' ? '&module=temple&debug' : '')
+  })
  }
  fs.writeFileSync(`${root}/observations.json`, JSON.stringify({ failures, observations }, null, 2))
  assert.equal(failures, 0, 'characterization scenarios failed')

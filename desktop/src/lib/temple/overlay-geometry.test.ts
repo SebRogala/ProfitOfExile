@@ -26,6 +26,7 @@ import {
 	captureToCss,
 	diamondGeometry,
 	doorDefaultPlacement,
+	keepWindowPlacement,
 	killGlyphs,
 	neverCoverRects,
 	offerStackPlacement,
@@ -735,6 +736,36 @@ describe('offerStackPlacement', () => {
 				host: HOST
 			})
 		).toEqual([null, null]);
+	});
+
+	// Nested so it shares `committedRegions()` with the offer stack it sits beside.
+	describe('keepWindowPlacement', () => {
+		/** The upper box on the committed frame: staggered at x 415, level with
+		 *  the first block at y 133, 216 px tall (POE-439-C NOTES.md). */
+		const UPPER = { x: 415, y: 133, w: 300, h: 216 };
+
+		// keep:happy
+		it('places the keep window left of the upper box on the committed frame', () => {
+			const obstacles = committedRegions();
+			expect(obstacles).toHaveLength(42);
+			const rect = keepWindowPlacement({ upper: UPPER, obstacles, placedBoxes: [UPPER] });
+			expect(rect).toEqual({ x: 242, y: 208, w: 164, h: 66 });
+			expect(rectIsClear(rect!, obstacles)).toBe(true);
+		});
+
+		// keep:critical
+		it('places no keep window it cannot place clear', () => {
+			const obstacles = committedRegions();
+			expect(keepWindowPlacement({ upper: null, obstacles, placedBoxes: [] })).toBeNull();
+			expect(keepWindowPlacement({ upper: { ...UPPER, x: 100 }, obstacles, placedBoxes: [] })).toBeNull();
+			expect(keepWindowPlacement({
+				upper: UPPER, obstacles: [...obstacles, { x: 300, y: 250, w: 20, h: 20 }], placedBoxes: []
+			})).toBeNull();
+			expect(keepWindowPlacement({
+				upper: UPPER, obstacles, placedBoxes: [UPPER, { x: 240, y: 260, w: 300, h: 100 }]
+			})).toBeNull();
+			expect(keepWindowPlacement({ upper: UPPER, obstacles: [], placedBoxes: [] })).toBeNull();
+		});
 	});
 });
 

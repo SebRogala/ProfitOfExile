@@ -152,11 +152,16 @@
 	import ItemIcon from '$lib/components/ItemIcon.svelte';
 	import { getIconUrl } from '$lib/icons';
 	import { offersCompact, offerStackPlacement } from './overlay-geometry';
+	import { keepWindowPlacement } from './overlay-geometry';
 	import { offerBoxSignature } from './view';
 	import type { OfferBox, OfferDriver } from './view';
 	import type { HostSize, WidgetRect } from '$lib/overlay/widgets/widget-geometry';
 
 	let {
+		seconds = 0,
+		startedAt = null,
+		paused = false,
+		keyLabel = null,
 		boxes,
 		blocks,
 		panel,
@@ -179,6 +184,14 @@
 		 *  width rather than a wrap ceiling — see the `box-sizing` note in the
 		 *  style block for why that difference is load-bearing. */
 		width: number;
+		/** The comparator's dismissal timeout, 0 for none (POE-439 keep window). */
+		seconds?: number;
+		/** When the countdown started, epoch ms, or null while not shown. */
+		startedAt?: number | null;
+		/** Kept on screen: the timeout no longer hides the boxes. */
+		paused?: boolean;
+		/** The effective dismissal key's label, or null without one. */
+		keyLabel?: string | null;
 	} = $props();
 
 	let widths = $state<number[]>([]);
@@ -268,6 +281,28 @@
 			obstacles,
 			host
 		})
+	);
+
+	// The keep window (POE-439 variant C): placed off the upper box alone, the
+	// wanted rect or nothing, so it never covers a read region or a box.
+	const keepWindow = $derived(
+		seconds > 0
+			? keepWindowPlacement({
+					upper: placements[0] ?? null,
+					obstacles,
+					placedBoxes: placements.filter((rect): rect is WidgetRect => rect !== null)
+				})
+			: null
+	);
+	let now = $state(Date.now());
+	$effect(() => {
+		if (keepWindow === null || paused || startedAt === null) return;
+		now = Date.now();
+		const timer = setInterval(() => { now = Date.now(); }, 1000);
+		return () => clearInterval(timer);
+	});
+	const remaining = $derived(
+		startedAt === null ? seconds : Math.max(1, Math.ceil(seconds - (now - startedAt) / 1000))
 	);
 
 	/** The item row's one cell — the line's unique: art, a price and, for a
@@ -551,6 +586,38 @@
 		{/if}
 	</div>
 {/each}
+
+{#if keepWindow}
+	<div class="keepwin" class:kept={paused} style="left:{keepWindow.x}px;top:{keepWindow.y}px;">
+		<div class="kw-bar">
+			{#if paused}
+				<i></i>
+			{:else}
+				{#key startedAt}
+					<i class="drain" style="animation-duration:{seconds}s;animation-delay:-{Math.max(0, Date.now() - (startedAt ?? Date.now()))}ms;"></i>
+				{/key}
+			{/if}
+		</div>
+		<div class="kw-row">
+			{#if paused}
+				<span class="lb">Close with</span>
+				{#if keyLabel}<span class="kw-key">{keyLabel}</span>{/if}
+			{:else}
+				<span class="lb">Hides in</span>
+				<span class="kw-sec">{remaining} s</span>
+			{/if}
+		</div>
+		{#if paused}
+			<div class="kw-btn">{@render keepGlyph()}Kept on screen</div>
+		{:else}
+			<div class="kw-btn" data-hot data-action="temple.keep">{@render keepGlyph()}Keep on screen</div>
+		{/if}
+	</div>
+{/if}
+
+{#snippet keepGlyph()}
+	<span class="glyph"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="1" width="2.4" height="8" rx=".6" fill="currentColor" /><rect x="6.1" y="1" width="2.4" height="8" rx=".6" fill="currentColor" /></svg></span>
+{/snippet}
 
 <style>
 	/* The alternative, and it is drawn faint rather than left out: the player is
@@ -1118,5 +1185,119 @@
 		font-size: 12px;
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
+	}
+
+	/* ------------------------------------------------- keep window -- */
+
+	/* POE-439 variant C: 164x66 fixed (border 4 + padding 16 + row 18 + gap 6 +
+	   button 22), the `.box` ground and muted frame. Click-through except the
+	   button's own hot rect. */
+	.keepwin {
+		position: absolute;
+		box-sizing: border-box;
+		width: 164px;
+		height: 66px;
+		padding: 8px;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		background: rgb(13 15 20 / 96%);
+		border: 2px solid rgb(148 163 184 / 40%);
+		border-radius: 6px;
+		color: var(--color-lab-text);
+		box-shadow: 0 2px 8px rgb(0 0 0 / 40%);
+		overflow: hidden;
+		pointer-events: none;
+	}
+	.kw-bar {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 0;
+		height: 2px;
+		background: var(--color-lab-border);
+	}
+	.kw-bar i {
+		display: block;
+		width: 100%;
+		height: 100%;
+		background: var(--color-lab-yellow);
+	}
+	.kw-bar i.drain {
+		background: var(--color-lab-blue);
+		animation-name: kw-drain;
+		animation-timing-function: linear;
+		animation-fill-mode: forwards;
+	}
+	@keyframes kw-drain {
+		from { width: 100%; }
+		to { width: 0; }
+	}
+	.kw-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		height: 18px;
+	}
+	.kw-row .lb {
+		text-transform: uppercase;
+	}
+	.kw-sec {
+		font-size: 15px;
+		font-weight: 700;
+		line-height: 18px;
+		font-variant-numeric: tabular-nums;
+	}
+	.kw-key {
+		box-sizing: border-box;
+		min-width: 0;
+		max-width: 92px;
+		height: 18px;
+		padding: 0 6px;
+		font-size: 12px;
+		font-weight: 600;
+		line-height: 16px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		color: var(--color-lab-text);
+		border: 1px solid rgb(228 228 231 / 14%);
+		border-radius: 3px;
+		background: rgb(255 255 255 / 4%);
+	}
+	.kw-btn {
+		box-sizing: border-box;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 148px;
+		height: 22px;
+		padding: 0 8px 0 4px;
+		border-radius: 4px;
+		border: 1px solid rgb(148 163 184 / 30%);
+		background: rgb(255 255 255 / 3%);
+		font-size: 12px;
+		font-weight: 600;
+		line-height: 20px;
+		white-space: nowrap;
+		color: var(--color-lab-text);
+	}
+	.kw-btn .glyph {
+		width: 16px;
+		height: 16px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex: 0 0 auto;
+		color: #9ca3af;
+	}
+	.kept .kw-btn {
+		border-color: rgb(234 179 8 / 55%);
+		background: rgb(234 179 8 / 8%);
+		color: var(--color-lab-yellow);
+	}
+	.kept .kw-btn .glyph {
+		color: var(--color-lab-yellow);
 	}
 </style>
