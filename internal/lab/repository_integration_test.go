@@ -1220,6 +1220,89 @@ func TestLatestDedicationResults_returnsOnlyScopedLeague(t *testing.T) {
 	}
 }
 
+func TestKeepRegressionLatestDedicationResults_NewestSnapshotWithOneVariantDoesNotBlankTheOther(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-139-ded-variant"
+	registerLeague(t, pool, leagueID)
+	earlier, later := futureTime(91), futureTime(92)
+	cleanupAtTime(t, pool, earlier, "dedication_snapshots")
+	cleanupAtTime(t, pool, later, "dedication_snapshots")
+
+	row := func(tm time.Time, variant string, profit float64) DedicationResult {
+		return DedicationResult{Time: tm, Variant: variant, Color: "RED", GemType: "skill",
+			Mode: "safe", LiquidityRisk: "LOW", Profit: profit}
+	}
+	scope := league.Historical(leagueID)
+	for _, batch := range [][]DedicationResult{
+		{row(earlier, "21/20c", 111), row(earlier, "21/23c", 222)},
+		{row(later, "21/23c", 333)},
+	} {
+		if _, err := repo.SaveDedicationResults(ctx, scope, batch); err != nil {
+			t.Fatalf("SaveDedicationResults: %v", err)
+		}
+	}
+
+	res, err := repo.LatestDedicationResults(ctx, scope, "21/20c", "", "", 100)
+	if err != nil {
+		t.Fatalf("LatestDedicationResults 21/20c: %v", err)
+	}
+	if len(res) != 1 {
+		t.Fatalf("21/20c result count = %d, want 1 row from its own newest snapshot", len(res))
+	}
+	if !res[0].Time.Equal(earlier) || !valuesClose(res[0].Profit, 111) {
+		t.Errorf("21/20c row = time %v profit %v, want time %v profit 111", res[0].Time, res[0].Profit, earlier)
+	}
+
+	all, err := repo.LatestDedicationResults(ctx, scope, "", "", "", 100)
+	if err != nil {
+		t.Fatalf("LatestDedicationResults all variants: %v", err)
+	}
+	got := map[string]DedicationResult{}
+	for _, r := range all {
+		got[r.Variant] = r
+	}
+	if len(all) != 2 || len(got) != 2 {
+		t.Fatalf("all-variant rows = %+v, want one 21/20c and one 21/23c row", all)
+	}
+	if r := got["21/20c"]; !r.Time.Equal(earlier) || !valuesClose(r.Profit, 111) {
+		t.Errorf("all-variant 21/20c row = time %v profit %v, want time %v profit 111", r.Time, r.Profit, earlier)
+	}
+	if r := got["21/23c"]; !r.Time.Equal(later) || !valuesClose(r.Profit, 333) {
+		t.Errorf("all-variant 21/23c row = time %v profit %v, want time %v profit 333", r.Time, r.Profit, later)
+	}
+}
+
+func TestKeepRegressionCorruptedGemPricesByNames_NewestSnapshotWithOneVariantDoesNotBlankTheOther(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-139-corrupt-variant"
+	registerLeague(t, pool, leagueID)
+	earlier, later := futureTime(93), futureTime(94)
+	cleanupAtTime(t, pool, earlier, "gem_snapshots")
+	cleanupAtTime(t, pool, later, "gem_snapshots")
+
+	const name = "POE139 Variant Gem"
+	seedGemSnapshot(t, pool, leagueID, earlier, name, "21/20c", true, true, 111, 10, "BLUE")
+	seedGemSnapshot(t, pool, leagueID, earlier, name, "21/23c", true, true, 222, 10, "BLUE")
+	seedGemSnapshot(t, pool, leagueID, later, name, "21/23c", true, true, 333, 10, "BLUE")
+
+	gems, err := repo.CorruptedGemPricesByNames(ctx, league.Historical(leagueID), []string{name}, "21/20c")
+	if err != nil {
+		t.Fatalf("CorruptedGemPricesByNames: %v", err)
+	}
+	if len(gems) != 1 {
+		t.Fatalf("21/20c gem count = %d, want 1 row from its own newest snapshot", len(gems))
+	}
+	if gems[0].Variant != "21/20c" || !valuesClose(gems[0].Chaos, 111) {
+		t.Errorf("21/20c gem = variant %q chaos %v, want 21/20c chaos 111", gems[0].Variant, gems[0].Chaos)
+	}
+}
+
 func TestLatestTransfigureResults_returnsOnlyScopedLeague(t *testing.T) {
 	pool := labIntegrationPool(t)
 	ctx := context.Background()
