@@ -106,6 +106,37 @@ func TestBuildCompareResults_GemNotFoundInTransfigure(t *testing.T) {
 	}
 }
 
+func TestKeepRegressionBuildDedicationCompareResults_MissingGemIsNoDataAndAZeroPricedGemIsNot(t *testing.T) {
+	gemPrices := []GemPrice{
+		{Name: "Spark", Variant: "21/20c", Chaos: 0, Listings: 3, IsCorrupted: true, GemColor: "BLUE"},
+		{Name: "Arc", Variant: "21/23c", Chaos: 300, Listings: 12, IsCorrupted: true, GemColor: "BLUE"},
+	}
+
+	results := BuildDedicationCompareResults([]string{"Arc", "Spark"}, gemPrices, nil, nil, "21/20c")
+
+	byName := make(map[string]CompareResult, len(results))
+	for _, r := range results {
+		byName[r.TransfiguredName] = r
+	}
+	arc, ok := byName["Arc"]
+	if !ok {
+		t.Fatal("no row for Arc")
+	}
+	if arc.Confidence != ConfidenceNoData {
+		t.Errorf("Arc confidence = %s, want %s (no price at 21/20c)", arc.Confidence, ConfidenceNoData)
+	}
+	if arc.Recommendation == "BEST" {
+		t.Error("Arc has no price at 21/20c but is recommended BEST")
+	}
+	spark, ok := byName["Spark"]
+	if !ok {
+		t.Fatal("no row for Spark")
+	}
+	if spark.Confidence == ConfidenceNoData {
+		t.Errorf("Spark is priced at 0c with 3 listings but confidence = %s", spark.Confidence)
+	}
+}
+
 func TestBuildCompareResults_DUMPINGLiquidNotAvoided(t *testing.T) {
 	transfigure := []TransfigureResult{
 		{TransfiguredName: "Liquid Gem", BaseName: "Liquid", Variant: "20/20", ROI: 200, Confidence: "OK"},
