@@ -2410,6 +2410,8 @@ mod tests {
             ("search.rs", include_str!("search.rs")),
             ("run.rs", include_str!("run.rs")),
             ("mod.rs", include_str!("mod.rs")),
+            ("run/confirm.rs", include_str!("run/confirm.rs")),
+            ("run/retain.rs", include_str!("run/retain.rs")),
         ] {
             let production = source.split("\n#[cfg(test)]").next().expect("a production half");
             let code: String = production
