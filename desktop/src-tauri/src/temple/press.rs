@@ -130,8 +130,8 @@ impl<C: PressContext> PendingRead<C> for TemplePending {
             return Some(format!("Temple: calibration — no Entrance plate on this frame, {} ms", started.elapsed().as_millis()));
         };
         let (x, y) = found.origin();
-        if let Some(screen) = self.screen.filter(|_| !stop()) {
-            ctx.bank_entrance([x, y], frame, screen.ui_scale);
+        if !stop() {
+            if let Some(screen) = self.screen { ctx.bank_entrance([x, y], frame, screen.ui_scale); }
             self.probe = Some(found);
         }
         Some(format!("Temple: calibration — Entrance found at ({x}, {y}), {} ms", started.elapsed().as_millis()))
