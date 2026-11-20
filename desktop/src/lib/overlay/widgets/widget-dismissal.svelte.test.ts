@@ -110,6 +110,34 @@ describe('widget dismissal', () => {
 		expect(vi.getTimerCount()).toBe(1);
 		vi.advanceTimersByTime(4000); expect(dismissal.hidden).toBe(true);
 	});
+	// keep:happy
+	it('a paused widget outlives its timeout', () => {
+		const { dismissal } = setup();
+		vi.advanceTimersByTime(4000); dismissal.pause(); flushSync();
+		expect(dismissal.paused).toBe(true);
+		vi.advanceTimersByTime(60000);
+		expect(dismissal.hidden).toBe(false); expect(vi.getTimerCount()).toBe(0);
+	});
+	// keep:happy
+	it('the dismissal key still hides a paused widget', () => {
+		const { dismissal } = setup(); dismissal.pause(); flushSync();
+		dismissal.applyKey(esc); expect(dismissal.hidden).toBe(true);
+	});
+	// keep:critical
+	it('a pause ends with its read when the content key changes', () => {
+		const { input, dismissal } = setup(); dismissal.pause(); flushSync();
+		input.key++; flushSync(); expect(dismissal.paused).toBe(false);
+		vi.advanceTimersByTime(9999); expect(dismissal.hidden).toBe(false);
+		vi.advanceTimersByTime(1); expect(dismissal.hidden).toBe(true);
+	});
+	// keep:critical
+	it('a pause ends with its read when the widget stops being shown', () => {
+		const { input, dismissal } = setup(); dismissal.pause(); flushSync();
+		input.shown = false; flushSync(); input.shown = true; flushSync();
+		expect(dismissal.paused).toBe(false);
+		vi.advanceTimersByTime(9999); expect(dismissal.hidden).toBe(false);
+		vi.advanceTimersByTime(1); expect(dismissal.hidden).toBe(true);
+	});
 	it('unchanged polls keep a dismissed read hidden without another timer', () => {
 		const { input, dismissal } = setup('lab.fontalerts'); dismissal.applyKey(esc); flushSync();
 		input.settings = { ...input.settings! }; flushSync(); vi.advanceTimersByTime(60000);

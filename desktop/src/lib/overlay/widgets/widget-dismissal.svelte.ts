@@ -10,6 +10,7 @@ export function createDismissal({ spec, shown, contentKey, settings, contentRead
 	contentReady?(): boolean;
 }) {
 	let hidden = $state(false);
+	let paused = $state(false);
 	let startedAt = $state<number | null>(null);
 	let wasShown = false;
 	let previousKey: unknown;
@@ -25,9 +26,11 @@ export function createDismissal({ spec, shown, contentKey, settings, contentRead
 		const key = contentKey();
 		if (visible && (!wasShown || !Object.is(key, previousKey))) {
 			hidden = false;
+			paused = false;
 			startedAt = Date.now();
 		} else if (!visible) {
 			hidden = false;
+			paused = false;
 			startedAt = null;
 		}
 		wasShown = visible;
@@ -35,13 +38,18 @@ export function createDismissal({ spec, shown, contentKey, settings, contentRead
 	});
 
 	$effect(() => {
-		if (hidden || startedAt === null || seconds === 0) return;
+		if (hidden || paused || startedAt === null || seconds === 0) return;
 		const timer = setTimeout(() => { hidden = true; }, Math.max(0, startedAt + seconds * 1000 - Date.now()));
 		return () => clearTimeout(timer);
 	});
 
 	return {
 		get hidden() { return hidden; },
+		get paused() { return paused; },
+		pause() {
+			if (!spec.dismiss?.timeout || !shown() || hidden) return;
+			paused = true;
+		},
 		get ready() { return settings() !== null && contentReady(); },
 		applyKey(pressed: BossLootShortcut) {
 			const configured = settings();
