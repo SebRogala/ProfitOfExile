@@ -256,4 +256,39 @@ mod tests {
             }
         }
     }
+
+    mod keep_happy {
+        use super::super::*;
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct QueryVectorFile {
+            cases: Vec<QueryVector>,
+        }
+
+        #[derive(Deserialize)]
+        struct QueryVector {
+            name: String,
+            gem: String,
+            variant: String,
+            mode: String,
+            query: serde_json::Value,
+        }
+
+        #[test]
+        fn gem_search_query_vectors_match_go_and_ts() {
+            // Shared with the Go and TS trade query tests (POE-429 WI-1).
+            let file: QueryVectorFile = serde_json::from_str(include_str!(
+                "../../../../internal/trade/testdata/gem-search-query-vectors.json"
+            )).unwrap();
+            for mode in ["normal", "dedication"] {
+                assert!(file.cases.iter().any(|c| c.mode == mode), "no {mode} case");
+            }
+            for case in &file.cases {
+                assert!(case.mode == "normal" || case.mode == "dedication", "{} unknown mode {}", case.name, case.mode);
+                let got = build_search_query_with_mode(&case.gem, &case.variant, case.mode == "dedication");
+                assert_eq!(got, case.query, "{}", case.name);
+            }
+        }
+    }
 }
