@@ -8,7 +8,7 @@ vi.mock('$lib/stores/status.svelte', () => ({
 	store: { status: { server_url: 'https://server.test', device_id: 'device-abc123' } }
 }));
 
-const { displayVariant, signalTransitionLabel, fetchCurrencyExchangePlays, fetchDivineRate, fetchHarvest, mapCompareRow, collectiveParams, fetchRankingsPage, fetchMarketOverview, fetchCompare } = await import('./api');
+const { displayVariant, signalTransitionLabel, fetchCurrencyExchangePlays, fetchDivineRate, fetchHarvest, mapCompareRow, collectiveParams, fetchRankingsPage, fetchMarketOverview, fetchCompare, fetchSignalHistory } = await import('./api');
 const { applyServerSlice, resetServerBaseForTests, SERVER_URL_WAIT_MS } = await import('$lib/stores/server-base.svelte');
 
 /** The server every fetcher test talks to, delivered the way the SSOT snapshot delivers it. */
@@ -973,5 +973,138 @@ describe('a request before the server is known', () => {
 
 		await outcome;
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * The comparator enriches its cards with signal history in one bulk request
+ * (POE-410), not one history request per card.
+ */
+describe('fetchCompare signal history (keep:happy)', () => {
+	const originalFetch = globalThis.fetch;
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	const ROWS = [
+		{ transfiguredName: 'Arc of Surging', variant: '20/20', roi: 10 },
+		{ transfiguredName: 'Spark of Nova', variant: '20/20', roi: 20 },
+		{ transfiguredName: 'Cold Snap of Power', variant: '1/20', roi: 30 },
+	];
+	const snap = (time: string, signal: string, currentPrice: number, priceVelocity = 0, currentListings = 5) => ({
+		time,
+		signal,
+		currentPrice,
+		priceVelocity,
+		currentListings,
+	});
+	const HISTORY: Record<string, unknown[]> = {
+		'Arc of Surging|20/20': [
+			snap('2026-11-20T10:00:00Z', 'RISING', 120, 0, 9),
+			snap('2026-11-20T09:00:00Z', 'STABLE', 100),
+			snap('2026-11-20T08:00:00Z', 'FALLING', 100, 4),
+		],
+		'Spark of Nova|20/20': [snap('2026-11-20T10:00:00Z', 'HERD', 50), snap('2026-11-20T09:30:00Z', 'STABLE', 50, -3)],
+		'Cold Snap of Power|1/20': [snap('2026-11-20T10:00:00Z', 'STABLE', 7)],
+	};
+	const ok = (body: unknown) => ({ ok: true, status: 200, statusText: 'OK', json: async () => structuredClone(body) });
+
+	function serve(rows: unknown[] = ROWS, bulk?: (keys: string[]) => unknown) {
+		const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
+			const url = new URL(String(input));
+			if (url.pathname === '/api/analysis/compare') return ok({ count: rows.length, data: rows });
+			if (url.pathname === '/api/analysis/history') {
+				const key = `${url.searchParams.get('name')}|${url.searchParams.get('variant')}`;
+				return ok({ count: (HISTORY[key] ?? []).length, history: HISTORY[key] ?? [] });
+			}
+			if (url.pathname === '/api/analysis/history/bulk') {
+				const keys = url.searchParams.getAll('key');
+				if (bulk) return bulk(keys);
+				return ok({
+					count: keys.length,
+					data: keys.map((k) => ({ name: k.split('|')[0], variant: k.split('|')[1], count: (HISTORY[k] ?? []).length, history: HISTORY[k] ?? [] })),
+				});
+			}
+			throw new Error(`unexpected request ${url.pathname}`);
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		return fetchMock;
+	}
+	const paths = (fetchMock: ReturnType<typeof vi.fn>) => fetchMock.mock.calls.map((c) => new URL(String(c[0])).pathname);
+
+	async function singleRouteHistories() {
+		serve();
+		return Promise.all(ROWS.map((r) => fetchSignalHistory(r.transfiguredName, r.variant)));
+	}
+
+	it('a three-card compare issues one compare and one bulk history request', async () => {
+		const fetchMock = serve();
+		await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
+		expect(paths(fetchMock)).toEqual(['/api/analysis/compare', '/api/analysis/history/bulk']);
+		const bulk = new URL(String(fetchMock.mock.calls[1][0]));
+		expect(bulk.searchParams.getAll('key')).toEqual(['Arc of Surging|20/20', 'Spark of Nova|20/20', 'Cold Snap of Power|1/20']);
+		expect(bulk.searchParams.get('limit')).toBe('4');
+	});
+
+	it('enriches every card with the history the single route derives', async () => {
+		const want = await singleRouteHistories();
+		expect(want[0]).toHaveLength(2);
+		serve();
+		const got = await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
+		expect(got.map((g) => g.signalHistory)).toEqual(want);
+	});
+
+	it('splits more than twelve cards into bulk requests of at most twelve keys', async () => {
+		const rows = Array.from({ length: 14 }, (_, i) => ({ transfiguredName: `Gem ${i}`, variant: '20/20' }));
+		const fetchMock = serve(rows);
+		await fetchCompare(rows.map((r) => r.transfiguredName), '20/20');
+		const bulks = fetchMock.mock.calls.map((c) => new URL(String(c[0]))).filter((u) => u.pathname === '/api/analysis/history/bulk');
+		expect(bulks.map((u) => u.searchParams.getAll('key').length)).toEqual([12, 2]);
+	});
+
+	it('a failed bulk request maps its cards to [] and keeps the compare rows', async () => {
+		serve(ROWS, () => ({ ok: false, status: 500, statusText: 'Internal Server Error', json: async () => ({}) }));
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const got = await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
+		warn.mockRestore();
+		expect(got.map((g) => [g.name, g.roi, g.signalHistory])).toEqual([
+			['Arc of Surging', 10, []],
+			['Spark of Nova', 20, []],
+			['Cold Snap of Power', 30, []],
+		]);
+	});
+
+	it('an error entry maps only its own card to []', async () => {
+		const want = await singleRouteHistories();
+		serve(ROWS, (keys) =>
+			ok({
+				count: keys.length,
+				data: keys.map((k, i) => (i === 0 ? { name: 'Arc of Surging', variant: '20/20', error: 'encode failed' } : { count: 0, history: HISTORY[k] ?? [] })),
+			})
+		);
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const got = await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
+		warn.mockRestore();
+		expect(got.map((g) => g.signalHistory)).toEqual([[], want[1], want[2]]);
+	});
+
+	it('passes its AbortSignal to the bulk request', async () => {
+		const fetchMock = serve();
+		const controller = new AbortController();
+		await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20', controller.signal);
+		const bulkCall = fetchMock.mock.calls.find((c) => new URL(String(c[0])).pathname === '/api/analysis/history/bulk');
+		expect(bulkCall?.[1]?.signal).toBe(controller.signal);
+	});
+
+	it('rejects and assigns no history when aborted while the bulk request is pending', async () => {
+		const gate: { release?: (v: unknown) => void } = {};
+		serve(ROWS, () => new Promise((resolve) => (gate.release = resolve)));
+		const controller = new AbortController();
+		const pending = fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20', controller.signal);
+		const outcome = expect(pending).rejects.toBe('closed');
+		await vi.waitFor(() => expect(gate.release).toBeDefined());
+		controller.abort('closed');
+		gate.release!(ok({ count: 3, data: ROWS.map((r) => ({ count: 1, history: HISTORY[`${r.transfiguredName}|${r.variant}`] ?? [] })) }));
+		await outcome;
 	});
 });

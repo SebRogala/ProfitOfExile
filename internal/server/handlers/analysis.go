@@ -750,6 +750,29 @@ func SignalHistory(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 	}
 }
 
+// SignalHistoryBulk returns SignalHistory for several gems in one request.
+// GET /api/analysis/history/bulk?key=Spark+of+Nova|20/20&key=Arc|1/20&limit=4
+func SignalHistoryBulk(src lab.SignalHistoryBulkSource, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var keys []lab.SignalHistoryKey
+		for _, raw := range r.URL.Query()["key"] {
+			name, variant, _ := strings.Cut(raw, "|")
+			keys = append(keys, lab.SignalHistoryKey{Name: name, Variant: resolve.NormalizeVariant(variant)})
+		}
+		history, err := lab.LoadSignalHistoryBulk(r.Context(), src, cache, scope, keys, 4)
+		if err != nil {
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
+		}
+		data := make([]map[string]any, 0, len(keys))
+		for _, k := range keys {
+			data = append(data, map[string]any{"name": k.Name, "variant": k.Variant, "count": len(history[k]), "history": history[k]})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"count": len(data), "data": data})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // V2 Analysis Endpoints (POE-62: scaffolding; data populated by POE-56 through POE-61)
 // ---------------------------------------------------------------------------

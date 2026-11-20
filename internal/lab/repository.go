@@ -1093,6 +1093,21 @@ func (r *Repository) SignalHistory(ctx context.Context, scope league.Scope, name
 	return changes, nil
 }
 
+// SignalHistoryBulk returns SignalHistory for each key.
+func (r *Repository) SignalHistoryBulk(ctx context.Context, scope league.Scope, keys []SignalHistoryKey, limit int) (map[SignalHistoryKey][]SignalChange, error) {
+	out := make(map[SignalHistoryKey][]SignalChange, len(keys))
+	for _, k := range keys {
+		changes, err := r.SignalHistory(ctx, scope, k.Name, k.Variant, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(changes) > 0 {
+			out[k] = changes
+		}
+	}
+	return out, nil
+}
+
 // signalHistorySeedMaxDays bounds the seed and cold-cache fallback, and it is the
 // endpoint's semantics rather than an implementation detail: a gem whose last
 // signal predates it holds no ring, and /api/analysis/history answers empty for
