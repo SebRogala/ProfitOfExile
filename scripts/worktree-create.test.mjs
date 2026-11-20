@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeF
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkBaseTrackedFiles, patchLaneFiles, render } from './worktree-create.mjs';
+import { LANE_NAME_PATTERN, checkBaseTrackedFiles, currentGuards, patchLaneFiles, render } from './worktree-create.mjs';
 
 const oldGuard = 'if [ "$DB_NAME" != profitofexile_integration ]; then\n\texit 1\nfi';
 const newGuard = 'if [[ ! "${INTEGRATION_DB-$DB_NAME}" =~ lane ]]; then\n\texit 1\nfi';
@@ -133,4 +133,31 @@ test('default rendered lane compose excludes the collector', () => {
 
 test('collector profile opt-in adds the collector to the rendered lane compose', () => {
   assert.deepEqual(renderedServices('--profile', 'collector'), ['app', 'collector', 'desktop', 'frontend']);
+});
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const laneNameHome = () => readFileSync(join(repoRoot, 'scripts/lib/lane-name.sh'), 'utf8');
+
+// keep:critical - a mismatch lets worktree-create accept a lane the guards refuse, or the reverse.
+test('keep:critical lane pattern equals scripts/lib/lane-name.sh', () => {
+  const body = laneNameHome().match(/^LANE_NAME_BODY='([^']+)'$/m)?.[1];
+  assert.ok(body, 'LANE_NAME_BODY not found in scripts/lib/lane-name.sh');
+  assert.equal(LANE_NAME_PATTERN.source, `^${body}$`);
+});
+
+// keep:critical - AC-3 provisioning path for lanes cut from bases older than lane-name.sh.
+test('keep:critical guard patch from a base without lane-name.sh still accepts the lane database', () => {
+  const originalGuard = 'if [ "$DB_NAME" != profitofexile_integration ]; then\n\techo "FAIL: database rule requires profitofexile_integration; other INTEGRATION_DB values are refused." >&2\n\texit 1\nfi';
+  const lane = join(scratchDir(), 'lane');
+  mkdirSync(join(lane, 'scripts', 'lib'), { recursive: true });
+  writeFileSync(join(lane, '.gitignore'), ignoreBody);
+  writeFileSync(join(lane, ENV_PATH), `#!/usr/bin/env bash\nDB_NAME="\${INTEGRATION_DB:-profitofexile_integration}"\n${originalGuard}\n`);
+  const { newGuard } = currentGuards(repoRoot);
+  patchLaneFiles(lane, { oldGuard: originalGuard, newGuard, laneName: laneNameHome() });
+  const source = db => spawnSync('bash', ['-c', `source ${ENV_PATH}`], { cwd: lane, encoding: 'utf8', env: { ...process.env, INTEGRATION_DB: db } });
+  const accepted = source('profitofexile_lanex1_integration');
+  assert.equal(accepted.status, 0, accepted.stderr);
+  const refused = source('profitofexile_integration_x');
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /^FAIL: database rule /);
 });

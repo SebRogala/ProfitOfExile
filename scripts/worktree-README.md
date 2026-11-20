@@ -54,7 +54,7 @@ make lane-teardown   # throwaway lanes only
 
 The lane name is `<dir>` lowercased with non-alphanumerics dropped, prefixed
 with `lane` when absent (`poe-414` gives `lanepoe414`); it must match
-`^lane[a-z0-9]{1,20}$`. It renders the same resources as § Created resources
+`LANE_NAME_PATTERN` in `scripts/lib/lane-name.sh`. It renders the same resources as § Created resources
 (databases, Compose project, container names, host, `.worktree/` caches, `.env`,
 `.env.local`, Vite config) from `docker-compose.worktree.yml`, reusing the main
 images `profitofexile-<service>:latest`, and migrates the lane dev DB in a
@@ -73,7 +73,7 @@ Without Docker or PostgreSQL: `bash scripts/lane-isolation.test.sh`.
 ## Created resources
 
 The target creates `.worktrees/<lane>` on new branch `<lane>` from the resolved
-base commit. Lane names match `^lane[a-z0-9]{1,20}$`. Existing paths, branches,
+base commit. Lane names match `LANE_NAME_PATTERN` in `scripts/lib/lane-name.sh`. Existing paths, branches,
 databases, container names, or Compose members are refused; failed allocation
 is retained rather than retried or deleted.
 

@@ -4,6 +4,8 @@
 # The lane name derives from the worktree directory only, so one directory
 # always maps to one set of resources (worktree-README.md § Lane isolation).
 set -euo pipefail
+# Sourced before the cd below, while a relative script path still resolves.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/lane-name.sh"
 
 action=${1:-}
 fail() { echo "lane-isolation: $*" >&2; exit 1; }
@@ -23,7 +25,7 @@ fi
 slug=$(basename "$checkout" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
 [[ $slug == lane* ]] || slug="lane$slug"
 # The integration guard (scripts/lib/integration-env.sh) accepts only this shape.
-[[ $slug =~ ^lane[a-z0-9]{1,20}$ ]] || fail "lane name '$slug' must match ^lane[a-z0-9]{1,20}$; rename the worktree directory"
+[[ $slug =~ $LANE_NAME_PATTERN ]] || fail "lane name '$slug' must match $LANE_NAME_PATTERN; rename the worktree directory"
 
 lane=$slug
 project="profitofexile-$lane"
