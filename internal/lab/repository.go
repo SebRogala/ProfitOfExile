@@ -1826,7 +1826,9 @@ func (r *Repository) LatestDedicationResults(ctx context.Context, scope league.S
 		       COALESCE(mode, 'safe'), COALESCE(thin_pool_gems, 0), COALESCE(liquidity_risk, 'LOW'),
 		       COALESCE(pool_breakdown, '[]'::jsonb), COALESCE(low_confidence_gems, '[]'::jsonb)
 		FROM dedication_snapshots
-		WHERE league = $1 AND time = (SELECT MAX(time) FROM dedication_snapshots WHERE league = $1)`
+		WHERE league = $1 AND time = (
+			SELECT MAX(d2.time) FROM dedication_snapshots d2
+			WHERE d2.league = $1 AND d2.variant = dedication_snapshots.variant)`
 	args := []any{scope.ID()}
 	argIdx := 2
 
@@ -2189,7 +2191,7 @@ func (r *Repository) CorruptedGemPricesByNames(ctx context.Context, scope league
 		       is_transfigured, is_corrupted, COALESCE(gem_color, ''), sample_count, sparkline_empty
 		FROM gem_snapshots
 		WHERE league = $1
-		  AND time = (SELECT MAX(time) FROM gem_snapshots WHERE league = $1)
+		  AND time = (SELECT MAX(time) FROM gem_snapshots WHERE league = $1 AND variant = $3 AND is_corrupted = true)
 		  AND is_corrupted = true
 		  AND variant = $3
 		  AND name = ANY($2)`, scope.ID(), names, variant)
