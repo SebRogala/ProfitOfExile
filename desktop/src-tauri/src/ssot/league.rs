@@ -74,7 +74,6 @@ impl LeagueTask {
     }
 }
 
-/// League slice of the SSOT.
 #[derive(Debug, Clone, Serialize)]
 struct LeagueChanged {
     league: String,

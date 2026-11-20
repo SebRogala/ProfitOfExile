@@ -36,6 +36,7 @@ pub(crate) use league::{note_server_league, parse_league_from_status, rearm_leag
 #[cfg(test)]
 pub(crate) use league::refresh_league_for_test;
 
+/// League slice of the SSOT.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct LeagueSlice {
     /// Resolved league name.
@@ -1448,7 +1449,7 @@ pub fn get_ssot(state: tauri::State<AppState>) -> AppSsotSnapshot {
 ///
 /// Notified when the league resolves (the poll cannot key a payload before
 /// then, so the first one would otherwise wait out a whole period) and when the
-/// server url changes. A module-local `static` for the reason [`LEAGUE_SCHEDULER`]
+/// server url changes. A module-local `static` for the reason [`league::LEAGUE_SCHEDULER`]
 /// is one: there is exactly one poller, woken here by `publish_league_resolution`,
 /// awaited by `temple::market::spawn_temple_market_poll`.
 pub(crate) static TEMPLE_MARKET_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
