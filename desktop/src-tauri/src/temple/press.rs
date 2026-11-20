@@ -132,12 +132,15 @@ impl<C: PressContext> PendingRead<C> for TemplePending {
         let (x, y) = found.origin();
         if let Some(screen) = self.screen.filter(|_| !stop()) {
             ctx.bank_entrance([x, y], frame, screen.ui_scale);
+            self.probe = Some(found);
         }
-        self.probe = Some(found);
         Some(format!("Temple: calibration — Entrance found at ({x}, {y}), {} ms", started.elapsed().as_millis()))
     }
     fn probe(&mut self, frame: &Arc<Capture>, ctx: &C) -> Result<bool, String> {
-        if self.probe.is_some() { return Ok(true); }
+        if self.probe.is_some() {
+            if ctx.epoch() != self.epoch || ctx.press_sender().is_none() { self.probe = None; return Ok(false); }
+            return Ok(true);
+        }
         self.probe = super::run::probe_frame(frame, self.screen, &|| ctx.epoch() != self.epoch || ctx.press_sender().is_none()).map_err(|e| format!("{e:?}"))?;
         Ok(self.probe.is_some())
     }
@@ -511,6 +514,20 @@ mod tests {
             assert!(live.anchors.and_then(|a| a.temple_entrance).is_some());
 
             assert_eq!(calibrations(&press(&world, || capture(2)).1), 0);
+        }
+
+        /// Silent consequence: a module turned off after calibration would
+        /// still select Temple and suppress every later reader's probe.
+        #[test]
+        fn calibration_evidence_is_not_selected_after_the_module_stops() {
+            let (world, _rx) = world(ArmState::default());
+            let frame = Arc::new(capture(1));
+            let mut pending = TEMPLE_READER.prepare(&world, &Press { cursor: None }).unwrap();
+            assert!(pending.calibrate(&frame, &world).unwrap().starts_with("Temple: calibration — Entrance found"));
+
+            *world.sender.lock().unwrap() = None;
+
+            assert_eq!(pending.probe(&frame, &world), Ok(false));
         }
 
         /// Silent consequence: old-frame coordinates banked into a replacement
