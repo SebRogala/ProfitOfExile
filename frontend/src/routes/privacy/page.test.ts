@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { render } from 'svelte/server';
 import Page from './+page.svelte';
-import { notice } from '$lib/privacy/notice-data';
+import { notice } from '$lib/privacy/notice';
 
 const page = render(Page);
 

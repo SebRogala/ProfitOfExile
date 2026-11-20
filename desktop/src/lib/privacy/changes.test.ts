@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { changesSince, type Notice } from './notice';
+import { changesSince } from './changes';
+import type { Notice } from './notice';
 
 const fixture: Notice = {
 	revision: 3,

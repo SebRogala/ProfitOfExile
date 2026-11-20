@@ -21,4 +21,5 @@ export interface Notice {
 	sections: NoticeSection[];
 }
 
+/** The bundled Data & Privacy notice (ADR-033); `notice.json` is byte-identical in both trees. */
 export const notice: Notice = raw;

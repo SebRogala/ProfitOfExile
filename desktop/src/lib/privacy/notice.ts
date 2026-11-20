@@ -21,12 +21,5 @@ export interface Notice {
 	sections: NoticeSection[];
 }
 
-/** The bundled Data & Privacy notice (ADR-033); `notice.json` mirrors the website's copy. */
+/** The bundled Data & Privacy notice (ADR-033); `notice.json` is byte-identical in both trees. */
 export const notice: Notice = raw;
-
-/** The change entries newer than `acceptedRevision`, newest first. */
-export function changesSince(source: Notice, acceptedRevision: number): NoticeChange[] {
-	return source.changes
-		.filter((c) => c.revision > acceptedRevision)
-		.sort((a, b) => b.revision - a.revision);
-}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { notice } from '$lib/privacy/notice-data';
+	import { notice } from '$lib/privacy/notice';
 </script>
 
 <svelte:head>
