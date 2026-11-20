@@ -37,7 +37,7 @@ func seedSignalHistory(t *testing.T, pool *pgxpool.Pool, scope league.Scope, nam
 	for i, age := range ages {
 		if _, err := pool.Exec(context.Background(), `
 			INSERT INTO gem_signals (league, time, name, variant, signal, sellability, window_signal, advanced_signal)
-			VALUES ($1, date_trunc('second', NOW()) - make_interval(secs => $2), $3, $4, $5, 50, $6, NULLIF($7, ''))`,
+			VALUES ($1, date_trunc('second', NOW()) - make_interval(secs => $2), $3, $4, $5, 50, $6, $7)`,
 			scope.ID(), age.Seconds(), name, variant, signals[i%len(signals)], "WINDOW", map[bool]string{true: "ADV"}[i%2 == 0]); err != nil {
 			t.Fatalf("seed signal %s %s: %v", name, variant, err)
 		}
