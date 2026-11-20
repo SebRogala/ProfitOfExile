@@ -86,6 +86,8 @@ func (f *FontColdFills) load(ctx context.Context, kind string, read func(context
 }
 
 func (f *FontColdFills) run(ctx context.Context, kind string, fl *overviewFlight, read func(context.Context) (any, error)) {
+	ctx, cancel := context.WithTimeout(ctx, sharedFillTimeout)
+	defer cancel()
 	var value any
 	var err error
 	defer func() {

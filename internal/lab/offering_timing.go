@@ -56,9 +56,9 @@ type OfferingTimingDay struct {
 	Median float64 `json:"median"`
 }
 
-// offeringFillTimeout bounds one shared offering fill. The fill runs detached
-// from the requests that wait on it.
-const offeringFillTimeout = 10 * time.Second
+// sharedFillTimeout bounds every shared single-flight fill in this package.
+// Each fill runs detached from the requests that wait on it.
+const sharedFillTimeout = 10 * time.Second
 
 // offeringQuerier is the part of the pool the offering fill uses.
 type offeringQuerier interface {
@@ -122,7 +122,7 @@ func (f *offeringFill) do(ctx context.Context, load offeringLoader, publish func
 }
 
 func (f *offeringFill) run(ctx context.Context, fl *offeringFlight, load offeringLoader, publish func([]OfferingTiming, error)) {
-	ctx, cancel := context.WithTimeout(ctx, offeringFillTimeout)
+	ctx, cancel := context.WithTimeout(ctx, sharedFillTimeout)
 	defer cancel()
 	defer func() {
 		fl.panicked = recover()

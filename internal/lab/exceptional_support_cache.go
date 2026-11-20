@@ -94,6 +94,8 @@ func (c *ExceptionalSupportCache) ExceptionalSupportPrices(ctx context.Context, 
 }
 
 func (c *ExceptionalSupportCache) fill(ctx context.Context, scope league.Scope, f *exceptionalSupportFlight) {
+	ctx, cancel := context.WithTimeout(ctx, sharedFillTimeout)
+	defer cancel()
 	c.answers.barrier.RLock()
 	defer c.answers.barrier.RUnlock()
 	defer func() {

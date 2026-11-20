@@ -256,6 +256,8 @@ func (rc *RankingAnswers) get(ctx context.Context, key string, inputs RankingInp
 }
 
 func (rc *RankingAnswers) fill(ctx context.Context, fk rankingFlightKey, inputs RankingInput, f *rankingFlight, load func(context.Context) (any, int64, error)) {
+	ctx, cancel := context.WithTimeout(ctx, sharedFillTimeout)
+	defer cancel()
 	var value any
 	var size int64
 	var err error
