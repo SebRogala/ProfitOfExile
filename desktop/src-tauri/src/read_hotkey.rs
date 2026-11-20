@@ -180,6 +180,9 @@ pub trait ScreenReader<C> {
 }
 /// Prepared context; probing retains evidence without publishing module state.
 pub trait PendingRead<C>: Send {
+    /// Calibrates an uncalibrated region on the pressed frame before any probe
+    /// runs; returns one app-log line, or `None` when nothing needed calibrating.
+    fn calibrate(&mut self, _frame: &std::sync::Arc<crate::capture::Capture>, _ctx: &C) -> Option<String> { None }
     fn probe(&mut self, frame: &std::sync::Arc<crate::capture::Capture>, ctx: &C) -> Result<bool, String>;
     fn consume(self: Box<Self>, frame: Result<&std::sync::Arc<crate::capture::Capture>, &str>, ctx: &C);
 }
@@ -198,9 +201,12 @@ pub struct PreparedPress<C> {
     pub pendings: Vec<(ReaderId, Box<dyn PendingRead<C>>)>,
     pub dismissed: Vec<u64>,
     pub finish: Option<FinishedRead>,
+    /// Where the press writes its calibration, miss and timing lines; `None` writes nothing.
+    pub log: Option<PressLog>,
 }
 
 pub type FinishedRead = Box<dyn FnOnce(DispatchOutcome) + Send>;
+pub type PressLog = Box<dyn FnMut(String) + Send>;
 
 pub fn prepare_press<C>(
     press: Press,
@@ -216,7 +222,7 @@ pub fn prepare_press<C>(
         if let Some(pending) = reader.prepare(ctx, &press) { pendings.push((id, pending)); }
     }
     pendings.sort_by_key(|(id, _)| if *id == ReaderId::Font { 0 } else if Some(id.mechanic()) == recent { 1 } else { 2 });
-    PreparedPress { delay, pendings, dismissed: Vec::new(), finish: None }
+    PreparedPress { delay, pendings, dismissed: Vec::new(), finish: None, log: None }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,7 +230,7 @@ pub enum DispatchOutcome { Selected(ReaderId), NoMatch, Failed(String), Suppress
 
 /// Await all same-tick dismissals, then delay, capture once and select the first match.
 pub fn dispatch_press<C>(
-    armed: PreparedPress<C>,
+    mut armed: PreparedPress<C>,
     ctx: &C,
     sleep: &mut dyn FnMut(std::time::Duration),
     grab: &mut dyn FnMut() -> Result<crate::capture::Capture, crate::capture::CaptureError>,
@@ -234,29 +240,55 @@ pub fn dispatch_press<C>(
         return DispatchOutcome::Suppressed;
     }
     sleep(armed.delay);
+    let mut log = armed.log.take();
+    let mut write = |line: String| if let Some(log) = log.as_mut() { log(line) };
+    let ms = |since: std::time::Instant| since.elapsed().as_millis();
+    let started = std::time::Instant::now();
     let frame = match grab() {
         // Nothing grabbed and already logged by capture; the press is a no-op.
         Err(crate::capture::CaptureError::NotAccepted) => return DispatchOutcome::Suppressed,
         Err(crate::capture::CaptureError::Failed(e)) => {
             log::warn!("read hotkey: screen grab failed: {e}");
+            write(format!("Read key: failed in {} ms (grab {} ms, calibration 0 ms, probes 0 ms)", ms(started), ms(started)));
             return DispatchOutcome::Failed(e);
         }
         Ok(capture) => std::sync::Arc::new(capture),
     };
+    let grab_ms = ms(started);
+    let calibration_started = std::time::Instant::now();
+    for (_, pending) in armed.pendings.iter_mut() {
+        if let Some(line) = pending.calibrate(&frame, ctx) { write(line); }
+    }
+    let calibration_ms = ms(calibration_started);
+    let probes_started = std::time::Instant::now();
+    let mut outcome = DispatchOutcome::NoMatch;
     for (id, mut pending) in armed.pendings {
+        let probe_started = std::time::Instant::now();
         match pending.probe(&frame, ctx) {
             Ok(true) => {
                 pending.consume(Ok(&frame), ctx);
-                return DispatchOutcome::Selected(id);
+                outcome = DispatchOutcome::Selected(id);
+                break;
             }
-            Ok(false) => {}
+            Ok(false) => write(format!("Read key: {id:?} probe — no match, {} ms", ms(probe_started))),
             Err(error) => {
                 log::warn!("read hotkey: probe failed: {error}");
-                return DispatchOutcome::Failed(error);
+                outcome = DispatchOutcome::Failed(error);
+                break;
             }
         }
     }
-    DispatchOutcome::NoMatch
+    let result = match &outcome {
+        DispatchOutcome::Selected(id) => format!("{id:?} selected"),
+        DispatchOutcome::Failed(_) => "failed".to_string(),
+        _ => "nothing detected".to_string(),
+    };
+    write(format!(
+        "Read key: {result} in {} ms (grab {grab_ms} ms, calibration {calibration_ms} ms, probes {} ms)",
+        ms(started),
+        ms(probes_started),
+    ));
+    outcome
 }
 
 /// Prepare, delay and capture in one call; the threads split it at the queue.
@@ -311,7 +343,7 @@ pub fn run_sampler<C>(
 /// The dispatch side: each queued press in order gets its own delay and grab.
 pub fn run_dispatcher<C>(
     ctx: &C,
-    queue: std::sync::mpsc::Receiver<PreparedPress<C>>,
+    queue: impl IntoIterator<Item = PreparedPress<C>>,
     sleep: &mut dyn FnMut(std::time::Duration),
     grab: &mut dyn FnMut() -> Result<crate::capture::Capture, crate::capture::CaptureError>,
     await_hidden: &mut dyn FnMut(&[u64]) -> bool,
@@ -329,9 +361,15 @@ pub fn spawn_read_hotkey(app: tauri::AppHandle, cancel: std::sync::Arc<std::sync
     let (tx, rx) = std::sync::mpsc::channel();
     let dispatch_app = app.clone();
     std::thread::spawn(move || {
+        let log_app = dispatch_app.clone();
+        let queue = rx.into_iter().map(move |mut armed: PreparedPress<tauri::AppHandle>| {
+            let app = log_app.clone();
+            armed.log = Some(Box::new(move |line| crate::app_log(&app, line)));
+            armed
+        });
         run_dispatcher(
             &dispatch_app,
-            rx,
+            queue,
             &mut std::thread::sleep,
             &mut || crate::capture::capture_screen(&dispatch_app),
             &mut |gen| crate::overlay_dismiss::await_hidden(&dispatch_app, gen),
@@ -407,6 +445,7 @@ mod dispatch_tests {
         probes: Mutex<Vec<(&'static str, u32)>>,
         probe_error: Mutex<bool>,
         trace: Mutex<Vec<String>>,
+        uncalibrated: Mutex<Vec<&'static str>>,
     }
     struct TestReader {
         name: &'static str,
@@ -431,6 +470,11 @@ mod dispatch_tests {
         }
     }
     impl PendingRead<Arc<World>> for TestPending {
+        fn calibrate(&mut self, _frame: &Arc<Capture>, ctx: &Arc<World>) -> Option<String> {
+            if !ctx.uncalibrated.lock().unwrap().contains(&self.name) { return None; }
+            ctx.trace.lock().unwrap().push("calibrate".into());
+            Some(format!("calibrated {}", self.name))
+        }
         fn probe(&mut self, frame: &Arc<Capture>, ctx: &Arc<World>) -> Result<bool, String> {
             ctx.trace.lock().unwrap().push("probe".into());
             ctx.probes.lock().unwrap().push((self.name, frame.monitor_id));
@@ -772,6 +816,49 @@ mod dispatch_tests {
             Ok(capture(grabs))
         }, &mut |_| panic!("no dismissal to await"));
         grabs as usize
+    }
+
+    mod keep_happy {
+        use super::*;
+
+        fn logged_press(world: &Arc<World>, readers: &[&dyn ScreenReader<Arc<World>>]) -> (DispatchOutcome, Vec<String>) {
+            let lines = Arc::new(Mutex::new(Vec::new()));
+            let sink = lines.clone();
+            let mut prepared = prepare_press(press(), Duration::ZERO, readers, world);
+            prepared.log = Some(Box::new(move |line| sink.lock().unwrap().push(line)));
+            let outcome = dispatch_press(prepared, world, &mut |_| {}, &mut || {
+                world.trace.lock().unwrap().push("grab".into());
+                Ok(capture(1))
+            }, &mut |_| panic!("no dismissal to await"));
+            let lines = lines.lock().unwrap().clone();
+            (outcome, lines)
+        }
+
+        #[test]
+        fn a_press_calibrates_every_uncalibrated_reader_before_the_first_probe() {
+            let world = Arc::new(World::default());
+            *world.uncalibrated.lock().unwrap() = vec!["a", "b"];
+            *world.misses.lock().unwrap() = vec!["a"];
+            let (outcome, lines) = logged_press(&world, &[&A, &B]);
+            assert_eq!(outcome, DispatchOutcome::Selected(ReaderId::Mercenary));
+            assert_eq!(*world.trace.lock().unwrap(), vec!["grab", "calibrate", "calibrate", "probe", "probe", "consume"]);
+            assert_eq!(lines.iter().filter(|l| *l == "calibrated a").count(), 1);
+            assert_eq!(lines.iter().filter(|l| *l == "calibrated b").count(), 1);
+            let first_miss = lines.iter().position(|l| l.contains("probe — no match")).expect("a miss line");
+            assert!(lines.iter().position(|l| l == "calibrated b").unwrap() < first_miss);
+        }
+
+        #[test]
+        fn each_probe_miss_logs_one_line_and_the_press_logs_its_timing() {
+            let world = Arc::new(World::default());
+            *world.misses.lock().unwrap() = vec!["a", "b"];
+            let (outcome, lines) = logged_press(&world, &[&A, &B]);
+            assert_eq!(outcome, DispatchOutcome::NoMatch);
+            assert_eq!(lines.len(), 3, "{lines:?}");
+            assert!(lines[0].starts_with("Read key: Temple probe — no match, "), "{lines:?}");
+            assert!(lines[1].starts_with("Read key: Mercenary probe — no match, "), "{lines:?}");
+            assert!(lines[2].starts_with("Read key: nothing detected in "), "{lines:?}");
+        }
     }
 
     #[test]
