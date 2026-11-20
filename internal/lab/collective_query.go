@@ -32,7 +32,13 @@ const CollectiveMaxPageSize = 100
 const CollectiveSearchLimit = 1000
 
 // collectiveVariants are the Normal markets, in their stored form.
-var collectiveVariants = map[string]bool{"1": true, "1/20": true, "20": true, "20/20": true}
+var collectiveVariants = func() map[string]bool {
+	set := make(map[string]bool, len(sparklineVariants))
+	for _, v := range sparklineVariants {
+		set[v] = true
+	}
+	return set
+}()
 
 var collectiveColors = map[string]bool{"RED": true, "GREEN": true, "BLUE": true}
 
