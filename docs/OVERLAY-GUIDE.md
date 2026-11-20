@@ -68,6 +68,12 @@ logs must keep the user aware of what the data is used for.
   without a CRAFT probe. Only the first match consumes the saved frame; losing
   probes publish nothing. Module switches and lifecycle identities still gate
   selected work. Screen matches and read completion never update log recency.
+  Before any probe, every eligible reader calibrates any uncalibrated region on
+  the saved frame, once; each probe then compares only its banked region, and a
+  miss moves to the next reader. `app.log` gets one
+  `Read key: <reader> probe — no match` line per miss and one
+  `Read key: <result> in N ms (grab, calibration, probes)` line per press.
+  `read_hotkey::dispatch_press` is the home of this order and these lines.
 - **No match.** A successfully captured frame that matches no reader publishes
   exactly: “Nothing detected. If a mechanic is open, check Settings → OCR
   Regions → Preview, and press Recalibrate if a region is off.” It follows the
