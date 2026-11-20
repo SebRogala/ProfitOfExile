@@ -225,34 +225,37 @@ describe('go', () => {
 		expect(mod.nav.view).toBe('lab');
 	});
 
+	// keep:critical — the persisted navView is the only observable for a wrong or
+	// inherited-property write, which would restore the wrong view at next launch.
 	it('persists the view name under the navView key, not the path', async () => {
 		const mod = await loadStoreWith({});
-		vi.useFakeTimers();
 		mod.nav.go('/temple');
-		// Writes are debounced per key inside prefs.svelte.ts; unrelated keys
-		// may also flush in this window, so count only navigation writes.
-		await vi.advanceTimersByTimeAsync(300);
+		// Writes are debounced per key inside prefs.svelte.ts; draining the pending
+		// debounce may also flush unrelated keys, so count only navigation writes.
+		await vi.runOnlyPendingTimersAsync();
 		expect(callsOf('set_ui_pref', 'navView')).toEqual([{ key: 'navView', value: 'temple' }]);
 	});
 
+	// keep:critical — the persisted navView is the only observable for a wrong or
+	// inherited-property write, which would restore the wrong view at next launch.
 	it("persists 'lab' for a path no view claims, not the unmapped path", async () => {
 		// Validate-on-read hides a bad write from `nav.view`, so the only place a
 		// missing fallback shows is what the next launch restores from.
 		const mod = await loadStoreWith({});
-		vi.useFakeTimers();
 		mod.nav.go('/mercs');
-		await vi.advanceTimersByTimeAsync(300);
+		await vi.runOnlyPendingTimersAsync();
 		expect(callsOf('set_ui_pref', 'navView')).toEqual([{ key: 'navView', value: 'lab' }]);
 	});
 
+	// keep:critical — the persisted navView is the only observable for a wrong or
+	// inherited-property write, which would restore the wrong view at next launch.
 	it("persists 'lab' for an Object.prototype path, not an inherited function", async () => {
 		// The read-side twin above passes even under an object-lookup `go`,
 		// because `parseView` narrows the bad value back to 'lab'. What the
 		// STORE was asked to write is the only observable that catches it.
 		const mod = await loadStoreWith({});
-		vi.useFakeTimers();
 		mod.nav.go('constructor');
-		await vi.advanceTimersByTimeAsync(300);
+		await vi.runOnlyPendingTimersAsync();
 		expect(callsOf('set_ui_pref', 'navView')).toEqual([{ key: 'navView', value: 'lab' }]);
 	});
 });
