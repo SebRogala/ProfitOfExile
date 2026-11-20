@@ -1179,14 +1179,17 @@ async function fetchSignalHistoryBulk(gems: CompareGem[], signal?: AbortSignal, 
 	return gems.map((gem, i) => bulkEntryTransitions(gem, body.data?.[i]));
 }
 
-/** One bulk entry's transitions; an error entry or a failed transform is []. */
+/**
+ * One bulk entry's transitions; an error entry or a failed transform is [], and
+ * an entry without history is [] as the single route's empty body is.
+ */
 function bulkEntryTransitions(gem: CompareGem, entry: { history?: any[]; error?: string } | undefined): SignalTransition[] {
-	if (!entry || entry.error) {
-		console.warn(`[Comparator] Signal history failed for ${gem.name}:`, entry?.error ?? 'missing entry');
+	if (entry?.error) {
+		console.warn(`[Comparator] Signal history failed for ${gem.name}:`, entry.error);
 		return [];
 	}
 	try {
-		return signalTransitions(entry.history || []);
+		return signalTransitions(entry?.history || []);
 	} catch (err) {
 		console.warn(`[Comparator] Signal history failed for ${gem.name}:`, err);
 		return [];
