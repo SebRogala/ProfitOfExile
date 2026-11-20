@@ -30,7 +30,7 @@ describe('reporting a failed click-through setup', () => {
 	/**
 	 * The literal, not the constant — half of a cross-language pair.
 	 *
-	 * `CLICKTHROUGH_WINDOW_GONE` in `desktop/src-tauri/src/lib.rs` is what
+	 * `CLICKTHROUGH_WINDOW_GONE` in `desktop/src-tauri/src/overlay_clickthrough.rs` is what
 	 * actually prefixes the message at runtime. A test written against this
 	 * module's own constant would survive a rename here while Rust kept the old
 	 * string, and every genuine warning would silently become an info line. The

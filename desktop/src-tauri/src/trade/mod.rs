@@ -1,4 +1,5 @@
 pub mod client;
+pub mod commands;
 pub mod query;
 pub mod rate_limiter;
 pub mod signals;

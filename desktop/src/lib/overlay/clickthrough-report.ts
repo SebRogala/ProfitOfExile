@@ -21,7 +21,7 @@
 /**
  * The marker Rust puts on the "window was already gone" failure.
  *
- * Must match `CLICKTHROUGH_WINDOW_GONE` in `desktop/src-tauri/src/lib.rs`. Both
+ * Must match `CLICKTHROUGH_WINDOW_GONE` in `desktop/src-tauri/src/overlay_clickthrough.rs`. Both
  * ends are pinned by a test — `clickthrough-report.test.ts` here, and
  * `a_vanished_window_is_reported_with_the_marker_the_caller_matches` there — so
  * a rename on either side fails a gate instead of silently downgrading every
