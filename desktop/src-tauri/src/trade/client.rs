@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use super::rate_limiter::TradeRateLimiter;
 use super::signals::build_result;
+use super::url::trade_api_search_url;
 use super::types::{SearchResponse, TradeListingDetail, TradeLookupResult};
 
 const TRADE_API_BASE_URL: &str = "https://www.pathofexile.com";
@@ -580,10 +581,7 @@ impl TradeApiClient {
         query_body: &serde_json::Value,
         league: &str,
     ) -> Result<SearchResponse, String> {
-        let url = format!(
-            "{}/api/trade/search/{}",
-            self.base_url, league
-        );
+        let url = trade_api_search_url(&self.base_url, league);
 
         log::info!("Trade search: {} → {}", label, url);
         log::info!("Trade query body: {}", serde_json::to_string(query_body).unwrap_or_default());
@@ -787,6 +785,19 @@ pub(crate) mod tests {
         let result = client.lookup_gem(Some("Mirage".into()), "Spark", "20/20", 0.0, |_| {}).await.unwrap();
         assert_eq!(result.league, "Mirage");
         assert!(stub.requests()[0].starts_with("POST /api/trade/search/Mirage "));
+    }
+
+    /// The search call site path-escapes the league (a space must not reach the wire raw).
+    #[tokio::test]
+    async fn search_request_escapes_league_with_space() {
+        let stub = stub_api(search_ok(), fetch_ok()).await;
+        let client = stub_client(&stub);
+        client.lookup_gem(Some("Hardcore Allflame".into()), "Spark", "20/20", 0.0, |_| {}).await.unwrap();
+        let request = &stub.requests()[0];
+        assert!(
+            request.contains("/api/trade/search/Hardcore%20Allflame"),
+            "search request line: {request}"
+        );
     }
 
     /// GGG's developer docs require an identifiable User-Agent with contact;
