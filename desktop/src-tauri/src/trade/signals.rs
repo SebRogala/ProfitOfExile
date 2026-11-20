@@ -218,46 +218,50 @@ mod tests {
                 assert_eq!(result.trade_url, v.trade_url);
             }
         }
-    }
 
-    fn concentration_for(unique_accounts: i32) -> SellerConcentration {
-        let listings: Vec<TradeListingDetail> = (0..10).map(|_| TradeListingDetail {
-            price: 10.0,
-            currency: "chaos".to_string(),
-            chaos_price: 10.0,
-            indexed_at: Utc::now(),
-            gem_level: 20,
-            gem_quality: 20,
-            corrupted: false,
-        }).collect();
-        compute_signals(&listings, unique_accounts).seller_concentration
-    }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct SignalVector {
+            name: String,
+            unique_accounts: i32,
+            cheapest_age_minutes: i64,
+            chaos_prices: Vec<f64>,
+            seller_concentration: String,
+            cheapest_staleness: String,
+            price_outlier: bool,
+        }
 
-    #[test]
-    fn eight_sellers_read_as_normal() {
-        assert_eq!(concentration_for(8), SellerConcentration::Normal);
-    }
-
-    #[test]
-    fn seven_sellers_read_as_concentrated() {
-        assert_eq!(concentration_for(7), SellerConcentration::Concentrated);
-    }
-
-    #[test]
-    fn five_sellers_read_as_concentrated() {
-        assert_eq!(concentration_for(5), SellerConcentration::Concentrated);
-    }
-
-    #[test]
-    fn four_sellers_read_as_monopoly() {
-        assert_eq!(concentration_for(4), SellerConcentration::Monopoly);
-    }
-
-    #[test]
-    fn no_listings_read_as_normal_with_zero_sellers() {
-        let signals = compute_signals(&[], 6);
-        assert_eq!(signals.seller_concentration, SellerConcentration::Normal);
-        assert_eq!(signals.unique_accounts, 0);
+        #[test]
+        fn signal_thresholds_match_go() {
+            // Shared with TestKeepHappy_ComputeSignalsMatchesSharedSignalVectors in internal/trade/types_test.go.
+            let vectors: Vec<SignalVector> = serde_json::from_str(include_str!(
+                "../../../../internal/trade/testdata/trade-signal-vectors.json"
+            )).unwrap();
+            assert!(!vectors.is_empty());
+            for v in &vectors {
+                let now = Utc::now();
+                let mut listings: Vec<TradeListingDetail> = v.chaos_prices.iter().map(|&p| TradeListingDetail {
+                    price: p,
+                    currency: "chaos".to_string(),
+                    chaos_price: p,
+                    indexed_at: now,
+                    gem_level: 20,
+                    gem_quality: 20,
+                    corrupted: false,
+                }).collect();
+                let want_unique = if let Some(first) = listings.first_mut() {
+                    first.indexed_at = now - chrono::Duration::minutes(v.cheapest_age_minutes);
+                    v.unique_accounts
+                } else {
+                    0
+                };
+                let got = serde_json::to_value(compute_signals(&listings, v.unique_accounts)).unwrap();
+                assert_eq!(got["sellerConcentration"], v.seller_concentration.as_str(), "{}", v.name);
+                assert_eq!(got["cheapestStaleness"], v.cheapest_staleness.as_str(), "{}", v.name);
+                assert_eq!(got["priceOutlier"], v.price_outlier, "{}", v.name);
+                assert_eq!(got["uniqueAccounts"], want_unique, "{}", v.name);
+            }
+        }
     }
 
     #[test]
