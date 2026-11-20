@@ -53,8 +53,14 @@ pub trait PressContext {
     fn sweep_spent(&self, _frame: &Capture) -> bool {
         false
     }
-    /// Records that this frame's screen setup spent its one sweep.
-    fn spend_sweep(&self, _frame: &Capture) {}
+    /// This frame's sweep key under the live Recalibrate generation.
+    fn sweep_key(&self, frame: &Capture) -> SweepKey {
+        sweep_key(frame, 0)
+    }
+    /// Records that `key`'s screen setup spent its one sweep.
+    fn spend_sweep(&self, _key: SweepKey) {}
+    /// Drops a spent sweep recorded for a screen setup other than this frame's.
+    fn forget_other_setup(&self, _frame: &Capture) {}
 }
 
 /// One screen setup for the sweep budget: capture size, display origin, client
@@ -73,6 +79,13 @@ pub(crate) fn sweep_key(frame: &Capture, rearm: u64) -> SweepKey {
         display: frame.origin,
         client_size: (frame.client[2], frame.client[3]),
         rearm,
+    }
+}
+
+/// Clears `spent` when it belongs to a screen setup other than `frame`'s.
+pub(crate) fn forget_other_setup(spent: &mut Option<SweepKey>, frame: &Capture) {
+    if spent.is_some_and(|key| key != sweep_key(frame, key.rearm)) {
+        *spent = None;
     }
 }
 
@@ -110,15 +123,18 @@ impl PressContext for AppHandle {
         crate::ssot::remember_anchor_if_current(self, crate::ssot::AnchorModule::TempleEntrance, origin, frame, ui_scale)
     }
     fn sweep_spent(&self, frame: &Capture) -> bool {
-        let temple = &self.state::<crate::AppState>().temple_state;
-        let key = sweep_key(frame, temple.rearm.load(std::sync::atomic::Ordering::SeqCst));
-        let spent = *temple.sweep_spent.lock().unwrap_or_else(|e| e.into_inner()) == Some(key);
+        let key = PressContext::sweep_key(self, frame);
+        let spent = *self.state::<crate::AppState>().temple_state.sweep_spent.lock().unwrap_or_else(|e| e.into_inner()) == Some(key);
         spent
     }
-    fn spend_sweep(&self, frame: &Capture) {
-        let temple = &self.state::<crate::AppState>().temple_state;
-        let key = sweep_key(frame, temple.rearm.load(std::sync::atomic::Ordering::SeqCst));
-        *temple.sweep_spent.lock().unwrap_or_else(|e| e.into_inner()) = Some(key);
+    fn sweep_key(&self, frame: &Capture) -> SweepKey {
+        sweep_key(frame, self.state::<crate::AppState>().temple_state.rearm.load(std::sync::atomic::Ordering::SeqCst))
+    }
+    fn spend_sweep(&self, key: SweepKey) {
+        *self.state::<crate::AppState>().temple_state.sweep_spent.lock().unwrap_or_else(|e| e.into_inner()) = Some(key);
+    }
+    fn forget_other_setup(&self, frame: &Capture) {
+        forget_other_setup(&mut self.state::<crate::AppState>().temple_state.sweep_spent.lock().unwrap_or_else(|e| e.into_inner()), frame);
     }
 }
 
@@ -153,6 +169,17 @@ impl<C: PressContext> ScreenReader<C> for TempleReader {
     }
 }
 
+impl TemplePending {
+    /// Reconciles the screen owner once per press and drops another setup's
+    /// spent sweep.
+    fn reconcile<C: PressContext>(&mut self, frame: &Capture, ctx: &C) {
+        if self.reconciled { return; }
+        self.reconciled = true;
+        self.screen = ctx.reconcile_screen(frame);
+        ctx.forget_other_setup(frame);
+    }
+}
+
 impl<C: PressContext> PendingRead<C> for TemplePending {
     fn needs_calibration(&mut self, frame: &Arc<Capture>, ctx: &C) -> bool {
         let stopped = ctx.epoch() != self.epoch || ctx.press_sender().is_none();
@@ -160,14 +187,15 @@ impl<C: PressContext> PendingRead<C> for TemplePending {
     }
     fn calibrate(&mut self, frame: &Arc<Capture>, ctx: &C) -> Option<String> {
         let started = std::time::Instant::now();
-        if !self.reconciled { self.reconciled = true; self.screen = ctx.reconcile_screen(frame); }
+        self.reconcile(frame, ctx);
         if super::run::is_calibrated(frame, self.screen) { return None; }
         let stop = || ctx.epoch() != self.epoch || ctx.press_sender().is_none();
+        let key = ctx.sweep_key(frame);
         let found = super::run::calibrate_frame(frame, self.screen, &stop);
         if stop() {
             return Some(format!("Temple: calibration — cancelled, {} ms", started.elapsed().as_millis()));
         }
-        ctx.spend_sweep(frame);
+        ctx.spend_sweep(key);
         let found = match found {
             Ok(found) => found,
             Err(e) => return Some(format!("Temple: calibration — failed ({e:?}), {} ms", started.elapsed().as_millis())),
@@ -181,7 +209,7 @@ impl<C: PressContext> PendingRead<C> for TemplePending {
         Some(format!("Temple: calibration — Entrance found at ({x}, {y}), {} ms", started.elapsed().as_millis()))
     }
     fn probe(&mut self, frame: &Arc<Capture>, ctx: &C) -> Result<bool, String> {
-        if !self.reconciled { self.reconciled = true; self.screen = ctx.reconcile_screen(frame); }
+        self.reconcile(frame, ctx);
         if self.probe.is_some() {
             if ctx.epoch() != self.epoch || ctx.press_sender().is_none() { self.probe = None; return Ok(false); }
             return Ok(true);
@@ -219,6 +247,8 @@ mod tests {
         replaced_by: Mutex<Option<crate::ssot::ScreenSlice>>,
         sweep: Mutex<Option<SweepKey>>,
         rearm: Mutex<u64>,
+        rearm_during_sweep: Mutex<Option<()>>,
+        sweeping: Mutex<bool>,
     }
     impl PressContext for World {
         fn screen(&self) -> Option<crate::ssot::ScreenSlice> {
@@ -252,8 +282,22 @@ mod tests {
         fn sweep_spent(&self, frame: &Capture) -> bool {
             *self.sweep.lock().unwrap() == Some(sweep_key(frame, *self.rearm.lock().unwrap()))
         }
-        fn spend_sweep(&self, frame: &Capture) {
-            *self.sweep.lock().unwrap() = Some(sweep_key(frame, *self.rearm.lock().unwrap()));
+        fn sweep_key(&self, frame: &Capture) -> SweepKey {
+            let key = sweep_key(frame, *self.rearm.lock().unwrap());
+            if self.rearm_during_sweep.lock().unwrap().take().is_some() { *self.sweeping.lock().unwrap() = true; }
+            key
+        }
+        fn spend_sweep(&self, key: SweepKey) {
+            *self.sweep.lock().unwrap() = Some(key);
+        }
+        fn forget_other_setup(&self, frame: &Capture) {
+            forget_other_setup(&mut self.sweep.lock().unwrap(), frame);
+        }
+        /// Stands in for a Recalibrate pressed while the sweep runs: the first
+        /// stop check after the sweep took its key bumps the generation once.
+        fn epoch(&self) -> u64 {
+            if std::mem::take(&mut *self.sweeping.lock().unwrap()) { *self.rearm.lock().unwrap() += 1; }
+            0
         }
     }
 
@@ -276,7 +320,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         (World { sender: Mutex::new(Some(tx)), arm: Mutex::new(arm), prompt: Mutex::new(None),
             slot: Mutex::new(Some(slice_1080(None))), replaced_by: Mutex::new(None),
-            sweep: Mutex::new(None), rearm: Mutex::new(0) }, rx)
+            sweep: Mutex::new(None), rearm: Mutex::new(0), rearm_during_sweep: Mutex::new(None), sweeping: Mutex::new(false) }, rx)
     }
 
     #[test]
@@ -651,6 +695,36 @@ mod tests {
             assert_eq!(calibrations(&press(&world, small).1), 0);
 
             assert_eq!(calibrations(&press(&world, moved).1), 0);
+        }
+
+        /// Silent consequence: a Recalibrate pressed during a sweep would be
+        /// spent by that older sweep, leaving the recalibrated screen none.
+        #[test]
+        fn a_recalibrate_during_a_sweep_keeps_the_new_generation_sweep() {
+            let (world, _rx) = world(ArmState::default());
+            *world.rearm_during_sweep.lock().unwrap() = Some(());
+
+            assert_eq!(calibrations(&press(&world, merc_capture).1), 1);
+
+            assert_eq!(calibrations(&press(&world, merc_capture).1), 1);
+            assert_eq!(calibrations(&press(&world, merc_capture).1), 0);
+        }
+
+        /// Silent consequence: a setup change that a banked probe answers
+        /// would leave the old setup's spent sweep, so returning to it never
+        /// sweeps again.
+        #[test]
+        fn a_press_on_another_setup_reopens_the_old_setup_sweep_without_sweeping() {
+            fn small() -> Capture { Capture { image: image::DynamicImage::new_rgb8(1280, 720), client: [0, 0, 1280, 720], ..merc_capture() } }
+            let (world, _rx) = world(ArmState::default());
+            assert_eq!(calibrations(&press(&world, small).1), 1);
+
+            *world.slot.lock().unwrap() = Some(slice_1080(Some([960, 713])));
+            let (outcome, lines) = press(&world, || capture(1));
+            assert_eq!(outcome, DispatchOutcome::Selected(ReaderId::Temple));
+            assert_eq!(calibrations(&lines), 0, "{lines:?}");
+
+            assert_eq!(calibrations(&press(&world, small).1), 1);
         }
 
         /// Silent consequence: old-frame coordinates banked into a replacement
