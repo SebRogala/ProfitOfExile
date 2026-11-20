@@ -30,18 +30,19 @@ var signalHistoryBulkFlights = newFontColdFills()
 
 // signalHistoryBulkFlightKey identifies one shareable read: the cache and
 // league it serves, the limit and the keys in canonical (sorted,
-// de-duplicated) order.
+// de-duplicated) order. Each name and variant is length-prefixed, so names
+// holding separator bytes cannot make two different key sets collide.
 func signalHistoryBulkFlightKey(cache *Cache, scope league.Scope, keys []SignalHistoryKey, limit int) string {
 	canonical := make([]string, 0, len(keys))
 	seen := make(map[SignalHistoryKey]bool, len(keys))
 	for _, k := range keys {
 		if !seen[k] {
 			seen[k] = true
-			canonical = append(canonical, k.Name+"\x1f"+k.Variant)
+			canonical = append(canonical, fmt.Sprintf("%d:%s%d:%s", len(k.Name), k.Name, len(k.Variant), k.Variant))
 		}
 	}
 	sort.Strings(canonical)
-	return fmt.Sprintf("%p\x1d%s\x1d%d\x1d%s", cache, scope.ID(), limit, strings.Join(canonical, "\x1e"))
+	return fmt.Sprintf("%p\x1d%s\x1d%d\x1d%s", cache, scope.ID(), limit, strings.Join(canonical, ""))
 }
 
 // LoadSignalHistoryBulk answers a bulk-history request: from the analyzer's

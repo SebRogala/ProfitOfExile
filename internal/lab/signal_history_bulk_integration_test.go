@@ -284,3 +284,16 @@ func TestKeepCriticalSignalHistoryBulkWindow(t *testing.T) {
 		}
 	})
 }
+
+func TestKeepCriticalSignalHistoryBulkFlightKeySeparatorName(t *testing.T) {
+	scope := league.Scope{}
+	pair := []SignalHistoryKey{{Name: "Arc", Variant: "20/20"}, {Name: "Spark", Variant: "20/20"}}
+	crafted := []SignalHistoryKey{{Name: "Arc\x1f20/20\x1eSpark", Variant: "20/20"}}
+	if signalHistoryBulkFlightKey(nil, scope, pair, 20) == signalHistoryBulkFlightKey(nil, scope, crafted, 20) {
+		t.Fatal("a name holding separator bytes shares the flight of a different key set")
+	}
+	reordered := []SignalHistoryKey{pair[1], pair[0], pair[1]}
+	if signalHistoryBulkFlightKey(nil, scope, pair, 20) != signalHistoryBulkFlightKey(nil, scope, reordered, 20) {
+		t.Fatal("equal key sets in another order or with duplicates do not share one flight")
+	}
+}
