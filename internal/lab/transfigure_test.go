@@ -358,3 +358,32 @@ func TestFilterGemDictionary_SkillsExcludeSupportGems(t *testing.T) {
 		t.Errorf("skills = %v, want Herald of Ash and Spark", got)
 	}
 }
+
+func TestKeepCritical_AnalyzeTransfigureCoversAllFourNormalVariants(t *testing.T) {
+	now := time.Now()
+	var gems []GemPrice
+	for _, v := range []string{"1", "1/20", "20", "20/20"} {
+		gems = append(gems,
+			GemPrice{Name: "Spark", Variant: v, Chaos: 5, Listings: 50, IsTransfigured: false},
+			GemPrice{Name: "Spark of Nova", Variant: v, Chaos: 100, Listings: 20, IsTransfigured: true},
+		)
+	}
+
+	results := AnalyzeTransfigure(now, gems)
+
+	got := make(map[string]int)
+	for _, r := range results {
+		if r.TransfiguredName == "Spark of Nova" {
+			got[r.Variant]++
+		}
+	}
+	want := map[string]int{"1": 1, "1/20": 1, "20": 1, "20/20": 1}
+	if len(got) != len(want) {
+		t.Fatalf("variants = %v, want exactly %v", got, want)
+	}
+	for v, n := range want {
+		if got[v] != n {
+			t.Errorf("variant %q: got %d results, want %d (all: %v)", v, got[v], n, got)
+		}
+	}
+}

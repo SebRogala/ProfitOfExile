@@ -81,14 +81,13 @@ func AnalyzeTransfigure(snapTime time.Time, gems []GemPrice) []TransfigureResult
 		}
 	}
 
-	variants := []string{"1", "1/20", "20", "20/20"}
 	var results []TransfigureResult
 
 	for transName, transVariants := range transGems {
 		baseName := extractBaseName(transName)
 		baseVariants := baseGems[baseName] // nil when the base gem is unpriced
 
-		for _, variant := range variants {
+		for _, variant := range sparklineVariants {
 			trans, hasTransVar := transVariants[variant]
 			if !hasTransVar {
 				continue
