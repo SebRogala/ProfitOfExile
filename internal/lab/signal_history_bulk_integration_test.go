@@ -157,18 +157,26 @@ func TestKeepHappySignalHistoryBulk(t *testing.T) {
 	}
 
 	want := referenceSignalHistory(t, pool, scope, keys, 4)
+	served := func(limit int) map[SignalHistoryKey][]SignalChange {
+		t.Helper()
+		got, err := LoadSignalHistoryBulk(context.Background(), plain, NewCache(scope), scope, keys, limit)
+		if err != nil {
+			t.Fatalf("LoadSignalHistoryBulk: %v", err)
+		}
+		return got
+	}
 	t.Run("deep series is clamped to the limit", func(t *testing.T) {
-		if n := len(referenceSignalHistory(t, pool, scope, keys[:1], 20)[keys[0]]); n != 20 {
+		if n := len(served(20)[keys[0]]); n != 20 {
 			t.Errorf("deep series serves %d rows at limit 20, want 20", n)
 		}
 	})
 	t.Run("rows past the 14-day window are dropped", func(t *testing.T) {
-		if n := len(want[SignalHistoryKey{"History Aged", "20/20"}]); n != 1 {
+		if n := len(served(4)[SignalHistoryKey{"History Aged", "20/20"}]); n != 1 {
 			t.Errorf("aged series serves %d rows, want only its in-window row", n)
 		}
 	})
 	t.Run("a key without rows is absent", func(t *testing.T) {
-		if _, ok := want[SignalHistoryKey{"History Missing", "20/20"}]; ok {
+		if _, ok := served(4)[SignalHistoryKey{"History Missing", "20/20"}]; ok {
 			t.Error("a key without rows has history")
 		}
 	})

@@ -282,9 +282,7 @@ describe('fetchCompare signal history (keep:happy)', () => {
 
 	it('a failed bulk request keeps the compare rows', async () => {
 		failBulk();
-		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const got = await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
-		warn.mockRestore();
 		expect(got.map((g) => [g.name, g.roi])).toEqual([
 			['Arc of Surging', 10],
 			['Spark of Nova', 20],
@@ -294,36 +292,52 @@ describe('fetchCompare signal history (keep:happy)', () => {
 
 	it('a failed bulk request maps its cards to []', async () => {
 		failBulk();
-		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const got = await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
-		warn.mockRestore();
 		expect(got.map((g) => g.signalHistory)).toEqual([[], [], []]);
 	});
 
-	it('a failed bulk request warns with its cards and the failure', async () => {
+	async function batchFailureWarnings() {
 		failBulk();
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
 		const calls = warn.mock.calls;
 		warn.mockRestore();
-		expect(calls).toHaveLength(1);
-		expect(calls[0][0]).toBe('[Comparator] Signal history failed for Arc of Surging, Spark of Nova, Cold Snap of Power:');
-		expect(String(calls[0][1])).toContain('500');
+		return calls;
+	}
+
+	it('a failed bulk request warns once', async () => {
+		expect(await batchFailureWarnings()).toHaveLength(1);
 	});
 
-	it('an error entry maps only its own card to []', async () => {
-		const want = await singleRouteHistories();
+	it("a failed bulk request's warning names its cards", async () => {
+		expect((await batchFailureWarnings())[0][0]).toBe('[Comparator] Signal history failed for Arc of Surging, Spark of Nova, Cold Snap of Power:');
+	});
+
+	it("a failed bulk request's warning carries the failure", async () => {
+		expect(String((await batchFailureWarnings())[0][1])).toContain('500');
+	});
+
+	const serveErrorEntry = () =>
 		serve(ROWS, (keys) =>
 			ok({
 				count: keys.length,
 				data: keys.map((k, i) => (i === 0 ? { name: 'Arc of Surging', variant: '20/20', error: 'encode failed' } : { count: 0, history: HISTORY[k] ?? [] })),
 			})
 		);
-		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+	it('an error entry maps only its own card to []', async () => {
+		const want = await singleRouteHistories();
+		serveErrorEntry();
 		const got = await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
+		expect(got.map((g) => g.signalHistory)).toEqual([[], want[1], want[2]]);
+	});
+
+	it('an error entry warns with its card and error', async () => {
+		serveErrorEntry();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		await fetchCompare(ROWS.map((r) => r.transfiguredName), '20/20');
 		const calls = warn.mock.calls;
 		warn.mockRestore();
-		expect(got.map((g) => g.signalHistory)).toEqual([[], want[1], want[2]]);
 		expect(calls).toEqual([['[Comparator] Signal history failed for Arc of Surging:', 'encode failed']]);
 	});
 });

@@ -146,7 +146,10 @@ func TestKeepHappySignalHistoryBulkLimit(t *testing.T) {
 		want  int
 	}{"default": {"", 4}, "explicit": {"limit=7", 7}, "clamped": {"limit=99", 20}} {
 		t.Run(name+" depth", func(t *testing.T) {
-			_, data := serveBulkHistory(t, SignalHistoryBulk(&recordingHistorySource{}, lab.NewCache(historyScope), historyScope), bulkHistoryURL(keys, tc.extra))
+			code, data := serveBulkHistory(t, SignalHistoryBulk(&recordingHistorySource{}, lab.NewCache(historyScope), historyScope), bulkHistoryURL(keys, tc.extra))
+			if code != http.StatusOK || len(data) != len(keys) {
+				t.Fatalf("status %d with %d entries, want 200 with %d", code, len(data), len(keys))
+			}
 			for _, e := range data {
 				if want := sourceSeries(lab.SignalHistoryKey{Name: e.Name, Variant: e.Variant})[:tc.want]; !reflect.DeepEqual(e.History, want) || e.Count != tc.want {
 					t.Errorf("%s entry = %d rows (count %d), want its %d newest", e.Name, len(e.History), e.Count, tc.want)

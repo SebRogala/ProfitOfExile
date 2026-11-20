@@ -683,8 +683,8 @@ func AnalysisStatus(cache *lab.Cache, divineRate *exchange.DivineRateReader, sco
 // SignalHistory returns the last N signal snapshots for a specific gem.
 // GET /api/analysis/history?name=Spark+of+Nova&variant=20/20&limit=4
 //
-// The highest-volume read on the analysis surface: the desktop calls it once per
-// gem inside fetchCompare, so three per gem scan. Cheap to execute (0.348 ms)
+// Before comparator enrichment moved to SignalHistoryBulk, the desktop called
+// this once per gem inside fetchCompare. Cheap to execute (0.348 ms)
 // and expensive to plan (5.3 ms over 925 planning buffers, from chunk pruning on
 // the hypertable), which is why it is served from the tick's own output.
 func SignalHistory(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
