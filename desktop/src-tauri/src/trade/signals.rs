@@ -1,6 +1,7 @@
 use chrono::Utc;
 
 use super::types::{CheapestStaleness, SellerConcentration, TradeListingDetail, TradeLookupResult, TradeSignals};
+use super::url::trade_search_url;
 
 // Trade price definition: docs/TRADE-LIFECYCLE.md#trade-price-definition.
 const TRADE_PRICE_LISTING_COUNT: usize = 3;
@@ -33,10 +34,7 @@ pub fn build_result(
     listings.sort_by(|a, b| a.chaos_price.total_cmp(&b.chaos_price));
 
     let trade_url = if !query_id.is_empty() && !league.is_empty() {
-        format!(
-            "https://www.pathofexile.com/trade/search/{}/{}",
-            league, query_id
-        )
+        format!("{}/{}", trade_search_url(league), query_id)
     } else {
         String::new()
     };
@@ -194,6 +192,32 @@ mod tests {
             corrupted: false,
         }).collect();
         build_result("Gem", "20/20", "Test League", "query", 10, listings, 1, vector.divine_rate)
+    }
+
+    mod keep_happy {
+        use super::super::*;
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct UrlVector {
+            league: String,
+            query_id: String,
+            trade_url: String,
+        }
+
+        #[test]
+        fn trade_url_escapes_league_like_go() {
+            // Shared with the Go trade-search URL test in internal/trade.
+            let vectors: Vec<UrlVector> = serde_json::from_str(include_str!(
+                "../../../../internal/trade/testdata/trade-url-vectors.json"
+            )).unwrap();
+            assert!(!vectors.is_empty());
+            for v in &vectors {
+                let result = build_result("Gem", "20/20", &v.league, &v.query_id, 0, vec![], 0, 0.0);
+                assert_eq!(result.trade_url, v.trade_url);
+            }
+        }
     }
 
     fn concentration_for(unique_accounts: i32) -> SellerConcentration {
