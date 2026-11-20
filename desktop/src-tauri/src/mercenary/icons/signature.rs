@@ -55,7 +55,7 @@ const COARSE_STEPS: [i32; 3] = [-2, 0, 2];
 /// The numeral is not part of the family's identity — the same art carries a
 /// I, II or III — so leaving it in would make the tier-1 and tier-3 samples of
 /// one family score as different families. Wider and taller than the badge's
-/// own read box ([`BadgeGeometry`]) on purpose: the mask only has to cost a
+/// own read box ([`super::super::BadgeGeometry`]) on purpose: the mask only has to cost a
 /// little signal, whereas a numeral leaking into the signature costs identity.
 const MASK_W_FRAC: f32 = 0.45;
 const MASK_H_FRAC: f32 = 0.35;
@@ -214,7 +214,7 @@ impl CellSig {
 /// aligned search in [`cell_candidates`] is built on top of this, not beside
 /// it.
 ///
-/// Takes the cell's OUTER rect (what [`super::geometry::detect_reason`] emits), reads
+/// Takes the cell's OUTER rect (what [`super::super::geometry::detect_reason`] emits), reads
 /// its inner region and then gives up the margin [`window_offset`] leaves —
 /// [`SHIFT_MAX`] px per side up to a 48 px cell, proportionally more above it —
 /// the alignment window. What is left of the cell frame after the inset is outside
@@ -323,7 +323,7 @@ fn window_sig(img: &DynamicImage, win: [i32; 4], dx: i32, dy: i32) -> Option<Cel
 /// learned in one cell scores 0.45-0.70 against the same art in another. The
 /// fix is to let the CELL move, not the template: this holds the signature of
 /// the cell's window at all 49 shifts in `-SHIFT_MAX..=SHIFT_MAX`², and
-/// [`TemplateStore::match_family`] takes each template's best over them.
+/// [`super::TemplateStore::match_family`] takes each template's best over them.
 ///
 /// Built once per occupied cell per detect — 49 small crops and resizes — and
 /// then reused for every template, which is what keeps the aligned search
