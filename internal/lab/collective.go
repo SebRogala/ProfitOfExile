@@ -548,6 +548,8 @@ func BuildDedicationCompareResults(
 				cr.ROI = 0
 				cr.ROIPct = 0
 			}
+		} else {
+			cr.Confidence = ConfidenceNoData
 		}
 
 		// Attach sparkline.
@@ -588,7 +590,7 @@ func BuildDedicationCompareResults(
 
 		for pos, r := range ranks {
 			cr := results[r.idx]
-			if notAnOutcome[r.idx] {
+			if notAnOutcome[r.idx] || cr.Confidence == ConfidenceNoData {
 				results[r.idx].Recommendation = "AVOID"
 			} else if cr.Confidence == "LOW" && cr.TransListings < 2 {
 				results[r.idx].Recommendation = "AVOID"
