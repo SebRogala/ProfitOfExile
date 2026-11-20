@@ -203,6 +203,9 @@ impl<C: PressContext> PendingRead<C> for TemplePending {
         let Some(found) = found else {
             return Some(format!("Temple: calibration — no Entrance plate on this frame, {} ms", started.elapsed().as_millis()));
         };
+        if ctx.sweep_key(frame) != key {
+            return Some(format!("Temple: calibration — superseded by Recalibrate, {} ms", started.elapsed().as_millis()));
+        }
         let (x, y) = found.origin();
         if let Some(screen) = self.screen { ctx.bank_entrance([x, y], frame, screen.ui_scale); }
         self.probe = Some(found);
@@ -708,6 +711,22 @@ mod tests {
 
             assert_eq!(calibrations(&press(&world, merc_capture).1), 1);
             assert_eq!(calibrations(&press(&world, merc_capture).1), 0);
+        }
+
+        /// Silent consequence: an Entrance found by a sweep that started
+        /// before Recalibrate would mark the recalibrated screen calibrated and
+        /// skip its fresh sweep.
+        #[test]
+        fn a_sweep_superseded_by_recalibrate_banks_and_selects_nothing() {
+            let (world, _rx) = world(ArmState::default());
+            *world.rearm_during_sweep.lock().unwrap() = Some(());
+
+            let (outcome, lines) = press(&world, shifted_capture);
+            assert_eq!(outcome, DispatchOutcome::NoMatch);
+            assert_eq!(lines.iter().filter(|l| l.starts_with("Temple: calibration — superseded by Recalibrate")).count(), 1, "{lines:?}");
+            assert!(world.slot.lock().unwrap().unwrap().anchors.and_then(|a| a.temple_entrance).is_none());
+
+            assert_eq!(calibrations(&press(&world, shifted_capture).1), 1);
         }
 
         /// Silent consequence: a setup change that a banked probe answers
