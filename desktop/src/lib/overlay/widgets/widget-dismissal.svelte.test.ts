@@ -147,6 +147,23 @@ describe('widget dismissal', () => {
 		vi.advanceTimersByTime(9999); expect(dismissal.hidden).toBe(false);
 		vi.advanceTimersByTime(1); expect(dismissal.hidden).toBe(true);
 	});
+	// keep:happy
+	it('close hides a shown widget and ends a pause so the next read counts down again', () => {
+		const { input, dismissal } = setup(); dismissal.pause(); flushSync();
+		dismissal.close(); flushSync();
+		expect(dismissal.hidden).toBe(true); expect(dismissal.paused).toBe(false);
+		input.key++; flushSync(); expect(dismissal.hidden).toBe(false);
+		vi.advanceTimersByTime(9999); expect(dismissal.hidden).toBe(false);
+		vi.advanceTimersByTime(1); expect(dismissal.hidden).toBe(true);
+	});
+	// keep:happy
+	it('close while the widget is not shown changes nothing', () => {
+		const { input, dismissal } = setup();
+		input.shown = false; flushSync(); dismissal.close();
+		input.shown = true; flushSync();
+		expect(dismissal.hidden).toBe(false);
+		vi.advanceTimersByTime(9999); expect(dismissal.hidden).toBe(false);
+	});
 	// keep:critical
 	it('a pause ends with its read when the widget stops being shown', () => {
 		const { input, dismissal } = setup(); dismissal.pause(); flushSync();

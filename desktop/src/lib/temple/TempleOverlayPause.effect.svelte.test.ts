@@ -141,7 +141,10 @@ beforeEach(() => {
 			const left = parseFloat(win.style.left);
 			const top = parseFloat(win.style.top);
 			const inside = x >= left && x < left + KEEP.w && y >= top && y < top + KEEP.h;
-			return inside ? (win.querySelector('[data-action="temple.keep"]') ?? win) : document.body;
+			if (!inside) return document.body;
+			// Keep spans x 10-82 and Close x 88-154 inside the window (border 2 + padding 8, gap 6).
+			const action = x - left < 85 ? 'temple.keep' : 'temple.close';
+			return win.querySelector(`[data-action="${action}"]`) ?? win;
 		}
 	});
 });
@@ -178,29 +181,48 @@ function offersLayer(target: HTMLElement) {
 	return target.querySelector<HTMLElement>('.anchored-layer[data-widget="temple.offers"]');
 }
 
-async function clickKeep(target: HTMLElement) {
+async function clickButton(target: HTMLElement, centre: number) {
 	const win = target.querySelector<HTMLElement>('.keepwin');
 	expect(win).not.toBeNull();
 	// The upper box was placed, so the window stands left of it.
 	expect({ left: win!.style.left, top: win!.style.top }).toEqual({ left: '242px', top: '208px' });
-	const x = parseFloat(win!.style.left) + 8 + 74;
+	const x = parseFloat(win!.style.left) + centre;
 	const y = parseFloat(win!.style.top) + KEEP.h - 8 - 11;
 	windowHandlers['overlay-click']({ payload: { label: 'temple', x, y } });
 	await settle();
 }
+const clickKeep = (target: HTMLElement) => clickButton(target, 10 + 36);
+const clickClose = (target: HTMLElement) => clickButton(target, 88 + 33);
 
 describe('temple keep window', () => {
 	// keep:happy
-	it('a forwarded click on Keep on screen keeps the offers past their timeout', async () => {
+	it('a forwarded click on Keep keeps the offers past their timeout', async () => {
 		const target = await render(10);
 		await clickKeep(target);
 		vi.advanceTimersByTime(11000);
 		await settle();
 		const layer = offersLayer(target)!;
 		expect(layer.querySelectorAll('.box')).toHaveLength(2);
-		expect(layer.querySelector('.keepwin .lb')?.textContent).toBe('Close with');
-		expect(layer.querySelector('.keepwin .kw-key')?.textContent).toBe('Esc');
+		expect(layer.querySelector('.keepwin .lb')?.textContent).toBe('Timer stopped');
+		expect(layer.querySelector('.keepwin')?.textContent).not.toMatch(/Esc|Key/);
 		expect(layer.querySelector('[data-action="temple.keep"]')).toBeNull();
+		expect(layer.querySelector('[data-action="temple.close"]')).not.toBeNull();
+	});
+
+	// keep:happy
+	it('a forwarded click on Close hides the offers and the keep window, before and after Keep', async () => {
+		let target = await render(10);
+		await clickClose(target);
+		expect(target.querySelectorAll('.box')).toHaveLength(0);
+		expect(target.querySelector('.keepwin')).toBeNull();
+		unmount(mounted!);
+		mounted = null;
+		document.body.innerHTML = '';
+		target = await render(10);
+		await clickKeep(target);
+		await clickClose(target);
+		expect(target.querySelectorAll('.box')).toHaveLength(0);
+		expect(target.querySelector('.keepwin')).toBeNull();
 	});
 
 	// keep:happy
@@ -220,6 +242,7 @@ describe('temple keep window', () => {
 		expect(offersLayer(target)?.querySelectorAll('.box')).toHaveLength(2);
 		expect(target.querySelector('.keepwin')).toBeNull();
 		expect(target.querySelector('[data-action="temple.keep"]')).toBeNull();
+		expect(target.querySelector('[data-action="temple.close"]')).toBeNull();
 	});
 
 	// keep:happy
