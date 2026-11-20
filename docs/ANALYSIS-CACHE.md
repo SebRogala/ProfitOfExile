@@ -351,6 +351,24 @@ closes the key space without changing series content. POE-134 may change that
 Sparklines always use raw prices. Never source them from normalized history —
 temporal normalization was removed from this path for creating edge artifacts.
 
+## The exceptional-support snapshot
+
+`GET /api/analysis/exceptional-supports` reads its two-statement snapshot (the
+latest `gem_snapshots` time, then the three level-1 uncorrupted prices) through
+`lab.ExceptionalSupportCache` (`internal/lab/exceptional_support_cache.go`).
+The snapshot is retained until the gem-snapshot revision of the ranked answers
+advances, which `cmd/server/recompute_runtime.go` publishes on each accepted
+`ninja_gems` event. Overlapping cold polls share one read; warm polls send no
+SQL; a league without a snapshot is retained too. A fill holds the ranking
+publication barrier across its SQL and is retained only when no gem snapshot
+was accepted since it began. Failed reads are not retained. The divine rate is
+read per request outside the cache.
+
+Event-loss limitation: there is no reconnect protocol. A snapshot written before
+the subscription starts or during a Mercure disconnect stays invisible until the
+next accepted gem event; an event the league guard rejects leaves the prior
+snapshot, and the next accepted event heals it.
+
 ## The seed-once fields
 
 Two fields cannot be filled from one tick's output alone, so their population

@@ -198,7 +198,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache, cfg.DivineRate, cfg.League))
 		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo, cfg.LabCache, cfg.League))
 		r.Get("/api/analysis/history/bulk", handlers.SignalHistoryBulk(cfg.LabRepo, cfg.LabCache, cfg.League))
-		r.Get("/api/analysis/exceptional-supports", handlers.ExceptionalSupportPrices(cfg.LabRepo, cfg.DivineRate, cfg.League))
+		r.Get("/api/analysis/exceptional-supports", handlers.ExceptionalSupportPrices(lab.NewExceptionalSupportCache(cfg.LabRepo.ExceptionalSupportPrices, cfg.LabCache), cfg.DivineRate, cfg.League))
 
 		r.Get("/api/analysis/market-overview", handlers.MarketOverview(cfg.LabCache, cfg.LabRepo, cfg.DivineRate, cfg.League))
 		// Sibling of market-overview, not a section of it: one aggregated,

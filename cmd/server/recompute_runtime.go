@@ -540,7 +540,8 @@ func (r *recomputeRuntime) dispatch(ev server.MercureEvent) {
 	if r.labCache != nil {
 		// The collector committed this snapshot before publishing the event, so
 		// the Dedication rankings, which read gem_snapshots directly, are stale
-		// now whether or not RunDedication later succeeds.
+		// now whether or not RunDedication later succeeds. The same publication
+		// invalidates the exceptional-support snapshot.
 		r.labCache.For(r.scope).Rankings().Publish(lab.RankingInputGemSnapshots)
 	}
 	if r.throttler != nil {
