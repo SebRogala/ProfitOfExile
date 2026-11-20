@@ -269,7 +269,7 @@ func main() {
 	//
 	// Deliberately NOT gated on mercureJWTSecret != "" like the sibling loops:
 	// those exist solely to publish, whereas this one performs essential DB
-	// ingestion and collector.PublishMercureEvent already no-ops on an empty
+	// ingestion and mercure.PublishMercureEvent already no-ops on an empty
 	// secret. Do not "fix" the asymmetry — gating it would silently stop
 	// collection on a hub-less deployment.
 	if os.Getenv("EXCHANGE_INGEST_ENABLED") != "false" {
@@ -495,7 +495,7 @@ func runLayoutResetTicker(ctx context.Context, scope league.Scope, mercureURL, m
 		case <-time.After(sleepDur):
 		}
 
-		if err := collector.PublishMercureEvent(ctx, mercureURL, mercureSecret, mercure.LabLayoutTopic, payload); err != nil {
+		if err := mercure.PublishMercureEvent(ctx, mercureURL, mercureSecret, mercure.LabLayoutTopic, payload); err != nil {
 			slog.Error("layout reset: mercure publish failed", "error", err)
 		} else {
 			slog.Info("layout reset: published reset event at midnight UTC")
@@ -537,7 +537,7 @@ func runTradeRefresherTicks(ctx context.Context, scope league.Scope, mercureURL,
 			return
 		case <-ticks:
 
-			if err := collector.PublishMercureEvent(ctx, mercureURL, mercureSecret, mercure.TradeTickTopic, payload); err != nil {
+			if err := mercure.PublishMercureEvent(ctx, mercureURL, mercureSecret, mercure.TradeTickTopic, payload); err != nil {
 				if ctx.Err() != nil {
 					return
 				}

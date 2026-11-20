@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"profitofexile/internal/collector"
 	"profitofexile/internal/league"
 	"profitofexile/internal/mercure"
 )
@@ -37,7 +36,7 @@ func DebugTrigger(mercureURL, mercureSecret string, scope league.Scope) http.Han
 			return
 		}
 
-		if err := collector.PublishMercureEvent(r.Context(), mercureURL, mercureSecret, topic, string(payload)); err != nil {
+		if err := mercure.PublishMercureEvent(r.Context(), mercureURL, mercureSecret, topic, string(payload)); err != nil {
 			http.Error(w, "publish failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}

@@ -7,6 +7,7 @@ import (
 
 	"profitofexile/internal/collector"
 	"profitofexile/internal/league"
+	"profitofexile/internal/mercure"
 )
 
 // stampedPublisher adapts exchange.EventPublisher onto the collector's Mercure
@@ -23,12 +24,12 @@ type stampedPublisher struct {
 }
 
 // Publish stamps the league identity onto the payload and posts it to the hub.
-// collector.PublishMercureEvent is a no-op when the URL or the secret is empty,
+// mercure.PublishMercureEvent is a no-op when the URL or the secret is empty,
 // so an unconfigured hub costs a marshal and nothing else.
 func (p stampedPublisher) Publish(ctx context.Context, topic string, payload map[string]any) error {
 	body, err := json.Marshal(collector.StampScope(payload, p.scope))
 	if err != nil {
 		return fmt.Errorf("stamped publisher: marshal %s payload: %w", topic, err)
 	}
-	return collector.PublishMercureEvent(ctx, p.mercureURL, p.mercureSecret, topic, string(body))
+	return mercure.PublishMercureEvent(ctx, p.mercureURL, p.mercureSecret, topic, string(body))
 }

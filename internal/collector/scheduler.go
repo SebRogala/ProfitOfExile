@@ -424,7 +424,7 @@ func (s *Scheduler) postCollect(ctx context.Context, endpointName string, snapTi
 		return
 	}
 
-	if err := PublishMercureEvent(ctx, s.mercureURL, s.mercureSecret, topic, string(payload)); err != nil {
+	if err := mercure.PublishMercureEvent(ctx, s.mercureURL, s.mercureSecret, topic, string(payload)); err != nil {
 		s.logger.Warn("mercure publish failed",
 			"endpoint", endpointName,
 			"error", err,

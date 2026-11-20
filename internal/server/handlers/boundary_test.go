@@ -25,7 +25,6 @@ var forbiddenImportPrefixes = []string{
 // the task that removes it. The baseline ratchets: an entry whose file no longer
 // imports a forbidden path fails the build until it is removed.
 var importBaseline = map[string]string{
-	"debug.go": "server audit L1: debug endpoints read collector state",
 }
 
 // guardFiles must be among the parsed files so the walk cannot pass vacuously.
