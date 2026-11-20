@@ -3,6 +3,8 @@ package lab
 import (
 	"sort"
 	"strings"
+
+	"profitofexile/internal/gemrule"
 )
 
 // Gem eligibility — the one place that records which priced gems a Labyrinth
@@ -63,7 +65,7 @@ import (
 // Not covered here: the collector's own Trarthus drop in
 // internal/collector/ninja.go. That is a different decision — do not *store*
 // the row — taken before any lab concept exists, and package collector does not
-// import package lab. Keep the two in step by hand.
+// import package lab. It reads the same Heist-only rule from internal/gemrule.
 
 // The colour rules. There are two, and the difference between them is the one
 // place where "colourless" has to be read carefully.
@@ -202,17 +204,10 @@ func isSupportGemName(name string) bool {
 	return strings.HasSuffix(name, " Support")
 }
 
-// isHeistOnlyGemName reports whether a gem is Heist-exclusive and therefore
-// unobtainable in standard league play.
-//
-// Game rule: the "of Trarthus" transfigured gems drop only from Heist
-// blueprints, so the lab can neither hand one out nor be fed one. The collector
-// refuses to store them at all (internal/collector/ninja.go), and measured
-// 2026-08-05 the local gem_snapshots holds 0 Trarthus rows — but gem_colors
-// still carries 12 seeded Trarthus names, so any surface reading gem_colors
-// rather than snapshots has to apply this rule itself.
+// isHeistOnlyGemName reports whether a gem is Heist-exclusive; the game rule
+// lives in gemrule.IsHeistOnlyName.
 func isHeistOnlyGemName(name string) bool {
-	return strings.Contains(name, "Trarthus")
+	return gemrule.IsHeistOnlyName(name)
 }
 
 // isVaalGemName reports whether a gem is a Vaal gem.
@@ -342,7 +337,7 @@ func isTransfigurePairCandidate(g GemPrice) bool {
 // TestSQLExclusionsMatchGoPredicates pins the pairing.
 const (
 	// sqlNotHeistOnly matches isHeistOnlyGemName.
-	sqlNotHeistOnly = `name NOT LIKE '%Trarthus%'`
+	sqlNotHeistOnly = gemrule.SQLNotHeistOnly
 
 	// sqlNotSupportGem matches isSupportGemName. The leading space is
 	// load-bearing: the rule is a suffix, not a substring.
