@@ -17,10 +17,12 @@ func TestSparklineFallbackFlightKey_EqualRequestsShareAndDistinctOnesDoNot(t *te
 	keys := []CollectiveSparklineKey{{"Spark of Nova", "20/20"}, {"Arc of Surging", "1"}}
 	base := sparklineFallbackFlightKey(cache, scope, "", keys, SparklineWindowHours)
 
-	reordered := []CollectiveSparklineKey{{"Arc of Surging", "1"}, {"Spark of Nova", "20/20"}, {"Arc of Surging", "1"}}
-	if got := sparklineFallbackFlightKey(cache, scope, "", reordered, SparklineWindowHours); got != base {
-		t.Errorf("reordered, duplicated keys give flight %q, want the canonical %q", got, base)
-	}
+	t.Run("canonical keys share", func(t *testing.T) {
+		reordered := []CollectiveSparklineKey{{"Arc of Surging", "1"}, {"Spark of Nova", "20/20"}, {"Arc of Surging", "1"}}
+		if got := sparklineFallbackFlightKey(cache, scope, "", reordered, SparklineWindowHours); got != base {
+			t.Errorf("reordered, duplicated keys give flight %q, want the canonical %q", got, base)
+		}
+	})
 	other := league.Historical("Settlers")
 	for name, got := range map[string]string{
 		"league":       sparklineFallbackFlightKey(cache, other, "", keys, SparklineWindowHours),
@@ -30,9 +32,11 @@ func TestSparklineFallbackFlightKey_EqualRequestsShareAndDistinctOnesDoNot(t *te
 		"keys":         sparklineFallbackFlightKey(cache, scope, "", keys[:1], SparklineWindowHours),
 		"variant":      sparklineFallbackFlightKey(cache, scope, "", []CollectiveSparklineKey{{"Spark of Nova", "20"}, {"Arc of Surging", "1"}}, SparklineWindowHours),
 	} {
-		if got == base {
-			t.Errorf("a different %s shares the flight %q", name, base)
-		}
+		t.Run("different "+name+" does not share", func(t *testing.T) {
+			if got == base {
+				t.Errorf("a different %s shares the flight %q", name, base)
+			}
+		})
 	}
 }
 
@@ -88,21 +92,27 @@ func TestQueryCollective_OverlappingColdPagesShareOneBulkRead(t *testing.T) {
 	close(src.release)
 	wg.Wait()
 
-	if reads := src.reads.Load(); reads != 1 {
-		t.Errorf("%d overlapping cold pages ran %d bulk reads, want 1", n, reads)
-	}
-	for i, g := range got {
-		if !reflect.DeepEqual(g, want) {
-			t.Fatalf("request %d sparklines = %v, want the SparkVariant series on each row's own key %v", i, g, want)
+	reads := src.reads.Load()
+	t.Run("overlapping misses share one read", func(t *testing.T) {
+		if reads != 1 {
+			t.Errorf("%d overlapping cold pages ran %d bulk reads, want 1", n, reads)
 		}
-	}
-
-	src.release = make(chan struct{})
-	close(src.release)
-	if _, err := QueryCollective(context.Background(), src, cache, scope, q); err != nil {
-		t.Fatalf("later request: %v", err)
-	}
-	if reads := src.reads.Load(); reads != 2 {
-		t.Errorf("request after the flight completed ran %d bulk reads in total, want 2 (nothing retained)", reads)
-	}
+	})
+	t.Run("SparkVariant series land on each row's own key", func(t *testing.T) {
+		for i, g := range got {
+			if !reflect.DeepEqual(g, want) {
+				t.Fatalf("request %d sparklines = %v, want the SparkVariant series on each row's own key %v", i, g, want)
+			}
+		}
+	})
+	t.Run("completed flight is not retained", func(t *testing.T) {
+		src.release = make(chan struct{})
+		close(src.release)
+		if _, err := QueryCollective(context.Background(), src, cache, scope, q); err != nil {
+			t.Fatalf("later request: %v", err)
+		}
+		if total := src.reads.Load(); total != reads+1 {
+			t.Errorf("request after the flight completed ran %d bulk reads in total, want %d (nothing retained)", total, reads+1)
+		}
+	})
 }

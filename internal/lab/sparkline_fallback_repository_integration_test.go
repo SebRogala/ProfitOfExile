@@ -157,48 +157,63 @@ func TestKeepHappySparklineFallbackBulk(t *testing.T) {
 	counted, counter := countingRepository(t, pool)
 	src := fixedPageSource{Repository: counted, rows: rows}
 
-	for _, sparkVariant := range []string{"", "20"} {
+	for name, sparkVariant := range map[string]string{"mixed page": "", "explicit SparkVariant": "20"} {
 		want := referenceSparklines(t, plain, scope, sparkVariant, rows)
 		if len(want) == 0 {
 			t.Fatalf("SparkVariant %q reference has no series, want a decorated page", sparkVariant)
 		}
 		counter.reset()
 		got := querySparklines(t, src, NewCache(scope), scope, sparkQuery(sparkVariant))
-		if n := counter.reset(); n != 1 {
-			t.Errorf("SparkVariant %q cold page ran %d sparkline statements, want 1", sparkVariant, n)
-		}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("SparkVariant %q sparklines = %v, want the per-variant read %v", sparkVariant, got, want)
-		}
+		statements := counter.reset()
+		t.Run(name+" runs one statement", func(t *testing.T) {
+			if statements != 1 {
+				t.Errorf("SparkVariant %q cold page ran %d sparkline statements, want 1", sparkVariant, statements)
+			}
+		})
+		t.Run(name+" equals the per-variant read", func(t *testing.T) {
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("SparkVariant %q sparklines = %v, want the per-variant read %v", sparkVariant, got, want)
+			}
+		})
 	}
 
 	want := referenceSparklines(t, plain, scope, "", rows)
 	cold := NewCache(scope)
 	counter.reset()
-	for i, o := range burst(300, func() collectiveOutcome {
+	outcomes := burst(300, func() collectiveOutcome {
 		got, err := QueryCollective(context.Background(), overlappingPageSource{src, 300}, cold, scope, sparkQuery(""))
 		return collectiveOutcome{got, err}
-	}) {
-		if o.err != nil {
-			t.Fatalf("burst request %d: %v", i, o.err)
+	})
+	statements := counter.reset()
+	t.Run("overlapping burst shares one statement", func(t *testing.T) {
+		if statements != 1 {
+			t.Errorf("300 overlapping cold requests ran %d sparkline statements, want 1", statements)
 		}
-		if !reflect.DeepEqual(o.got.Sparklines, want) {
-			t.Fatalf("burst request %d sparklines = %v, want the per-variant read", i, o.got.Sparklines)
+	})
+	t.Run("overlapping burst bodies equal the per-variant read", func(t *testing.T) {
+		for i, o := range outcomes {
+			if o.err != nil {
+				t.Fatalf("burst request %d: %v", i, o.err)
+			}
+			if !reflect.DeepEqual(o.got.Sparklines, want) {
+				t.Fatalf("burst request %d sparklines = %v, want the per-variant read", i, o.got.Sparklines)
+			}
 		}
-	}
-	if n := counter.reset(); n != 1 {
-		t.Errorf("300 overlapping cold requests ran %d sparkline statements, want 1", n)
-	}
-	if cold.For(scope).HasSparklines() {
-		t.Error("a page-limited fallback marked the sparkline corpus warm")
-	}
-
-	warm := NewCache(scope)
-	warm.For(scope).SetSparklinesByName(nil, nil, time.Now())
-	querySparklines(t, src, warm, scope, sparkQuery(""))
-	if n := counter.reset(); n != 0 {
-		t.Errorf("warm page ran %d sparkline statements, want 0", n)
-	}
+	})
+	t.Run("fallback leaves the corpus cold", func(t *testing.T) {
+		if cold.For(scope).HasSparklines() {
+			t.Error("a page-limited fallback marked the sparkline corpus warm")
+		}
+	})
+	t.Run("warm cache runs no statement", func(t *testing.T) {
+		warm := NewCache(scope)
+		warm.For(scope).SetSparklinesByName(nil, nil, time.Now())
+		counter.reset()
+		querySparklines(t, src, warm, scope, sparkQuery(""))
+		if n := counter.reset(); n != 0 {
+			t.Errorf("warm page ran %d sparkline statements, want 0", n)
+		}
+	})
 }
 
 // A failed fallback read is not retained: the next cold request reads again
@@ -244,13 +259,18 @@ func TestKeepCriticalSparklineFallbackRowSelection(t *testing.T) {
 	}
 	counted, counter := countingRepository(t, pool)
 	got := querySparklines(t, fixedPageSource{Repository: counted, rows: rows}, NewCache(scope), scope, sparkQuery(""))
-	if n := counter.reset(); n != 1 {
-		t.Errorf("cold page ran %d sparkline statements, want 1", n)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("bulk selection differs from the per-variant read: got %d/%d/%d points",
-			len(got[CollectiveSparklineKey{"Cap Gem A", "20"}]), len(got[CollectiveSparklineKey{"Cap Gem B", "20"}]), len(got[CollectiveSparklineKey{"Cap Gem C", "1"}]))
-	}
+	statements := counter.reset()
+	t.Run("one statement", func(t *testing.T) {
+		if statements != 1 {
+			t.Errorf("cold page ran %d sparkline statements, want 1", statements)
+		}
+	})
+	t.Run("per-variant selection", func(t *testing.T) {
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("bulk selection differs from the per-variant read: got %d/%d/%d points",
+				len(got[CollectiveSparklineKey{"Cap Gem A", "20"}]), len(got[CollectiveSparklineKey{"Cap Gem B", "20"}]), len(got[CollectiveSparklineKey{"Cap Gem C", "1"}]))
+		}
+	})
 }
 
 // TestKeepCriticalSparklineFallbackWindow: the window is evaluated by each
@@ -274,10 +294,15 @@ func TestKeepCriticalSparklineFallbackWindow(t *testing.T) {
 	time.Sleep(time.Until(seeded.Add(edge + 1500*time.Millisecond)))
 	counter.reset()
 	got := querySparklines(t, src, cache, scope, sparkQuery(""))[key]
-	if n := counter.reset(); n != 1 {
-		t.Errorf("later cold request ran %d sparkline statements, want 1", n)
-	}
-	if len(got) != 1 || got[0].Price != 101 {
-		t.Errorf("later request = %+v, want only the 1h point (price 101)", got)
-	}
+	statements := counter.reset()
+	t.Run("later request reads again", func(t *testing.T) {
+		if statements != 1 {
+			t.Errorf("later cold request ran %d sparkline statements, want 1", statements)
+		}
+	})
+	t.Run("aged point is dropped", func(t *testing.T) {
+		if len(got) != 1 || got[0].Price != 101 {
+			t.Errorf("later request = %+v, want only the 1h point (price 101)", got)
+		}
+	})
 }

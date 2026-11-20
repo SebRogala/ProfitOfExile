@@ -654,8 +654,7 @@ func (r *Repository) SparklineData(ctx context.Context, scope league.Scope, name
 	query := `
 		SELECT name, time, COALESCE(chaos, 0), COALESCE(listings, 0)
 		FROM gem_snapshots
-		WHERE league = $1 AND name = ANY($2) AND is_corrupted = false
-		  AND time > NOW() - make_interval(hours => $3)`
+		WHERE name = ANY($2) AND ` + rawSparklineFilter("", "$3")
 	args := []any{scope.ID(), names, hours}
 
 	if variant != "" {
@@ -663,7 +662,7 @@ func (r *Repository) SparklineData(ctx context.Context, scope league.Scope, name
 		args = append(args, variant)
 	}
 
-	query += ` ORDER BY name, time ASC LIMIT 10000`
+	query += fmt.Sprintf(` ORDER BY name, time ASC LIMIT %d`, rawSparklineRowLimit)
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -680,11 +679,7 @@ func (r *Repository) SparklineData(ctx context.Context, scope league.Scope, name
 		if err := rows.Scan(&name, &t, &chaos, &listings); err != nil {
 			return nil, fmt.Errorf("lab repo: scan sparkline point: %w", err)
 		}
-		result[name] = append(result[name], SparklinePoint{
-			Time:     t.UTC().Format(time.RFC3339),
-			Price:    chaos,
-			Listings: listings,
-		})
+		result[name] = append(result[name], rawSparklinePoint(t, chaos, listings))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("lab repo: sparkline rows iteration: %w", err)
@@ -693,9 +688,29 @@ func (r *Repository) SparklineData(ctx context.Context, scope league.Scope, name
 	return result, nil
 }
 
+// rawSparklineRowLimit bounds one raw sparkline selection: SparklineData's
+// whole read, and each variant of a SparklineSeries read.
+const rawSparklineRowLimit = 10000
+
+// rawSparklineFilter is the row predicate SparklineData and SparklineSeries
+// share: league $1, non-corrupted, strictly newer than hoursParam hours before
+// NOW(). alias qualifies the columns ("" for none).
+func rawSparklineFilter(alias, hoursParam string) string {
+	if alias != "" {
+		alias += "."
+	}
+	return alias + "league = $1 AND " + alias + "is_corrupted = false AND " +
+		alias + "time > NOW() - make_interval(hours => " + hoursParam + ")"
+}
+
+// rawSparklinePoint is a served sparkline point: raw chaos, RFC 3339 UTC time.
+func rawSparklinePoint(t time.Time, chaos float64, listings int) SparklinePoint {
+	return SparklinePoint{Time: t.UTC().Format(time.RFC3339), Price: chaos, Listings: listings}
+}
+
 // SparklineSeries reads the raw non-corrupted points of every requested
 // (name, variant) series in one statement. Each variant keeps the selection
-// SparklineData makes for it: its own first 10,000 window rows by (name, time),
+// SparklineData makes for it: its own first rawSparklineRowLimit window rows by (name, time),
 // shared across that variant's requested names, not a per-series cap. The
 // primary key makes (name, time) unique within a variant, so that selection is
 // deterministic. Series with no points are omitted.
@@ -720,13 +735,12 @@ func (r *Repository) SparklineSeries(ctx context.Context, scope league.Scope, ke
 			       row_number() OVER (PARTITION BY g.variant ORDER BY g.name, g.time) AS rn
 			FROM gem_snapshots g
 			JOIN requested k ON k.name = g.name AND k.variant = g.variant
-			WHERE g.league = $1 AND g.is_corrupted = false
-			  AND g.time > NOW() - make_interval(hours => $4)
+			WHERE `+rawSparklineFilter("g", "$4")+`
 		)
 		SELECT name, variant, time, chaos, listings
 		FROM windowed
-		WHERE rn <= 10000
-		ORDER BY variant, name, time`, scope.ID(), names, variants, hours)
+		WHERE rn <= $5
+		ORDER BY variant, name, time`, scope.ID(), names, variants, hours, rawSparklineRowLimit)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query sparkline series: %w", err)
 	}
@@ -741,11 +755,7 @@ func (r *Repository) SparklineSeries(ctx context.Context, scope league.Scope, ke
 		if err := rows.Scan(&k.Name, &k.Variant, &t, &chaos, &listings); err != nil {
 			return nil, fmt.Errorf("lab repo: scan sparkline series point: %w", err)
 		}
-		result[k] = append(result[k], SparklinePoint{
-			Time:     t.UTC().Format(time.RFC3339),
-			Price:    chaos,
-			Listings: listings,
-		})
+		result[k] = append(result[k], rawSparklinePoint(t, chaos, listings))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("lab repo: sparkline series rows iteration: %w", err)

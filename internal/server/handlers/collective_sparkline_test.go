@@ -514,12 +514,18 @@ func TestCollectiveAnalysis_ColdSparklineFallbackServesEachRowsOwnSeries(t *test
 	for _, row := range decodeCollectiveSparklineRows(t, w) {
 		got[row.TransfiguredName+" "+row.Variant] = row.Sparkline
 	}
-	if len(got) != 3 {
-		t.Fatalf("rows = %v, want the three ranked rows", got)
-	}
-	assertSparkline(t, got["Spark of Nova 20/20"], nova2020)
-	assertSparkline(t, got["Spark of Nova 1"], nova1)
-	assertSparkline(t, got["Arc of Surging 20"], nil)
+	t.Run("serves every ranked row", func(t *testing.T) {
+		if len(got) != 3 {
+			t.Errorf("rows = %v, want the three ranked rows", got)
+		}
+	})
+	t.Run("each row carries its own market's series", func(t *testing.T) {
+		assertSparkline(t, got["Spark of Nova 20/20"], nova2020)
+		assertSparkline(t, got["Spark of Nova 1"], nova1)
+	})
+	t.Run("a row without series serves an empty sparkline", func(t *testing.T) {
+		assertSparkline(t, got["Arc of Surging 20"], nil)
+	})
 }
 
 // A tick whose sparkline stage retained no series at all has still answered.

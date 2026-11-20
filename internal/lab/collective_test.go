@@ -424,15 +424,19 @@ func TestQueryCollective_PageLimitedFallbackNeverWarmsTheSparklineCorpus(t *test
 	if err != nil {
 		t.Fatalf("QueryCollective: %v", err)
 	}
-	if len(got.Sparklines) != 2 {
-		t.Fatalf("sparklines = %v, want both rows decorated from the fallback", got.Sparklines)
-	}
-	if cache.For(scope).HasSparklines() {
-		t.Error("HasSparklines() = true after a page-limited fallback, want the corpus left cold")
-	}
-	if points := cache.For(scope).Sparklines("Spark of Nova", "20/20"); len(points) != 0 {
-		t.Errorf("cache holds %v for Spark of Nova after the fallback, want nothing", points)
-	}
+	t.Run("serves the page's series", func(t *testing.T) {
+		if len(got.Sparklines) != 2 {
+			t.Errorf("sparklines = %v, want both rows decorated from the fallback", got.Sparklines)
+		}
+	})
+	t.Run("leaves the corpus cold", func(t *testing.T) {
+		if cache.For(scope).HasSparklines() {
+			t.Error("HasSparklines() = true after a page-limited fallback, want the corpus left cold")
+		}
+		if points := cache.For(scope).Sparklines("Spark of Nova", "20/20"); len(points) != 0 {
+			t.Errorf("cache holds %v for Spark of Nova after the fallback, want nothing", points)
+		}
+	})
 }
 
 func TestCollectiveQuery_ValidateRejectsOutOfRangeValues(t *testing.T) {
