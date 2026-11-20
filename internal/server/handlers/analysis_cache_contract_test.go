@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,13 +133,16 @@ func gemDictionaryCache(t *testing.T) *lab.Cache {
 
 // The desktop blocks on this before its gem scan loop, so a query here lands as
 // OCR that does not start.
-func TestGemDictionary_WarmCacheServesTheTransfiguredPoolWithoutQuerying(t *testing.T) {
+func TestKeepHappy_GemDictionary_WarmCacheServesTheTransfiguredPoolWithoutQuerying(t *testing.T) {
 	w := serveWithoutRepository(t, GemDictionary(nil, gemDictionaryCache(t), cacheContractScope),
 		"/api/analysis/gems/dictionary")
 
 	names := decodeNames(t, w)
 	if len(names) != 1 || names[0] != "Spark of Nova" {
 		t.Errorf("names = %v, want the transfigured pool — that is the default", names)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "public, max-age=3600" {
+		t.Errorf("Cache-Control = %q, want %q on a non-empty answer", got, "public, max-age=3600")
 	}
 }
 
@@ -155,7 +159,8 @@ func TestGemDictionary_WarmCacheServesTheSkillPoolWithoutQuerying(t *testing.T) 
 // An empty dictionary is a legitimate answer for a league with no gem_colors
 // rows and no snapshots; reading it as cold would query twice per request
 // forever for an answer that cannot change before the next tick.
-func TestGemDictionary_WarmButEmptyCacheAnswersWithoutQuerying(t *testing.T) {
+func TestKeepRegression_GemDictionary_WarmButEmptyCacheAnswersWithoutQuerying(t *testing.T) {
+	logs := captureHandlerLogs(t)
 	cache := lab.NewCache(cacheContractScope)
 	cache.For(cacheContractScope).SetGemDictionary(nil, nil)
 
@@ -164,6 +169,22 @@ func TestGemDictionary_WarmButEmptyCacheAnswersWithoutQuerying(t *testing.T) {
 
 	if names := decodeNames(t, w); len(names) != 0 {
 		t.Errorf("names = %v, want none", names)
+	}
+	if got := w.Header().Get("Cache-Control"); strings.Contains(got, "max-age=3600") {
+		t.Errorf("Cache-Control = %q, want no 1h cache on an empty answer", got)
+	}
+	var found bool
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var rec map[string]any
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		if rec["level"] == "ERROR" && rec["league"] == cacheContractScope.ID() && rec["transfigured"] == true {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("logs = %s, want an ERROR record with league %q and transfigured true", logs.String(), cacheContractScope.ID())
 	}
 }
 
