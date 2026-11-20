@@ -23,6 +23,15 @@ export function tradeGemName(name: string): string {
 	return name.replace(/[öäüéèêáàâíóúÖÄÜÉ]/g, c => diacriticFold[c]);
 }
 
+/** Attribute caps to isolate pure-color gems (hybrids start at 98). */
+function pureColorReqFilters(color: string): Record<string, any> {
+	const reqFilters: Record<string, any> = {};
+	if (color === 'RED')   { reqFilters.dex = { max: 97 }; reqFilters.int = { max: 97 }; }
+	if (color === 'GREEN') { reqFilters.str = { max: 97 }; reqFilters.int = { max: 97 }; }
+	if (color === 'BLUE')  { reqFilters.str = { max: 97 }; reqFilters.dex = { max: 97 }; }
+	return reqFilters;
+}
+
 /**
  * Build trade URL for the cheapest corrupted gems of a color at one Dedication
  * variant ("21/23" or "21/20"), for Dedication lab input cost.
@@ -33,11 +42,7 @@ export function tradeGemName(name: string): string {
  */
 export function cheapestCorruptedTradeUrl(color: string, isTransfigured: boolean, league?: string | null, variant = '21/23'): string | null {
 	if (!league?.trim()) return null;
-	// Attribute caps to isolate pure-color gems (hybrids start at 98).
-	const reqFilters: Record<string, any> = {};
-	if (color === 'RED')   { reqFilters.dex = { max: 97 }; reqFilters.int = { max: 97 }; }
-	if (color === 'GREEN') { reqFilters.str = { max: 97 }; reqFilters.int = { max: 97 }; }
-	if (color === 'BLUE')  { reqFilters.str = { max: 97 }; reqFilters.dex = { max: 97 }; }
+	const reqFilters = pureColorReqFilters(color);
 
 	// Quality is pinned exactly: 21/20 and 21/23 are separate markets, and a
 	// quality minimum would list the dearer 23s against the 20-quality pool.
@@ -110,10 +115,7 @@ export function buyBaseUrl(variant: string, color: string, league?: string | nul
 	const quality = parts.length > 1 ? parseInt(parts[1]) : 0;
 	if (level < 20) return null;
 
-	const reqFilters: Record<string, any> = {};
-	if (color === 'RED')   { reqFilters.dex = { max: 97 }; reqFilters.int = { max: 97 }; }
-	if (color === 'GREEN') { reqFilters.str = { max: 97 }; reqFilters.int = { max: 97 }; }
-	if (color === 'BLUE')  { reqFilters.str = { max: 97 }; reqFilters.dex = { max: 97 }; }
+	const reqFilters = pureColorReqFilters(color);
 
 	const miscFilters: Record<string, any> = {
 		gem_level: { min: level },
