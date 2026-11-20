@@ -118,9 +118,7 @@ describe('gem-name fold vectors', () => {
 
 // keep:happy
 describe('gem search-query vectors', () => {
-	it('exercises at least one shared case', () => {
-		expect(baseQueryVectors.length).toBeGreaterThan(0);
-	});
+	expect(baseQueryVectors.length).toBeGreaterThan(0);
 
 	it.each(baseQueryVectors)('builds the shared $name body', ({ gem, variant, query: expectedBody }) => {
 		const url = baseGemTradeUrl(gem, variant, 'New League');
