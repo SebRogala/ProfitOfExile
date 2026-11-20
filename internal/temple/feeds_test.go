@@ -1,6 +1,9 @@
 package temple
 
 import (
+	"encoding/json"
+	"os/exec"
+	"slices"
 	"testing"
 
 	"profitofexile/internal/collector"
@@ -101,5 +104,31 @@ func TestIsFeedEndpoint_rejectsTheGemAndCurrencyEndpoints(t *testing.T) {
 		if IsFeedEndpoint(endpoint) {
 			t.Errorf("IsFeedEndpoint(%q) = true, want false", endpoint)
 		}
+	}
+}
+
+// TestKeepCritical_generateTempleIconsScriptReadsTheFeedCategories pins that the
+// icon generator reads the same categories, in order, as the server: a category
+// the script missed would silently get no icons.
+func TestKeepCritical_generateTempleIconsScriptReadsTheFeedCategories(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatalf("python3 is required to load scripts/generate-temple-icons.py: %v", err)
+	}
+	const loader = `import importlib.util, json
+spec = importlib.util.spec_from_file_location("gen", "../../scripts/generate-temple-icons.py")
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(json.dumps([mod.ROOM_CATEGORY] + mod.ITEM_CATEGORIES))`
+	out, err := exec.Command(python, "-I", "-c", loader).Output()
+	if err != nil {
+		t.Fatalf("load script: %v", err)
+	}
+	var got []string
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode script output %q: %v", out, err)
+	}
+	if want := Categories(); !slices.Equal(got, want) {
+		t.Fatalf("script categories = %v, want %v", got, want)
 	}
 }

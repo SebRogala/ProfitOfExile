@@ -1,12 +1,20 @@
 package temple
 
-import "profitofexile/internal/mercure"
+import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
+
+	"profitofexile/internal/mercure"
+)
 
 // THE SEVEN FEEDS THIS PACKAGE READS
 //
 // POE-254's collector polls seven poe.ninja item-overview categories and stores
-// them in item_snapshots; this package is their read side (POE-255). The same
-// seven appear on both sides, and they are listed here rather than imported from
+// them in item_snapshots; this package is their read side (POE-255). The read
+// side's one home is feeds.json, embedded here and also read by
+// scripts/generate-temple-icons.py. The same seven appear on both sides, and
+// they are listed in feeds.json rather than imported from
 // internal/collector on purpose: nothing under internal/server imports the
 // collector package today (internal/lab reads gem_snapshots without importing
 // the writer that fills it), and the two lists answer different questions —
@@ -37,15 +45,41 @@ type Feed struct {
 	Topic    string
 }
 
-// feeds is the seven categories, room category first.
-var feeds = []Feed{
-	{Category: RoomCategory, Endpoint: "ninja-incursion-temple", Topic: mercureTopicPrefix + "items/incursion-temple"},
-	{Category: "Vial", Endpoint: "ninja-vial", Topic: mercureTopicPrefix + "items/vial"},
-	{Category: "UniqueArmour", Endpoint: "ninja-unique-armour", Topic: mercureTopicPrefix + "items/unique-armour"},
-	{Category: "UniqueAccessory", Endpoint: "ninja-unique-accessory", Topic: mercureTopicPrefix + "items/unique-accessory"},
-	{Category: "UniqueWeapon", Endpoint: "ninja-unique-weapon", Topic: mercureTopicPrefix + "items/unique-weapon"},
-	{Category: "UniqueJewel", Endpoint: "ninja-unique-jewel", Topic: mercureTopicPrefix + "items/unique-jewel"},
-	{Category: "UniqueFlask", Endpoint: "ninja-unique-flask", Topic: mercureTopicPrefix + "items/unique-flask"},
+//go:embed feeds.json
+var feedsJSON []byte
+
+// feeds is the seven categories decoded from feeds.json, room category first.
+var feeds = decodeFeeds(feedsJSON)
+
+// feedEntry is one row of feeds.json.
+type feedEntry struct {
+	Category    string `json:"category"`
+	Endpoint    string `json:"endpoint"`
+	TopicSuffix string `json:"topicSuffix"`
+}
+
+// decodeFeeds panics on a malformed, empty or blank-field table, or one whose
+// first entry is not RoomCategory: a server that would otherwise read no temple
+// feed must not start silently.
+func decodeFeeds(raw []byte) []Feed {
+	var entries []feedEntry
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		panic(fmt.Sprintf("temple: decode feeds.json: %v", err))
+	}
+	if len(entries) == 0 {
+		panic("temple: feeds.json holds no feeds")
+	}
+	if entries[0].Category != RoomCategory {
+		panic(fmt.Sprintf("temple: feeds.json first category is %q, want %q", entries[0].Category, RoomCategory))
+	}
+	out := make([]Feed, len(entries))
+	for i, e := range entries {
+		if e.Category == "" || e.Endpoint == "" || e.TopicSuffix == "" {
+			panic(fmt.Sprintf("temple: feeds.json feed %d has an empty field", i))
+		}
+		out[i] = Feed{Category: e.Category, Endpoint: e.Endpoint, Topic: mercureTopicPrefix + e.TopicSuffix}
+	}
+	return out
 }
 
 // Categories returns the seven item_snapshots categories this package reads, in

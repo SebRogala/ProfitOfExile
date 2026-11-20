@@ -51,25 +51,29 @@ from pathlib import Path
 # poe.ninja's item-overview endpoint, the same one internal/collector polls.
 NINJA_URL = "https://poe.ninja/poe1/api/economy/stash/current/item/overview"
 
-# The seven categories, mirroring internal/temple/feeds.go. The room category is
-# read only for its shared artwork.
-ROOM_CATEGORY = "IncursionTemple"
-ITEM_CATEGORIES = [
-    "Vial",
-    "UniqueArmour",
-    "UniqueAccessory",
-    "UniqueWeapon",
-    "UniqueJewel",
-    "UniqueFlask",
-]
-
 # The single key every room-tier's icon path is built from. Must equal
 # temple.RoomIconName.
 ROOM_ICON_NAME = "Chronicle of Atzoatl"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 UPGRADES_GO = REPO_ROOT / "internal" / "temple" / "upgrades.go"
+FEEDS_JSON = REPO_ROOT / "internal" / "temple" / "feeds.json"
 OUTPUT = REPO_ROOT / "internal" / "icons" / "urls" / "temple.json"
+
+
+def load_feed_categories(feeds_json: Path) -> tuple[str, list[str]]:
+    """The seven categories from internal/temple/feeds.json, the list's one home
+    (also embedded by internal/temple/feeds.go): the room category first, read
+    only for its shared artwork, then the item categories in order."""
+    if not feeds_json.is_file():
+        raise SystemExit(f"feeds file missing: {feeds_json}")
+    feeds = json.loads(feeds_json.read_text(encoding="utf-8"))
+    if not feeds:
+        raise SystemExit(f"feeds file holds no feeds: {feeds_json}")
+    return feeds[0]["category"], [f["category"] for f in feeds[1:]]
+
+
+ROOM_CATEGORY, ITEM_CATEGORIES = load_feed_categories(FEEDS_JSON)
 
 UPGRADE_LINE = re.compile(
     r'\{Base: "([^"]+)", Upgraded: "([^"]+)"\}'

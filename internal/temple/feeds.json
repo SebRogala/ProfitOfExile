@@ -1,0 +1,9 @@
+[
+  {"category": "IncursionTemple", "endpoint": "ninja-incursion-temple", "topicSuffix": "items/incursion-temple"},
+  {"category": "Vial", "endpoint": "ninja-vial", "topicSuffix": "items/vial"},
+  {"category": "UniqueArmour", "endpoint": "ninja-unique-armour", "topicSuffix": "items/unique-armour"},
+  {"category": "UniqueAccessory", "endpoint": "ninja-unique-accessory", "topicSuffix": "items/unique-accessory"},
+  {"category": "UniqueWeapon", "endpoint": "ninja-unique-weapon", "topicSuffix": "items/unique-weapon"},
+  {"category": "UniqueJewel", "endpoint": "ninja-unique-jewel", "topicSuffix": "items/unique-jewel"},
+  {"category": "UniqueFlask", "endpoint": "ninja-unique-flask", "topicSuffix": "items/unique-flask"}
+]
