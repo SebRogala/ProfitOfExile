@@ -47,7 +47,7 @@ check "happy: pipeforge init ran once in the lane" test "$(cat "$FAKE_LOG")" = "
 # and an off-pattern name would leave a half-made lane mapped to another slug.
 r="$work/critical"
 fresh_repo "$r"
-check "critical: hostile name exits nonzero" bash -c '! make -s -C "$1" worktree-create "name=lane\"; touch $2/PWNED; \"" 2>/dev/null' _ "$r" "$work"
+check "critical: hostile name exits nonzero" bash -c '! make -s -C "$1" worktree-create "name=lane\"; touch $2/PWNED; \""' _ "$r" "$work"
 check "critical: injected command did not run" test ! -e "$work/PWNED"
 check "critical: no .worktrees entry" test -z "$(ls -A "$r/.worktrees" 2>/dev/null)"
 check "critical: no new branch" test "$(branches "$r")" = dev
