@@ -369,3 +369,4 @@ export interface CurrencyExchangeResponse {
 	showConvert: boolean;
 	itemUniverse: ExchangeUniverseItem[];
 }
+
