@@ -325,7 +325,7 @@ func TestFontAnalysis_MixedChaosAndDivineLensWithoutARateHasNoPrice(t *testing.T
 // The Font body served from a warm corpus, pinned whole: per-mode rows
 // narrowed to the variant in profit order and cut at the limit, best colors,
 // and the all-null lens of a nil trade cache.
-func TestFontAnalysis_WarmBodyIsPinned(t *testing.T) {
+func TestKeepHappyFontAnalysis_WarmBodyIsPinned(t *testing.T) {
 	at := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
 	c := lab.NewCache(corpusScope)
 	c.For(corpusScope).SetFont(lab.FontAnalysis{

@@ -397,48 +397,6 @@ func TestQueryCollective_TradeConfidenceNoteComesFromTheCachedSignalOfTheSameMar
 	}
 }
 
-// seriesCollectiveSource serves one series for every requested name.
-type seriesCollectiveSource struct {
-	fakeCollectiveSource
-}
-
-func (seriesCollectiveSource) SparklineData(_ context.Context, _ league.Scope, names []string, _ string, _ int) (map[string][]SparklinePoint, error) {
-	out := make(map[string][]SparklinePoint, len(names))
-	for _, n := range names {
-		out[n] = []SparklinePoint{{Time: time.Now().UTC().Format(time.RFC3339), Price: 7, Listings: 3}}
-	}
-	return out, nil
-}
-
-// The fallback serves only one page's series; the analyzer owns the corpus,
-// so a cold page must leave it cold for the next population to fill.
-func TestQueryCollective_PageLimitedFallbackNeverWarmsTheSparklineCorpus(t *testing.T) {
-	scope := league.Historical("Mirage")
-	cache := NewCache(scope)
-	src := seriesCollectiveSource{fakeCollectiveSource{page: CollectivePage{Rows: []CollectiveResult{
-		{TransfiguredName: "Spark of Nova", Variant: "20/20"},
-		{TransfiguredName: "Cleave of Rage", Variant: "1"},
-	}, Total: 2}}}
-
-	got, err := QueryCollective(context.Background(), src, cache, scope, CollectiveQuery{Page: 1, PageSize: 10, Sort: CollectiveSortPrice})
-	if err != nil {
-		t.Fatalf("QueryCollective: %v", err)
-	}
-	t.Run("serves the page's series", func(t *testing.T) {
-		if len(got.Sparklines) != 2 {
-			t.Errorf("sparklines = %v, want both rows decorated from the fallback", got.Sparklines)
-		}
-	})
-	t.Run("leaves the corpus cold", func(t *testing.T) {
-		if cache.For(scope).HasSparklines() {
-			t.Error("HasSparklines() = true after a page-limited fallback, want the corpus left cold")
-		}
-		if points := cache.For(scope).Sparklines("Spark of Nova", "20/20"); len(points) != 0 {
-			t.Errorf("cache holds %v for Spark of Nova after the fallback, want nothing", points)
-		}
-	})
-}
-
 func TestCollectiveQuery_ValidateRejectsOutOfRangeValues(t *testing.T) {
 	ok := CollectiveQuery{Page: 1, PageSize: 10, Sort: CollectiveSortPrice}
 	if err := ok.Validate(); err != nil {

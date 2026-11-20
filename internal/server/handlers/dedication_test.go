@@ -250,7 +250,7 @@ func TestDedicationAnalysis_WarmCacheWithAnEmptyAnalysisDoesNotQuery(t *testing.
 // The Dedication body served from a warm corpus, pinned whole: both pools of
 // the requested variant split by mode in profit order, cut at the limit per
 // mode, with the entry fee of the cached offering timing.
-func TestDedicationAnalysis_WarmBodyIsPinned(t *testing.T) {
+func TestKeepHappyDedicationAnalysis_WarmBodyIsPinned(t *testing.T) {
 	at := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
 	cache := lab.NewCache(dedicationScope)
 	cache.For(dedicationScope).SetOfferingTiming([]byte(`[{"name":"Dedication to the Goddess","currentPrice":12.5}]`))
