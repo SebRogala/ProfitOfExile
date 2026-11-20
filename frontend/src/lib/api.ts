@@ -656,20 +656,66 @@ export async function fetchCompare(gems: string[], variant: string, mode?: strin
 	const resp = await get<{ count: number; data: any[] }>('/analysis/compare', params);
 	const results = (resp.data || []).map(mapCompareRow);
 
-	// Enrich with signal history in parallel
-	const settled = await Promise.allSettled(
-		results.map(async (gem) => {
-			gem.signalHistory = await fetchSignalHistory(gem.name, gem.variant);
+	await enrichSignalHistory(results);
+	return results;
+}
+
+/**
+ * Most keys one /analysis/history/bulk request carries (the server's
+ * signalHistoryBulkMaxKeys); a larger compare is split into batches.
+ */
+const SIGNAL_HISTORY_BULK_MAX_KEYS = 12;
+
+/**
+ * Fills each card's signal history with one bulk request per batch of cards
+ * (POE-410). A failed batch leaves its cards with no history and keeps the
+ * compare rows.
+ */
+async function enrichSignalHistory(results: CompareGem[]): Promise<void> {
+	const batches: CompareGem[][] = [];
+	for (let i = 0; i < results.length; i += SIGNAL_HISTORY_BULK_MAX_KEYS) {
+		batches.push(results.slice(i, i + SIGNAL_HISTORY_BULK_MAX_KEYS));
+	}
+	await Promise.all(
+		batches.map(async (batch) => {
+			let histories: SignalTransition[][];
+			try {
+				histories = await fetchSignalHistoryBulk(batch);
+			} catch (err) {
+				console.warn(`[Comparator] Signal history failed for ${batch.map((g) => g.name).join(', ')}:`, err);
+				histories = batch.map(() => []);
+			}
+			batch.forEach((gem, i) => {
+				gem.signalHistory = histories[i];
+			});
 		})
 	);
-	settled.forEach((result, i) => {
-		if (result.status === 'rejected') {
-			console.warn(`[Comparator] Signal history failed for ${results[i].name}:`, result.reason);
-			results[i].signalHistory = [];
-		}
-	});
+}
 
-	return results;
+async function fetchSignalHistoryBulk(gems: CompareGem[], limit = 4): Promise<SignalTransition[][]> {
+	const url = new URL(`${API_BASE}/analysis/history/bulk`, window.location.origin);
+	for (const gem of gems) url.searchParams.append('key', `${gem.name}|${gem.variant}`);
+	url.searchParams.set('limit', String(limit));
+	const resp = await fetch(url.toString());
+	if (!resp.ok) {
+		throw new Error(`API /analysis/history/bulk: ${resp.status} ${resp.statusText}`);
+	}
+	const body = (await resp.json()) as { data?: { history?: any[]; error?: string }[] };
+	return gems.map((gem, i) => bulkEntryTransitions(gem, body.data?.[i]));
+}
+
+/** One bulk entry's transitions; an error entry or a failed transform is []. */
+function bulkEntryTransitions(gem: CompareGem, entry: { history?: any[]; error?: string } | undefined): SignalTransition[] {
+	if (!entry || entry.error) {
+		console.warn(`[Comparator] Signal history failed for ${gem.name}:`, entry?.error ?? 'missing entry');
+		return [];
+	}
+	try {
+		return signalTransitions(entry.history || []);
+	} catch (err) {
+		console.warn(`[Comparator] Signal history failed for ${gem.name}:`, err);
+		return [];
+	}
 }
 
 // --- Signal History ---
@@ -683,7 +729,11 @@ export async function fetchSignalHistory(
 		'/analysis/history',
 		{ name, variant, limit: String(limit) }
 	);
-	const snapshots = resp.history || [];
+	return signalTransitions(resp.history || []);
+}
+
+/** Diffs a gem's history (newest first, as served) into its signal transitions. */
+function signalTransitions(snapshots: any[]): SignalTransition[] {
 	if (snapshots.length < 2) return [];
 
 	// History comes in DESC order — reverse for chronological

@@ -1093,17 +1093,62 @@ func (r *Repository) SignalHistory(ctx context.Context, scope league.Scope, name
 	return changes, nil
 }
 
-// SignalHistoryBulk returns SignalHistory for each key.
+// SignalHistoryBulk returns SignalHistory for every key in one statement: each
+// key runs the single-series predicate, ordering and limit as a lateral
+// subquery. Keys without rows are absent from the result.
 func (r *Repository) SignalHistoryBulk(ctx context.Context, scope league.Scope, keys []SignalHistoryKey, limit int) (map[SignalHistoryKey][]SignalChange, error) {
-	out := make(map[SignalHistoryKey][]SignalChange, len(keys))
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: signal history bulk: %w", err)
+	}
+	if limit <= 0 || len(keys) == 0 {
+		return nil, nil
+	}
+	names, variants := make([]string, 0, len(keys)), make([]string, 0, len(keys))
+	seen := make(map[SignalHistoryKey]bool, len(keys))
 	for _, k := range keys {
-		changes, err := r.SignalHistory(ctx, scope, k.Name, k.Variant, limit)
-		if err != nil {
-			return nil, err
+		if !seen[k] {
+			seen[k] = true
+			names, variants = append(names, k.Name), append(variants, k.Variant)
 		}
-		if len(changes) > 0 {
-			out[k] = changes
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT k.name, k.variant, h.time, h.signal, h.window_signal, h.advanced,
+		       h.price_vel, h.listing_vel, h.chaos, h.listings
+		FROM unnest($2::text[], $3::text[]) AS k(name, variant)
+		CROSS JOIN LATERAL (
+			SELECT s.time, s.signal, s.window_signal, COALESCE(s.advanced_signal, '') AS advanced,
+			       COALESCE(f.vel_long_price, 0) AS price_vel, COALESCE(f.vel_long_listing, 0) AS listing_vel,
+			       COALESCE(f.chaos, 0) AS chaos, COALESCE(f.listings, 0) AS listings
+			FROM gem_signals s
+			LEFT JOIN gem_features f ON f.league = s.league AND f.time = s.time AND f.name = s.name AND f.variant = s.variant
+			  AND f.time > NOW() - make_interval(days => $5)
+			WHERE s.league = $1 AND s.name = k.name AND s.variant = k.variant
+			  AND s.time > NOW() - make_interval(days => $5)
+			ORDER BY s.time DESC
+			LIMIT $4
+		) h`, scope.ID(), names, variants, limit, signalHistorySeedMaxDays)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: signal history bulk: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[SignalHistoryKey][]SignalChange)
+	for rows.Next() {
+		var k SignalHistoryKey
+		var c SignalChange
+		if err := rows.Scan(&k.Name, &k.Variant, &c.Time, &c.Signal, &c.Window, &c.Advanced,
+			&c.PriceVel, &c.ListVel, &c.Price, &c.Listings); err != nil {
+			return nil, fmt.Errorf("lab repo: scan signal history bulk: %w", err)
 		}
+		out[k] = append(out[k], c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: signal history bulk iteration: %w", err)
+	}
+	// The lateral rows arrive per key in its ORDER BY, but the outer query
+	// does not promise to keep it.
+	for _, series := range out {
+		sort.SliceStable(series, func(i, j int) bool { return series[i].Time.After(series[j].Time) })
 	}
 	return out, nil
 }

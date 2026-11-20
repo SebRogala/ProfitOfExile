@@ -698,19 +698,9 @@ func SignalHistory(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 			return
 		}
 
-		limit := 4
-		if v := r.URL.Query().Get("limit"); v != "" {
-			n, err := strconv.Atoi(v)
-			if err != nil || n < 1 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]string{"error": "limit must be a positive integer (max 20)"})
-				return
-			}
-			if n > 20 {
-				n = 20
-			}
-			limit = n
+		limit, ok := signalHistoryLimit(w, r)
+		if !ok {
+			return
 		}
 
 		// Warmth is the cache's answer for the whole ring corpus, not this gem's
@@ -750,26 +740,101 @@ func SignalHistory(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 	}
 }
 
-// SignalHistoryBulk returns SignalHistory for several gems in one request.
+// signalHistoryLimit reads the history routes' limit: default 4, clamped to
+// 20, anything but a positive integer rejected with 400.
+func signalHistoryLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
+	v := r.URL.Query().Get("limit")
+	if v == "" {
+		return 4, true
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		writeHistoryBadRequest(w, "limit must be a positive integer (max 20)")
+		return 0, false
+	}
+	return min(n, 20), true
+}
+
+func writeHistoryBadRequest(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// signalHistoryBulkMaxKeys bounds one bulk request; a compare asks for one key
+// per card and the clients split larger compares into batches of this size.
+const signalHistoryBulkMaxKeys = 12
+
+// SignalHistoryBulk returns SignalHistory for several gems in one request, so
+// a compare enriches its cards with one request and one statement instead of
+// one of each per card (POE-410).
 // GET /api/analysis/history/bulk?key=Spark+of+Nova|20/20&key=Arc|1/20&limit=4
+//
+// Each key is name|variant. No key, more than signalHistoryBulkMaxKeys keys, a
+// key without exactly one separator or with a blank part, or a bad limit
+// rejects the whole request with 400 before any read. The response lists one
+// entry per requested key in request order, each the single route's body for
+// that key; an entry whose history cannot be encoded carries "error" instead,
+// and its siblings are served. A failed read fails the request with 500, so
+// the client maps that batch's cards to no history and keeps the compare rows.
+//
+// Access and load: a public read like /api/analysis/history, under the same
+// router middleware (device identification, the 20-second timeout) and with
+// no limiter of its own. None is needed for distinct-key traffic: a request is bounded to 12
+// keys of at most 20 rows in one statement, where the per-card route it
+// replaces cost up to 12 statements; overlapping equal requests share one
+// read; and a warm analyzer cache answers with no SQL at all.
 func SignalHistoryBulk(src lab.SignalHistoryBulkSource, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var keys []lab.SignalHistoryKey
-		for _, raw := range r.URL.Query()["key"] {
-			name, variant, _ := strings.Cut(raw, "|")
-			keys = append(keys, lab.SignalHistoryKey{Name: name, Variant: resolve.NormalizeVariant(variant)})
+		raw := r.URL.Query()["key"]
+		if len(raw) == 0 || len(raw) > signalHistoryBulkMaxKeys {
+			writeHistoryBadRequest(w, fmt.Sprintf("between 1 and %d key parameters (name|variant) are required", signalHistoryBulkMaxKeys))
+			return
 		}
-		history, err := lab.LoadSignalHistoryBulk(r.Context(), src, cache, scope, keys, 4)
+		keys := make([]lab.SignalHistoryKey, 0, len(raw))
+		for _, k := range raw {
+			parts := strings.Split(k, "|")
+			if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+				writeHistoryBadRequest(w, "each key must be name|variant")
+				return
+			}
+			keys = append(keys, lab.SignalHistoryKey{Name: parts[0], Variant: resolve.NormalizeVariant(parts[1])})
+		}
+		limit, ok := signalHistoryLimit(w, r)
+		if !ok {
+			return
+		}
+
+		history, err := lab.LoadSignalHistoryBulk(r.Context(), src, cache, scope, keys, limit)
 		if err != nil {
+			slog.Error("signal history bulk: query failed", "error", err, "keys", len(keys))
 			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 			return
 		}
-		data := make([]map[string]any, 0, len(keys))
+
+		type entry struct {
+			Name    string          `json:"name"`
+			Variant string          `json:"variant"`
+			Count   *int            `json:"count,omitempty"`
+			History json.RawMessage `json:"history,omitempty"`
+			Error   string          `json:"error,omitempty"`
+		}
+		data := make([]entry, 0, len(keys))
 		for _, k := range keys {
-			data = append(data, map[string]any{"name": k.Name, "variant": k.Variant, "count": len(history[k]), "history": history[k]})
+			changes := history[k]
+			encoded, err := json.Marshal(changes)
+			if err != nil {
+				slog.Error("signal history bulk: encode entry", "error", err, "name", k.Name, "variant", k.Variant)
+				data = append(data, entry{Name: k.Name, Variant: k.Variant, Error: "encode failed"})
+				continue
+			}
+			count := len(changes)
+			data = append(data, entry{Name: k.Name, Variant: k.Variant, Count: &count, History: encoded})
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"count": len(data), "data": data})
+		if err := json.NewEncoder(w).Encode(map[string]any{"count": len(data), "data": data}); err != nil {
+			slog.Error("signal history bulk: encode response", "error", err)
+		}
 	}
 }
 
