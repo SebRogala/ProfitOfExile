@@ -39,18 +39,26 @@ pub(crate) fn probe(frame: &Capture, lab: &LabPlacements) -> Option<GemPanelEvid
     if !scale.is_finite() || !(0.4..=4.0).contains(&scale) { return None; }
     let x = slot[0] + slot[2] / 2 - (88.0 * scale).round() as i32;
     let y = slot[1] - (157.0 * scale).round() as i32;
-    let image = frame.image.to_rgb8();
     let (title, confirm) = assets();
     let resize = |template: &RgbImage| image::imageops::resize(template,
         (template.width() as f32 * scale).round() as u32,
         (template.height() as f32 * scale).round() as u32, image::imageops::FilterType::Lanczos3);
     let (title, confirm) = (resize(title), resize(confirm));
     let margin = (4.0 * scale).ceil() as i32;
+    let (cx, cy) = ((2.0 * scale).round() as i32, (250.0 * scale).round() as i32);
+    let left = (x - margin).min(x + cx - margin).max(0);
+    let top = (y - margin).max(0);
+    let right = (x + margin + title.width() as i32).max(x + cx + margin + confirm.width() as i32)
+        .min(frame.image.width() as i32);
+    let bottom = (y + margin + title.height() as i32).max(y + cy + margin + confirm.height() as i32)
+        .min(frame.image.height() as i32);
+    if right <= left || bottom <= top { return None; }
+    let image = frame.image.crop_imm(left as u32, top as u32, (right - left) as u32, (bottom - top) as u32).to_rgb8();
+    let (x, y) = (x - left, y - top);
     for dy in -margin..=margin {
         for dx in -margin..=margin {
             if matches(&image, &title, x + dx, y + dy)
-                && matches(&image, &confirm, x + dx + (2.0 * scale).round() as i32,
-                    y + dy + (250.0 * scale).round() as i32) { return Some(GemPanelEvidence); }
+                && matches(&image, &confirm, x + dx + cx, y + dy + cy) { return Some(GemPanelEvidence); }
         }
     }
     None
