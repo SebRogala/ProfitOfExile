@@ -19,8 +19,9 @@ the lane or `pipeforge init --cwd <lane>`.
 Prerequisites: Git, Bash, `pipeforge` on PATH, and lane-setup's own
 prerequisites: Docker Compose, the running shared local infrastructure
 (`postgres` container on the `infra` network), the local `profitofexile`
-PostgreSQL role, and main images `profitofexile-<service>:latest` built by
-`make up` in the main checkout. No primary environment file is copied.
+PostgreSQL role, and main images `profitofexile-<service>:latest` built with
+`docker compose --profile collector build app frontend collector desktop` in
+the main checkout. No primary environment file is copied.
 
 ## Lane isolation in an existing worktree (`make lane-setup`)
 
@@ -98,7 +99,7 @@ lane setup, `make up` or a plain `docker compose up`. Start it only when the
 Operator explicitly allows that start. To start it, run from the lane root:
 
 ```sh
-docker compose --profile collector start collector
+docker compose --profile collector up -d collector
 ```
 
 Stop it again with `docker compose --profile collector stop collector`.
