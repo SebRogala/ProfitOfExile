@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, DEDICATION_POOL_LABELS, type DedicationPool, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
+	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, VARIANTS, DEDICATION_POOL_LABELS, type DedicationPool, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
 	import { baseGemTradeUrl, cheapestCorruptedTradeUrl, buyBaseUrl, baseGemNoQualityUrl } from '$lib/trade-utils';
 	import { formatPrice, formatPriceSigned, type PriceUnit } from '$lib/price.svelte';
 	import InfoTooltip from './InfoTooltip.svelte';
@@ -7,7 +7,6 @@
 
 	let { refreshKey = 0, league = '', labMode = 'normal' }: { refreshKey?: number; league?: string; labMode?: 'normal' | 'dedication' } = $props();
 
-	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const COLORS = ['RED', 'GREEN', 'BLUE'] as const;
 
 	// --- Normal (Font) mode state ---

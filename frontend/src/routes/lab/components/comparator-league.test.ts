@@ -157,4 +157,31 @@ describe('Comparator league fence', () => {
 			expect(root.textContent).toContain('No trade data available');
 		});
 	});
+
+	// keep:critical
+	it('offers exactly the four normal variants and restores them after a Dedication round trip', async () => {
+		serve();
+		const props = new SvelteMap<string, string>([['labMode', 'normal']]);
+		const root = document.createElement('div');
+		document.body.append(root);
+		flushSync(() => {
+			mounted.push(mount(Comparator, { target: root, props: {
+				league: 'A',
+				get labMode() { return props.get('labMode') as 'normal' | 'dedication'; }
+			} }));
+		});
+		await settle();
+		const picker = () => root.querySelector<HTMLSelectElement>('.variant-select select')!;
+		const options = () => Array.from(picker().options, (o) => o.value);
+		const normal = ['1/0', '1/20', '20/0', '20/20'];
+		expect(options()).toEqual(normal);
+
+		flushSync(() => { props.set('labMode', 'dedication'); });
+		await settle();
+		expect(options()).toEqual(['21/20', '21/23']);
+		flushSync(() => { props.set('labMode', 'normal'); });
+		await settle();
+		expect(options()).toEqual(normal);
+		expect(normal).toContain(picker().value);
+	});
 });

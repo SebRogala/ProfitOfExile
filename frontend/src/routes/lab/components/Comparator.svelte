@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { fetchGemNames, fetchCompare, DEDICATION_VARIANTS, type CompareGem } from '$lib/api';
+	import { fetchGemNames, fetchCompare, DEDICATION_VARIANTS, VARIANTS, type CompareGem } from '$lib/api';
 	import { untrack } from 'svelte';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { hasTradeListings, lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
@@ -63,8 +63,7 @@
 		}
 	});
 
-	const NORMAL_VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
-	let activeVariants = $derived<readonly string[]>(isDedication ? DEDICATION_VARIANTS : NORMAL_VARIANTS);
+	let activeVariants = $derived<readonly string[]>(isDedication ? DEDICATION_VARIANTS : VARIANTS);
 	let VARIANT_OPTIONS = $derived(activeVariants.map((v) => ({ value: v, label: v })));
 
 	// The comparator owns its own market, the same way it owns the variant in
@@ -76,7 +75,7 @@
 			variant = DEDICATION_VARIANTS[0];
 			dropTradeData();
 			loadResults();
-		} else if (!isDedication && !NORMAL_VARIANTS.includes(variant)) {
+		} else if (!isDedication && !(VARIANTS as readonly string[]).includes(variant)) {
 			variant = '20/20';
 			dropTradeData();
 			loadResults();
