@@ -294,6 +294,16 @@ mod tests {
         merc: Sender<MercInbox>,
     }
     impl crate::temple::press::PressContext for BothWorld {
+        /// The live 1920x1080 sheet's banked Entrance, so the temple probe
+        /// matches before the merc probe runs.
+        fn screen(&self) -> Option<crate::ssot::ScreenSlice> {
+            Some(crate::ssot::ScreenSlice {
+                width: 1920, height: 1080, ui_scale: 0.90,
+                source: crate::ssot::ScreenScaleSource::Remembered, measured_at_ms: 0,
+                verified_this_session: false, monitor_id: 1, origin: (0, 0), client: [0, 0, 1920, 1080],
+                anchors: Some(crate::ssot::Anchors { temple_entrance: Some([960, 713]), merc_panel: None }),
+            })
+        }
         fn press_sender(&self) -> Option<Sender<crate::temple::press::PressedFrame>> {
             Some(self.temple.clone())
         }
