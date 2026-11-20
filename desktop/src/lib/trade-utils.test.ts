@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { baseGemTradeUrl, cheapestCorruptedTradeUrl, buyBaseUrl, baseGemNoQualityUrl, exceptionalSupportTradeUrl } from './trade-utils';
+// Shared with the Go (internal/trade) and Rust (desktop/src-tauri trade::query) tests.
+import foldVectorsRaw from '../../../internal/trade/testdata/gem-name-fold-vectors.json?raw';
+
+const foldVectors: { name: string; gem: string; tradeName: string }[] = JSON.parse(foldVectorsRaw);
 
 const name = 'Kinetic Blast of Clustering';
 const builders = [
@@ -96,5 +100,13 @@ describe('exceptionalSupportTradeUrl', () => {
 			},
 			sort: { price: 'asc' },
 		});
+	});
+});
+
+// keep:happy
+describe('gem-name fold vectors', () => {
+	it.each(foldVectors)('folds $name for both base-gem builders', ({ gem, tradeName }) => {
+		expect(query(baseGemTradeUrl(gem, '20/20', 'New League')).type).toBe(tradeName);
+		expect(query(baseGemNoQualityUrl(gem, 'New League')).type).toBe(tradeName);
 	});
 });

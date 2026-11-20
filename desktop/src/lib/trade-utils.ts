@@ -12,6 +12,17 @@ export function baseGemName(name: string): string {
 	return idx > 0 ? name.substring(0, idx) : name;
 }
 
+const diacriticFold: Record<string, string> = {
+	ö: 'o', ä: 'a', ü: 'u', é: 'e', è: 'e', ê: 'e',
+	á: 'a', à: 'a', â: 'a', í: 'i', ó: 'o', ú: 'u',
+	Ö: 'O', Ä: 'A', Ü: 'U', É: 'E'
+};
+
+/** Go's stripDiacritics (internal/trade/client.go), pinned by internal/trade/testdata/gem-name-fold-vectors.json. */
+export function tradeGemName(name: string): string {
+	return name.replace(/[öäüéèêáàâíóúÖÄÜÉ]/g, c => diacriticFold[c]);
+}
+
 /**
  * Build trade URL for the cheapest corrupted gems of a color at one Dedication
  * variant ("21/23" or "21/20"), for Dedication lab input cost.
@@ -74,7 +85,7 @@ export function baseGemTradeUrl(name: string, variant: string, league?: string |
 
 	const q = {
 		query: {
-			type: base,
+			type: tradeGemName(base),
 			status: { option: 'securable' },
 			filters: {
 				type_filters: { filters: { category: { option: 'gem' } } },
@@ -134,7 +145,7 @@ export function baseGemNoQualityUrl(gemName: string, league?: string | null): st
 	if (!league?.trim()) return null;
 	const q = {
 		query: {
-			type: baseGemName(gemName),
+			type: tradeGemName(baseGemName(gemName)),
 			status: { option: 'securable' },
 			filters: {
 				type_filters: { filters: { category: { option: 'gem' } } },
