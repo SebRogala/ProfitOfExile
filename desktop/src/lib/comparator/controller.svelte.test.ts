@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { CompareGem } from '$lib/api';
 import type { TradeLookupResult } from '$lib/tradeApi';
+import { MERCURE_REFETCH_DEBOUNCE_MS, MERCURE_REFETCH_JITTER_MS } from '$lib/stores/mercure.svelte';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({})) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
@@ -271,7 +272,7 @@ it('same-gem overlap remains uncorrelated across controller disposal', async () 
 });
 
 // Lab's Mercure reload: 2000 ms debounce + random() × 4000 ms jitter; random is pinned to 0.5.
-const LAB_RELOAD_MS = 4000;
+const LAB_RELOAD_MS = MERCURE_REFETCH_DEBOUNCE_MS + 0.5 * MERCURE_REFETCH_JITTER_MS;
 function labSetup() {
 	vi.useFakeTimers();
 	const reloads: string[] = [];
@@ -282,6 +283,7 @@ function labSetup() {
 	});
 	return { lab, reloads, status };
 }
+// keep:critical — a drift in the shared Mercure pair would silently re-align the herd
 it('lab reloads once after the jittered debounce of a Mercure update', () => {
 	const { lab, reloads, status } = labSetup();
 	lab.onMercureUpdate();

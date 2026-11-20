@@ -7,6 +7,7 @@ import { listen } from '@tauri-apps/api/event';
 import { isSource, type TradeLookupResult, type TradeQueueDisplay, type TradeQueueEvent } from '$lib/tradeApi';
 import { floorQuote, quoteDelta, type QueueItem } from '$lib/session-queue';
 import { createLeagueReadGuard } from './league-fence';
+import { MERCURE_REFETCH_DEBOUNCE_MS, MERCURE_REFETCH_JITTER_MS } from '$lib/stores/mercure.svelte';
 
 interface Selection { variant: string; mode: string; divineRate: number }
 interface OverlayPayload {
@@ -272,9 +273,7 @@ export function createLabQueueController(dependencies: {
 }
 
 /** Lab's retained dashboard reads share one league fence, including failure/finally paths. */
-const MERCURE_DEBOUNCE_MS = 2000;
 export const RANKINGS_DEBOUNCE_MS = 300;
-const MERCURE_JITTER_MS = 4000;
 
 export function createLabController(dependencies: {
 	status: () => Promise<StatusData>;
@@ -376,8 +375,9 @@ export function createLabController(dependencies: {
 	// by 2s (lab.Throttler) and the collector cycle is minutes, so up to 6s of extra
 	// delay is invisible on screen.
 	//
-	// Kept in step with frontend/src/routes/lab/+page.svelte, which runs the same
-	// two constants against the same publish.
+	// The pair lives in $lib/stores/mercure.svelte, shared with the exchange view;
+	// frontend/src/routes/lab/+page.svelte holds its own copy of the same values
+	// against the same publish.
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	function clearDebounce() {
 		if (debounceTimer) clearTimeout(debounceTimer);
@@ -388,7 +388,7 @@ export function createLabController(dependencies: {
 		// Re-rolled on every fire, not once per session: a fixed per-client offset
 		// would put the same clients in the same slot on every publish, which only
 		// spreads the herd once instead of on each tick.
-		const delay = MERCURE_DEBOUNCE_MS + random() * MERCURE_JITTER_MS;
+		const delay = MERCURE_REFETCH_DEBOUNCE_MS + random() * MERCURE_REFETCH_JITTER_MS;
 		debounceTimer = setTimeout(() => {
 			debounceTimer = null;
 			dependencies.onReload?.();

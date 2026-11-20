@@ -15,6 +15,20 @@ import { emit } from '@tauri-apps/api/event';
 import { connectMercure, type MercureConnection } from '$lib/api';
 import { onStatusReady, store } from './status.svelte';
 
+/**
+ * Debounce window for a Mercure-triggered refetch. Collapses a burst of
+ * publishes into a single request.
+ */
+export const MERCURE_REFETCH_DEBOUNCE_MS = 2000;
+
+/**
+ * Random spread added on top of the debounce. The debounce alone does not
+ * disperse a herd, it aligns one: every client receives the same publish within
+ * milliseconds, so a fixed delay puts all of them on `publish + 2000ms`
+ * exactly. The offset scatters arrivals across 2–6s instead.
+ */
+export const MERCURE_REFETCH_JITTER_MS = 4000;
+
 const updateSubscribers = new Set<() => void>();
 const connectionSubscribers = new Set<(connected: boolean) => void>();
 let connection: MercureConnection | null = null;

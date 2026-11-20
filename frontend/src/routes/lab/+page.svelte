@@ -43,8 +43,8 @@
 	let refreshKey = $state(0);
 
 	// --- Mercure debounce + jitter ---
-	// The 2s debounce mirrors the desktop dashboard (MERCURE_DEBOUNCE_MS in
-	// desktop/src/lib/pages/LabPage.svelte): a burst of publishes collapses into a
+	// The 2s debounce mirrors the desktop (MERCURE_REFETCH_DEBOUNCE_MS in
+	// desktop/src/lib/stores/mercure.svelte.ts): a burst of publishes collapses into a
 	// single reload instead of one loadAll() per event.
 	//
 	// The jitter is the part the debounce alone does not solve. A fixed per-client

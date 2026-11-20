@@ -33,6 +33,7 @@ import type {
 	CurrencyExchangeResponse
 } from '$lib/api';
 import { groupNumber } from '$lib/stores/number-format.svelte';
+import { MERCURE_REFETCH_DEBOUNCE_MS, MERCURE_REFETCH_JITTER_MS } from '$lib/stores/mercure.svelte';
 
 /**
  * Re-exported from `$lib/api` so the page can import its wire enums from the
@@ -1752,21 +1753,11 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 
 // ------------------------------------------------------------ the refetch --
 
-/**
- * Debounce window for a Mercure-triggered refetch. Collapses a burst of
- * publishes into a single request.
+/*
+ * Mercure refetch timing lives in `$lib/stores/mercure.svelte`
+ * (`MERCURE_REFETCH_DEBOUNCE_MS`/`MERCURE_REFETCH_JITTER_MS`), shared with the
+ * lab controller.
  */
-export const REFETCH_DEBOUNCE_MS = 2000;
-
-/**
- * Random spread added on top of the debounce. The debounce alone does not
- * disperse a herd, it aligns one: every client receives the same publish within
- * milliseconds, so a fixed delay puts all of them on `publish + 2000ms`
- * exactly. The offset scatters arrivals across 2–6s instead. Same two values as
- * `LabPage.svelte`'s `MERCURE_DEBOUNCE_MS`/`MERCURE_JITTER_MS`, against the
- * same server, and for the same reason.
- */
-export const REFETCH_JITTER_MS = 4000;
 
 /**
  * How long to wait before a Mercure-triggered refetch.
@@ -1777,5 +1768,5 @@ export const REFETCH_JITTER_MS = 4000;
  * spread is testable.
  */
 export function refetchDelay(random: () => number = Math.random): number {
-	return REFETCH_DEBOUNCE_MS + random() * REFETCH_JITTER_MS;
+	return MERCURE_REFETCH_DEBOUNCE_MS + random() * MERCURE_REFETCH_JITTER_MS;
 }

@@ -1,12 +1,11 @@
 import { beforeAll, describe, it, expect } from 'vitest';
+import { MERCURE_REFETCH_DEBOUNCE_MS, MERCURE_REFETCH_JITTER_MS } from '$lib/stores/mercure.svelte';
 import {
 	CHAOS_ID,
 	DIVINE_ID,
 	HORIZON_OPTIONS,
 	MODE_OPTIONS,
-	REFETCH_DEBOUNCE_MS,
 	ROW_CAP_OPTIONS,
-	REFETCH_JITTER_MS,
 	SORT_OPTIONS,
 	chaosIconPath,
 	currencyIconPath,
@@ -3655,13 +3654,15 @@ describe('row closure', () => {
 });
 
 describe('refetchDelay', () => {
+	// keep:critical — a drift in the shared Mercure pair would silently re-align the herd
 	it('waits the bare debounce when the roll comes up lowest', () => {
-		expect(refetchDelay(() => 0)).toBe(REFETCH_DEBOUNCE_MS);
+		expect(refetchDelay(() => 0)).toBe(MERCURE_REFETCH_DEBOUNCE_MS);
 		expect(refetchDelay(() => 0)).toBe(2000);
 	});
 
+	// keep:critical — a drift in the shared Mercure pair would silently re-align the herd
 	it('waits debounce plus the whole jitter window when the roll comes up highest', () => {
-		expect(refetchDelay(() => 1)).toBe(REFETCH_DEBOUNCE_MS + REFETCH_JITTER_MS);
+		expect(refetchDelay(() => 1)).toBe(MERCURE_REFETCH_DEBOUNCE_MS + MERCURE_REFETCH_JITTER_MS);
 		expect(refetchDelay(() => 1)).toBe(6000);
 	});
 
