@@ -1,7 +1,9 @@
 package mercure
 
 // Mercure topics published by the server, collector and tools. The
-// subscriber-token claim list and every publisher read them from here.
+// subscriber-token claim list and the publishers read them from here, except
+// exchange.UpdatedTopic and harvest.UpdatedTopic, which stay in their pillar
+// packages (internal/exchange, internal/harvest) for now.
 const (
 	LeagueActiveTopic    = "poe/league/active"
 	AnalysisUpdatedTopic = "poe/analysis/updated"
