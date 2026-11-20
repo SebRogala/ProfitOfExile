@@ -33,14 +33,25 @@ var mercureTopicSuffix = buildTopicSuffixes()
 // its endpoint name and its topic cannot drift apart.
 func buildTopicSuffixes() map[string]string {
 	suffixes := map[string]string{
-		EndpointNinjaGems:      "gems",
-		EndpointNinjaCurrency:  "currency",
-		EndpointNinjaFragments: "fragments",
+		EndpointNinjaGems:      mercure.CollectorGemsSuffix,
+		EndpointNinjaCurrency:  mercure.CollectorCurrencySuffix,
+		EndpointNinjaFragments: mercure.CollectorFragmentsSuffix,
 	}
 	for _, item := range ItemEndpoints {
 		suffixes[item.Endpoint] = item.TopicSuffix
 	}
 	return suffixes
+}
+
+// EndpointTopic returns the Mercure topic the collector publishes after storing
+// endpointName, e.g. "poe/collector/gems"; an endpoint missing from the suffix
+// map publishes under its raw name.
+func EndpointTopic(endpointName string) string {
+	suffix, ok := mercureTopicSuffix[endpointName]
+	if !ok {
+		suffix = endpointName
+	}
+	return mercureTopicPrefix + suffix
 }
 
 // Scheduler orchestrates price data collection with independent goroutines per
@@ -400,12 +411,7 @@ func (s *Scheduler) postCollect(ctx context.Context, endpointName string, snapTi
 		}
 	}
 
-	// Build per-endpoint topic: "poe/collector/gems", "poe/collector/currency".
-	suffix, ok := mercureTopicSuffix[endpointName]
-	if !ok {
-		suffix = endpointName
-	}
-	topic := mercureTopicPrefix + suffix
+	topic := EndpointTopic(endpointName)
 
 	// Mercure publish (non-fatal on failure).
 	nextFetch := time.Now().Add(nextSleep).UTC()

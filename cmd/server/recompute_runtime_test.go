@@ -8,9 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"profitofexile/internal/collector"
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
+	"profitofexile/internal/mercure"
 	"profitofexile/internal/price/resolve"
 	"profitofexile/internal/server"
 )
@@ -1017,5 +1019,23 @@ func TestSyncBookRate_followsANinjaFallbackChangeWithoutAnExchangeRecompute(t *t
 	}
 	if got, ok := priceBook.Get(gem); !ok || got.Chaos != 47.5 {
 		t.Errorf("Get(gem).Chaos = %v (ok %v), want 47.5 (median of 40, 0.25x190, 55)", got.Chaos, ok)
+	}
+}
+
+// keep:critical — a topic renamed on one side leaves the runtime unsubscribed,
+// so analysis silently never reruns after a collector store.
+func TestKeepCritical_RecomputeRuntimeSubscribesToEveryCollectorPublishedTopic(t *testing.T) {
+	runtime := &recomputeRuntime{}
+	subscribed := map[string]bool{}
+	for _, topic := range runtime.topics() {
+		subscribed[topic] = true
+	}
+	for _, endpoint := range []string{collector.EndpointNinjaGems, collector.EndpointNinjaCurrency, collector.EndpointNinjaFragments} {
+		if topic := collector.EndpointTopic(endpoint); !subscribed[topic] {
+			t.Errorf("runtime does not subscribe to %q, which the collector publishes for %s", topic, endpoint)
+		}
+	}
+	if !subscribed[mercure.TradeTickTopic] {
+		t.Errorf("runtime does not subscribe to %q", mercure.TradeTickTopic)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
+	"profitofexile/internal/mercure"
 	"profitofexile/internal/price/book"
 	"profitofexile/internal/price/resolve"
 	"profitofexile/internal/server"
@@ -127,7 +128,7 @@ func newRecomputeRuntime(ctx context.Context, scope league.Scope) *recomputeRunt
 // stale tiers. Each step is run sequentially; an error in one step is logged
 // and the next step still runs (matches the pre-Mercure handler's behavior).
 //
-// Triggered by the poe/admin/recompute Mercure event from cmd/recalculate.
+// Triggered by the mercure.AdminRecomputeTopic event from cmd/recalculate.
 func runFullRecompute(ctx context.Context, analyzer recomputeAnalyzer, scope league.Scope) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -419,12 +420,12 @@ func (r *recomputeRuntime) startupQuality() {
 
 func (r *recomputeRuntime) topics() []string {
 	topics := []string{
-		"poe/collector/gems",
-		"poe/collector/currency",
-		"poe/collector/fragments",
-		"poe/collector/trade-tick", // collector schedules trade refresh ticks
-		"poe/admin/recompute",      // operator-triggered full recompute
-		exchange.Topic,             // collector stored a currency-exchange hour
+		mercure.CollectorGemsTopic,
+		mercure.CollectorCurrencyTopic,
+		mercure.CollectorFragmentsTopic,
+		mercure.TradeTickTopic,      // collector schedules trade refresh ticks
+		mercure.AdminRecomputeTopic, // operator-triggered full recompute
+		exchange.Topic,              // collector stored a currency-exchange hour
 	}
 	// The seven item-overview topics come from temple.Topics rather than being
 	// repeated here, so subscription and endpoint dispatch cannot drift apart.
@@ -442,7 +443,7 @@ func (r *recomputeRuntime) eventContext() context.Context {
 }
 
 func (r *recomputeRuntime) dispatch(ev server.MercureEvent) {
-	if ev.Topic == "poe/admin/recompute" {
+	if ev.Topic == mercure.AdminRecomputeTopic {
 		slog.Info("mercure: admin recompute requested")
 		if r.analyzer != nil {
 			// Runs on the service context r.ctx, as before the extraction.
@@ -451,7 +452,7 @@ func (r *recomputeRuntime) dispatch(ev server.MercureEvent) {
 		return
 	}
 
-	if ev.Topic == "poe/collector/trade-tick" {
+	if ev.Topic == mercure.TradeTickTopic {
 		if r.tradeTick == nil {
 			// A misconfigured deployment may publish ticks with trade disabled;
 			// warn once because repeating the warning every tick is noise.
