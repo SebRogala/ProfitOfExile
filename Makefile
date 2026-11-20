@@ -6,10 +6,10 @@ help: ## Show available commands
 -include .env.local
 
 .PHONY: worktree-create
-worktree-create: ## Provision a guarded isolated lane (LANE=lane… BASE=ref)
-	@node scripts/worktree-create.mjs
-
-export LANE BASE DRY_RUN
+worktree-create: export WORKTREE_NAME = $(value name)
+worktree-create: export WORKTREE_BASE = $(value base)
+worktree-create: ## Create lane .worktrees/<name> from base (default dev), then pipeforge init runs lane-setup (name=lane… base=ref)
+	@scripts/worktree-create.sh
 
 .PHONY: lane-setup lane-teardown
 lane-setup: ## Isolate this lane worktree: own DBs, Compose project, host; idempotent (pipeforge laneSetup)
