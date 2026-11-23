@@ -744,8 +744,8 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 			pick,
 			priority:
 				offer !== priorityOffer ? null
-					: offer.builtTier === 3 ? 'builds Cradle of Creation'
-						: offer.builtTier === 1 || offer.builtTier === 2 ? 'always upgrade to Cradle' : null,
+					: offer.builtTier === 1 || offer.builtTier === 2 || offer.builtTier === 3
+						? 'always go with Cradle' : null,
 			// Only on the pick: the note says the kill on the frame was the only
 			// one there was, and a note on the block the advisor did NOT choose
 			// would be saying that about the wrong box.
