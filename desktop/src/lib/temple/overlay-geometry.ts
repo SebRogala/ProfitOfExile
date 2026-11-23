@@ -259,15 +259,18 @@ export const KEEP_WINDOW_CSS = { w: 164, h: 66 };
 /**
  * The keep window beside the upper offer box: centred in the band left of it,
  * `upper.x - STACK_STAGGER_CSS` to `upper.x - STACK_GAP_CSS`, and level with its
- * middle. The wanted rect or nothing, never a nearest free spot: a keep window
- * moved away from the boxes reads as an orphan.
+ * middle. If that spot is outside the host or blocked, try right of the upper
+ * box, then the nearest free spot from the left. The nearest search keeps an
+ * 8 px host inset and clearance from every blocker except the upper box,
+ * which it may touch. Return null when no spot is free.
  */
 export function keepWindowPlacement(input: {
 	upper: WidgetRect | null;
 	obstacles: readonly WidgetRect[];
 	placedBoxes: readonly WidgetRect[];
+	host: HostSize;
 }): WidgetRect | null {
-	const { upper, obstacles, placedBoxes } = input;
+	const { upper, obstacles, placedBoxes, host } = input;
 	if (upper === null || obstacles.length === 0) return null;
 	const band = STACK_STAGGER_CSS - STACK_GAP_CSS;
 	const rect = {
@@ -275,8 +278,30 @@ export function keepWindowPlacement(input: {
 		y: Math.round(upper.y + (upper.h - KEEP_WINDOW_CSS.h) / 2),
 		...KEEP_WINDOW_CSS
 	};
-	if (rect.x < 0 || !rectIsClear(rect, [...obstacles, ...placedBoxes])) return null;
-	return rect;
+	const blockers = [...obstacles, ...placedBoxes];
+	const free = (at: WidgetRect) =>
+		at.x >= 0 && at.y >= 0 && at.x + at.w <= host.width &&
+		at.y + at.h <= host.height && rectIsClear(at, blockers);
+	if (free(rect)) return rect;
+	const right = { ...rect, x: upper.x + upper.w + STACK_GAP_CSS };
+	if (free(right)) return right;
+
+	const inset = STACK_GAP_CSS;
+	const innerHost = { width: host.width - 2 * inset, height: host.height - 2 * inset };
+	if (rect.w > innerHost.width || rect.h > innerHost.height) return null;
+	const isUpper = (box: WidgetRect) =>
+		box.x === upper.x && box.y === upper.y && box.w === upper.w && box.h === upper.h;
+	const grow = (box: WidgetRect): WidgetRect => ({
+		x: box.x - inset, y: box.y - inset, w: box.w + 2 * inset, h: box.h + 2 * inset
+	});
+	const shift = (box: WidgetRect): WidgetRect => ({ ...box, x: box.x - inset, y: box.y - inset });
+	const nearestBlockers = [
+		...obstacles.map(grow),
+		...placedBoxes.map((box) => isUpper(box) ? box : grow(box))
+	];
+	if (!placedBoxes.some(isUpper)) nearestBlockers.push(upper);
+	const nearest = avoidRects(shift(rect), nearestBlockers.map(shift), innerHost);
+	return nearest === null ? null : { ...nearest, x: nearest.x + inset, y: nearest.y + inset };
 }
 
 /**

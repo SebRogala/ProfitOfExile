@@ -281,14 +281,15 @@
 		})
 	);
 
-	// The keep window (POE-439 variant C): placed off the upper box alone, the
-	// wanted rect or nothing, so it never covers a read region or a box.
+	// The keep window follows the upper box across re-reads, with fallback
+	// placement so a blocked left spot does not hide Paused and Close (POE-467).
 	const keepWindow = $derived(
 		seconds > 0
 			? keepWindowPlacement({
 					upper: placements[0] ?? null,
 					obstacles,
-					placedBoxes: placements.filter((rect): rect is WidgetRect => rect !== null)
+					placedBoxes: placements.filter((rect): rect is WidgetRect => rect !== null),
+					host
 				})
 			: null
 	);

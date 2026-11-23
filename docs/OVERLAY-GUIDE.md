@@ -520,10 +520,13 @@ the timer, compass, path-strip and comparator widgets.
   `TempleOfferBoxes.svelte` draws in the same anchored layer, so it shares the
   offers' one dismissal. `keepWindowPlacement` (`temple/overlay-geometry.ts`)
   centres it in the band left of the upper box (`upper.x − STACK_STAGGER_CSS`
-  to `upper.x − STACK_GAP_CSS`), level with the box's middle, and takes that
-  rect or nothing: no upper box, no read regions yet, a negative x or a band
-  that is not clear of the read regions and the placed boxes draws no keep
-  window, and neither does a timeout of Off. It shows the countdown, a *Pause*
+  to `upper.x − STACK_GAP_CSS`), level with the box's middle. It first tries
+  that left rect, then the rect 8 px right of the upper box at the same y;
+  both must fit inside the host and avoid all read regions and placed boxes.
+  If both fail, `avoidRects` searches from the left rect inside an 8 px host
+  inset, with every blocker grown by 8 px except the upper box, which it may
+  touch. No free spot means no keep window. No upper box or no read regions
+  returns null first; a timeout of Off also hides it. It shows the countdown, a *Pause*
   button (72×22, `data-hot data-action="temple.keep"`) and a *Close* button
   (66×22, `data-hot data-action="temple.close"`); it names no dismissal key.
   One forwarded click on Pause calls `createDismissal`'s `pause()`; the keep is
