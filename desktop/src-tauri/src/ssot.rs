@@ -1224,22 +1224,29 @@ pub(crate) fn set_anchor_if_current(
     })
 }
 
-/// [`set_anchor_if_current`] against the app's screen owner, check and write
-/// under one `screen` lock, then [`remember_anchor`]'s persist and emit.
+/// [`set_anchor_if_current`] against the app's screen owner, then
+/// [`remember_anchor`]'s persist and emit. `None` when the temple Recalibrate
+/// generation is no longer `temple_rearm`: the check runs under the same
+/// `screen` lock [`geometry_recalibrate`] holds while it clears the owner and
+/// bumps that generation, so no Recalibrate can land between check and write.
 pub fn remember_anchor_if_current(
     app: &AppHandle,
     module: AnchorModule,
     anchor: [i32; 2],
     frame: &crate::capture::Capture,
     ui_scale: f32,
-) -> bool {
+    temple_rearm: u64,
+) -> Option<bool> {
     let changed = {
         let state = app.state::<AppState>();
         let mut screen = state.screen.lock().unwrap_or_else(|e| e.into_inner());
+        if state.temple_state.rearm.load(std::sync::atomic::Ordering::SeqCst) != temple_rearm {
+            return None;
+        }
         let capture = (frame.image.width(), frame.image.height());
         set_anchor_if_current(&mut screen, capture, frame.origin, frame.client, ui_scale, module, anchor)
     };
-    remember_anchor_effects(changed, || crate::persist_settings(app), || emit_ssot(app))
+    Some(remember_anchor_effects(changed, || crate::persist_settings(app), || emit_ssot(app)))
 }
 
 fn remember_anchor_effects<P, E>(changed: bool, persist: P, emit: E) -> bool
@@ -1383,15 +1390,19 @@ pub fn screen_from_capture(capture: &crate::capture::Capture) -> ScreenSlice {
 #[tauri::command]
 pub fn geometry_recalibrate(app: AppHandle) {
     {
+        // The temple bump shares the clear's `screen` lock so a read-key bank
+        // checking its sweep generation sees both or neither
+        // (`remember_anchor_if_current`).
         let state = app.state::<AppState>();
-        *state.screen.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    }
-    {
-        let state = app.state::<AppState>();
+        let mut screen = state.screen.lock().unwrap_or_else(|e| e.into_inner());
+        *screen = None;
         state
             .temple_state
             .rearm
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    {
+        let state = app.state::<AppState>();
         state
             .merc.refit
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);

@@ -45,9 +45,10 @@ pub trait PressContext {
         self.screen()
     }
     /// Banks a calibration's Entrance origin into the screen it was found on;
-    /// `false` when nothing was written.
-    fn bank_entrance(&self, _origin: [i32; 2], _frame: &Capture, _ui_scale: f32) -> bool {
-        false
+    /// `Some(false)` when nothing was written, `None` when Recalibrate moved
+    /// the generation off `rearm` before the write.
+    fn bank_entrance(&self, _origin: [i32; 2], _frame: &Capture, _ui_scale: f32, _rearm: u64) -> Option<bool> {
+        Some(false)
     }
     /// Whether this frame's screen setup already spent its one sweep.
     fn sweep_spent(&self, _frame: &Capture) -> bool {
@@ -119,8 +120,8 @@ impl PressContext for AppHandle {
         crate::ssot::publish_screen(self, crate::ssot::screen_from_capture(frame));
         self.screen()
     }
-    fn bank_entrance(&self, origin: [i32; 2], frame: &Capture, ui_scale: f32) -> bool {
-        crate::ssot::remember_anchor_if_current(self, crate::ssot::AnchorModule::TempleEntrance, origin, frame, ui_scale)
+    fn bank_entrance(&self, origin: [i32; 2], frame: &Capture, ui_scale: f32, rearm: u64) -> Option<bool> {
+        crate::ssot::remember_anchor_if_current(self, crate::ssot::AnchorModule::TempleEntrance, origin, frame, ui_scale, rearm)
     }
     fn sweep_spent(&self, frame: &Capture) -> bool {
         let key = PressContext::sweep_key(self, frame);
@@ -207,7 +208,11 @@ impl<C: PressContext> PendingRead<C> for TemplePending {
             return Some(format!("Temple: calibration — superseded by Recalibrate, {} ms", started.elapsed().as_millis()));
         }
         let (x, y) = found.origin();
-        if let Some(screen) = self.screen { ctx.bank_entrance([x, y], frame, screen.ui_scale); }
+        if let Some(screen) = self.screen {
+            if ctx.bank_entrance([x, y], frame, screen.ui_scale, key.rearm).is_none() {
+                return Some(format!("Temple: calibration — superseded by Recalibrate, {} ms", started.elapsed().as_millis()));
+            }
+        }
         self.probe = Some(found);
         Some(format!("Temple: calibration — Entrance found at ({x}, {y}), {} ms", started.elapsed().as_millis()))
     }
@@ -279,15 +284,17 @@ mod tests {
             reconciled
         }
         /// The same operation `AppHandle` runs through `remember_anchor_if_current`.
-        fn bank_entrance(&self, origin: [i32; 2], frame: &Capture, ui_scale: f32) -> bool {
+        fn bank_entrance(&self, origin: [i32; 2], frame: &Capture, ui_scale: f32, rearm: u64) -> Option<bool> {
             if std::mem::take(&mut *self.recalibrate_at_bank.lock().unwrap()) {
                 *self.slot.lock().unwrap() = Some(crate::ssot::screen_from_capture(frame));
                 *self.rearm.lock().unwrap() += 1;
             }
-            crate::ssot::set_anchor_if_current(
-                &mut self.slot.lock().unwrap(), (frame.image.width(), frame.image.height()), frame.origin, frame.client,
+            let mut slot = self.slot.lock().unwrap();
+            if *self.rearm.lock().unwrap() != rearm { return None; }
+            Some(crate::ssot::set_anchor_if_current(
+                &mut slot, (frame.image.width(), frame.image.height()), frame.origin, frame.client,
                 ui_scale, crate::ssot::AnchorModule::TempleEntrance, origin,
-            )
+            ))
         }
         fn sweep_spent(&self, frame: &Capture) -> bool {
             *self.sweep.lock().unwrap() == Some(sweep_key(frame, *self.rearm.lock().unwrap()))
