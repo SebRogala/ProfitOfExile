@@ -644,6 +644,31 @@ describe('offerStackPlacement', () => {
 		expect(FULL_BOX_MAX_CSS).toBeLessThanOrEqual(DIAGONAL_BUDGET_CSS);
 	});
 
+	/** POE-465's priority banner: 22 px high, pulled 10 px into the top
+	 *  padding and pushing the header 8 px down. Drawn only on an alerted box,
+	 *  so it is outside `FULL_BOX_ROWS`, which every other board still budgets. */
+	const ALERT_ROW = 22 - 10 + 8;
+
+	it('keep:critical budgets an alerted pair for the banner row on the worst box — an unbudgeted banner pushes the lower box onto the upper one', () => {
+		const ALERTED_PAIR = 2 * WORST_FULL_BOX + ALERT_ROW + STACK_GAP_CSS;
+		const compactAt = (free: number) =>
+			offersCompact({
+				driverCounts: [3, 3],
+				alerts: [true, false],
+				blocks: [{ x: 1140, y: HOST.height - free, w: 280, h: 43 }, null],
+				panel: COMMITTED_PANEL,
+				host: HOST
+			});
+
+		expect(ALERT_ROW).toBe(20);
+		expect(ALERTED_PAIR).toBe(608);
+		expect(WORST_FULL_BOX + ALERT_ROW).toBeLessThanOrEqual(DIAGONAL_BUDGET_CSS);
+		expect(compactAt(ALERTED_PAIR)).toBe(false);
+		expect(compactAt(ALERTED_PAIR - 1)).toBe(true);
+		expect(FULL_BOX_MAX_CSS).toBe(290);
+		expect(FULL_PAIR_CSS).toBe(588);
+	});
+
 	it('seats two worst-case boxes without clamping at exactly the clearance the compact rule allows', () => {
 		// The two constants meeting. `offersCompact` lets the pair render full
 		// down to `FULL_PAIR_CSS` of host below the first block, so at exactly
@@ -928,6 +953,44 @@ describe('offersCompact', () => {
 				blocks: [null, null],
 				panel: null,
 				host: shortHost
+			})
+		).toBe(true);
+	});
+
+	// POE-465: the priority banner's 20 px is budgeted only on a board that
+	// draws it. Free height under the first block, per alert input.
+	it.each([
+		{ alerts: undefined, free: 587, compact: true },
+		{ alerts: undefined, free: 588, compact: false },
+		{ alerts: undefined, free: 607, compact: false },
+		{ alerts: undefined, free: 608, compact: false },
+		{ alerts: [false, false], free: 588, compact: false },
+		{ alerts: [false, false], free: 607, compact: false },
+		{ alerts: [true, false], free: 587, compact: true },
+		{ alerts: [true, false], free: 588, compact: true },
+		{ alerts: [true, false], free: 607, compact: true },
+		{ alerts: [true, false], free: 608, compact: false },
+		{ alerts: [false, true], free: 607, compact: true },
+		{ alerts: [false, true], free: 608, compact: false }
+	])(
+		'keep:critical draws the pair compact=$compact at $free px free with alerts $alerts — a full pair past its budget drops the comparison',
+		({ alerts, free, compact }) => {
+			const blocks = [{ ...HIGH[0], y: HOST.height - free }, HIGH[1]];
+
+			expect(
+				offersCompact({ driverCounts: THREE, alerts, blocks, panel: COMMITTED_PANEL, host: HOST })
+			).toBe(compact);
+		}
+	);
+
+	it('keep:critical still collapses an alerted board on driver count alone — the banner budget must not replace the fold rule', () => {
+		expect(
+			offersCompact({
+				driverCounts: [MAX_FOLDABLE_DRIVERS + 1, 2],
+				alerts: [true, false],
+				blocks: HIGH,
+				panel: COMMITTED_PANEL,
+				host: HOST
 			})
 		).toBe(true);
 	});

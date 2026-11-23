@@ -111,9 +111,9 @@ function drawable(readAt: number): TempleSlice {
 	} as TempleSlice;
 }
 
-function seed(timeoutSeconds: number) {
+function seed(timeoutSeconds: number, slice: TempleSlice = temple(Date.now())) {
 	applySnapshot({
-		temple: temple(Date.now()),
+		temple: slice,
 		overlayDismiss: { timeoutSeconds, shortcut: esc, overlays: {}, pending: [] }
 	} as unknown as SsotSnapshot);
 }
@@ -188,9 +188,9 @@ async function settle() {
 	flushSync();
 }
 
-async function render(timeoutSeconds: number, query = '') {
+async function render(timeoutSeconds: number, query = '', slice?: TempleSlice) {
 	window.history.replaceState(null, '', `/overlay/temple${query}`);
-	seed(timeoutSeconds);
+	seed(timeoutSeconds, slice);
 	const { default: Page } = await import('../../routes/overlay/temple/+page.svelte');
 	const target = document.createElement('div');
 	document.body.appendChild(target);
@@ -357,5 +357,196 @@ describe('temple keep window', () => {
 		await settle();
 		expect(target.querySelector('.config-bar')).toBeNull();
 		expect(calls.some(([name, args]) => name === 'set_overlay_config_mode' && (args as { on: boolean }).on === false)).toBe(true);
+	});
+});
+
+const CRADLE = 'Cradle of Creation';
+const PRIORITY = { architectIndex: 0, reason: 'priority: Xipocado or the Cradle of Creation line — kill this architect first' };
+/** The first block's top in `temple()`, CSS px at scale factor 1. */
+const FIRST_BLOCK_TOP = 133;
+
+function roomValue(total: number) {
+	return { total, priced: 'market', guessed: false, league: 'Allflame', asOf: Date.now(), scaledFromTier3: null, drivers: [] };
+}
+
+/**
+ * `temple()` with box 0 on the Queen's line and `advice.priority` naming it:
+ * a Cradle of Creation tier-3 kill beside the fixture's other-line box 1.
+ * `over` replaces box 0's fields (a Hall of Lords tier-2 variant) and
+ * `advice` the advice's (the other box as the pick, or no pick at all).
+ */
+function alerted(
+	readAt: number,
+	over: Record<string, unknown> = {},
+	advice: Partial<NonNullable<TempleSlice['advice']>> = {}
+): TempleSlice {
+	const slice = temple(readAt);
+	const [first, second] = slice.panel!.offers;
+	return {
+		...slice,
+		panel: {
+			...slice.panel!,
+			offers: [
+				{ ...first, architectName: 'Xipocado', displayName: CRADLE, builtTier: 3, lineTop: CRADLE, value: roomValue(96), ...over },
+				{ ...second, value: roomValue(40) }
+			]
+		},
+		advice: { ...slice.advice!, priority: PRIORITY, ...advice }
+	} as TempleSlice;
+}
+
+/** The host's height CSS px, so `free` px are left under the first block. */
+function hostWithFree(free: number) {
+	patch(window, 'innerHeight', { get: () => FIRST_BLOCK_TOP + free });
+}
+
+/** What one rendered box says about the alert: its classes and the banner's
+ *  position and three parts, null where it draws no banner. */
+function alertOf(box: Element) {
+	const prio = box.querySelector(':scope > .prio');
+	return {
+		alert: box.classList.contains('alert'),
+		pick: box.classList.contains('pick'),
+		compact: box.classList.contains('compact'),
+		banner: prio
+			? {
+					first: box.firstElementChild === prio,
+					beforeTitle: prio.nextElementSibling?.classList.contains('head-title') ?? false,
+					bang: prio.querySelector('.bang')?.textContent ?? null,
+					call: prio.querySelector('.call')?.textContent ?? null,
+					why: prio.querySelector('.why')?.textContent ?? null
+				}
+			: null
+	};
+}
+
+function boxesOf(target: HTMLElement) {
+	return [...(offersLayer(target)?.querySelectorAll('.box') ?? [])];
+}
+
+const BANNER = (why: string) => ({ first: true, beforeTitle: true, bang: '!', call: 'JUST DO IT!', why });
+
+describe('temple priority alert (POE-465)', () => {
+	it('keep:happy draws the banner first on the alerted full box and nothing on the other', async () => {
+		const target = await render(10, '', alerted(Date.now()));
+
+		expect(boxesOf(target).map(alertOf)).toEqual([
+			{ alert: true, pick: true, compact: false, banner: BANNER('builds Cradle of Creation') },
+			{ alert: false, pick: false, compact: false, banner: null }
+		]);
+	});
+
+	it('keep:happy draws both boxes compact with the banner kept at 607 px free under an alerted board', async () => {
+		hostWithFree(607);
+		const target = await render(10, '', alerted(Date.now()));
+
+		expect(boxesOf(target).map(alertOf)).toEqual([
+			{ alert: true, pick: true, compact: true, banner: BANNER('builds Cradle of Creation') },
+			{ alert: false, pick: false, compact: true, banner: null }
+		]);
+	});
+
+	it('keep:happy keeps an alerted board full at 608 px free', async () => {
+		hostWithFree(608);
+		const target = await render(10, '', alerted(Date.now()));
+
+		expect(boxesOf(target).map(alertOf)).toEqual([
+			{ alert: true, pick: true, compact: false, banner: BANNER('builds Cradle of Creation') },
+			{ alert: false, pick: false, compact: false, banner: null }
+		]);
+	});
+
+	it('keep:happy keeps an unalerted board full at 588 px free with no banner', async () => {
+		hostWithFree(588);
+		const target = await render(10);
+
+		expect(boxesOf(target).map(alertOf)).toEqual([
+			{ alert: false, pick: true, compact: false, banner: null },
+			{ alert: false, pick: false, compact: false, banner: null }
+		]);
+	});
+
+	it('keep:happy tells a forced Hall of Lords tier-2 kill to keep upgrading, beside its four-digit value', async () => {
+		const target = await render(
+			10,
+			'',
+			alerted(Date.now(), { displayName: 'Hall of Lords', builtTier: 2, value: roomValue(1240) }, { forcedKill: true })
+		);
+		const [upper] = boxesOf(target);
+
+		expect(alertOf(upper).banner).toEqual(BANNER('always upgrade to Cradle'));
+		expect(upper.querySelector('.forced')?.textContent).toBe('(only architect read)');
+		expect(upper.querySelector('.val .num')?.textContent).toBe('1240c');
+	});
+
+	it('keep:happy keeps the cyan pick on the other box while the alerted alternative carries the banner', async () => {
+		const target = await render(
+			10,
+			'',
+			alerted(Date.now(), {}, { recommendations: [{ ...temple(0).advice!.recommendations[0], architectIndex: 1 }] })
+		);
+
+		expect(boxesOf(target).map(alertOf)).toEqual([
+			{ alert: true, pick: false, compact: false, banner: BANNER('builds Cradle of Creation') },
+			{ alert: false, pick: true, compact: false, banner: null }
+		]);
+	});
+
+	it('keep:happy alerts the higher-value Queen-line box on a board with no pick and no priority', async () => {
+		const readAt = Date.now();
+		const slice = alerted(readAt, { value: roomValue(64) }, { recommendations: [], priority: null });
+		const [first, second] = slice.panel!.offers;
+		const board = {
+			...slice,
+			panel: { ...slice.panel!, offers: [first, { ...second, displayName: CRADLE, builtTier: 3, lineTop: CRADLE, value: roomValue(96) }] }
+		} as TempleSlice;
+		const target = await render(10, '', board);
+
+		expect(boxesOf(target).map((box) => alertOf(box).banner?.why ?? null)).toEqual([null, 'builds Cradle of Creation']);
+	});
+
+	it('keep:happy shows both boxes measured and placed after a read that gains the alert', async () => {
+		const target = await render(10);
+		vi.advanceTimersByTime(1000);
+		applySnapshot({ temple: alerted(Date.now()) } as unknown as SsotSnapshot);
+		await settle();
+		const boxes = boxesOf(target) as HTMLElement[];
+
+		expect(boxes.map((box) => box.classList.contains('alert'))).toEqual([true, false]);
+		expect(boxes.map((box) => box.style.visibility)).toEqual(['', '']);
+	});
+
+	it('keep:happy hides an alerted comparator on a forwarded Close', async () => {
+		const target = await render(10, '', alerted(Date.now()));
+		expect(boxesOf(target).filter((box) => box.classList.contains('alert'))).toHaveLength(1);
+
+		await clickClose(target);
+
+		expect(target.querySelectorAll('.box')).toHaveLength(0);
+		expect(target.querySelector('.keepwin')).toBeNull();
+	});
+
+	it('keep:happy hides an alerted comparator at its timeout, unpaused by the alert', async () => {
+		const target = await render(10, '', alerted(Date.now()));
+		expect(boxesOf(target).filter((box) => box.classList.contains('alert'))).toHaveLength(1);
+		expect(target.querySelector('[data-action="temple.keep"]')?.textContent?.trim()).toBe('Pause');
+
+		vi.advanceTimersByTime(11000);
+		await settle();
+
+		expect(target.querySelectorAll('.box')).toHaveLength(0);
+		expect(target.querySelector('.keepwin')).toBeNull();
+	});
+
+	it('keep:happy keeps an alerted comparator, banner and all, past its timeout once paused', async () => {
+		const target = await render(10, '', alerted(Date.now()));
+		await clickKeep(target);
+		vi.advanceTimersByTime(11000);
+		await settle();
+		const layer = offersLayer(target)!;
+
+		expect(boxesOf(target).map((box) => alertOf(box).alert)).toEqual([true, false]);
+		expect(layer.querySelector('.keepwin .lb')?.textContent).toBe('Timer stopped');
+		expect(layer.querySelector('.kw-keep:not([data-action])')?.textContent?.trim()).toBe('Paused');
 	});
 });

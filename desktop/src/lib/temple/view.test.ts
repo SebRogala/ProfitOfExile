@@ -2358,6 +2358,22 @@ describe('offerBoxSignature', () => {
 		expect(offerBoxSignature(withDifferentText, false)).toBe(offerBoxSignature(withRarity, false));
 	});
 
+	// POE-465: the priority banner adds 20 px to the box it sits on, so its
+	// presence is a shape change in either form.
+	it.each([false, true])('keep:happy moves the signature when the priority alert appears (compact %s)', (compact) => {
+		const alerted = box({ priority: 'builds Cradle of Creation' });
+		const plain = box({ priority: null });
+
+		expect(offerBoxSignature(alerted, compact)).not.toBe(offerBoxSignature(plain, compact));
+	});
+
+	it.each([false, true])('keep:happy keeps the signature when only the priority wording changes (compact %s)', (compact) => {
+		const tier3 = box({ priority: 'builds Cradle of Creation' });
+		const tier2 = box({ priority: 'always upgrade to Cradle' });
+
+		expect(offerBoxSignature(tier2, compact)).toBe(offerBoxSignature(tier3, compact));
+	});
+
 });
 
 describe('marketNote', () => {
@@ -2808,4 +2824,140 @@ describe('offerBoxes — the Cradle bracket (POE-370)', () => {
 		expect(offerBoxSignature(withCradle, false)).not.toBe(offerBoxSignature(without, false));
 		expect(offerBoxSignature(reworded, false)).toBe(offerBoxSignature(withCradle, false));
 	});
+});
+
+describe('offerBoxes — the priority alert (POE-465)', () => {
+	const CRADLE = 'Cradle of Creation';
+	const BUILDS_CRADLE = 'builds Cradle of Creation';
+	const ON_THE_WAY = 'always upgrade to Cradle';
+	const PRIORITY_REASON = 'priority: Xipocado or the Cradle of Creation line — kill this architect first';
+	/** An offer on the Queen's line (Royal Meeting Room / Hall of Lords /
+	 *  Cradle of Creation), resolved, at the tier it builds. */
+	const queen = (over: Partial<OfferView> = {}): OfferView =>
+		offer({
+			architectName: 'Xipocado',
+			printedTarget: 'Royal Meeting Room',
+			displayName: CRADLE,
+			builtTier: 3,
+			grade: 'A1',
+			lineTop: CRADLE,
+			value: value({ total: 96 }),
+			...over
+		});
+	/** An offer on another line — the fixture's Sadist's Den line. */
+	const other = (over: Partial<OfferView> = {}): OfferView => offer({ value: value({ total: 40 }), ...over });
+	/** An offer whose printed target did not resolve: no line, no room, no value. */
+	const unresolved = (over: Partial<OfferView> = {}): OfferView =>
+		offer({ displayName: null, builtTier: null, grade: null, lineTop: null, value: null, ...over });
+	const priorities = (offers: OfferView[], over: Partial<AdviceView> = {}) =>
+		offerBoxes(
+			{
+				...templeSliceDefault(),
+				advice: advice(over),
+				panel: { room: null, roomRect: null, offers, incursionsRemaining: 6 },
+				market: LIVE_MARKET
+			},
+			NOW
+		).map((box) => box.priority);
+
+	it('keep:happy alerts the tier-3 Queen-line offer the priority names, and only that one', () => {
+		const boxes = priorities([queen({ index: 0 }), other({ index: 1 })], {
+			priority: { architectIndex: 0, reason: PRIORITY_REASON }
+		});
+
+		expect(boxes).toEqual([BUILDS_CRADLE, null]);
+	});
+
+	it.each([
+		{ room: 'Royal Meeting Room', tier: 1 },
+		{ room: 'Hall of Lords', tier: 2 }
+	])('keep:happy tells a tier-$tier $room offer to keep upgrading toward the Cradle', ({ room, tier }) => {
+		const boxes = priorities([other({ index: 0 }), queen({ index: 1, displayName: room, builtTier: tier })], {
+			recommendations: [ranked({ architectIndex: 1 })],
+			priority: { architectIndex: 1, reason: PRIORITY_REASON }
+		});
+
+		expect(boxes).toEqual([null, ON_THE_WAY]);
+	});
+
+	it.each([
+		{ name: 'absent', priority: undefined },
+		{ name: 'null', priority: null }
+	])(
+		'keep:critical alerts nothing on a picked board whose priority is $name — an unsupported instruction on the pick reads as the advice',
+		({ priority }) => {
+			const boxes = priorities([queen({ index: 0 }), queen({ index: 1, value: value({ total: 500 }) })], {
+				recommendations: [ranked({ architectIndex: 0 })],
+				priority
+			});
+
+			expect(boxes).toEqual([null, null]);
+		}
+	);
+
+	it.each([
+		{ name: 'with a pick', recommendations: [ranked({ architectIndex: 0 })] },
+		{ name: 'without a pick', recommendations: [] }
+	])(
+		'keep:critical alerts nothing when the priority names a box off the Queen line, $name — the fallback would print an instruction the advisor did not give',
+		({ recommendations }) => {
+			const boxes = priorities([queen({ index: 0 }), other({ index: 1 })], {
+				recommendations,
+				priority: { architectIndex: 1, reason: 'priority: upgrade to Grand Reactor' }
+			});
+
+			expect(boxes).toEqual([null, null]);
+		}
+	);
+
+	it.each([
+		{ name: 'no Queen-line offer', offers: [other({ index: 0 }), other({ index: 1 })], want: [null, null] },
+		{
+			name: 'one Queen-line offer worth less than the other line',
+			offers: [queen({ index: 0, value: value({ total: 64 }) }), other({ index: 1, value: value({ total: 500 }) })],
+			want: [BUILDS_CRADLE, null]
+		},
+		{
+			name: 'two Queen-line offers, the lower one worth more',
+			offers: [queen({ index: 0, value: value({ total: 64 }) }), queen({ index: 1, value: value({ total: 96 }) })],
+			want: [null, BUILDS_CRADLE]
+		},
+		{
+			name: 'two Queen-line offers, the upper one worth more',
+			offers: [queen({ index: 0, value: value({ total: 96 }) }), queen({ index: 1, value: value({ total: 64 }) })],
+			want: [BUILDS_CRADLE, null]
+		},
+		{
+			name: 'two Queen-line offers of equal worth',
+			offers: [
+				queen({ index: 0, displayName: 'Hall of Lords', builtTier: 2, value: value({ total: 80 }) }),
+				queen({ index: 1, value: value({ total: 80 }) })
+			],
+			want: [ON_THE_WAY, null]
+		},
+		{
+			name: 'an unresolved offer beside a Queen-line one',
+			offers: [unresolved({ index: 0 }), queen({ index: 1, value: value({ total: 64 }) })],
+			want: [null, BUILDS_CRADLE]
+		},
+		{
+			name: 'an unresolved offer beside another line',
+			offers: [unresolved({ index: 0 }), other({ index: 1 })],
+			want: [null, null]
+		},
+		{
+			name: 'a legacy payload with no priority field',
+			offers: [queen({ index: 0, value: value({ total: 64 }) }), queen({ index: 1, value: value({ total: 96 }) })],
+			want: [null, BUILDS_CRADLE],
+			legacy: true
+		}
+	] as { name: string; offers: OfferView[]; want: (string | null)[]; legacy?: boolean }[])(
+		'keep:critical with no pick and no priority alerts only the higher-value Queen-line offer: $name — a wrong box names the wrong architect to kill',
+		({ offers, want, legacy }) => {
+			// `advice()` carries no `priority` key at all, which is the legacy wire.
+			const over: Partial<AdviceView> = legacy ? { recommendations: [] } : { recommendations: [], priority: null };
+
+			expect(priorities(offers, over)).toEqual(want);
+		}
+	);
 });
