@@ -549,6 +549,9 @@ pub struct ValuationKey {
     /// The market read as `market::temple_market_now` answered it: the stored
     /// payload with `stale` judged against THIS tick's clock.
     pub market: MarketInput,
+    /// Whether the read's temple drops upgraded chest uniques (POE-470): a
+    /// table built for one value is never served for the other.
+    pub cradle: bool,
 }
 
 /// Where a table came from — the word the read line prints.
@@ -1192,6 +1195,7 @@ mod tests {
             preset: Preset::Default,
             custom: TempleCustomSettings::default(),
             market: allflame(),
+            cradle: false,
         }
     }
 
@@ -1338,6 +1342,7 @@ mod tests {
                 preset: Preset::Custom,
                 custom: TempleCustomSettings::default(),
                 market: allflame(),
+                cradle: false,
             },
             valued: sentinel_table(),
         });
@@ -1348,6 +1353,7 @@ mod tests {
                 preset: Preset::Custom,
                 custom: rusher.clone(),
                 market: allflame(),
+                cradle: false,
             },
         );
 
@@ -1446,6 +1452,7 @@ mod tests {
                 preset: Preset::Custom,
                 custom,
                 market: market.clone(),
+                cradle: false,
             },
         );
 
@@ -1457,5 +1464,47 @@ mod tests {
             expected,
             "and the object left behind for the next read",
         );
+    }
+
+    mod keep_critical {
+        use super::*;
+        use crate::temple::valuation::DriverKind;
+
+        // keep:critical — POE-470 AC-1. Silent consequence: a cache that
+        // serves the table built for the other Cradle context hands the read
+        // plausible chest totals for uniques the temple will not drop, and the
+        // advice ranks on them. Switching false -> true -> false misses each
+        // time, and each answer counts Sanctum of Immortality's chest at the
+        // unique its context drops.
+        #[test]
+        fn a_cradle_switch_is_served_the_table_its_context_names_each_time() {
+            let mut slot = None;
+            let steps = [
+                (false, "Mask of the Spirit Drinker", 48.75),
+                (true, "Mask of the Stitched Demon", 106.75),
+                (false, "Mask of the Spirit Drinker", 48.75),
+            ];
+            for (step, (cradle, name, chaos)) in steps.into_iter().enumerate() {
+                let (valued, source) = look_up_or_compute(
+                    &mut slot,
+                    ValuationKey {
+                        cradle,
+                        ..base_key()
+                    },
+                );
+
+                assert_eq!(source, ValuationSource::Computed, "step {step}: the switch missed");
+                let sanctum = valued
+                    .get("sanctum_of_immortality", tier(3))
+                    .expect("sanctum is valued");
+                let unique = sanctum
+                    .drivers
+                    .iter()
+                    .find(|d| d.kind == DriverKind::UniqueDrop)
+                    .expect("sanctum has a chest driver");
+                assert_eq!(unique.name, name, "step {step} (cradle={cradle})");
+                assert_eq!(unique.chaos, Some(chaos), "step {step} (cradle={cradle})");
+            }
+        }
     }
 }

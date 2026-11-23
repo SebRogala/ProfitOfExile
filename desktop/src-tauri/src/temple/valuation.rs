@@ -413,6 +413,19 @@ impl Valued {
         Valued::compute_with(market, knobs, &RoomOverrides::new())
     }
 
+    /// [`Self::compute_with`] in a read's Cradle context (POE-470): `cradle`
+    /// says whether this temple's chests drop their upgraded uniques.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
+    pub fn compute_in(
+        market: &MarketInput,
+        knobs: &Knobs,
+        overrides: &RoomOverrides,
+        cradle: bool,
+    ) -> Valued {
+        let _ = cradle;
+        Valued::compute_with(market, knobs, overrides)
+    }
+
     /// [`Self::compute`] with the Custom preset's per-room overrides applied
     /// (POE-257 D4).
     ///
@@ -1153,6 +1166,7 @@ pub fn temple_valuation_now(
         preset: settings.preset,
         custom: settings.custom.clone(),
         market: market.clone(),
+        cradle: false,
     };
     let state = app.state::<AppState>();
     {
@@ -2677,6 +2691,214 @@ mod tests {
             for n in [1, 2] {
                 let lower = value_of(&valued, "factory", n);
                 assert!(close(lower.total, 14.4), "tier {n} total was {}", lower.total);
+            }
+        }
+
+        // POE-470 AC-1: a chest counts the unique the temple will drop, at
+        // the modelled 0.25 / N. With a Cradle that is the upgraded item at
+        // its own feed price, carrying no second "with Cradle" alternative;
+        // without one it is the base item with its upgraded alternative
+        // shown beside it. Sanctum of Immortality tier 3 is the AC's room:
+        // 427 x 0.25 = 106.75 with a Cradle and 195 x 0.25 = 48.75 without,
+        // each beside its unchanged 18 c rarity.
+        #[test]
+        fn a_chest_counts_the_unique_its_cradle_context_drops() {
+            let market = allflame();
+            for cradle in [false, true] {
+                let valued = Valued::compute_in(&market, &Knobs::default(), &RoomOverrides::new(), cradle);
+                for (key, tiers) in valued.lines() {
+                    let want: Vec<_> = CHEST_DRIVERS.iter().filter(|row| row.0 == key).collect();
+                    for (index, value) in tiers.iter().enumerate() {
+                        let at = format!("cradle={cradle} {key} tier {}", index + 1);
+                        let got: Vec<&Driver> = value
+                            .drivers
+                            .iter()
+                            .filter(|d| d.kind == DriverKind::UniqueDrop)
+                            .collect();
+                        assert_eq!(got.len(), want.len(), "{at}");
+                        for (d, &&(_, base, count, base_unit, base_chaos, up_name, up_unit, up_chaos)) in
+                            got.iter().zip(want.iter())
+                        {
+                            let (name, unit, chaos) = if cradle {
+                                (up_name, up_unit, up_chaos)
+                            } else {
+                                (base, base_unit, base_chaos)
+                            };
+                            assert_eq!(d.name, name, "{at}");
+                            assert_eq!(d.count, Some(count), "{at} {name}");
+                            assert_eq!(d.unit_price, Some(unit), "{at} {name}");
+                            assert!(d.chaos.is_some_and(|c| close(c, chaos)), "{at} {name}: {:?}", d.chaos);
+                            assert_eq!(
+                                d.upgraded.as_ref().map(|u| u.name.as_str()),
+                                (!cradle).then_some(up_name),
+                                "{at} {name}: the upgraded alternative is shown only without a Cradle",
+                            );
+                        }
+                    }
+                }
+                let sanctum = value_of(&valued, "sanctum_of_immortality", 3);
+                let (drops, total) = if cradle { (106.75, 124.75) } else { (48.75, 66.75) };
+                assert!(close(sanctum.drops, drops), "cradle={cradle}: drops {}", sanctum.drops);
+                assert!(close(sanctum.bonus, 18.0), "cradle={cradle}: bonus {}", sanctum.bonus);
+                assert!(close(sanctum.total, total), "cradle={cradle}: total {}", sanctum.total);
+            }
+        }
+
+        // POE-470 AC-2: the built rooms with no chest are worth their sale
+        // when the feed prices one above the floor — Torture Cages at the tier
+        // fraction (0.8) of Sadist's Den's tier-3 sale delta, a built Cradle of
+        // Creation at its own — and fall back to their grade, with the
+        // GradeFallback driver, when nothing in their model is priced on an
+        // otherwise live read.
+        #[test]
+        fn a_chestless_built_room_is_priced_by_its_sale_model() {
+            let market = |extra: &str| -> MarketInput {
+                serde_json::from_str(&format!(
+                    r#"{{"league":"Allflame","floor":10,"rooms":[
+                        {{"line":"Locus of Corruption","tier":3,"chaos":856,"saleDelta":846,
+                          "aboveFloor":true,"listings":40,"lowConfidence":false}}{extra}],
+                        "items":[]}}"#
+                ))
+                .expect("the wire mirror accepts a synthetic payload")
+            };
+            let sadists = r#",{"line":"Sadist's Den","tier":3,"chaos":50,"saleDelta":40,
+                "aboveFloor":true,"listings":40,"lowConfidence":false}"#;
+            let cradle = r#",{"line":"Cradle of Creation","tier":3,"chaos":70,"saleDelta":60,
+                "aboveFloor":true,"listings":40,"lowConfidence":false}"#;
+            // (row, market extra rooms, line, tier, Some(total) when priced)
+            let rows: [(&str, &str, &str, u8, Option<f64>); 4] = [
+                ("Sadist's Den sells above the floor", sadists, "sadists_den", 2, Some(0.8 * 40.0)),
+                ("Cradle of Creation sells above the floor", cradle, "throne_of_atziri", 3, Some(60.0)),
+                ("nothing prices Sadist's Den", "", "sadists_den", 2, None),
+                ("nothing prices Cradle of Creation", "", "throne_of_atziri", 3, None),
+            ];
+            for (row, extra, key, n, priced_total) in rows {
+                let market = market(extra);
+                assert!(market.prices_anything(), "{row}: precondition, the read is live");
+                let value = value_of(&Valued::compute(&market, &Knobs::default()), key, n);
+                let graded = value.drivers.iter().any(|d| d.kind == DriverKind::GradeFallback);
+                match priced_total {
+                    Some(total) => {
+                        assert_eq!(value.priced, Priced::Market, "{row}");
+                        assert!(!graded, "{row}: no grade driver on a priced room");
+                        assert!(close(value.total, total), "{row}: total {}", value.total);
+                        assert!(close(value.sale, total), "{row}: sale {}", value.sale);
+                    }
+                    None => {
+                        assert_eq!(value.priced, Priced::Fallback, "{row}");
+                        assert!(graded, "{row}: the grade driver carries the fallback");
+                    }
+                }
+            }
+        }
+    }
+
+    mod keep_critical {
+        use super::*;
+
+        // keep:critical — POE-470 AC-1. Silent consequence: a Cradle board
+        // that keeps Soul Catcher's price — or takes the dearer of the pair —
+        // ranks Museum of Artefacts at a plausible total the temple will never
+        // drop. Under a Cradle, Museum counts Soul Ripper even where it is the
+        // CHEAPER item, so its value falls below the no-Cradle one.
+        #[test]
+        fn a_cheaper_upgrade_lowers_a_cradle_chest() {
+            let mut market = allflame();
+            for (name, chaos) in [("Soul Catcher", 3832.0), ("Soul Ripper", 308.0)] {
+                market
+                    .items
+                    .get_mut(name)
+                    .unwrap_or_else(|| panic!("the capture prices {name}"))
+                    .chaos = chaos;
+            }
+            let museum = |cradle: bool| {
+                value_of(
+                    &Valued::compute_in(&market, &Knobs::default(), &RoomOverrides::new(), cradle),
+                    "museum_of_artefacts",
+                    3,
+                )
+            };
+
+            let without = museum(false);
+            let with = museum(true);
+
+            assert!(close(without.total, 958.0), "no Cradle: 0.25 x 3832, was {}", without.total);
+            let unique = driver(&with, DriverKind::UniqueDrop);
+            assert_eq!(unique.name, "Soul Ripper");
+            assert_eq!(unique.unit_price, Some(308.0));
+            assert!(unique.chaos.is_some_and(|c| close(c, 77.0)), "chaos {:?}", unique.chaos);
+            assert!(close(with.total, 77.0), "Cradle: 0.25 x 308, was {}", with.total);
+            assert!(with.total < without.total, "{} !< {}", with.total, without.total);
+        }
+
+        // keep:critical — POE-470 AC-1. Silent consequence: a Cradle chest
+        // whose upgraded item has no quote, valued at the BASE item's price
+        // instead, shows and ranks a number for an item the temple does not
+        // drop. The term stays listed under the upgraded name, unpriced and
+        // contributing nothing: Sanctum keeps its 18 c rarity and reads
+        // Partial; Museum, which has no other term, takes its grade.
+        #[test]
+        fn an_unquoted_upgrade_leaves_a_cradle_chest_term_unpriced() {
+            // (row, removed upgraded item, line, Some(partial total) or None for the grade)
+            let rows: [(&str, &str, &str, Option<f64>); 2] = [
+                ("rarity remains", "Mask of the Stitched Demon", "sanctum_of_immortality", Some(18.0)),
+                ("nothing remains", "Soul Ripper", "museum_of_artefacts", None),
+            ];
+            for (row, removed, key, partial) in rows {
+                let mut market = allflame();
+                assert!(market.items.remove(removed).is_some(), "{row}: the capture prices {removed}");
+
+                let value = value_of(
+                    &Valued::compute_in(&market, &Knobs::default(), &RoomOverrides::new(), true),
+                    key,
+                    3,
+                );
+
+                let unique = driver(&value, DriverKind::UniqueDrop);
+                assert_eq!(unique.name, removed, "{row}");
+                assert_eq!(unique.unit_price, None, "{row}: never the base item's price");
+                assert_eq!(unique.chaos, None, "{row}");
+                assert_eq!(value.drops, 0.0, "{row}");
+                match partial {
+                    Some(total) => {
+                        assert_eq!(value.priced, Priced::Partial, "{row}");
+                        assert!(close(value.total, total), "{row}: total {}", value.total);
+                    }
+                    None => {
+                        assert_eq!(value.priced, Priced::Fallback, "{row}");
+                        assert_eq!(
+                            driver(&value, DriverKind::GradeFallback).name,
+                            rank_of(key).label(),
+                            "{row}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    mod keep_regression {
+        use super::*;
+
+        // POE-470 AC-3: the two target lines sell rather than drop, so the
+        // Cradle context moves neither: Locus of Corruption and Doryani's
+        // Institute read the same total at every tier with and without it.
+        #[test]
+        fn the_target_lines_are_valued_the_same_with_and_without_a_cradle() {
+            let market = allflame();
+            let at = |cradle: bool| {
+                Valued::compute_in(&market, &Knobs::default(), &RoomOverrides::new(), cradle)
+            };
+            let (without, with) = (at(false), at(true));
+            for (key, t3) in [("corruption", 864.0), ("gem", 390.0)] {
+                assert!(close(value_of(&without, key, 3).total, t3), "{key} precondition");
+                for n in 1..=3 {
+                    assert_eq!(
+                        value_of(&with, key, n).total,
+                        value_of(&without, key, n).total,
+                        "{key} tier {n}"
+                    );
+                }
             }
         }
     }

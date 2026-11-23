@@ -685,6 +685,15 @@ fn priority_architect(architect: &ArchitectChoice) -> bool {
     architect.line.key() == "throne_of_atziri"
 }
 
+/// Whether a read values its chests in the Cradle context (POE-470 D3): a
+/// Cradle of Creation on `board`, or a panel kill in `offers` that builds on
+/// its line.
+#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
+pub fn cradle_in_play(board: &BoardState, offers: &[ArchitectOffer]) -> bool {
+    let _ = (board, offers);
+    false
+}
+
 /// Rank priority kills first, then by EV; rank door sets by the rule chain.
 ///
 /// See [`rules`]'s module header for the measurement behind the split. Two
@@ -4252,6 +4261,95 @@ mod tests {
                     expected: kill_groups(&[0, 1], &["A0-B0", "no door"]),
                 },
             ]);
+        }
+
+        // keep:critical — POE-470 AC-1. Silent consequence: a read that
+        // misjudges its Cradle context ranks and shows every chest room at
+        // the wrong unique's price (Mask of the Spirit Drinker's 195 c where
+        // the temple drops Mask of the Stitched Demon's 427 c, or the
+        // reverse), a plausible total the advice and the overlay both trust.
+        // The context is a Cradle of Creation on the board or a panel kill
+        // that builds on its line, at whichever tier the kill builds.
+        #[test]
+        fn a_read_values_its_chests_in_the_cradle_context_its_board_and_panel_name() {
+            use crate::temple::market::allflame;
+            use crate::temple::valuation::{DriverKind, Knobs, RoomOverrides, Valued};
+
+            let unrelated = || {
+                vec![
+                    offer("Azcapa", Upgrade, "Catalyst of Corruption"),
+                    offer("Ticaba", Change, "Storage Room"),
+                ]
+            };
+            let standing_in = |tier: u8, extra: &[(Slot, &'static str, u8)]| {
+                let mut rooms = vec![(D1, if tier == 0 { "" } else { "corruption" }, tier)];
+                rooms.extend_from_slice(extra);
+                board(&rooms, &[(D1, E1)], D1, 5)
+            };
+            let rows: Vec<(&str, BoardState, Vec<ArchitectOffer>, bool)> = vec![
+                (
+                    "Cradle of Creation on the board, unrelated offers",
+                    standing_in(1, &[(C1, "throne_of_atziri", 3)]),
+                    unrelated(),
+                    true,
+                ),
+                (
+                    "a change from filler builds Royal Meeting Room",
+                    standing_in(0, &[]),
+                    vec![offer("Tzamoto", Change, "Cradle of Creation"), unrelated().remove(0)],
+                    true,
+                ),
+                (
+                    "a change from tier 1 builds Hall of Lords",
+                    standing_in(1, &[]),
+                    vec![unrelated().remove(0), offer("Tzamoto", Change, "Cradle of Creation")],
+                    true,
+                ),
+                (
+                    "a change from tier 2 builds Cradle of Creation",
+                    standing_in(2, &[]),
+                    vec![offer("Tzamoto", Change, "Cradle of Creation"), unrelated().remove(0)],
+                    true,
+                ),
+                (
+                    "Hall of Lords on the board is no Cradle, unrelated offers",
+                    standing_in(1, &[(C1, "throne_of_atziri", 2)]),
+                    unrelated(),
+                    false,
+                ),
+                ("unrelated offers on a board with no Cradle", standing_in(1, &[]), unrelated(), false),
+                ("no offer read on a board with no Cradle", standing_in(1, &[]), Vec::new(), false),
+            ];
+
+            let market = allflame();
+            let mut failures = Vec::new();
+            for (name, state, offers, want) in &rows {
+                let cradle = cradle_in_play(state, offers);
+                if cradle != *want {
+                    failures.push(format!("{name}: cradle_in_play {cradle}, want {want}"));
+                }
+                let valued = Valued::compute_in(&market, &Knobs::default(), &RoomOverrides::new(), cradle);
+                let sanctum = valued
+                    .get("sanctum_of_immortality", Tier::new(3).expect("tier 3"))
+                    .expect("sanctum is valued");
+                let unique = sanctum
+                    .drivers
+                    .iter()
+                    .find(|d| d.kind == DriverKind::UniqueDrop)
+                    .expect("sanctum has a chest driver");
+                let (want_name, want_chaos) = if *want {
+                    ("Mask of the Stitched Demon", 106.75)
+                } else {
+                    ("Mask of the Spirit Drinker", 48.75)
+                };
+                if unique.name != want_name || unique.chaos != Some(want_chaos) {
+                    failures.push(format!(
+                        "{name}: sanctum counts {} at {:?}, want {want_name} at {want_chaos}",
+                        unique.name, unique.chaos
+                    ));
+                }
+            }
+            assert!(failures.is_empty(), "\n{}", failures.join("\n"));
         }
     }
 
