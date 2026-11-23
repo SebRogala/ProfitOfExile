@@ -69,7 +69,8 @@ what is going on.
 ## Consequences
 
 - A press on a calibrated screen, or one where any banked probe matches, runs
-  no sweep and stays in milliseconds.
+  no sweep. The milliseconds target applies to the temple and gem probes;
+  measurement awaits the Operator's Windows smoke.
 - A screen setup that never shows the sheet costs one sweep, not one per press.
 - A wrong placement stays wrong until Recalibrate or a setup change; that is
   the manual fix (ADR-025 clause 4).
