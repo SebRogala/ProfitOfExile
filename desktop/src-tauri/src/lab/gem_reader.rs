@@ -2,7 +2,8 @@
 //! match selects the pressed frame, preparing a context if needed. The three
 //! slot icons are matched (`gem_icons`); when the cursor is on a slot,
 //! the tooltip band of the same frame is OCR'd and its name overrides that
-//! slot. Only certain slots reach the held gems and the server.
+//! slot. A certain slot is held as its name; an uncertain one, read under
+//! complete references, as its best candidate, flagged in the read prompt.
 
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
@@ -219,14 +220,18 @@ pub(crate) struct LabGemRead {
 }
 
 impl LabGemRead {
-    /// The certain names, left to right, each once.
-    pub(crate) fn certain_names(&self) -> Vec<String> {
+    /// The held names, left to right, each once: every certain name and,
+    /// when `hold_best`, every uncertain slot's best candidate.
+    pub(crate) fn held_names(&self, hold_best: bool) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
         for slot in &self.slots {
-            if let GemSlot::Certain { name, .. } = slot {
-                if !names.contains(name) {
-                    names.push(name.clone());
-                }
+            let name = match slot {
+                GemSlot::Certain { name, .. } => Some(name),
+                GemSlot::Uncertain { candidates } if hold_best => candidates.first().map(|c| &c.name),
+                _ => None,
+            };
+            if let Some(name) = name.filter(|name| !names.contains(name)) {
+                names.push(name.clone());
             }
         }
         names
@@ -386,12 +391,20 @@ fn read_gem_frame_with_vocab(
 }
 
 /// Store `read` (merged over the context's previous read) as `last_gem_read`
-/// and make its certain names the held gems, if the context `captured` is
+/// and make its held names the held gems, if the context `captured` is
 /// still armed and the vocabulary generation `vocab_gen` is still current
 /// (r2-H1). The status is built after the `detected_gems` guard is released
 /// (`build_status` takes it).
 pub(crate) fn commit_gem_read(state: &AppState, captured: u64, vocab_gen: u64, read: &LabGemRead) -> Option<GemCommit> {
     let lab = &state.lab_scan;
+    // Incomplete references may lack the true gem, making the best candidate
+    // its sibling, so only complete ones hold an uncertain slot. Read from the
+    // installed vocabulary, not the press's: a slot classified just before a
+    // complete reinstall is held (accepted trade-off).
+    let hold_best = gem_vocab::current(lab)
+        .filter(|vocab| vocab.generation == vocab_gen)
+        .and_then(|vocab| vocab.refs)
+        .is_some_and(|refs| !refs.incomplete);
     let (names, replaced, stored, prompt_changed) = {
         let mut gems = lab.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
         if captured == 0 || lab.gem_context.load(Ordering::SeqCst) != captured
@@ -408,7 +421,7 @@ pub(crate) fn commit_gem_read(state: &AppState, captured: u64, vocab_gen: u64, r
             *last = Some(stored.clone());
             stored
         };
-        let names = stored.certain_names();
+        let names = stored.held_names(hold_best);
         let replaced = *gems != names;
         if replaced {
             *gems = names.clone();

@@ -16,12 +16,13 @@ saved with the POE-455 patch. The tooltips named Toxic Rain of Sporeburst,
 Fire Trap of Blasting and Detonate Dead of Chain Reaction, left to right.
 The regression test requires all three exact names with certainty.
 
-The missing-reference and washed-sibling tests extend this frame. The Rust
-calibration helper `gem_icon_pair_rmse_report`, run by the kept sibling test,
-also measures the 1080p/4K/16:10 frames and 13 sibling pairs under gold/white
-washes, offsets and scales. Run it with
-`cargo test --lib a_washed_sibling_icon -- --nocapture`. The certainty
-constants and their measured derivation live in `lab::gem_icons`.
+The missing-reference and washed-sibling tests extend this frame: a missing
+reference or a washed sibling reads uncertain (held as its flagged best
+candidate), never certain as another gem. The ignored Rust calibration report
+`gem_icon_pair_rmse_report` also measures the 1080p/4K/16:10 frames and 13
+sibling pairs under gold/white washes, offsets and scales. Run it with
+`cargo test --lib gem_icon_pair_rmse_report -- --ignored --nocapture`. The
+certainty margin and its measured derivation live in `lab::gem_icons`.
 
 ## `gem-sets.json`
 

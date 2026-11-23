@@ -26,8 +26,7 @@ const FINE_TOP: usize = 25;
 /// Candidates an uncertain slot reports.
 const TOP_CANDIDATES: usize = 3;
 /// A slot is certain when its second-best reference (in the chosen set) scores
-/// at least this many times its best (C2), and its best is within
-/// [`SLOT_RMSE_MAX`].
+/// at least this many times its best (C2).
 ///
 /// Rust calibration (2026-11-23, `gem_icon_pair_rmse_report`): 361 rows,
 /// including 1080p/4K/16:10, the reported frame with and without its true
@@ -36,16 +35,13 @@ const TOP_CANDIDATES: usize = 3;
 /// 1.001-1.371; the maximum is Massacre's 50% gold wash (RMSE 18.766).
 /// The 12 clean real slots have margins >=1.428. Choose 1.4 between these
 /// extrema: an RMSE cut alone would reject clean slots before that sibling.
-/// Together the cuts withhold 115 of the 308 correct nearest matches in
-/// this degraded sample; they need a tooltip instead of an icon guess.
+/// Known limit: 1.4 leaves only ~2% headroom under the closest clean real
+/// slot (1.428), so a slightly softer real capture can read uncertain.
+/// The missing Chain Reaction art reads Scavenging at margin 1.249. The
+/// margin also leaves 109 of the 308 correct nearest matches in this
+/// degraded sample uncertain; under complete references the reader holds
+/// each uncertain slot as its flagged best candidate.
 pub(crate) const UNCERTAIN_MARGIN: f32 = 1.4;
-/// Rust sample: clean real slots score 13.408-21.122; omitting Chain
-/// Reaction yields Scavenging at 27.690. Choose 24 below their midpoint
-/// (24.406), retaining the clean slots and withholding the missing art.
-/// Across all rows, correct nearest scores span 0.545-37.773 and wrong
-/// scores 18.385-37.539; this ceiling and the margin reject all 53 wrong
-/// matches, retaining certainty for all 12 clean real slots.
-pub(crate) const SLOT_RMSE_MAX: f32 = 24.0;
 
 /// The presence gate: above this sum of the three slots' best RMSE (chosen
 /// set, 48 px) the frame holds no gem panel and the reader writes nothing.
@@ -275,7 +271,7 @@ fn classify_ranked(refs: &GemIconRefs, ranked: &[(GemSet, [Vec<Candidate>; 3], f
     let other_joint = ranked.iter().find(|r| r.0 != *set).map(|r| r.2);
     let slots = lists.clone().map(|list| {
         let margin = list.get(1).map_or(f32::INFINITY, |second| second.rmse / list[0].rmse);
-        if margin >= UNCERTAIN_MARGIN && list[0].rmse <= SLOT_RMSE_MAX && !refs.incomplete {
+        if margin >= UNCERTAIN_MARGIN && !refs.incomplete {
             IconSlot::Certain { name: list[0].name.clone(), margin }
         } else {
             IconSlot::Uncertain { candidates: list.into_iter().take(TOP_CANDIDATES).collect() }
@@ -598,7 +594,6 @@ pub(crate) mod tests {
         /// washed icon is held as the other variant and priced as that gem.
         #[test]
         fn a_washed_sibling_icon_is_its_own_gem_or_uncertain_never_another_gem_certain() {
-            gem_icon_pair_rmse_report();
             let mut wrong = Vec::new();
             for amount in [0.3, 0.35, 0.4, 0.45, 0.5] {
                 for colour in [GOLD, WHITE] {
@@ -624,8 +619,10 @@ pub(crate) mod tests {
         }
     }
 
-    /// Rust measurement sample retained by the kept sibling sweep's nocapture output.
-    /// Run `cargo test --lib a_washed_sibling_icon -- --nocapture` for calibration.
+    /// Rust measurement sample behind the certainty constants; it asserts
+    /// nothing. Run `cargo test --lib gem_icon_pair_rmse_report -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "calibration report, minutes long"]
     fn gem_icon_pair_rmse_report() {
         let refs = crate::lab::gem_icon_refs::tests::fixture_refs_transfigured();
         // The report repeats clean filler crops across hundreds of rows. Reuse
@@ -664,7 +661,7 @@ pub(crate) mod tests {
                 nearest = if list[0].name == truth { "correct" } else { "wrong" },
             );
         };
-        println!("SLOT_RMSE_MAX {SLOT_RMSE_MAX}, UNCERTAIN_MARGIN {UNCERTAIN_MARGIN}; best, second-best and margin measured below");
+        println!("UNCERTAIN_MARGIN {UNCERTAIN_MARGIN}; best, second-best and margin measured below");
         println!("{:<60} | {:<38} | {:>6} | {:>6} | {:>5} | verdict", "case", "best", "best", "2nd", "margin");
         let fixture = fixture_frame();
         for (label, frame, slice) in [

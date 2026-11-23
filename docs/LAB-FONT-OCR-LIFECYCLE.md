@@ -95,16 +95,15 @@ The selected frame follows the POE-397 icon/tooltip flow:
    measurements in its doc comment) a frame judged on a complete reference
    population is "no gem panel": logged, nothing written, no tooltip read.
 3. **Certain or uncertain.** A slot is certain when its second-best reference
-   scores at least `UNCERTAIN_MARGIN` times its best and its best score is at
-   most `SLOT_RMSE_MAX`, otherwise uncertain with its top 3 candidates. The
-   constants in `lab::gem_icons` own the numerical rule and its Rust sample
-   derivation. The absolute ceiling withholds the reported missing-reference
-   sibling match; the margin withholds washed siblings. While references are
-   `incomplete` (some art
+   scores at least `UNCERTAIN_MARGIN` times its best, otherwise uncertain with
+   its top 3 candidates. The constant in `lab::gem_icons` owns the numerical
+   rule, its Rust sample derivation and its known headroom limit. The margin
+   keeps washed siblings and the reported missing-reference sibling match
+   from reading certain. While references are `incomplete` (some art
    failed to load, not a 404) every slot is uncertain, and a frame above the
    gate is "icon evidence unavailable", not "no gem panel": the true gems may
    be the ones that failed. With no references loaded at all the same holds.
-   Either way no icon slot is guessed and the hover read below still runs.
+   Either way no icon slot is held and the hover read below still runs.
 4. **Hover.** Only when the press cursor lies on a slot, the `lab.gem` band of
    the same frame is OCR'd (Lanczos3 2×, then bilinear when that yields no
    candidates) and matched against the tooltip vocabulary; a match makes that
@@ -113,12 +112,15 @@ The selected frame follows the POE-397 icon/tooltip flow:
    tooltip read of that slot can replace it within the same context.
 
 `commit_gem_read` stores the read, merged over the context's previous read, in
-`last_gem_read` and makes its certain names the held gems, only while the
+`last_gem_read` and makes its held names the held gems, only while the
 press's token and the vocabulary generation are both still current. A changed
 list emits `gems-cleared`, `gem-detected` per name and the status, and is sent
-to the server; an unchanged one is only logged. Uncertain slots never reach the
-held gems or the server; showing their candidates is deferred (no design).
-Instead the stored read's uncertain slots go to the read prompt
+to the server; an unchanged one is only logged. The held names are the certain
+names and, while the installed references are complete, each uncertain slot's
+best candidate (a flagged pick); the server receives flagged picks like
+certain ones. Under incomplete references an uncertain slot holds nothing.
+Showing the other candidates is deferred (no design). The flag stays local:
+the stored read's uncertain slots go to the read prompt
 (`ReadPromptSnapshot.gemUncertain`, set under the commit's guard): it names
 them and asks the player to wait for the Font's reveal, then press the read key
 again or hover the gem and press. A later read that resolves them, and any arm
