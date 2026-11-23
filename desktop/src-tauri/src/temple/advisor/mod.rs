@@ -682,8 +682,7 @@ fn conditional_second_door(
 }
 
 fn priority_architect(architect: &ArchitectChoice) -> bool {
-    architect.architect_name.eq_ignore_ascii_case("Xipocado")
-        || architect.line.key() == "throne_of_atziri"
+    architect.line.key() == "throne_of_atziri"
 }
 
 /// Rank priority kills first, then by EV; rank door sets by the rule chain.
@@ -696,7 +695,7 @@ fn priority_architect(architect: &ArchitectChoice) -> bool {
 ///    — live board 8 is why. The rest are ordered by EV, and those inside
 ///    [`rules::noise_margin`] of the leader are re-ordered by the architect
 ///    rules — R0's "both architects are worthless, the kill is free" is exactly
-///    this band. Resolved Xipocado and Cradle-line kills are then stably
+///    this band. Resolved Cradle-line kills are then stably
 ///    promoted above this ordering, including R4's veto (POE-465).
 /// 2. **The door set**, within each architect, by [`DoorKey`] with EV breaking
 ///    its ties.

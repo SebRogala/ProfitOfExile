@@ -242,8 +242,8 @@ pub enum Reason {
     GradeFallback,
     /// The rollout separated the architects beyond the noise band.
     ExpectedValue,
-    /// Xipocado's kill, or one that builds on the Cradle of Creation line,
-    /// ranks first whatever the rest of the chain prefers.
+    /// A kill that builds on the Cradle of Creation line ranks first
+    /// whatever the rest of the chain prefers.
     ArchitectPriority,
 }
 
@@ -341,7 +341,7 @@ impl Reason {
             }
             Reason::ExpectedValue => "architect ranked on expected value; architect tie-breaks did not decide it".to_string(),
             Reason::ArchitectPriority => {
-                "priority: Xipocado or the Cradle of Creation line — kill this architect first"
+                "priority: Cradle of Creation — kill this architect so Xipocado builds it"
                     .to_string()
             }
         }

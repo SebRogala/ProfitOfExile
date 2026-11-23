@@ -161,6 +161,18 @@ impl RoomLine {
         }
     }
 
+    fn built_name(self, tier: Tier) -> Option<&'static str> {
+        // In 3.30 every Queen-line tier builds Cradle of Creation; `name`
+        // retains legacy tier names for parsing old panels.
+        self.name(tier).map(|name| {
+            if self.key == "throne_of_atziri" {
+                self.tiers[2]
+            } else {
+                name
+            }
+        })
+    }
+
     /// Ranking of the line's tier-3 room, paired with that name on offers so
     /// it is not mistaken for the built room's tier.
     pub fn rank(self) -> RoomRank {
@@ -902,7 +914,7 @@ pub fn resolve_offer(printed_target: &str, current_tier: Tier) -> Option<Resolve
     Some(ResolvedOffer {
         line,
         built_tier: built,
-        display_name: line.name(built)?,
+        display_name: line.built_name(built)?,
     })
 }
 
@@ -964,7 +976,7 @@ pub fn resolve_offer_for(
         OfferKind::Change => OfferResolution::UnknownCurrentTier,
         OfferKind::Upgrade => {
             let built = identity.tier();
-            match line.name(built) {
+            match line.built_name(built) {
                 Some(display_name) => OfferResolution::Built(ResolvedOffer {
                     line,
                     built_tier: built,
