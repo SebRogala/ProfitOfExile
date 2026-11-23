@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -579,6 +580,66 @@ func TestItemAsset_followsThe330PatchNotes(t *testing.T) {
 				t.Errorf("category = %q, want %q", item.Category, tc.wantCategory)
 			}
 		})
+	}
+}
+
+// royalVisageID is the Incursion Uber fragment the 3.30 regeneration dropped
+// from both committed assets (POE-468), so the exchange showed the humanized id
+// with no icon.
+const (
+	royalVisageID      = "Metadata/Items/MapFragments/CurrencyIncursionUberFragment"
+	royalVisageIconURL = "https://www.poewiki.net/images/9/94/Royal_Visage_inventory_icon.png"
+)
+
+// keep:happy
+func TestKeepHappy_LookupItem_royalVisage_returnsItsNameFragmentsCategoryAndWikiIcon(t *testing.T) {
+	item, ok := LookupItem(royalVisageID)
+
+	if !ok {
+		t.Fatalf("LookupItem(%q) reported a miss, want the Royal Visage asset entry", royalVisageID)
+	}
+	want := Item{Name: "Royal Visage", IconURL: royalVisageIconURL, Category: "Fragments"}
+	if item != want {
+		t.Errorf("LookupItem(%q) = %+v, want %+v", royalVisageID, item, want)
+	}
+}
+
+// keep:regression — POE-468: the exchange rendered "Incursion Uber Fragment"
+// with no icon for Royal Visage.
+func TestKeepRegression_royalVisage_showsItsInGameNameAndACachedIconPath(t *testing.T) {
+	if got := DisplayName(royalVisageID); got != "Royal Visage" {
+		t.Errorf("DisplayName(%q) = %q, want %q", royalVisageID, got, "Royal Visage")
+	}
+
+	path, ok := IconPath(royalVisageID)
+
+	if !ok {
+		t.Fatalf("IconPath(%q) reported no icon, want the cached icon route", royalVisageID)
+	}
+	want := "/icon/currency-exchange/Metadata%2FItems%2FMapFragments%2FCurrencyIncursionUberFragment"
+	if path != want {
+		t.Errorf("IconPath(%q) = %q, want %q", royalVisageID, path, want)
+	}
+}
+
+// keep:critical — silent consequence: the deploy-time pre-seed map
+// (itemdata/icon-urls.json) looks valid while omitting an icon the runtime
+// metadata advertises, so the server's icon cache is never seeded for it.
+func TestKeepCritical_royalVisageIcon_isInBothTheRuntimeMapAndThePreSeedMap(t *testing.T) {
+	if got, ok := IconURLs()[royalVisageID]; !ok || got != royalVisageIconURL {
+		t.Errorf("IconURLs()[%q] = %q (present %v), want %q", royalVisageID, got, ok, royalVisageIconURL)
+	}
+
+	raw, err := os.ReadFile("itemdata/icon-urls.json")
+	if err != nil {
+		t.Fatalf("read pre-seed map: %v", err)
+	}
+	var preSeed map[string]string
+	if err := json.Unmarshal(raw, &preSeed); err != nil {
+		t.Fatalf("unmarshal pre-seed map: %v", err)
+	}
+	if got, ok := preSeed[royalVisageID]; !ok || got != royalVisageIconURL {
+		t.Errorf("icon-urls.json[%q] = %q (present %v), want %q", royalVisageID, got, ok, royalVisageIconURL)
 	}
 }
 
