@@ -1080,6 +1080,36 @@ mod tests {
         }
     }
 
+    mod keep_critical {
+        use super::*;
+
+        /// Silent consequence without it: a later unhovered press replaces
+        /// the name the tooltip printed with the icon's sibling guess, and
+        /// the overlay prices the wrong variant.
+        #[test]
+        fn a_tooltip_resolved_slot_stays_resolved_when_a_later_icon_match_is_certain() {
+            let state = test_app_state();
+            let token = arm_gem_context(&state);
+            with_refs(&state, fixture_refs().clone());
+            let frame = fixture_frame();
+            committed(press(&state, token, &frame, centre_of(1), &["Reave of Ruin"])).unwrap();
+
+            let later = committed(press(&state, token, &frame, None, &[])).unwrap();
+
+            assert_eq!(later.names, ["Blade Vortex of the Scythe", "Reave of Ruin", "Blade Flurry of Incision"]);
+            assert!(matches!(&later.read.slots[1], GemSlot::Certain { source: SlotSource::Tooltip, .. }), "{:?}", later.read);
+
+            with_refs(&state, Arc::new(fixture_refs_marked_incomplete()));
+            let uncertain = committed(press(&state, token, &frame, None, &[])).unwrap();
+            assert_eq!(uncertain.names, ["Reave of Ruin"]);
+            assert_eq!(held(&state), ["Reave of Ruin"]);
+
+            let next = committed(press(&state, token, &frame, centre_of(1), &["Reave of Refraction"])).unwrap();
+            assert_eq!(next.names, ["Reave of Refraction"]);
+            assert_eq!(held(&state), ["Reave of Refraction"]);
+        }
+    }
+
     #[test]
     fn an_uncertain_blend_keeps_its_candidates_out_of_the_held_gems() {
         let state = test_app_state();

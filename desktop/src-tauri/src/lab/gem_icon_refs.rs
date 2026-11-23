@@ -166,6 +166,24 @@ pub(crate) mod tests {
         REFS.get_or_init(|| std::sync::Arc::new(fixture_build().0))
     }
 
+    /// The transfigured half alone: the population a Normal-mode Font read
+    /// matches against (its dictionary has no normal names).
+    pub(crate) fn fixture_refs_transfigured() -> &'static GemIconRefs {
+        static REFS: OnceLock<GemIconRefs> = OnceLock::new();
+        REFS.get_or_init(|| {
+            let dict = GemDictionary { normal: Vec::new(), transfigured: gem_sets().transfigured };
+            build_refs(&dict, |name| art_outcome(route(name))).0
+        })
+    }
+
+    /// The transfigured half without `missing`, as a league whose new gem the
+    /// icon route does not know yet.
+    pub(crate) fn fixture_refs_transfigured_without(missing: &str) -> GemIconRefs {
+        let transfigured = gem_sets().transfigured.into_iter().filter(|n| n != missing).collect();
+        let dict = GemDictionary { normal: Vec::new(), transfigured };
+        build_refs(&dict, |name| art_outcome(route(name))).0
+    }
+
     /// The fixture refs with one eligible name's art failing to load.
     pub(crate) fn fixture_refs_marked_incomplete() -> GemIconRefs {
         let sets = gem_sets();

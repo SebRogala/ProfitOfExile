@@ -423,4 +423,255 @@ pub(crate) mod tests {
         let IconRead::Panel { slots, .. } = &read else { panic!("{read:?}") };
         assert!(slots.iter().all(|s| matches!(s, IconSlot::Uncertain { .. })), "{read:?}");
     }
+
+    /// What one slot of a frame is made to suffer before it is read.
+    #[derive(Debug, Clone, Copy)]
+    enum Degrade {
+        Clean,
+        /// Every pixel of the slot's crop moved `amount` of the way to the
+        /// colour, as a selection or hover glow would.
+        Wash([u8; 3], f32),
+        /// The slot rect read `dx, dy` capture px off the icon.
+        Offset(i32, i32),
+        /// The icon drawn at this factor of the slot size.
+        Scale(f32),
+    }
+
+    const GOLD: [u8; 3] = [230, 180, 60];
+    const WHITE: [u8; 3] = [255, 255, 255];
+    /// Slots 1 and 2 of a synthetic frame: clean, so the frame passes the
+    /// presence gate on its transfigured set.
+    const FILLER: [&str; 2] = ["Blade Vortex of the Scythe", "Reave of Refraction"];
+
+    /// The sibling pairs whose reference icons are closest (Lab RMSE of the
+    /// art composited on the slot interior, 13.5-18.7), Detonate Dead being
+    /// the reported one.
+    const PAIRS: [[&str; 2]; 13] = [
+        ["Detonate Dead of Chain Reaction", "Detonate Dead of Scavenging"],
+        ["Boneshatter of Carnage", "Boneshatter of Complex Trauma"],
+        ["Artillery Ballista of Cross Strafe", "Artillery Ballista of Focus Fire"],
+        ["Earthshatter of Fragility", "Earthshatter of Prominence"],
+        ["Perforate of Bloodshed", "Perforate of Duality"],
+        ["Lacerate of Butchering", "Lacerate of Haemorrhage"],
+        ["Summon Flame Golem of Hordes", "Summon Flame Golem of the Meteor"],
+        ["Summon Stone Golem of Hordes", "Summon Stone Golem of Safeguarding"],
+        ["Volatile Dead of Confinement", "Volatile Dead of Seething"],
+        ["Blade Trap of Greatswords", "Blade Trap of Laceration"],
+        ["Toxic Rain of Sporeburst", "Toxic Rain of Withering"],
+        ["Rain of Arrows of Artillery", "Rain of Arrows of Saturation"],
+        ["Ethereal Knives of Lingering Blades", "Ethereal Knives of the Massacre"],
+    ];
+
+    /// The reported frame's slot row (`font-slots-detonate-dead-chain-reaction.png`,
+    /// see the fixture README), its slot rects and what the game's tooltips named.
+    const REPORTED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/lab/font-slots-detonate-dead-chain-reaction.png");
+    const REPORTED_RECTS: [[i32; 4]; 3] = [[58, 42, 49, 49], [158, 42, 49, 49], [259, 42, 49, 49]];
+    const REPORTED_TRUTH: [&str; 3] = ["Toxic Rain of Sporeburst", "Fire Trap of Blasting", "Detonate Dead of Chain Reaction"];
+
+    fn reported_frame() -> RgbaImage {
+        image::open(REPORTED).unwrap_or_else(|e| panic!("{REPORTED}: {e}")).to_rgba8()
+    }
+
+    /// Move every pixel of `rect`'s crop (the rect plus `SlotImage`'s margin)
+    /// `amount` of the way to `colour`.
+    fn wash(frame: &mut RgbaImage, rect: [i32; 4], colour: [u8; 3], amount: f32) {
+        let m = (rect[2] as f32 * MARGIN_PX as f32 / CANONICAL_PX as f32).round() as i32;
+        let (w, h) = (frame.width() as i32, frame.height() as i32);
+        for y in (rect[1] - m).max(0)..(rect[1] + rect[3] + m).min(h) {
+            for x in (rect[0] - m).max(0)..(rect[0] + rect[2] + m).min(w) {
+                let p = frame.get_pixel_mut(x as u32, y as u32);
+                for c in 0..3 {
+                    p.0[c] = (p.0[c] as f32 * (1.0 - amount) + colour[c] as f32 * amount).round() as u8;
+                }
+            }
+        }
+    }
+
+    /// `rects` with slot 3's rect moved or its crop washed by `degrade`
+    /// (`Scale` is drawn, not applied here).
+    fn degrade_slot_3(frame: &mut RgbaImage, rects: [[i32; 4]; 3], degrade: Degrade) -> [[i32; 4]; 3] {
+        let mut out = rects;
+        match degrade {
+            Degrade::Wash(colour, amount) => wash(frame, rects[2], colour, amount),
+            Degrade::Offset(dx, dy) => out[2] = [rects[2][0] + dx, rects[2][1] + dy, rects[2][2], rects[2][3]],
+            Degrade::Clean | Degrade::Scale(_) => {}
+        }
+        out
+    }
+
+    /// A 1080p frame of the reference art: `FILLER` clean in slots 1-2 and
+    /// `gem` in slot 3 under `degrade`, with the rects to read.
+    fn synthetic_frame(gem: &str, degrade: Degrade) -> (DynamicImage, [[i32; 4]; 3]) {
+        let dir = std::path::Path::new(crate::lab::gem_icon_refs::tests::ART_DIR);
+        let rects = placements_for(Some(&screen(1920, 1080, 0.9))).lab.gem_slots;
+        let mut canvas = RgbaImage::from_pixel(1920, 1080, image::Rgba([12, 10, 9, 255]));
+        for (i, name) in [FILLER[0], FILLER[1], gem].into_iter().enumerate() {
+            let art = crate::gem_art::read_art(dir, name).unwrap_or_else(|| panic!("no art for {name} in {dir:?}"));
+            let rect = rects[i];
+            let size = match degrade {
+                Degrade::Scale(f) if i == 2 => (rect[2] as f32 * f).round() as i32,
+                _ => rect[2],
+            };
+            let icon = image::imageops::resize(&art, size as u32, size as u32, FilterType::Lanczos3);
+            let (x, y) = (rect[0] + (rect[2] - size) / 2, rect[1] + (rect[3] - size) / 2);
+            image::imageops::overlay(&mut canvas, &icon, x as i64, y as i64);
+        }
+        let rects = degrade_slot_3(&mut canvas, rects, degrade);
+        (DynamicImage::ImageRgba8(canvas), rects)
+    }
+
+    /// The reported frame with slot 3 under `degrade` (`Scale` unsupported).
+    fn reported_degraded(degrade: Degrade) -> (DynamicImage, [[i32; 4]; 3]) {
+        let mut frame = reported_frame();
+        let rects = degrade_slot_3(&mut frame, REPORTED_RECTS, degrade);
+        (DynamicImage::ImageRgba8(frame), rects)
+    }
+
+    /// The gem slot `i` is called certain as, when that is not `truth`.
+    fn wrong_certain(read: &IconRead, i: usize, truth: &str) -> Option<String> {
+        let IconRead::Panel { slots, .. } = read else { return None };
+        match &slots[i] {
+            IconSlot::Certain { name, .. } if name != truth => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    const WASHES: [Degrade; 4] =
+        [Degrade::Wash(GOLD, 0.4), Degrade::Wash(GOLD, 0.5), Degrade::Wash(WHITE, 0.4), Degrade::Wash(WHITE, 0.5)];
+
+    mod keep_regression {
+        use super::*;
+        use crate::lab::gem_icon_refs::tests::fixture_refs_transfigured;
+
+        #[test]
+        fn the_reported_frame_reads_detonate_dead_of_chain_reaction_in_slot_3() {
+            let (frame, rects) = reported_degraded(Degrade::Clean);
+
+            let read = classify_slots(fixture_refs_transfigured(), &slots_of(&frame, rects));
+
+            eprintln!("reported: {read:?}");
+            assert_eq!(verdict(&read), Some((GemSet::Transfigured, REPORTED_TRUTH.map(String::from).to_vec(), true)), "{read:?}");
+        }
+
+    }
+
+    mod keep_critical {
+        use super::*;
+        use crate::lab::gem_icon_refs::tests::fixture_refs_transfigured;
+
+        /// Silent consequence without it: a gem the references lack (a new
+        /// league's) is held as its sibling and priced as that gem.
+        #[test]
+        fn a_slot_whose_gem_has_no_reference_is_not_read_as_its_sibling_certain() {
+            let refs = crate::lab::gem_icon_refs::tests::fixture_refs_transfigured_without(REPORTED_TRUTH[2]);
+            let (frame, rects) = reported_degraded(Degrade::Clean);
+
+            let read = classify_slots(&refs, &slots_of(&frame, rects));
+
+            let IconRead::Panel { slots, .. } = &read else { panic!("{read:?}") };
+            assert!(matches!(&slots[2], IconSlot::Uncertain { .. }), "{:?}", slots[2]);
+        }
+
+        /// Silent consequence without it: across the closest sibling pairs, a
+        /// washed icon is held as the other variant and priced as that gem.
+        #[test]
+        fn a_washed_sibling_icon_is_its_own_gem_or_uncertain_never_another_gem_certain() {
+            gem_icon_pair_rmse_report();
+            let mut wrong = Vec::new();
+            for amount in [0.3, 0.35, 0.4, 0.45, 0.5] {
+                for colour in [GOLD, WHITE] {
+                    let (frame, rects) = reported_degraded(Degrade::Wash(colour, amount));
+                    let read = classify_slots(fixture_refs_transfigured(), &slots_of(&frame, rects));
+                    assert!(matches!(read, IconRead::Panel { .. }), "reported {colour:?} {amount}: {read:?}");
+                    if let Some(name) = wrong_certain(&read, 2, REPORTED_TRUTH[2]) {
+                        wrong.push(format!("reported {colour:?} {amount}: certain {name}"));
+                    }
+                }
+            }
+            for gem in PAIRS.into_iter().flatten() {
+                for degrade in WASHES {
+                    let (frame, rects) = synthetic_frame(gem, degrade);
+                    let read = classify_slots(fixture_refs_transfigured(), &slots_of(&frame, rects));
+                    assert!(matches!(read, IconRead::Panel { .. }), "{gem} {degrade:?}: {read:?}");
+                    if let Some(name) = wrong_certain(&read, 2, gem) {
+                        wrong.push(format!("{gem} {degrade:?}: certain {name}"));
+                    }
+                }
+            }
+            assert!(wrong.is_empty(), "a wrong gem read as certain: {wrong:#?}");
+        }
+    }
+
+    /// Rust measurement sample retained by the kept sibling sweep's nocapture output.
+    fn gem_icon_pair_rmse_report() {
+        let refs = crate::lab::gem_icon_refs::tests::fixture_refs_transfigured();
+        let row = |population: &GemIconRefs, label: &str, truth: &str, frame: &DynamicImage, rects: [[i32; 4]; 3], i: usize| {
+            let slots = slots_of(frame, rects);
+            let list = rank(&population.transfigured, &slots[i]);
+            let read = classify_slots(population, &slots);
+            let verdict = match &read {
+                IconRead::Panel { slots, .. } => match &slots[i] {
+                    IconSlot::Certain { name, .. } if name == truth => "certain-right".to_string(),
+                    IconSlot::Certain { name, .. } => format!("CERTAIN-WRONG({name})"),
+                    IconSlot::Uncertain { .. } => "uncertain".to_string(),
+                },
+                IconRead::NoPanel { .. } => "no-panel".to_string(),
+                IconRead::Unavailable { .. } => "unavailable".to_string(),
+            };
+            println!(
+                "{label:<60} | {best:<38} | {b:6.3} | {r:6.3} | {m:5.3} | nearest-{nearest} | {verdict}",
+                best = list[0].name,
+                b = list[0].rmse,
+                r = list[1].rmse,
+                m = list[1].rmse / list[0].rmse,
+                nearest = if list[0].name == truth { "correct" } else { "wrong" },
+            );
+        };
+        println!("UNCERTAIN_MARGIN {UNCERTAIN_MARGIN}; best, second-best and margin measured below");
+        println!("{:<60} | {:<38} | {:>6} | {:>6} | {:>5} | verdict", "case", "best", "best", "2nd", "margin");
+        let fixture = fixture_frame();
+        for (label, frame, slice) in [
+            ("font-gems-1080p", fixture.clone(), screen(1920, 1080, 0.9)),
+            ("font-gems 4K", fixture.resize_exact(3840, 2160, FilterType::Lanczos3), screen(3840, 2160, 1.8)),
+        ] {
+            let rects = placements_for(Some(&slice)).lab.gem_slots;
+            for (i, truth) in TRUTH.into_iter().enumerate() {
+                row(refs, format!("{label} slot {}", i + 1).as_str(), truth, &frame, rects, i);
+            }
+        }
+        let from = placements_for(Some(&screen(1920, 1080, 0.9))).lab.font;
+        let slice = screen(1920, 1200, 1.0);
+        let to = placements_for(Some(&slice)).lab.font;
+        let panel = fixture.crop_imm(from[0] as u32, from[1] as u32, from[2] as u32, from[3] as u32)
+            .resize_exact(to[2] as u32, to[3] as u32, FilterType::Lanczos3);
+        let mut canvas = DynamicImage::new_rgb8(1920, 1200);
+        image::imageops::overlay(&mut canvas, &panel, to[0] as i64, to[1] as i64);
+        for (i, truth) in TRUTH.into_iter().enumerate() {
+            row(refs, &format!("font-gems 16:10 slot {}", i + 1), truth, &canvas, placements_for(Some(&slice)).lab.gem_slots, i);
+        }
+        let missing = crate::lab::gem_icon_refs::tests::fixture_refs_transfigured_without(REPORTED_TRUTH[2]);
+        let (frame, rects) = reported_degraded(Degrade::Clean);
+        row(&missing, "reported missing Chain Reaction", REPORTED_TRUTH[2], &frame, rects, 2);
+        for degrade in [Degrade::Clean, Degrade::Offset(3, 3), Degrade::Offset(-3, -3)]
+            .into_iter()
+            .chain([0.2, 0.3, 0.4, 0.5].into_iter().flat_map(|a| [Degrade::Wash(GOLD, a), Degrade::Wash(WHITE, a)]))
+        {
+            let (frame, rects) = reported_degraded(degrade);
+            if matches!(degrade, Degrade::Clean) {
+                for i in 0..2 {
+                    row(refs, format!("reported slot {}", i + 1).as_str(), REPORTED_TRUTH[i], &frame, rects, i);
+                }
+            }
+            row(refs, format!("reported slot 3 {degrade:?}").as_str(), REPORTED_TRUTH[2], &frame, rects, 2);
+        }
+        let degrades = [Degrade::Clean, Degrade::Offset(3, 3), Degrade::Offset(-3, -3), Degrade::Scale(0.94), Degrade::Scale(1.06)]
+            .into_iter()
+            .chain([0.2, 0.3, 0.4, 0.5].into_iter().flat_map(|a| [Degrade::Wash(GOLD, a), Degrade::Wash(WHITE, a)]));
+        for degrade in degrades {
+            for gem in PAIRS.into_iter().flatten() {
+                let (frame, rects) = synthetic_frame(gem, degrade);
+                row(refs, format!("{gem} {degrade:?}").as_str(), gem, &frame, rects, 2);
+            }
+        }
+    }
 }
