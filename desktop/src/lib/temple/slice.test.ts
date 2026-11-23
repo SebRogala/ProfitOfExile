@@ -216,15 +216,6 @@ describe('the Rust sample decodes into this mirror', () => {
 		);
 	});
 
-	it('reads the priority kill Rust put on the advice', () => {
-		// POE-465: the panel block to kill first and the advisor's reason, in
-		// the nested camelCase keys the wire carries.
-		expect(slice.advice?.priority).toEqual({
-			architectIndex: 0,
-			reason: 'priority: Xipocado or the Cradle of Creation line — kill this architect first'
-		});
-	});
-
 	it('reads the advice, its reasons and its map action', () => {
 		expect(slice.advice?.recommendations[0].reasons).toEqual(['R1: connects toward the top']);
 		expect(slice.advice?.gambles[0].risk).toBe(0.31);

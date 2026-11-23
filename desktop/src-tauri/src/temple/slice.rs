@@ -2413,12 +2413,8 @@ mod tests {
                     assert_eq!(json.get("priority"), Some(&want), "{name}: {json}");
                 }
             }
-        }
 
-        mod keep_regression {
-            use super::*;
-
-            // keep:regression — an advice payload from a build before POE-465
+            // keep:happy — an advice payload from a build before POE-465
             // has no `priority` key and must still decode, as no priority,
             // with every other field intact.
             #[test]
