@@ -41,8 +41,9 @@
 //! started by one of those would put a waiting notice on screen for an
 //! incursion that is already over.
 //!
-//! ANY Alva line still ENDS a cycle, and since 2026-09-07 (WI-1) only a START
-//! phrase ARMS one. The asymmetry is deliberate: an unheard start variant costs
+//! An Alva END or a START over a live arm ends the epoch; a START that opens
+//! a resting gate preserves its pre-entry read (POE-439). Only a START phrase
+//! arms an incursion gate. The asymmetry is deliberate: an unheard start variant costs
 //! that incursion's read (one incursion in 342 carried no start line at all),
 //! while an unheard END variant would leave the notice standing — a claim on
 //! screen that is false.
@@ -261,8 +262,8 @@ pub enum TempleArm {
 /// [`apply_line`]'s observable outcome beyond the state itself, and the seam
 /// this module's tests assert "extended, not replaced" through — a distinction
 /// [`TempleArm`] alone cannot express, because both spellings leave the same
-/// `Armed`. No production caller branches on it: the arm/disarm log line is the
-/// capture loop's (see [`on_client_line`]).
+/// `Armed`. [`on_client_line`] passes this outcome to [`ends_epoch`] and
+/// [`advice_end`] to distinguish a resting START from a live-arm START.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transition {
     /// The line says nothing about the temple.
