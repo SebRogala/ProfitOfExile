@@ -1,5 +1,9 @@
 .PHONY: help build test test-integration qa up up-collector down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-size-gate desktop-test desktop-test-js desktop-build desktop-deploy desktop-sync desktop-release-windows desktop-watch merc-seed-art lab-gem-art
 
+.PHONY: size-gate-test
+size-gate-test: ## Test the uniform production-line crossing gate
+	@sh scripts/size-gate.test.sh
+
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' Makefile | sed 's/:.*## /\t/' | awk -F '\t' '{printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
