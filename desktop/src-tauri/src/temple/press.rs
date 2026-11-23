@@ -252,6 +252,9 @@ mod tests {
         rearm: Mutex<u64>,
         rearm_during_sweep: Mutex<Option<()>>,
         sweeping: Mutex<bool>,
+        /// Stands in for a Recalibrate completing after the sweep's generation
+        /// check and before the bank takes the screen lock.
+        recalibrate_at_bank: Mutex<bool>,
     }
     impl PressContext for World {
         fn screen(&self) -> Option<crate::ssot::ScreenSlice> {
@@ -277,6 +280,10 @@ mod tests {
         }
         /// The same operation `AppHandle` runs through `remember_anchor_if_current`.
         fn bank_entrance(&self, origin: [i32; 2], frame: &Capture, ui_scale: f32) -> bool {
+            if std::mem::take(&mut *self.recalibrate_at_bank.lock().unwrap()) {
+                *self.slot.lock().unwrap() = Some(crate::ssot::screen_from_capture(frame));
+                *self.rearm.lock().unwrap() += 1;
+            }
             crate::ssot::set_anchor_if_current(
                 &mut self.slot.lock().unwrap(), (frame.image.width(), frame.image.height()), frame.origin, frame.client,
                 ui_scale, crate::ssot::AnchorModule::TempleEntrance, origin,
@@ -323,7 +330,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         (World { sender: Mutex::new(Some(tx)), arm: Mutex::new(arm), prompt: Mutex::new(None),
             slot: Mutex::new(Some(slice_1080(None))), replaced_by: Mutex::new(None),
-            sweep: Mutex::new(None), rearm: Mutex::new(0), rearm_during_sweep: Mutex::new(None), sweeping: Mutex::new(false) }, rx)
+            sweep: Mutex::new(None), rearm: Mutex::new(0), rearm_during_sweep: Mutex::new(None), sweeping: Mutex::new(false), recalibrate_at_bank: Mutex::new(false) }, rx)
     }
 
     #[test]
@@ -720,6 +727,22 @@ mod tests {
         fn a_sweep_superseded_by_recalibrate_banks_and_selects_nothing() {
             let (world, _rx) = world(ArmState::default());
             *world.rearm_during_sweep.lock().unwrap() = Some(());
+
+            let (outcome, lines) = press(&world, shifted_capture);
+            assert_eq!(outcome, DispatchOutcome::NoMatch);
+            assert_eq!(lines.iter().filter(|l| l.starts_with("Temple: calibration — superseded by Recalibrate")).count(), 1, "{lines:?}");
+            assert!(world.slot.lock().unwrap().unwrap().anchors.and_then(|a| a.temple_entrance).is_none());
+
+            assert_eq!(calibrations(&press(&world, shifted_capture).1), 1);
+        }
+
+        /// Silent consequence: a Recalibrate landing between the sweep's
+        /// generation check and the bank would receive the old Entrance, so the
+        /// recalibrated screen reads as calibrated and never sweeps.
+        #[test]
+        fn a_recalibrate_between_the_generation_check_and_the_bank_banks_and_selects_nothing() {
+            let (world, _rx) = world(ArmState::default());
+            *world.recalibrate_at_bank.lock().unwrap() = true;
 
             let (outcome, lines) = press(&world, shifted_capture);
             assert_eq!(outcome, DispatchOutcome::NoMatch);
