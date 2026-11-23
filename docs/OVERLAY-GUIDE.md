@@ -523,12 +523,12 @@ the timer, compass, path-strip and comparator widgets.
   to `upper.x − STACK_GAP_CSS`), level with the box's middle, and takes that
   rect or nothing: no upper box, no read regions yet, a negative x or a band
   that is not clear of the read regions and the placed boxes draws no keep
-  window, and neither does a timeout of Off. It shows the countdown, a *Keep*
+  window, and neither does a timeout of Off. It shows the countdown, a *Pause*
   button (72×22, `data-hot data-action="temple.keep"`) and a *Close* button
   (66×22, `data-hot data-action="temple.close"`); it names no dismissal key.
-  One forwarded click on Keep calls `createDismissal`'s `pause()`; the keep is
-  one-way, with no un-pause. Kept, it reads `TIMER STOPPED` and withdraws
-  Keep's hot rect; a re-read keeps it Kept with the timer stopped. The
+  One forwarded click on Pause calls `createDismissal`'s `pause()`; the keep is
+  one-way, with no un-pause. Paused, it reads `TIMER STOPPED` and withdraws
+  Pause's hot rect; a re-read keeps it Paused with the timer stopped. The
   dismissal's show gate is the sheet status AND the advice, so an area change
   (`slice::clear_advice` nulls the advice, keeping status and read stamp) ends
   the keep and the next read counts down again. One
@@ -1095,11 +1095,11 @@ touching the named path.
   sheet before entering the Incursion and press the read key once. The rooms
   comparator must show at once from that read.
 - **Temple keep window** (POE-439, AC-3): with a dismissal timeout set, read
-  the sheet and click *Keep* in the window left of the upper offer box. The
+  the sheet and click *Pause* in the window left of the upper offer box. The
   click must not reach the game, the window must read `TIMER STOPPED` with no
   key name, and the boxes must outlive the timeout. *Close*, the dismissal
   key, then separately an area change, must each hide the boxes and the
-  window; *Close* must also work before Keep is clicked.
+  window; *Close* must also work before Pause is clicked.
 
 - **Widget overlay, click-through and the hot rect** (POE-225): with the temple
   module on and the game focused, click the game through an empty part of the

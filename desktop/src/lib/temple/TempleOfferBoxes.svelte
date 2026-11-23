@@ -605,9 +605,9 @@
 		</div>
 		<div class="kw-btns">
 			{#if paused}
-				<div class="kw-btn kw-keep">{@render keepGlyph()}Kept</div>
+				<div class="kw-btn kw-keep">{@render keepGlyph()}Paused</div>
 			{:else}
-				<div class="kw-btn kw-keep" data-hot data-action="temple.keep">{@render keepGlyph()}Keep</div>
+				<div class="kw-btn kw-keep" data-hot data-action="temple.keep">{@render keepGlyph()}Pause</div>
 			{/if}
 			<div class="kw-btn kw-close" data-hot data-action="temple.close">{@render closeGlyph()}Close</div>
 		</div>
@@ -1194,7 +1194,7 @@
 
 	/* POE-439 variant C: 164x66 fixed (border 4 + padding 16 + row 18 + gap 6 +
 	   button 22), the `.box` ground and muted frame. Click-through except the
-	   buttons' own hot rects (Keep before the click, Close in both states). */
+	   buttons' own hot rects (Pause before the click, Close in both states). */
 	.keepwin {
 		position: absolute;
 		box-sizing: border-box;
