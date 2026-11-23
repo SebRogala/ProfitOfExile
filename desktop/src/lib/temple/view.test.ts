@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { render } from 'svelte/server';
+import { Window } from 'happy-dom';
+import TempleOfferBoxes from './TempleOfferBoxes.svelte';
 import offerBoxesSource from './TempleOfferBoxes.svelte?raw';
 import {
 	COL_PITCH,
@@ -2830,7 +2833,7 @@ describe('offerBoxes — the priority alert (POE-465)', () => {
 	const CRADLE = 'Cradle of Creation';
 	const BUILDS_CRADLE = 'builds Cradle of Creation';
 	const ON_THE_WAY = 'always upgrade to Cradle';
-	const PRIORITY_REASON = 'priority: Xipocado or the Cradle of Creation line — kill this architect first';
+	const PRIORITY_REASON = 'priority: Cradle of Creation — kill this architect so Xipocado builds it';
 	/** An offer on the Queen's line (Royal Meeting Room / Hall of Lords /
 	 *  Cradle of Creation), resolved, at the tier it builds. */
 	const queen = (over: Partial<OfferView> = {}): OfferView =>
@@ -2866,6 +2869,66 @@ describe('offerBoxes — the priority alert (POE-465)', () => {
 		});
 
 		expect(boxes).toEqual([BUILDS_CRADLE, null]);
+	});
+
+	it('keep:happy alerts only Tzamoto on the Torment Cells board', () => {
+		// The reported board: standing in Torment Cells (T1), Xipocado offers the
+		// torture line's upgrade and Tzamoto offers the change that builds the
+		// Cradle line at T2 — the kill the advisor picks and prioritises.
+		const boxes = offerBoxes(
+			{
+				...templeSliceDefault(),
+				status: 'read',
+				advice: advice({
+					recommendations: [ranked({ architectIndex: 1 })],
+					priority: { architectIndex: 1, reason: PRIORITY_REASON }
+				}),
+				panel: {
+					room: 'Torment Cells',
+					roomRect: null,
+					offers: [
+						other({ index: 0, architectName: 'Xipocado', kind: 'upgrade', printedTarget: 'Torture Cages', displayName: 'Torture Cages' }),
+						queen({ index: 1, architectName: 'Tzamoto', kind: 'change', printedTarget: CRADLE, builtTier: 2 })
+					],
+					incursionsRemaining: 6
+				},
+				market: LIVE_MARKET
+			},
+			NOW
+		);
+
+		expect(boxes.map((box) => box.priority)).toEqual([null, ON_THE_WAY]);
+
+		const window = new Window();
+		try {
+			const document = window.document as unknown as Document;
+			document.body.innerHTML = render(TempleOfferBoxes, {
+				props: {
+					boxes,
+					blocks: [
+						{ x: 1300, y: 140, w: 280, h: 43 },
+						{ x: 1300, y: 190, w: 280, h: 43 }
+					],
+					panel: { x: 1300, y: 100, w: 300, h: 400 },
+					obstacles: [{ x: 1100, y: 40, w: 500, h: 400 }],
+					host: { width: 1920, height: 1080 },
+					width: 300
+				}
+			}).body;
+			const rendered = [...document.querySelectorAll('.box')].map((box) => ({
+				alert: box.classList.contains('alert'),
+				bang: box.querySelector('.prio .bang')?.textContent ?? null,
+				call: box.querySelector('.prio .call')?.textContent ?? null,
+				why: box.querySelector('.prio .why')?.textContent ?? null
+			}));
+
+			expect(rendered).toEqual([
+				{ alert: false, bang: null, call: null, why: null },
+				{ alert: true, bang: '!', call: 'JUST DO IT!', why: ON_THE_WAY }
+			]);
+		} finally {
+			window.happyDOM.close();
+		}
 	});
 
 	it.each([

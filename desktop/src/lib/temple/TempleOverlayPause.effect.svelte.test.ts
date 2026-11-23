@@ -361,7 +361,7 @@ describe('temple keep window', () => {
 });
 
 const CRADLE = 'Cradle of Creation';
-const PRIORITY = { architectIndex: 0, reason: 'priority: Xipocado or the Cradle of Creation line — kill this architect first' };
+const PRIORITY = { architectIndex: 0, reason: 'priority: Cradle of Creation — kill this architect so Xipocado builds it' };
 /** The first block's top in `temple()`, CSS px at scale factor 1. */
 const FIRST_BLOCK_TOP = 133;
 
