@@ -35,7 +35,7 @@ function moduleAt(path: string): Module {
 	// Preserve offsets so diagnostics still name the source line in a Svelte file.
 	let source = raw;
 	if (path.endsWith('.svelte')) {
-		const chars = [...raw].map((char) => char === '\n' ? '\n' : ' ');
+		const chars = [...raw].map((char): string => char === '\n' ? '\n' : ' ');
 		for (const match of raw.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
 			const start = match.index! + match[0].indexOf('>') + 1;
 			for (let i = 0; i < match[1].length; i++) chars[start + i] = match[1][i];
