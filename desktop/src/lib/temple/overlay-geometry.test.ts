@@ -769,27 +769,148 @@ describe('offerStackPlacement', () => {
 		 *  the first block at y 133, 216 px tall (POE-439-C NOTES.md). */
 		const UPPER = { x: 415, y: 133, w: 300, h: 216 };
 
+		/** The compact host: a 1600x900 monitor at 150 %, in CSS px. */
+		const COMPACT_HOST = { width: 1067, height: 600 };
+		/**
+		 * The 42 read regions on the compact host, derived the way the POE-467
+		 * design mock (`design/mock.html`, `toCompact`) derived the ones its
+		 * rects were computed against: the committed 1920x1080 regions scaled by
+		 * 600/1080 about the frame centre (960, 540) onto the host centre
+		 * (533.5, 300), every coordinate and size rounded. The mock built its
+		 * 1920 set with the same lattice arithmetic as `committedRegions()`.
+		 * Among them: plate B0 at 427,191 96x43 and plate A0 at 486,133.
+		 */
+		function compactRegions(): WidgetRect[] {
+			const k = 600 / 1080;
+			return committedRegions().map((r) => ({
+				x: Math.round((r.x - 960) * k + 533.5),
+				y: Math.round((r.y - 540) * k + 300),
+				w: Math.round(r.w * k),
+				h: Math.round(r.h * k)
+			}));
+		}
+
+		/** The clear distance between two non-overlapping rects (negative when
+		 *  they overlap): the larger of the x gap and the y gap. */
+		function gap(a: WidgetRect, b: WidgetRect): number {
+			return Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w), b.y - (a.y + a.h), a.y - (b.y + b.h));
+		}
+
+		function insetFromHost(rect: WidgetRect, host: { width: number; height: number }): number {
+			return Math.min(rect.x, rect.y, host.width - (rect.x + rect.w), host.height - (rect.y + rect.h));
+		}
+
 		// keep:happy
 		it('places the keep window left of the upper box on the committed frame', () => {
 			const obstacles = committedRegions();
 			expect(obstacles).toHaveLength(42);
-			const rect = keepWindowPlacement({ upper: UPPER, obstacles, placedBoxes: [UPPER] });
+			const rect = keepWindowPlacement({ upper: UPPER, obstacles, placedBoxes: [UPPER], host: HOST });
 			expect(rect).toEqual({ x: 242, y: 208, w: 164, h: 66 });
 			expect(rectIsClear(rect!, obstacles)).toBe(true);
 		});
 
+		// keep:regression (POE-467): on the compact host the column clamps to x 8,
+		// so the left spot (-165, 93) is off screen and the old rule drew no keep
+		// window — a re-read while paused hid the Paused state and the Close
+		// control. The upper and lower boxes are the design mock's placement of
+		// two compact boxes (300x104 each: padding, border, title, sub, rule and
+		// strip rows) for a first block left of the panel centre, high; the lower
+		// box sits at 68,186 because `avoidRects` moved it off plate C0.
+		it('puts the keep window right of the upper box when the left spot is off the compact host', () => {
+			const obstacles = compactRegions();
+			const upper = { x: 8, y: 74, w: 300, h: 104 };
+			const lower = { x: 68, y: 186, w: 300, h: 104 };
+			const rect = keepWindowPlacement({
+				upper, obstacles, placedBoxes: [upper, lower], host: COMPACT_HOST
+			});
+			expect(rect).toEqual({ x: 316, y: 93, w: 164, h: 66 });
+			expect(insetFromHost(rect!, COMPACT_HOST)).toBeGreaterThanOrEqual(0);
+			expect(rectIsClear(rect!, [...obstacles, upper, lower])).toBe(true);
+		});
+
+		// keep:regression (POE-467): the same compact host with the first block
+		// low and the upper box carrying the priority alert (+20 px, 124 tall):
+		// left (-165, 190) is off screen and right (316, 190) lands on plate B0,
+		// so without a nearest free spot a re-read while paused hid the Paused
+		// state and the Close control. The window goes flush under the upper box
+		// (it may touch that one), keeping 8 px from every other blocker and from
+		// every host edge.
+		it('puts the keep window at the nearest free spot when both beside-spots fail on the compact host', () => {
+			const obstacles = compactRegions();
+			const upper = { x: 8, y: 161, w: 300, h: 124 };
+			const lower = { x: 150, y: 409, w: 300, h: 104 };
+			// The right spot really is blocked by a read region, so this case
+			// reaches the nearest-spot search.
+			expect(rectIsClear({ x: 316, y: 190, w: 164, h: 66 }, obstacles)).toBe(false);
+			const rect = keepWindowPlacement({
+				upper, obstacles, placedBoxes: [upper, lower], host: COMPACT_HOST
+			});
+			expect(rect).toEqual({ x: 8, y: 285, w: 164, h: 66 });
+			expect(rectIsClear(rect!, [...obstacles, upper, lower])).toBe(true);
+			expect(Math.min(...[...obstacles, lower].map((o) => gap(rect!, o)))).toBeGreaterThanOrEqual(STACK_GAP_CSS);
+			expect(insetFromHost(rect!, COMPACT_HOST)).toBeGreaterThanOrEqual(STACK_GAP_CSS);
+		});
+
+		// keep:regression (POE-467): the spots the old rule refused now have a
+		// fallback, because refusing them hid the Paused state and the Close
+		// control on a re-read while paused. Each expected rect is the design
+		// rule worked by hand on the committed frame:
+		// - upper at x 100: left x -73 is off screen; right is 100 + 300 + 8 =
+		//   408 at y 208, clear (plate D0 starts at y 554).
+		// - a 20x20 obstacle at 300,250 on the left spot: right (723, 208) hits
+		//   plate A0 (874..1046 x 239..316); the nearest spot from (242, 208)
+		//   against that obstacle grown by 8 (292..328 x 242..278) is straight up
+		//   to y 242 - 66 = 176.
+		// - a lower box at 240,260 300x100 on the left spot: right hits plate A0;
+		//   the lower box grown by 8 starts at y 252, so the window goes up to
+		//   252 - 66 = 186, still clear of the upper box at x 415.
+		it.each([
+			{
+				name: 'the left spot is off screen',
+				upper: { ...UPPER, x: 100 },
+				extra: [] as WidgetRect[],
+				placedBoxes: [] as WidgetRect[],
+				expected: { x: 408, y: 208, w: 164, h: 66 }
+			},
+			{
+				name: 'a read region covers the left spot',
+				upper: UPPER,
+				extra: [{ x: 300, y: 250, w: 20, h: 20 }],
+				placedBoxes: [] as WidgetRect[],
+				expected: { x: 242, y: 176, w: 164, h: 66 }
+			},
+			{
+				name: 'the lower box covers the left spot',
+				upper: UPPER,
+				extra: [] as WidgetRect[],
+				placedBoxes: [UPPER, { x: 240, y: 260, w: 300, h: 100 }],
+				expected: { x: 242, y: 186, w: 164, h: 66 }
+			}
+		])('falls back to $expected.x,$expected.y when $name', ({ upper, extra, placedBoxes, expected }) => {
+			const obstacles = [...committedRegions(), ...extra];
+			const rect = keepWindowPlacement({ upper, obstacles, placedBoxes, host: HOST });
+			expect(rect).toEqual(expected);
+			expect(rectIsClear(rect!, [...obstacles, ...placedBoxes])).toBe(true);
+		});
+
+		// keep:regression (POE-467): when the host has no room at all under the
+		// rule, the answer stays "no keep window" rather than one drawn over a
+		// read region. Only a 66 px strip along the top is uncovered: the window
+		// would fit there flush, but not with the 8 px clearance from the
+		// obstacle and the host edge, so nothing is free.
+		it('places no keep window when no spot on the host is free', () => {
+			const upper = { x: 8, y: 74, w: 300, h: 104 };
+			const obstacles = [{ x: 0, y: 66, w: 1067, h: 534 }];
+			expect(keepWindowPlacement({
+				upper, obstacles, placedBoxes: [upper], host: COMPACT_HOST
+			})).toBeNull();
+		});
+
 		// keep:critical
-		it('places no keep window it cannot place clear', () => {
+		it('places no keep window before the upper box or the read regions exist', () => {
 			const obstacles = committedRegions();
-			expect(keepWindowPlacement({ upper: null, obstacles, placedBoxes: [] })).toBeNull();
-			expect(keepWindowPlacement({ upper: { ...UPPER, x: 100 }, obstacles, placedBoxes: [] })).toBeNull();
-			expect(keepWindowPlacement({
-				upper: UPPER, obstacles: [...obstacles, { x: 300, y: 250, w: 20, h: 20 }], placedBoxes: []
-			})).toBeNull();
-			expect(keepWindowPlacement({
-				upper: UPPER, obstacles, placedBoxes: [UPPER, { x: 240, y: 260, w: 300, h: 100 }]
-			})).toBeNull();
-			expect(keepWindowPlacement({ upper: UPPER, obstacles: [], placedBoxes: [] })).toBeNull();
+			expect(keepWindowPlacement({ upper: null, obstacles, placedBoxes: [], host: HOST })).toBeNull();
+			expect(keepWindowPlacement({ upper: UPPER, obstacles: [], placedBoxes: [], host: HOST })).toBeNull();
 		});
 	});
 });
