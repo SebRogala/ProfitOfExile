@@ -21,21 +21,6 @@ knowledge belongs in maintained documentation or specialized agent profiles.
 - [Game facts](docs/GAME-FACTS.md) — dated, sourced Path of Exile facts the
   code treats as invariants; read before touching lab, font, temple, or
   exchange logic.
-- `/var/www/project-seed/INHERIT.md` — read before you propose architecture,
-  linting, CI, or quality-gate work. It is the brownfield protocol that governs
-  this project, which outgrew what one person can hold, and lives in the owner's
-  local project-seed repository (principles, protocols, and per-toolchain gate
-  mappings; no runnable code). Its phases run in order: 0 map, 1 characterization
-  tests and CI, 2 baseline walls, 3 fix in context only. In Phase 2, use the
-  portable gate subset only. Keep architecture-shape rules (hexagonal-shape
-  rules, module-DAG configs) off code that does not follow that architecture:
-  every file would enter the baseline as permanent noise. In Phase 3, clean the
-  files that current work touches while they are open, when the task's scope
-  names that cleanup and assigns it to an applier. Track god-file and
-  duplication paydown inside a paydown campaign named as its own deliverable,
-  never as tickets of their own. The non-PHP columns of its
-  `toolchains/matrix.md` are unverified mappings: verify tool names and
-  versions before you instantiate a stack.
 
 Current code, migrations, tests, and deployment configuration are authoritative
 for implemented behavior. Document status matters: do not treat product vision,
