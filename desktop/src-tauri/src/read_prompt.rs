@@ -84,7 +84,7 @@ pub struct ReadPromptState {
 
 impl ReadPromptState {
     /// Records `mechanic` as the newest arm, even when it was already active;
-    /// `snapshot` presents it unless it is a `DivineFont` arm.
+    /// `snapshot` presents it only when presentation policy permits it.
     pub fn arm(&mut self, mechanic: Mechanic) {
         self.last_client_mechanic = Some(mechanic);
         self.arm_generation += 1;
@@ -103,7 +103,7 @@ impl ReadPromptState {
         self.active.iter().find(|(m, _)| *m == mechanic).map(|(_, id)| *id)
     }
     /// A read of `mechanic`'s arm `id` succeeded. A newer arm of the same
-    /// mechanic, made while that read ran, stays shown.
+    /// mechanic, made while that read ran, stays armed.
     pub fn read_done(&mut self, mechanic: Mechanic, id: u64) {
         self.active.retain(|entry| *entry != (mechanic, id));
     }
