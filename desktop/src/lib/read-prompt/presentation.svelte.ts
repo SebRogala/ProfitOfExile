@@ -13,8 +13,10 @@ export function createReadPromptPresentation({ source, listen, invoke, frame }: 
 		overlayDismiss: DismissSnapshot | null;
 	};
 }) {
+	// Key only: Rust ends the no-match result when its recalibration window
+	// does (POE-459), so a view timer would disagree with the press it offers.
 	const dismissal = createDismissal({
-		spec: { ...widgetsFor(PROMPT_WINDOW_LABEL).find((spec) => spec.id === 'prompt.read')!, dismiss: { timeout: true, key: true } },
+		spec: { ...widgetsFor(PROMPT_WINDOW_LABEL).find((spec) => spec.id === 'prompt.read')!, dismiss: { key: true } },
 		shown: () => source().readPrompt.noMatch,
 		contentKey: () => source().readPrompt.seq,
 		settings: () => source().overlayDismiss

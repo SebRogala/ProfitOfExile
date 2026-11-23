@@ -201,7 +201,7 @@ mod tests {
         let (queue, presses) = mpsc::channel();
         let mut samples = samples.into_iter();
         let mut cursors = cursors.iter().copied();
-        run_sampler(world, readers, &mut || samples.next(), &mut || cursors.next(), &queue, &mut || None, &mut |_| 0);
+        run_sampler(world, readers, &mut || samples.next(), &mut || cursors.next(), &queue, &mut crate::read_hotkey::Accepted::default, &mut |_| 0);
         drop(queue);
         let mut grabs = 0;
         run_dispatcher(world, presses, &mut |_| {}, &mut || {
@@ -332,7 +332,7 @@ mod tests {
             &[&crate::temple::press::TEMPLE_READER, &MERC_READER];
         let (queue, presses) = mpsc::channel();
         let mut samples = vec![sample(PRESSED)].into_iter();
-        run_sampler(&world, readers, &mut || samples.next(), &mut || Some((5, 5)), &queue, &mut || None, &mut |_| 0);
+        run_sampler(&world, readers, &mut || samples.next(), &mut || Some((5, 5)), &queue, &mut crate::read_hotkey::Accepted::default, &mut |_| 0);
         drop(queue);
         let mut grabs = 0;
         run_dispatcher(&world, presses, &mut |_| {}, &mut || {

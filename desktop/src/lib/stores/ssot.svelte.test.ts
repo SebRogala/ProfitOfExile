@@ -1659,7 +1659,7 @@ describe('the native bossLoot slice', () => {
 });
 
 describe('the readHotkey slice', () => {
-	const readHotkey = { shortcut: { key: 82, shift: false, ctrl: true, alt: false }, delayMs: 250 };
+	const readHotkey = { shortcut: { key: 82, shift: false, ctrl: true, alt: false }, delayMs: 250, recalibrateSeconds: 10 };
 
 	it('takes the shortcut and delay from a polled snapshot', async () => {
 		const mod = await import('./ssot.svelte');
@@ -1694,7 +1694,7 @@ describe('the overlayDismiss slice', () => {
 describe('the readPrompt slice', () => {
 	it('shows no prompt before Rust answers', async () => {
 		const mod = await import('./ssot.svelte');
-		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: false, recalibrating: false, seq: 0 });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: false, recalibrating: false, seq: 0, gemUncertain: [false, false, false], recalibrateOffer: false });
 	});
 
 	it('takes the armed mechanic and its seq from a snapshot, and its clear', async () => {
@@ -1716,7 +1716,7 @@ describe('the readPrompt slice', () => {
 		const mod = await import('./ssot.svelte');
 		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, noMatch: true, recalibrating: false, seq: 5 } });
 		mod.applySnapshot({ league: { name: null }, readPrompt: golden.readPrompt as SsotSnapshot['readPrompt'] });
-		expect(mod.ssot.readPrompt).toEqual({ mechanic: 'divineFont', noMatch: false, recalibrating: false, seq: 3 });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: 'divineFont', noMatch: false, recalibrating: false, seq: 3, gemUncertain: [false, false, true], recalibrateOffer: false });
 	});
 });
 

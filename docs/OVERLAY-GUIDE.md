@@ -69,9 +69,14 @@ logs must keep the user aware of what the data is used for.
   probes publish nothing. Module switches and lifecycle identities still gate
   selected work. Screen matches and read completion never update log recency.
   Each probe compares only its banked region, and a miss moves to the next
-  reader. Only after every probe missed may a reader with an uncalibrated
-  region run its recalibration sweep, once per screen setup ([ADR-035](adr/035-a-read-key-press-sweeps-only-after-every-banked-probe-missed-once-per-screen-setup.md));
-  meanwhile the read prompt shows “No mechanics found - running a
+  reader. A press whose probes all miss offers recalibration instead of
+  sweeping: the read prompt shows “No mechanics detected - press <key> within
+  N s to recalibrate” (`ReadHotkeySettings.recalibrate_seconds`, default 5;
+  Rust clears it when the window ends, with no sweep and no grab). Only a press
+  inside that window whose own probes also miss may let a reader with an
+  uncalibrated region run its recalibration sweep, on that press's one frame,
+  once per screen setup ([ADR-035](adr/035-a-read-key-press-sweeps-only-after-every-banked-probe-missed-once-per-screen-setup.md)
+  and its POE-459 amendment); meanwhile the read prompt shows “No mechanics found - running a
   recalibration sweep now.” `app.log` gets one
   `Read key: <reader> probe — no match` line per miss, a
   `Read key: no mechanics found — running a recalibration sweep now` line when
@@ -144,8 +149,9 @@ For a press that both dismisses and reads, `read_hotkey.rs` queues dismissal
 before the read delay and capture. `createDismissalHost` registers Temple and
 Lab through `overlay_dismiss_host(window)`. Mercenary uses `ack: false` because
 its window is excluded from captures, so it neither registers nor acknowledges.
-The prompt host uses the same `ack: false` path. Its local dismissal-capable
-descriptor applies only to no-match content, without a registry flag or Settings row.
+The prompt host uses the same `ack: false` path. Its local key-only dismissal
+descriptor applies only to no-match content, without a registry flag or Settings row;
+the no-match result's lifetime is Rust's recalibration window (POE-459).
 Rust retains an ordered, bounded list of `{ gen, shortcut }` in
 `overlayDismiss.pending`, also delivered through `overlay-dismiss-key` events.
 Hosts union both delivery paths, deduplicate exact generations and process the
@@ -295,7 +301,9 @@ widget through `createReadPromptPresentation`: detected text while
 [Screen reading](#screen-reading-ggg-policy). Since POE-438 a Divine
 Font arm is kept for the read but not presented, so the prompt shows detected
 text for Incursion and Mercenary only; the no-match result still shows for
-every read. It is
+every read. A Divine Font read that leaves a gem slot uncertain shows a
+request to wait for the reveal and press again (`ssot.readPrompt.gemUncertain`,
+see [Lab Font OCR lifecycle](LAB-FONT-OCR-LIFECYCLE.md)). It is
 display only, and it is in `capture.rs` `EXCLUDED_WHILE_GRABBING`
 ([ADR-023](adr/023-a-window-excluded-from-the-grab-may-cover-what-its-module-reads.md)
 amendment), so it is never in a read frame. The lab widget window is governed by `lab_overlays_enabled`; its compass, map

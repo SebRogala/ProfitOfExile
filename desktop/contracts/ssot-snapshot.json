@@ -435,7 +435,8 @@
       "ctrl": true,
       "alt": true
     },
-    "delayMs": 150
+    "delayMs": 150,
+    "recalibrateSeconds": 10
   },
   "overlayDismiss": {
     "timeoutSeconds": 10,
@@ -452,6 +453,12 @@
     "mechanic": "divineFont",
     "noMatch": false,
     "recalibrating": false,
-    "seq": 3
+    "seq": 3,
+    "gemUncertain": [
+      false,
+      false,
+      true
+    ],
+    "recalibrateOffer": false
   }
 }

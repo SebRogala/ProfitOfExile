@@ -289,6 +289,8 @@ pub(crate) struct GemCommit {
     pub status: AppStatus,
     /// The read as stored in `last_gem_read`.
     pub read: LabGemRead,
+    /// The read prompt's uncertain slots changed (the SSOT carries them).
+    pub prompt_changed: bool,
 }
 
 /// The best match among the candidates, and every rejection.
@@ -388,7 +390,7 @@ fn read_gem_frame_with_vocab(
 /// (`build_status` takes it).
 pub(crate) fn commit_gem_read(state: &AppState, captured: u64, vocab_gen: u64, read: &LabGemRead) -> Option<GemCommit> {
     let lab = &state.lab_scan;
-    let (names, replaced, stored) = {
+    let (names, replaced, stored, prompt_changed) = {
         let mut gems = lab.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
         if captured == 0 || lab.gem_context.load(Ordering::SeqCst) != captured
             || lab.gem_vocab_generation.load(Ordering::SeqCst) != vocab_gen
@@ -410,10 +412,12 @@ pub(crate) fn commit_gem_read(state: &AppState, captured: u64, vocab_gen: u64, r
             *gems = names.clone();
             lab.choice_seq.fetch_add(1, Ordering::SeqCst);
         }
-        (names, replaced, stored)
+        let uncertain = std::array::from_fn(|i| matches!(stored.slots[i], GemSlot::Uncertain { .. }));
+        let prompt_changed = crate::read_prompt::gem_read_in(state, uncertain);
+        (names, replaced, stored, prompt_changed)
     };
     let status = crate::build_status(state);
-    Some(GemCommit { names, replaced, status, read: stored, generation: vocab_gen })
+    Some(GemCommit { names, replaced, status, read: stored, generation: vocab_gen, prompt_changed })
 }
 
 /// Test seam: runs inside `commit_gem_read` after its checks passed, while the
@@ -453,6 +457,9 @@ fn describe(read: &LabGemRead) -> String {
 /// The lock-free adapter: emit, send and log a commit.
 pub(crate) fn publish_gem_commit(app: &AppHandle, commit: GemCommit) {
     if !gem_publication_current(&app.state::<AppState>(), &commit) { return; }
+    if commit.prompt_changed {
+        crate::ssot::emit_ssot(app);
+    }
     app_log(
         app,
         format!("Gem read: {} — held {:?}{}", describe(&commit.read), commit.names, if commit.replaced { "" } else { " (unchanged)" }),
@@ -1024,6 +1031,53 @@ mod tests {
 
         assert_eq!(later.names, ["Reave of Refraction"]);
         assert_eq!(held(&state), ["Reave of Refraction"]);
+    }
+
+    mod keep_happy {
+        use super::*;
+
+        fn prompt_slots(state: &AppState) -> [bool; 3] {
+            state.read_prompt.lock().unwrap().snapshot().gem_uncertain
+        }
+
+        #[test]
+        fn an_uncertain_read_asks_the_read_prompt_for_another_press_on_its_slots() {
+            let state = test_app_state();
+            let token = arm_gem_context(&state);
+            with_refs(&state, fixture_refs().clone());
+            let (frame, _) = blended_frame("Dark Pact", "Dark Bargain");
+
+            committed(press(&state, token, &frame, None, &[])).expect("stored");
+
+            assert_eq!(prompt_slots(&state), [true, true, true]);
+        }
+
+        #[test]
+        fn a_second_press_that_reads_every_slot_withdraws_the_request() {
+            let state = test_app_state();
+            let token = arm_gem_context(&state);
+            with_refs(&state, fixture_refs().clone());
+            let (blend, _) = blended_frame("Dark Pact", "Dark Bargain");
+            committed(press(&state, token, &blend, None, &[])).expect("first press stored");
+
+            let second = committed(press(&state, token, &fixture_frame(), None, &[])).expect("second press stored");
+
+            assert_eq!(second.names, truth());
+            assert_eq!(prompt_slots(&state), [false, false, false]);
+        }
+
+        #[test]
+        fn closing_the_choice_withdraws_the_request() {
+            let state = test_app_state();
+            let token = arm_gem_context(&state);
+            with_refs(&state, fixture_refs().clone());
+            let (blend, _) = blended_frame("Dark Pact", "Dark Bargain");
+            committed(press(&state, token, &blend, None, &[])).expect("stored");
+
+            disarm_gem_context(&state, false);
+
+            assert_eq!(prompt_slots(&state), [false, false, false]);
+        }
     }
 
     #[test]

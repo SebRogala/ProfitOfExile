@@ -25,7 +25,8 @@
       "ctrl": true,
       "alt": false
     },
-    "delayMs": 0
+    "delayMs": 0,
+    "recalibrateSeconds": 5
   },
   "overlay_dismiss": {
     "timeoutSeconds": 10,

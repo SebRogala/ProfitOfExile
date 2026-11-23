@@ -80,6 +80,7 @@ pub(crate) fn arm_gem_context(state: &AppState) -> u64 {
     state.lab_scan.choice_seq.fetch_add(1, Ordering::SeqCst);
     gems.clear();
     *state.lab_scan.last_gem_read.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    crate::read_prompt::gem_read_in(state, [false; 3]);
     token
 }
 
@@ -90,6 +91,7 @@ pub(crate) fn disarm_gem_context(state: &AppState, clear: bool) -> bool {
     let mut gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
     let was_armed = state.lab_scan.gem_context.swap(0, Ordering::SeqCst) != 0;
     state.lab_scan.gem_lifecycle.fetch_add(1, Ordering::SeqCst);
+    crate::read_prompt::gem_read_in(state, [false; 3]);
     if clear {
         gems.clear();
         *state.lab_scan.last_gem_read.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -122,6 +124,7 @@ pub(crate) fn prepare_gem_context(state: &AppState, expected: GemReadIdentity) -
     state.lab_scan.gem_context.store(token, Ordering::SeqCst);
     gems.clear();
     *state.lab_scan.last_gem_read.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    crate::read_prompt::gem_read_in(state, [false; 3]);
     Some(token)
 }
 

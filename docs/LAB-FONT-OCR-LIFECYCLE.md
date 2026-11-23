@@ -112,7 +112,12 @@ The selected frame follows the POE-397 icon/tooltip flow:
 press's token and the vocabulary generation are both still current. A changed
 list emits `gems-cleared`, `gem-detected` per name and the status, and is sent
 to the server; an unchanged one is only logged. Uncertain slots never reach the
-held gems or the server; showing their candidates is deferred (no design). The
+held gems or the server; showing their candidates is deferred (no design).
+Instead the stored read's uncertain slots go to the read prompt
+(`ReadPromptSnapshot.gemUncertain`, set under the commit's guard): it names
+them and asks the player to wait for the Font's reveal, then press the read key
+again or hover the gem and press. A later read that resolves them, and any arm
+or end of the gem context, withdraws the request. The
 context stays armed after 3 certain slots, so a hover can still correct one; it
 ends on CONFIRM, FontClosed or ZoneChanged.
 

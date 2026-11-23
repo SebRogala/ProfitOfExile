@@ -81,7 +81,8 @@ Current as amended 2026-11-20 (POE-440). Homes: `temple/press.rs` (`TempleReader
 - **The read.** The temple probe runs only the placed-origin recheck on the banked Entrance crop,
   with no sweep; a miss is "no match" and the next reader probes. The one banked Entrance region
   serves the open sheet and the pre-Incursion read: they are the same screen. Only when every
-  reader missed and the slice is uncalibrated (null, or no anchored Entrance origin) does the
+  reader missed, the press confirmed a no-match offer (POE-459) and the slice is uncalibrated
+  (null, or no anchored Entrance origin) does the
   full-frame locate (`anchor::anchor_for_loop`) run as the recalibration sweep, once per screen
   setup, then the probe retries the same frame; the budget and its re-open triggers are
   [ADR-035](adr/035-a-read-key-press-sweeps-only-after-every-banked-probe-missed-once-per-screen-setup.md). A sweep stopped before it ran logs

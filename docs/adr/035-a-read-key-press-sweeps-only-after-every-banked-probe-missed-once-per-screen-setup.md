@@ -74,3 +74,16 @@ what is going on.
 - A screen setup that never shows the sheet costs one sweep, not one per press.
 - A wrong placement stays wrong until Recalibrate or a setup change; that is
   the manual fix (ADR-025 clause 4).
+
+## Amendment 2026-11-23 (POE-459): a sweep needs a confirming press
+
+Clause 2 gains a gate. A press whose probes all miss no longer sweeps on its
+own: it shows "No mechanics detected - press <read key> within N s to
+recalibrate" in the read prompt (N is `ReadHotkeySettings.recalibrate_seconds`,
+default 5, Settings › Read screen). Only a press accepted inside that window
+(`PressStamp::confirming`, `PreparedPress::sweep`) may sweep, and only after its
+own probes missed too, so a mechanic opened meanwhile is read, not swept over.
+That press takes one grab; its probes and its sweep read the same frame. When
+the window ends `read_prompt` clears the result and nothing else happens: no
+sweep, no grab. A confirming press that also finds nothing shows the no-match
+guidance instead of a second offer. Clauses 3-5 are unchanged.

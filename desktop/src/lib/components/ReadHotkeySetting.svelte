@@ -6,6 +6,8 @@
 
 	/** `read_hotkey::MAX_DELAY_MS` on the Rust side. */
 	export const READ_DELAY_MAX_MS = 2000;
+	/** `read_hotkey::RECALIBRATE_SECONDS` on the Rust side. */
+	export const RECALIBRATE_SECONDS = [5, 10, 20, 30];
 
 	export interface ReadHotkeyDeps {
 		current: () => ReadHotkeySettings | null;
@@ -20,14 +22,15 @@
 		let pending = $state(false);
 		let error = $state('');
 
-		async function save(change: { shortcut?: string; delayMs?: number }) {
+		async function save(change: { shortcut?: string; delayMs?: number; recalibrateSeconds?: number }) {
 			const current = deps.current();
 			if (!current || pending) return;
 			let settings: ReadHotkeySettings;
 			try {
 				settings = {
 					shortcut: change.shortcut === undefined ? current.shortcut : parseShortcut(change.shortcut, current.shortcut),
-					delayMs: change.delayMs ?? current.delayMs
+					delayMs: change.delayMs ?? current.delayMs,
+					recalibrateSeconds: change.recalibrateSeconds ?? current.recalibrateSeconds
 				};
 			} catch (e) {
 				error = e instanceof Error ? e.message : `${e}`;
@@ -69,6 +72,9 @@
 					return;
 				}
 				await save({ delayMs: value });
+			},
+			async setRecalibrateSeconds(value: number) {
+				await save({ recalibrateSeconds: value });
 			}
 		};
 	}
@@ -99,6 +105,18 @@
 			value={settings.delayMs} disabled={editor.pending}
 			onchange={(event) => { void editor.setDelay(Number(event.currentTarget.value)); }} />
 		<span class="setting-value">ms</span>
+	{:else}
+		<span class="setting-value">...</span>
+	{/if}
+</div>
+<div class="setting-row">
+	<span class="setting-label">Recalibrate window</span>
+	{#if settings}
+		<select class="setting-input narrow" aria-label="Recalibrate window" value={settings.recalibrateSeconds} disabled={editor.pending}
+			onchange={(event) => { const value = Number(event.currentTarget.value); event.currentTarget.value = `${settings?.recalibrateSeconds ?? ''}`; void editor.setRecalibrateSeconds(value); }}>
+			{#each RECALIBRATE_SECONDS as seconds}<option value={seconds}>{seconds} s</option>{/each}
+		</select>
+		<span class="setting-value">to press the read key again after nothing is detected</span>
 	{:else}
 		<span class="setting-value">...</span>
 	{/if}

@@ -28,7 +28,14 @@ impl Shortcut {
 pub struct ReadHotkeySettings {
     pub shortcut: Shortcut,
     pub delay_ms: u32,
+    /// How long a no-match result offers its recalibration: a read press
+    /// within it may sweep (POE-459). The dismissal timeout's choices minus
+    /// Off, since Off would never offer a sweep.
+    pub recalibrate_seconds: u32,
 }
+
+/// The choices `recalibrate_seconds` takes.
+pub const RECALIBRATE_SECONDS: [u32; 4] = [5, 10, 20, 30];
 impl Default for ReadHotkeySettings {
     fn default() -> Self {
         Self {
@@ -39,6 +46,7 @@ impl Default for ReadHotkeySettings {
                 alt: false,
             },
             delay_ms: 0,
+            recalibrate_seconds: 5,
         }
     }
 }
@@ -75,6 +83,9 @@ impl ReadHotkeySettings {
         self.shortcut.validate()?;
         if self.delay_ms > MAX_DELAY_MS {
             return Err(format!("Delay must be at most {MAX_DELAY_MS} ms"));
+        }
+        if !RECALIBRATE_SECONDS.contains(&self.recalibrate_seconds) {
+            return Err("Invalid recalibration window".into());
         }
         Ok(())
     }
@@ -206,13 +217,28 @@ pub struct PreparedPress<C> {
     pub finish: Option<FinishedRead>,
     /// Where the press writes its calibration, miss and timing lines; `None` writes nothing.
     pub log: Option<PressLog>,
-    /// Raised once, before a recalibration sweep runs; `None` raises nothing.
-    pub sweep_notice: Option<SweepNotice>,
+    /// `Some` for a press made while a no-match result offered recalibration:
+    /// only such a press sweeps when its own read finds nothing, and this is
+    /// raised once before the sweep runs. `None`: the press never sweeps.
+    pub sweep: Option<SweepNotice>,
 }
 
 pub type FinishedRead = Box<dyn FnOnce(DispatchOutcome) + Send>;
 pub type PressLog = Box<dyn FnMut(String) + Send>;
 pub type SweepNotice = Box<dyn FnOnce() + Send>;
+
+/// What accepting a press gives it: its result hook and its sweep permission.
+#[derive(Default)]
+pub struct Accepted {
+    pub finish: Option<FinishedRead>,
+    pub sweep: Option<SweepNotice>,
+}
+
+/// An accepted press: `finish` always, `notice` only when `stamp` was taken
+/// inside a recalibration offer.
+pub fn accepted(stamp: crate::read_prompt::PressStamp, finish: FinishedRead, notice: SweepNotice) -> Accepted {
+    Accepted { finish: Some(finish), sweep: stamp.confirming().then_some(notice) }
+}
 
 pub fn prepare_press<C>(
     press: Press,
@@ -228,7 +254,7 @@ pub fn prepare_press<C>(
         if let Some(pending) = reader.prepare(ctx, &press) { pendings.push((id, pending)); }
     }
     pendings.sort_by_key(|(id, _)| if *id == ReaderId::Font { 0 } else if Some(id.mechanic()) == recent { 1 } else { 2 });
-    PreparedPress { delay, pendings, dismissed: Vec::new(), finish: None, log: None, sweep_notice: None }
+    PreparedPress { delay, pendings, dismissed: Vec::new(), finish: None, log: None, sweep: None }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -285,11 +311,14 @@ pub fn dispatch_press<C>(
     }
     let probes_ms = ms(probes_started);
     let calibration_started = std::time::Instant::now();
-    if outcome == DispatchOutcome::NoMatch {
+    // Only a press confirming a no-match offer sweeps, and on this same frame:
+    // nothing here grabs again.
+    let notice = armed.sweep.take();
+    if let (true, Some(notice)) = (outcome == DispatchOutcome::NoMatch, notice) {
         let mut sweep: Vec<_> = missed.into_iter().filter_map(|(id, mut p)| p.needs_calibration(&frame, ctx).then_some((id, p))).collect();
         if !sweep.is_empty() {
             write("Read key: no mechanics found — running a recalibration sweep now".to_string());
-            if let Some(notice) = armed.sweep_notice.take() { notice(); }
+            notice();
         }
         for (id, mut pending) in sweep.drain(..) {
             if let Some(line) = pending.calibrate(&frame, ctx) { write(line); }
@@ -350,7 +379,7 @@ pub fn run_sampler<C>(
     sample: &mut dyn FnMut() -> Option<Sample>,
     cursor: &mut dyn FnMut() -> Option<(i32, i32)>,
     queue: &std::sync::mpsc::Sender<PreparedPress<C>>,
-    on_accept: &mut dyn FnMut() -> Option<FinishedRead>,
+    on_accept: &mut dyn FnMut() -> Accepted,
     on_dismiss: &mut dyn FnMut(&Shortcut) -> u64,
 ) {
     let mut poll = ReadPoll::default();
@@ -358,11 +387,12 @@ pub fn run_sampler<C>(
     while let Some(s) = sample() {
         let dismissed = dismiss_poll.poll(&s, on_dismiss);
         if let Some(press) = poll.poll(&s.down, s.foreground, &s.settings.shortcut, cursor) {
-            let finish = on_accept();
+            let accepted = on_accept();
             let delay = std::time::Duration::from_millis(u64::from(s.settings.delay_ms));
             let mut armed = prepare_press(press, delay, readers, ctx);
             armed.dismissed = dismissed;
-            armed.finish = finish;
+            armed.finish = accepted.finish;
+            armed.sweep = accepted.sweep;
             if queue.send(armed).is_err() {
                 return;
             }
@@ -394,8 +424,6 @@ pub fn spawn_read_hotkey(app: tauri::AppHandle, cancel: std::sync::Arc<std::sync
         let log_app = dispatch_app.clone();
         let queue = rx.into_iter().map(move |mut armed: PreparedPress<tauri::AppHandle>| {
             let app = log_app.clone();
-            let notice_app = app.clone();
-            armed.sweep_notice = Some(Box::new(move || crate::read_prompt::begin_sweep(&notice_app)));
             armed.log = Some(Box::new(move |line| crate::app_log(&app, line)));
             armed
         });
@@ -417,8 +445,12 @@ pub fn spawn_read_hotkey(app: tauri::AppHandle, cancel: std::sync::Arc<std::sync
         };
         run_sampler(&app, READERS, &mut sample, &mut platform::cursor, &tx, &mut || {
             let stamp = crate::read_prompt::accept_press(&app);
-            let result_app = app.clone();
-            Some(Box::new(move |outcome| crate::read_prompt::finish_read(&result_app, stamp, outcome)))
+            let (result_app, notice_app) = (app.clone(), app.clone());
+            accepted(
+                stamp,
+                Box::new(move |outcome| crate::read_prompt::finish_read(&result_app, stamp, outcome)),
+                Box::new(move || crate::read_prompt::begin_sweep(&notice_app)),
+            )
         }, &mut |shortcut| crate::overlay_dismiss::publish(&app, shortcut));
     });
 }
@@ -529,6 +561,33 @@ mod dispatch_tests {
     const GEM: TestReader = TestReader { name: "g", armed: true };
     const FONT: TestReader = TestReader { name: "f", armed: true };
 
+    /// The production acceptance over `state`'s prompt: the result hook and,
+    /// inside a recalibration offer, the sweep.
+    fn accept_in(state: &Arc<crate::AppState>) -> Accepted {
+        let stamp = crate::read_prompt::accept_press_in(state);
+        let (result_state, notice_state) = (state.clone(), state.clone());
+        accepted(
+            stamp,
+            Box::new(move |outcome| { crate::read_prompt::finish_read_in(&result_state, stamp, outcome); }),
+            Box::new(move || { crate::read_prompt::begin_sweep_in(&notice_state); }),
+        )
+    }
+
+    /// One read-key press through the sampler and the dispatcher; its grabs.
+    fn press_once(world: &Arc<World>, state: &Arc<crate::AppState>) -> usize {
+        let (tx, rx) = mpsc::channel();
+        let mut samples = vec![sample(PRESSED, true)].into_iter();
+        run_sampler(world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || accept_in(state), &mut |_| panic!("no dismissal"));
+        drop(tx);
+        let mut grabs = 0;
+        run_dispatcher(world, rx, &mut |_| {}, &mut || { grabs += 1; Ok(capture(1)) }, &mut |_| panic!("no dismissal to await"));
+        grabs
+    }
+
+    fn calibrated(world: &Arc<World>) -> bool {
+        world.trace.lock().unwrap().iter().any(|t| t == "calibrate")
+    }
+
     fn result_pipeline(selected: bool, handshake: bool, capture_error: Option<CaptureError>) -> (usize, crate::read_prompt::ReadPromptSnapshot) {
         let world = Arc::new(World::default());
         if !selected { world.misses.lock().unwrap().push("a"); }
@@ -539,11 +598,7 @@ mod dispatch_tests {
         let mut shared = sample(PRESSED, true);
         shared.dismiss = vec![shared.settings.shortcut.clone()];
         let mut samples = vec![shared].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || {
-            let stamp = crate::read_prompt::accept_press_in(&state);
-            let result_state = state.clone();
-            Some(Box::new(move |outcome| { crate::read_prompt::finish_read_in(&result_state, stamp, outcome); }))
-        }, &mut |_| 1);
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || accept_in(&state), &mut |_| 1);
         drop(tx);
         let mut grabs = 0;
         let mut error = capture_error;
@@ -559,28 +614,28 @@ mod dispatch_tests {
     fn dispatched_all_miss_frame_publishes_no_match_after_one_capture() {
         let (grabs, snapshot) = result_pipeline(false, true, None);
         assert_eq!(grabs, 1);
-        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2, recalibrating: false });
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: true });
     }
 
     #[test]
     fn failed_hide_handshake_preserves_prompt_without_capture() {
         let (grabs, snapshot) = result_pipeline(false, false, None);
         assert_eq!(grabs, 0);
-        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Incursion), no_match: false, seq: 1, recalibrating: false });
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Incursion), no_match: false, seq: 1, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     #[test]
     fn dispatched_selected_frame_does_not_publish_no_match() {
         let (grabs, snapshot) = result_pipeline(true, true, None);
         assert_eq!(grabs, 1);
-        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Incursion), no_match: false, seq: 2, recalibrating: false });
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Incursion), no_match: false, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     #[test]
     fn dispatched_capture_failure_preserves_prompt() {
         let (grabs, snapshot) = result_pipeline(false, true, Some(CaptureError::Failed("no monitor".into())));
         assert_eq!(grabs, 1);
-        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Incursion), no_match: false, seq: 1, recalibrating: false });
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Incursion), no_match: false, seq: 1, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     fn route(world: &Arc<World>, readers: &[&dyn ScreenReader<Arc<World>>]) -> DispatchOutcome {
@@ -684,7 +739,7 @@ mod dispatch_tests {
         run_sampler(&world, &[&A], &mut || samples.next(), &mut || {
             assert_eq!(ledger.pending().len(), 1, "dismiss before evaluating the read edge");
             None
-        }, &tx, &mut || None, &mut |shortcut| {
+        }, &tx, &mut Accepted::default, &mut |shortcut| {
             assert!(world.armed_order.lock().unwrap().is_empty(), "dismiss before arming readers");
             let gen = ledger.publish(shortcut).gen;
             events.lock().unwrap().push(format!("dismiss({gen})"));
@@ -751,7 +806,7 @@ mod dispatch_tests {
             let esc = Sample { down: [27].into_iter().collect(), foreground: true, settings: f.settings.clone(), dismiss: f.dismiss.clone() };
             let (tx, rx) = mpsc::channel();
             let mut samples = vec![f, esc].into_iter();
-            run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |s| ledger.publish(s).gen);
+            run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |s| ledger.publish(s).gen);
             drop(tx);
             ledger.ack("temple", 2);
             let elapsed = Cell::new(Duration::ZERO);
@@ -790,7 +845,7 @@ mod dispatch_tests {
         shared.dismiss = vec![shared.settings.shortcut.clone(), Shortcut { key: 71, ..shared.settings.shortcut.clone() }];
         let (tx, rx) = mpsc::channel();
         let mut samples = vec![shared].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |s| ledger.publish(s).gen);
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |s| ledger.publish(s).gen);
         drop(tx);
         ledger.ack("temple", 2);
         let elapsed = Cell::new(Duration::ZERO);
@@ -818,7 +873,7 @@ mod dispatch_tests {
         let mut samples = vec![sample(&[27], false), sample(&[27], true), sample(&[], true), sample(&[27], true), sample(&[27], true)].into_iter();
         let (tx, rx) = mpsc::channel();
         let mut dismissed = Vec::new();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |s| {
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |s| {
             dismissed.push(s.key);
             dismissed.len() as u64
         });
@@ -844,7 +899,7 @@ mod dispatch_tests {
     fn run_pipeline(world: &Arc<World>, readers: &[&dyn ScreenReader<Arc<World>>], samples: Vec<Sample>) -> usize {
         let (tx, rx) = mpsc::channel();
         let mut samples = samples.into_iter();
-        run_sampler(world, readers, &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |_| panic!("no dismissal"));
+        run_sampler(world, readers, &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |_| panic!("no dismissal"));
         drop(tx);
         let mut grabs = 0;
         run_dispatcher(world, rx, &mut |_| {}, &mut || {
@@ -863,7 +918,7 @@ mod dispatch_tests {
             let mut prepared = prepare_press(press(), Duration::ZERO, readers, world);
             prepared.log = Some(Box::new(move |line| sink.lock().unwrap().push(line)));
             let notice_world = world.clone();
-            prepared.sweep_notice = Some(Box::new(move || notice_world.trace.lock().unwrap().push("notice".into())));
+            prepared.sweep = Some(Box::new(move || notice_world.trace.lock().unwrap().push("notice".into())));
             let outcome = dispatch_press(prepared, world, &mut |_| {}, &mut || {
                 world.trace.lock().unwrap().push("grab".into());
                 Ok(capture(1))
@@ -897,6 +952,69 @@ mod dispatch_tests {
             assert_eq!(lines[2], "Read key: no mechanics found — running a recalibration sweep now");
             assert_eq!(lines[3], "calibrated a");
             assert!(lines[4].starts_with("Read key: Temple selected in "), "{lines:?}");
+        }
+
+        #[test]
+        fn a_no_match_press_offers_recalibration_without_sweeping() {
+            let world = Arc::new(World::default());
+            *world.uncalibrated.lock().unwrap() = vec!["a"];
+            *world.misses.lock().unwrap() = vec!["a"];
+            let state = Arc::new(crate::settings::tests::test_app_state());
+
+            let grabs = press_once(&world, &state);
+
+            assert_eq!(grabs, 1);
+            assert!(!calibrated(&world), "{:?}", world.trace.lock().unwrap());
+            let snapshot = state.read_prompt.lock().unwrap().snapshot();
+            assert!(snapshot.no_match && snapshot.recalibrate_offer, "{snapshot:?}");
+        }
+
+        #[test]
+        fn a_press_inside_the_offer_that_finds_nothing_sweeps_on_its_one_grab() {
+            let world = Arc::new(World::default());
+            *world.uncalibrated.lock().unwrap() = vec!["a"];
+            *world.misses.lock().unwrap() = vec!["a"];
+            let state = Arc::new(crate::settings::tests::test_app_state());
+            press_once(&world, &state);
+            world.trace.lock().unwrap().clear();
+
+            let grabs = press_once(&world, &state);
+
+            assert_eq!(grabs, 1);
+            assert_eq!(*world.trace.lock().unwrap(), vec!["probe", "calibrate", "probe", "consume"]);
+        }
+
+        #[test]
+        fn a_press_inside_the_offer_reads_a_mechanic_now_present_without_sweeping() {
+            let world = Arc::new(World::default());
+            *world.uncalibrated.lock().unwrap() = vec!["a"];
+            *world.misses.lock().unwrap() = vec!["a"];
+            let state = Arc::new(crate::settings::tests::test_app_state());
+            press_once(&world, &state);
+            world.misses.lock().unwrap().clear();
+            world.trace.lock().unwrap().clear();
+
+            press_once(&world, &state);
+
+            assert_eq!(*world.trace.lock().unwrap(), vec!["probe", "consume"]);
+            assert!(!state.read_prompt.lock().unwrap().snapshot().no_match);
+        }
+
+        #[test]
+        fn an_expired_offer_clears_the_prompt_and_the_next_press_does_not_sweep() {
+            let world = Arc::new(World::default());
+            *world.uncalibrated.lock().unwrap() = vec!["a"];
+            *world.misses.lock().unwrap() = vec!["a"];
+            let state = Arc::new(crate::settings::tests::test_app_state());
+            press_once(&world, &state);
+            let shown = crate::read_prompt::no_match_id_in(&state).expect("the no-match result is shown");
+
+            crate::read_prompt::expire_no_match_in(&state, shown);
+
+            let snapshot = state.read_prompt.lock().unwrap().snapshot();
+            assert!(!snapshot.no_match && !snapshot.recalibrate_offer, "{snapshot:?}");
+            press_once(&world, &state);
+            assert!(!calibrated(&world), "{:?}", world.trace.lock().unwrap());
         }
 
         #[test]
@@ -1023,7 +1141,7 @@ mod dispatch_tests {
             grabs
         });
         let mut samples = vec![sample(PRESSED, true), sample(&[], true), sample(PRESSED, true)].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |_| panic!("no dismissal"));
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |_| panic!("no dismissal"));
         // The first grab is still blocked, yet both presses were armed.
         assert_eq!(world.armed_order.lock().unwrap().len(), 2);
         drop(tx);
@@ -1060,7 +1178,7 @@ mod dispatch_tests {
         let (tx, rx) = mpsc::channel();
         // The delay setting changes on the tick after the press, while it is queued.
         let mut samples = vec![with_delay(PRESSED, 300), with_delay(&[], 900)].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |_| panic!("no dismissal"));
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |_| panic!("no dismissal"));
         drop(tx);
         let events = Mutex::new(Vec::new());
         run_dispatcher(
@@ -1081,7 +1199,7 @@ mod dispatch_tests {
         *world.context.lock().unwrap() = "x".into();
         let (tx, rx) = mpsc::channel();
         let mut samples = vec![sample(PRESSED, true)].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || None, &mut |_| panic!("no dismissal"));
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |_| panic!("no dismissal"));
         drop(tx);
         *world.context.lock().unwrap() = "y".into();
         let mut grabs = 0;
@@ -1102,6 +1220,7 @@ mod tests {
         ReadHotkeySettings {
             shortcut: Shortcut { key, shift: false, ctrl: true, alt: false },
             delay_ms: 0,
+            recalibrate_seconds: 5,
         }
     }
 
@@ -1139,7 +1258,7 @@ mod tests {
     fn storing_a_read_hotkey_on_the_boss_loot_capture_key_is_refused_and_keeps_the_old_one() {
         let state = test_app_state();
         let capture = loot_of(&state).capture_shortcut;
-        let refused = ReadHotkeySettings { shortcut: capture, delay_ms: 100 };
+        let refused = ReadHotkeySettings { shortcut: capture, delay_ms: 100, ..ReadHotkeySettings::default() };
         assert!(store_settings(&state, refused).is_err());
         assert_eq!(read_of(&state), ReadHotkeySettings::default());
     }
@@ -1147,7 +1266,7 @@ mod tests {
     fn storing_a_read_hotkey_on_the_boss_loot_preview_key_is_refused_and_keeps_the_old_one() {
         let state = test_app_state();
         let preview = loot_of(&state).preview_shortcut;
-        let refused = ReadHotkeySettings { shortcut: preview, delay_ms: 100 };
+        let refused = ReadHotkeySettings { shortcut: preview, delay_ms: 100, ..ReadHotkeySettings::default() };
         assert!(store_settings(&state, refused).is_err());
         assert_eq!(read_of(&state), ReadHotkeySettings::default());
     }

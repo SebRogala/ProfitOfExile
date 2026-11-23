@@ -21,7 +21,7 @@ const PromptPage = (await import('../../routes/overlay/prompt/+page.svelte')).de
 const { ssot } = await import('$lib/stores/ssot.svelte');
 
 beforeEach(() => {
-	ssot.readHotkey = { shortcut: { key: 65, shift: false, ctrl: true, alt: false }, delayMs: 0 };
+	ssot.readHotkey = { shortcut: { key: 65, shift: false, ctrl: true, alt: false }, delayMs: 0, recalibrateSeconds: 5 };
 	ssot.overlayDismiss = null;
 });
 
@@ -61,6 +61,17 @@ describe('read prompt page', () => {
 		const prompts = target.querySelectorAll('.prompt');
 		expect(prompts).toHaveLength(1);
 		expect(prompts[0].textContent).toBe('No mechanics found - running a recalibration sweep now.');
+		expect(prompts[0].classList.contains('no-match')).toBe(true);
+	});
+
+	it('asks for another press on the uncertain gem slot in the wrapping prompt', () => {
+		ssot.readPrompt = { mechanic: null, noMatch: false, recalibrating: false, seq: 4, gemUncertain: [false, false, true] };
+		const target = render();
+		const prompts = target.querySelectorAll('.prompt');
+		expect(prompts).toHaveLength(1);
+		expect(prompts[0].textContent).toBe(
+			'Gem 3 unclear - wait for the Font to finish revealing, then press Ctrl + A again, or hover the gem and press Ctrl + A'
+		);
 		expect(prompts[0].classList.contains('no-match')).toBe(true);
 	});
 });

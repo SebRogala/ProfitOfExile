@@ -7,7 +7,7 @@ import { render } from 'svelte/server';
 import { ssot, type ReadHotkeySettings } from '$lib/stores/ssot.svelte';
 import ReadHotkeySetting, { createReadHotkeyEditor } from './ReadHotkeySetting.svelte';
 
-const stored: ReadHotkeySettings = { shortcut: { key: 120, shift: true, ctrl: false, alt: false }, delayMs: 0 };
+const stored: ReadHotkeySettings = { shortcut: { key: 120, shift: true, ctrl: false, alt: false }, delayMs: 0, recalibrateSeconds: 5 };
 const key = (k: string, mods: Partial<{ ctrlKey: boolean; altKey: boolean; shiftKey: boolean }> = {}) =>
 	({ key: k, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...mods });
 
@@ -30,7 +30,7 @@ describe('ReadHotkeySetting editor', () => {
 		e.listen();
 		await e.captureKey(key('r', { ctrlKey: true }));
 		expect(calls).toEqual([{ command: 'read_hotkey_set_settings',
-			args: { settings: { shortcut: { key: 82, shift: false, ctrl: true, alt: false }, delayMs: 0 } } }]);
+			args: { settings: { shortcut: { key: 82, shift: false, ctrl: true, alt: false }, delayMs: 0, recalibrateSeconds: 5 } } }]);
 		expect(refreshed()).toBe(1);
 		expect(e.listening).toBe(false);
 	});
@@ -39,7 +39,7 @@ describe('ReadHotkeySetting editor', () => {
 		const { e, calls } = editor();
 		e.listen();
 		await e.captureMouse({ button: 3, ctrlKey: false, altKey: false, shiftKey: true, metaKey: false });
-		expect(calls[0].args).toEqual({ settings: { shortcut: { key: 5, shift: true, ctrl: false, alt: false }, delayMs: 0 } });
+		expect(calls[0].args).toEqual({ settings: { shortcut: { key: 5, shift: true, ctrl: false, alt: false }, delayMs: 0, recalibrateSeconds: 5 } });
 	});
 
 	it('cancels on Escape without sending', async () => {
@@ -53,13 +53,19 @@ describe('ReadHotkeySetting editor', () => {
 	it('sends the edited delay with the stored shortcut', async () => {
 		const { e, calls } = editor();
 		await e.setDelay(250);
-		expect(calls[0].args).toEqual({ settings: { shortcut: stored.shortcut, delayMs: 250 } });
+		expect(calls[0].args).toEqual({ settings: { shortcut: stored.shortcut, delayMs: 250, recalibrateSeconds: 5 } });
 	});
 
 	it('sends the longest delay', async () => {
 		const { e, calls } = editor();
 		await e.setDelay(2000);
-		expect(calls[0].args).toEqual({ settings: { shortcut: stored.shortcut, delayMs: 2000 } });
+		expect(calls[0].args).toEqual({ settings: { shortcut: stored.shortcut, delayMs: 2000, recalibrateSeconds: 5 } });
+	});
+
+	it('sends the chosen recalibrate window with the stored key and delay', async () => {
+		const { e, calls } = editor();
+		await e.setRecalibrateSeconds(20);
+		expect(calls[0].args).toEqual({ settings: { shortcut: stored.shortcut, delayMs: 0, recalibrateSeconds: 20 } });
 	});
 
 	it('refuses a delay past the longest without sending', async () => {
@@ -86,7 +92,7 @@ describe('ReadHotkeySetting editor', () => {
 
 describe('ReadHotkeySetting rows', () => {
 	it('show the SSOT key and delay', () => {
-		ssot.readHotkey = { shortcut: { key: 82, shift: false, ctrl: true, alt: false }, delayMs: 250 };
+		ssot.readHotkey = { shortcut: { key: 82, shift: false, ctrl: true, alt: false }, delayMs: 250, recalibrateSeconds: 5 };
 		const html = render(ReadHotkeySetting, { props: { editor: editor().e } }).body;
 		expect(html).toContain('aria-label="Read screen: Ctrl + R"');
 		expect(html).toMatch(/aria-label="Read delay"[^>]*value="250"|value="250"[^>]*aria-label="Read delay"/);

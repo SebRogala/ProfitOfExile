@@ -40,7 +40,7 @@ async function settle() {
 function setup(loaded = true) {
 	const input = client.proxy({
 		readPrompt: { mechanic: null, noMatch: true, recalibrating: false, seq: 1 } as ReadPromptSnapshot,
-		readHotkey: { shortcut: { key: 65, shift: false, ctrl: true, alt: false }, delayMs: 0 },
+		readHotkey: { shortcut: { key: 65, shift: false, ctrl: true, alt: false }, delayMs: 0, recalibrateSeconds: 5 },
 		overlayDismiss: loaded ? { timeoutSeconds: 10, shortcut: esc, overlays: {}, pending: [] } as DismissSnapshot : null
 	});
 	let deliver!: (event: { payload: PendingDismiss }) => void;
@@ -60,14 +60,8 @@ function setup(loaded = true) {
 }
 
 describe('read prompt presentation', () => {
-	it('hides the no-match at the global deadline', () => {
+	it('leaves the no-match lifetime to Rust: no view timer hides it', () => {
 		const h = setup();
-		expect(h.presentation.text).toBe(MESSAGE);
-		vi.advanceTimersByTime(9999); expect(h.presentation.text).toBe(MESSAGE);
-		vi.advanceTimersByTime(1); expect(h.presentation.text).toBeNull();
-	});
-	it('keeps timeout Off visible', () => {
-		const h = setup(); h.input.overlayDismiss!.timeoutSeconds = 0; flushSync();
 		vi.advanceTimersByTime(60000); expect(h.presentation.text).toBe(MESSAGE);
 		expect(vi.getTimerCount()).toBe(0);
 	});
@@ -79,40 +73,32 @@ describe('read prompt presentation', () => {
 		const h = setup(); await settle(); h.deliver(1, f); await settle();
 		expect(h.presentation.text).toBe(MESSAGE);
 	});
-	it('follows a changed global timeout from the original show time', () => {
-		const h = setup(); vi.advanceTimersByTime(4000);
-		h.input.overlayDismiss!.timeoutSeconds = 5; flushSync();
-		vi.advanceTimersByTime(999); expect(h.presentation.text).toBe(MESSAGE);
-		vi.advanceTimersByTime(1); expect(h.presentation.text).toBeNull();
-	});
 	it('follows a changed global dismissal key', async () => {
 		const h = setup(); h.input.overlayDismiss!.shortcut = f; await settle();
 		h.deliver(1); await settle(); expect(h.presentation.text).toBe(MESSAGE);
 		h.deliver(2, f); await settle(); expect(h.presentation.text).toBeNull();
 	});
-	it.each(['timeout', 'key'])('keeps the same sequence hidden across polls after %s dismissal', async (how) => {
+	it('keeps the same sequence hidden across polls after key dismissal', async () => {
 		const h = setup(); await settle();
-		if (how === 'key') { h.deliver(1); await settle(); } else vi.advanceTimersByTime(10000);
+		h.deliver(1); await settle();
 		flushSync(); h.input.readPrompt = { mechanic: null, noMatch: true, recalibrating: false, seq: 1 };
 		h.input.overlayDismiss = { ...h.input.overlayDismiss! }; flushSync();
 		expect(h.presentation.text).toBeNull(); expect(vi.getTimerCount()).toBe(0);
 	});
-	it('shows a fresh no-match sequence with a fresh deadline', () => {
-		const h = setup(); vi.advanceTimersByTime(10000); flushSync();
+	it('shows a fresh no-match sequence after a key dismissal', async () => {
+		const h = setup(); await settle(); h.deliver(1); await settle();
 		h.input.readPrompt = { mechanic: null, noMatch: true, recalibrating: false, seq: 2 }; flushSync();
 		expect(h.presentation.text).toBe(MESSAGE);
-		vi.advanceTimersByTime(9999); expect(h.presentation.text).toBe(MESSAGE);
-		vi.advanceTimersByTime(1); expect(h.presentation.text).toBeNull();
 	});
 	it('a selected result replaces the no-match', () => {
 		const h = setup();
 		h.input.readPrompt = { mechanic: null, noMatch: false, recalibrating: false, seq: 2 }; flushSync();
 		expect(h.presentation.text).toBeNull(); expect(vi.getTimerCount()).toBe(0);
 	});
-	it('keeps detected text outside the no-match timeout and key', async () => {
-		const h = setup(); vi.advanceTimersByTime(10000); flushSync();
+	it('keeps detected text outside the no-match key', async () => {
+		const h = setup(); await settle(); h.deliver(1); await settle();
 		h.input.readPrompt = { mechanic: 'incursion', noMatch: false, recalibrating: false, seq: 2 }; await settle();
-		h.deliver(1); await settle(); vi.advanceTimersByTime(60000);
+		h.deliver(2); await settle(); vi.advanceTimersByTime(60000);
 		expect(h.presentation.text).toBe(DETECTED); expect(vi.getTimerCount()).toBe(0);
 	});
 	it('catches up a queued key once global settings arrive', async () => {
@@ -126,9 +112,9 @@ describe('read prompt presentation', () => {
 		h.input.overlayDismiss!.pending = [{ gen: 1, shortcut: esc }]; await settle();
 		expect(h.presentation.text).toBeNull(); expect(h.invoke).not.toHaveBeenCalled();
 	});
-	it('disposal removes the timer and listener', async () => {
-		const h = setup(); await settle(); expect(vi.getTimerCount()).toBe(1);
+	it('disposal removes the listener', async () => {
+		const h = setup(); await settle();
 		h.stop(); cleanups.splice(cleanups.indexOf(h.stop), 1); await settle();
-		expect(vi.getTimerCount()).toBe(0); expect(h.unlisten).toHaveBeenCalledOnce();
+		expect(h.unlisten).toHaveBeenCalledOnce();
 	});
 });

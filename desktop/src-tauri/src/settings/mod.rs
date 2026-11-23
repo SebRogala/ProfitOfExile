@@ -1528,6 +1528,7 @@ pub(crate) mod tests {
         crate::read_hotkey::ReadHotkeySettings {
             shortcut: crate::read_hotkey::Shortcut { key: 82, shift: false, ctrl: true, alt: false },
             delay_ms: 250,
+            recalibrate_seconds: 20,
         }
     }
     #[test]
@@ -1558,7 +1559,7 @@ pub(crate) mod tests {
         let json = serde_json::to_value(crate::ssot::build_snapshot(&state)).unwrap();
         assert_eq!(
             json["readHotkey"],
-            serde_json::json!({"shortcut": {"key": 82, "shift": false, "ctrl": true, "alt": false}, "delayMs": 250})
+            serde_json::json!({"shortcut": {"key": 82, "shift": false, "ctrl": true, "alt": false}, "delayMs": 250, "recalibrateSeconds": 20})
         );
     }
     #[test]

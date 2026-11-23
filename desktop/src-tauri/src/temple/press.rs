@@ -366,13 +366,20 @@ mod tests {
     /// Ctrl+A, the default read key.
     const PRESSED: &[u16] = &[17, 65];
 
+    /// A press that confirms a no-match offer, the only kind that may sweep
+    /// (POE-459): these tests are about the sweep once it is allowed; the
+    /// offer gate itself is `read_hotkey`'s.
+    fn confirming() -> crate::read_hotkey::Accepted {
+        crate::read_hotkey::Accepted { finish: None, sweep: Some(Box::new(|| {})) }
+    }
+
     /// The read key's sampler and dispatcher over `samples` with only the
     /// temple reader registered; returns the grab count.
     fn press_through_the_read_key(world: &World, samples: Vec<Sample>) -> u32 {
         let readers: &[&dyn ScreenReader<World>] = &[&TEMPLE_READER];
         let (queue, presses) = mpsc::channel();
         let mut samples = samples.into_iter();
-        run_sampler(world, readers, &mut || samples.next(), &mut || None, &queue, &mut || None, &mut |_| 0);
+        run_sampler(world, readers, &mut || samples.next(), &mut || None, &queue, &mut confirming, &mut |_| 0);
         drop(queue);
         let mut grabs = 0;
         run_dispatcher(world, presses, &mut |_| {}, &mut || {
@@ -548,6 +555,7 @@ mod tests {
     fn press(world: &World, frame: fn() -> Capture) -> (crate::read_hotkey::DispatchOutcome, Vec<String>) {
         let lines = Arc::new(Mutex::new(Vec::new()));
         let mut armed = crate::read_hotkey::prepare_press(Press { cursor: None }, Default::default(), &[&TEMPLE_READER], world);
+        armed.sweep = confirming().sweep;
         let sink = Arc::clone(&lines);
         armed.log = Some(Box::new(move |line| sink.lock().unwrap().push(line)));
         let outcome = crate::read_hotkey::dispatch_press(armed, world, &mut |_| {}, &mut || Ok(frame()), &mut |_| true);

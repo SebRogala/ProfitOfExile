@@ -273,6 +273,8 @@ export interface ServerSlice {
 export interface ReadHotkeySettings {
 	shortcut: BossLootShortcut;
 	delayMs: number;
+	/** How long a no-match result offers recalibration to the next press (POE-459). */
+	recalibrateSeconds: number;
 }
 
 export type DismissInheritance<T> = 'inherit' | { override: T };
@@ -308,6 +310,16 @@ export interface ReadPromptSnapshot {
 	/** A recalibration sweep is running for the newest press. */
 	recalibrating: boolean;
 	seq: number;
+	/**
+	 * Divine Font gem slots, left to right, the current choice's read left
+	 * uncertain. Optional for partial test snapshots; Rust always sends it.
+	 */
+	gemUncertain?: boolean[];
+	/**
+	 * The no-match result offers a recalibration to a read press before it
+	 * expires (Rust owns the window). Optional like `gemUncertain`.
+	 */
+	recalibrateOffer?: boolean;
 }
 
 export interface SsotSnapshot {
@@ -424,7 +436,7 @@ export const ssot = $state({
 	readHotkey: null as ReadHotkeySettings | null,
 	overlayDismiss: null as DismissSnapshot | null,
 	/** No prompt until Rust answers. */
-	readPrompt: { mechanic: null, noMatch: false, recalibrating: false, seq: 0 } as ReadPromptSnapshot,
+	readPrompt: { mechanic: null, noMatch: false, recalibrating: false, seq: 0, gemUncertain: [false, false, false], recalibrateOffer: false } as ReadPromptSnapshot,
 });
 
 /** The three market fields, which share the write-through + poll-guard machinery. */

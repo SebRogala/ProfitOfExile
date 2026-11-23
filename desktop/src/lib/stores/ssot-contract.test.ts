@@ -45,7 +45,8 @@ const snapshotKeys: Record<keyof SsotSnapshot, true> = {
 
 const readHotkeyKeys: Record<keyof ReadHotkeySettings, true> = {
 	shortcut: true,
-	delayMs: true
+	delayMs: true,
+	recalibrateSeconds: true
 };
 
 const overlayDismissKeys: Record<keyof DismissSnapshot, true> = {
@@ -59,7 +60,9 @@ const readPromptKeys: Record<keyof ReadPromptSnapshot, true> = {
 	mechanic: true,
 	noMatch: true,
 	recalibrating: true,
-	seq: true
+	seq: true,
+	gemUncertain: true,
+	recalibrateOffer: true
 };
 
 const serverKeys: Record<keyof ServerSlice, true> = {

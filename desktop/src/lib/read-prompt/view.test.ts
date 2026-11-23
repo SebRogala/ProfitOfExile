@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { readPromptText } from './view';
 import type { ReadHotkeySettings, ReadPromptMechanic } from '$lib/stores/ssot.svelte';
 
-const CTRL_A: ReadHotkeySettings = { shortcut: { key: 65, shift: false, ctrl: true, alt: false }, delayMs: 0 };
-const MOUSE_4: ReadHotkeySettings = { shortcut: { key: 5, shift: false, ctrl: false, alt: false }, delayMs: 0 };
+const CTRL_A: ReadHotkeySettings = { shortcut: { key: 65, shift: false, ctrl: true, alt: false }, delayMs: 0, recalibrateSeconds: 5 };
+const MOUSE_4: ReadHotkeySettings = { shortcut: { key: 5, shift: false, ctrl: false, alt: false }, delayMs: 0, recalibrateSeconds: 5 };
 
 function text(mechanic: ReadPromptMechanic | null, readHotkey: ReadHotkeySettings | null) {
 	return readPromptText({ readPrompt: { mechanic, noMatch: false, recalibrating: false, seq: 1 }, readHotkey });
@@ -25,6 +25,14 @@ describe('readPromptText', () => {
 			.toBe('Nothing detected. If a mechanic is open, check Settings → OCR Regions → Preview, and press Recalibrate if a region is off.');
 	});
 	it.each([
+		[CTRL_A, 'No mechanics detected - press Ctrl + A within 5 s to recalibrate'],
+		[{ ...MOUSE_4, recalibrateSeconds: 10 }, 'No mechanics detected - press Mouse 4 within 10 s to recalibrate']
+	])('offers recalibration with the bound key and its window (%#)', (readHotkey, expected) => {
+		expect(readPromptText({ readPrompt: { mechanic: null, noMatch: true, recalibrating: false, seq: 2, recalibrateOffer: true }, readHotkey }))
+			.toBe(expected);
+	});
+
+	it.each([
 		['divineFont', 'Detected Divine Font - press Ctrl + A to read'],
 		['incursion', 'Detected Incursion - press Ctrl + A to read'],
 		['mercenary', 'Detected Mercenary - press Ctrl + A to read']
@@ -43,6 +51,25 @@ describe('readPromptText', () => {
 	it('follows a rebound read key for the same armed prompt', () => {
 		expect(text('incursion', CTRL_A)).toBe('Detected Incursion - press Ctrl + A to read');
 		expect(text('incursion', MOUSE_4)).toBe('Detected Incursion - press Mouse 4 to read');
+	});
+
+	it.each([
+		[[true, false, false], 'Gem 1 unclear'],
+		[[true, false, true], 'Gems 1 and 3 unclear'],
+		[[true, true, true], 'Gems 1, 2 and 3 unclear']
+	] as const)('names the uncertain gem slots %j and asks for another press of the bound key', (gemUncertain, gems) => {
+		expect(readPromptText({ readPrompt: { mechanic: null, noMatch: false, recalibrating: false, seq: 4, gemUncertain: [...gemUncertain] }, readHotkey: MOUSE_4 }))
+			.toBe(`${gems} - wait for the Font to finish revealing, then press Mouse 4 again, or hover the gem and press Mouse 4`);
+	});
+
+	it('words uncertain gem slots over an armed mechanic', () => {
+		expect(readPromptText({ readPrompt: { mechanic: 'incursion', noMatch: false, recalibrating: false, seq: 4, gemUncertain: [false, true, false] }, readHotkey: CTRL_A }))
+			.toMatch(/^Gem 2 unclear/);
+	});
+
+	it('draws nothing for uncertain gem slots before the read key setting has arrived', () => {
+		expect(readPromptText({ readPrompt: { mechanic: null, noMatch: false, recalibrating: false, seq: 4, gemUncertain: [true, false, false] }, readHotkey: null }))
+			.toBeNull();
 	});
 
 	it('draws nothing while no mechanic is armed', () => {
