@@ -242,6 +242,10 @@ pub enum Reason {
     GradeFallback,
     /// The rollout separated the architects beyond the noise band.
     ExpectedValue,
+    /// Xipocado's kill, or one that builds on the Cradle of Creation line,
+    /// ranks first whatever the rest of the chain prefers.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
+    ArchitectPriority,
 }
 
 impl Reason {
@@ -337,6 +341,10 @@ impl Reason {
                 "unpriced fallback: rollouts within noise, so the sheet's room order breaks equal architect rules".to_string()
             }
             Reason::ExpectedValue => "architect ranked on expected value; architect tie-breaks did not decide it".to_string(),
+            Reason::ArchitectPriority => {
+                "priority: Xipocado or the Cradle of Creation line — kill this architect first"
+                    .to_string()
+            }
         }
     }
 }

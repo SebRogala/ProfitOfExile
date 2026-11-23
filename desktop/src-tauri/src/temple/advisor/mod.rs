@@ -238,6 +238,18 @@ pub struct Advice {
     pub map_action: MapAction,
     /// What was unreadable or unspendable.
     pub warnings: Vec<Warning>,
+    /// The ranked kill that outranks every other preference, when one does.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
+    pub priority: Option<AdvicePriority>,
+}
+
+/// One kill the advice puts first whatever the rest of the ranking says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdvicePriority {
+    /// The offer's index on the panel, as [`ArchitectChoice::offer_index`].
+    pub architect_index: usize,
+    /// One short line saying why.
+    pub reason: String,
 }
 
 /// Rank every legal move for the room the player is standing in.
@@ -274,6 +286,7 @@ pub fn advise(
             convenience_door: None,
             map_action: MapAction::Continue,
             warnings,
+            priority: None,
         };
     };
 
@@ -408,6 +421,7 @@ pub fn advise(
         convenience_door,
         map_action,
         warnings,
+        priority: None,
     }
 }
 
@@ -3510,8 +3524,10 @@ mod tests {
                 "AdvancesTarget",
                 "R1Apex",
             ],
-            // 3 Chasm late — the Apex, free at last.
-            &["R1Apex", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs"],
+            // 3 Chasm late — the Apex, free at last. Both kills are priority
+            // kills (POE-465): Xopec's builds Royal Meeting Room on the Cradle
+            // of Creation line, and the other is Xipocado's.
+            &["R1Apex", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs", "ArchitectPriority"],
             // 4 Chasm merge — one door changes anything, and it is RV that
             // makes it worth a key.
             &["RvMerge", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs"],
@@ -3825,5 +3841,372 @@ mod tests {
                 ("7 ArmourersWorkshop-PC", Some((Change, "upgrade".to_string(), 2))),
             ],
         );
+    }
+
+
+    // ======================= POE-465: Xipocado and the Cradle of Creation line
+
+    /// Each recommendation as `(offer index, doors)`, best first.
+    fn ranked_sequence(advice: &Advice) -> Vec<(Option<usize>, String)> {
+        advice
+            .recommendations
+            .iter()
+            .map(|r| {
+                (
+                    r.option.architect.as_ref().map(|a| a.offer_index),
+                    r.option.doors_label(),
+                )
+            })
+            .collect()
+    }
+
+    /// Every recommendation with its EV and the rules that spoke, for a
+    /// failure message that shows the whole ranking.
+    fn ranking_dump(advice: &Advice) -> String {
+        advice
+            .recommendations
+            .iter()
+            .map(|r| {
+                format!(
+                    "  {:?} [{}] ev={:.3} {:?}",
+                    r.option.architect.as_ref().map(|a| a.offer_index),
+                    r.option.doors_label(),
+                    r.ev,
+                    r.reasons.iter().map(reason_kind).collect::<Vec<_>>()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The best EV among the options whose kill is offer `index` (or is not).
+    fn best_ev(advice: &Advice, is_offer: impl Fn(Option<usize>) -> bool) -> f64 {
+        advice
+            .recommendations
+            .iter()
+            .filter(|r| is_offer(r.option.architect.as_ref().map(|a| a.offer_index)))
+            .map(|r| r.ev)
+            .fold(f64::NEG_INFINITY, f64::max)
+    }
+
+    /// What makes a row a real test of the priority rather than of the
+    /// ranking it overrides.
+    enum Precondition {
+        /// The qualifying kill's best option prices below the rival's.
+        LowerEv,
+        /// R4's carve-out vetoes the qualifying kill.
+        Vetoed,
+        /// Every kill on the board qualifies.
+        AllQualify,
+    }
+
+    struct PriorityRow {
+        name: &'static str,
+        state: BoardState,
+        offers: Vec<ArchitectOffer>,
+        keys: u8,
+        profile: StrategyProfile,
+        /// The panel indexes of the offers that qualify for the priority.
+        qualifying: &'static [usize],
+        precondition: Precondition,
+        /// `(offer index, doors)` per recommendation, best first.
+        expected: Vec<(Option<usize>, &'static str)>,
+    }
+
+    /// Every way the advice for `row` misses the priority contract.
+    fn priority_failures(row: &PriorityRow) -> Vec<String> {
+        let advice = advise(
+            &row.state,
+            &row.offers,
+            row.keys,
+            &row.profile,
+            &TempleConfig::default(),
+            N,
+            SEED,
+        );
+        let dump = ranking_dump(&advice);
+        let qualifies = |index: Option<usize>| index.is_some_and(|i| row.qualifying.contains(&i));
+        let mut failures = Vec::new();
+
+        let precondition_holds = match row.precondition {
+            Precondition::LowerEv => {
+                best_ev(&advice, qualifies) < best_ev(&advice, |i| !qualifies(i))
+            }
+            Precondition::Vetoed => advice.recommendations.iter().any(|r| {
+                qualifies(r.option.architect.as_ref().map(|a| a.offer_index))
+                    && has_reason(r, |x| matches!(x, Reason::R4CarveOutVeto { .. }))
+            }),
+            Precondition::AllQualify => advice
+                .recommendations
+                .iter()
+                .all(|r| qualifies(r.option.architect.as_ref().map(|a| a.offer_index))),
+        };
+        if !precondition_holds {
+            failures.push(format!("{}: the board no longer tests the priority:\n{dump}", row.name));
+        }
+
+        let got = ranked_sequence(&advice);
+        let want: Vec<(Option<usize>, String)> = row
+            .expected
+            .iter()
+            .map(|(index, doors)| (*index, doors.to_string()))
+            .collect();
+        if got != want {
+            failures.push(format!(
+                "{}: ranking\n  got  {got:?}\n  want {want:?}\n{dump}",
+                row.name
+            ));
+        }
+
+        let top = row.expected[0].0.expect("a priority row ranks a kill first");
+        let want_priority = Some(AdvicePriority {
+            architect_index: top,
+            reason: Reason::ArchitectPriority.describe(),
+        });
+        if advice.priority != want_priority {
+            failures.push(format!(
+                "{}: priority {:?}, want {want_priority:?}",
+                row.name, advice.priority
+            ));
+        }
+
+        for ranked in &advice.recommendations {
+            let index = ranked.option.architect.as_ref().map(|a| a.offer_index);
+            let marked = has_reason(ranked, |r| matches!(r, Reason::ArchitectPriority));
+            if marked != qualifies(index) {
+                failures.push(format!(
+                    "{}: option {index:?} [{}] carries ArchitectPriority={marked}: {:?}",
+                    row.name,
+                    ranked.option.doors_label(),
+                    ranked.reasons
+                ));
+            }
+        }
+        failures
+    }
+
+    fn assert_priority_rows(rows: &[PriorityRow]) {
+        let failures: Vec<String> = rows.iter().flat_map(priority_failures).collect();
+        assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+    }
+
+    /// A tier-`tier` room of `line` at D1, beside a connected Doryani's
+    /// Institute that only a Locus completes into the profile's combination.
+    fn priority_board(line: &str, tier: u8) -> BoardState {
+        board(&[(D1, line, tier), (E2, "gem", 3)], &[(D1, E1), (E1, E2)], D1, 5)
+    }
+
+    fn carve_out_profile() -> StrategyProfile {
+        let mut profile = rush();
+        profile.r4_keep_upgrade_targets = true;
+        profile
+    }
+
+    mod keep_happy {
+        use super::*;
+
+        // keep:happy — AC-1. Xipocado's kill ranks first under either offer
+        // kind and any letter case, although it prices below a Locus/Doryani
+        // kill or R4's carve-out vetoes it, and although Grand Reactor is not
+        // on the Cradle line. Every other option stays, after it.
+        #[test]
+        fn a_xipocado_offer_is_killed_first_over_every_other_preference() {
+            let (eight, _) = board_eight();
+            assert_priority_rows(&[
+                PriorityRow {
+                    name: "change, upper case, lower EV",
+                    state: priority_board("corruption", 1),
+                    offers: vec![
+                        offer("XIPOCADO", Change, "Grand Reactor"),
+                        offer("Azcapa", Upgrade, "Catalyst of Corruption"),
+                    ],
+                    keys: 1,
+                    profile: rush(),
+                    qualifying: &[0],
+                    precondition: Precondition::LowerEv,
+                    expected: vec![],
+                },
+                PriorityRow {
+                    name: "upgrade, lower case, lower EV",
+                    state: priority_board("conduit_of_lightning", 1),
+                    offers: vec![
+                        offer("Azcapa", Change, "Corruption Chamber"),
+                        offer("xipocado", Upgrade, "Grand Reactor"),
+                    ],
+                    keys: 1,
+                    profile: rush(),
+                    qualifying: &[1],
+                    precondition: Precondition::LowerEv,
+                    expected: vec![],
+                },
+                PriorityRow {
+                    name: "upgrade across the R4 carve-out veto",
+                    state: eight,
+                    offers: vec![
+                        offer("Xipocado", Upgrade, "Engineering Department"),
+                        offer("Juatalotli", Change, "Storage Room"),
+                    ],
+                    keys: 0,
+                    profile: carve_out_profile(),
+                    qualifying: &[0],
+                    precondition: Precondition::Vetoed,
+                    expected: vec![],
+                },
+            ]);
+        }
+    }
+
+    mod keep_critical {
+        use super::*;
+
+        // keep:critical — AC-2 and AC-3. Silent consequence: the overlay
+        // points at the wrong architect block, a plausible kill the player
+        // trusts, and the Cradle of Creation line is lost to a Locus/Doryani
+        // move. Any architect's kill that builds on the throne_of_atziri line
+        // ranks first at every tier a kill can build; with two priority kills
+        // the old order between them stands.
+        #[test]
+        fn a_kill_on_the_cradle_line_is_ranked_first_at_every_buildable_tier() {
+            let throne_eight = board(
+                &[(D1, "throne_of_atziri", 1), (C1, "upgrade", 2), (C2, "corruption", 1)],
+                &[(C1, D1), (D1, E1), (E1, E2)],
+                D1,
+                6,
+            );
+            let three = cases::case_3_chasm_late();
+            assert_priority_rows(&[
+                PriorityRow {
+                    name: "Hall of Lords (tier 2), lower EV",
+                    state: priority_board("corruption", 1),
+                    offers: vec![
+                        offer("Azcapa", Upgrade, "Catalyst of Corruption"),
+                        offer("Xopec", Change, "Royal Meeting Room"),
+                    ],
+                    keys: 1,
+                    profile: rush(),
+                    qualifying: &[1],
+                    precondition: Precondition::LowerEv,
+                    expected: vec![],
+                },
+                PriorityRow {
+                    name: "Cradle of Creation (tier 3), lower EV",
+                    state: priority_board("corruption", 2),
+                    offers: vec![
+                        offer("Xopec", Change, "Royal Meeting Room"),
+                        offer("Azcapa", Upgrade, "Locus of Corruption"),
+                    ],
+                    keys: 1,
+                    profile: rush(),
+                    qualifying: &[0],
+                    precondition: Precondition::LowerEv,
+                    expected: vec![],
+                },
+                PriorityRow {
+                    name: "Hall of Lords upgrade across the R4 carve-out veto",
+                    state: throne_eight,
+                    offers: vec![
+                        offer("Ticaba", Upgrade, "Hall of Lords"),
+                        offer("Juatalotli", Change, "Storage Room"),
+                    ],
+                    keys: 0,
+                    profile: carve_out_profile(),
+                    qualifying: &[0],
+                    precondition: Precondition::Vetoed,
+                    expected: vec![],
+                },
+                PriorityRow {
+                    name: "case 3: Royal Meeting Room (tier 1) beside Xipocado",
+                    state: three.state,
+                    offers: three.offers,
+                    keys: three.keys,
+                    profile: rush(),
+                    qualifying: &[0, 1],
+                    precondition: Precondition::AllQualify,
+                    expected: vec![],
+                },
+            ]);
+        }
+    }
+
+    mod keep_regression {
+        use super::*;
+
+        // keep:regression — AC-4. Boards with neither a Xipocado offer nor a
+        // Cradle-line kill keep their recommendation order and publish no
+        // priority. Case 8 prints Grand Reactor from another architect, so
+        // the printed target alone must not qualify.
+        #[test]
+        fn a_board_without_a_qualifying_offer_keeps_its_ranking_and_no_priority() {
+            let rows: [(cases::Case, Vec<(Option<usize>, &str)>); 2] = [
+                (cases::case_2_corruption_chamber(), vec![]),
+                (cases::case_8_lightning_workshop(), vec![]),
+            ];
+            let mut failures = Vec::new();
+            for (case, expected) in rows {
+                let advice = advise_case(&case);
+                let got = ranked_sequence(&advice);
+                let want: Vec<(Option<usize>, String)> = expected
+                    .iter()
+                    .map(|(index, doors)| (*index, doors.to_string()))
+                    .collect();
+                if got != want || advice.priority.is_some() {
+                    failures.push(format!(
+                        "{}: priority {:?}\n  got  {got:?}\n  want {want:?}\n{}",
+                        case.name,
+                        advice.priority,
+                        ranking_dump(&advice)
+                    ));
+                }
+            }
+            assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+        }
+
+        // keep:regression — AC-4. An offer that cannot be ranked — its printed
+        // target unknown, or a change with no current tier to resolve against
+        // — gets no priority, and the warnings say what they said before.
+        #[test]
+        fn an_unrankable_qualifying_offer_gets_no_priority() {
+            let unknown_tier = |mut state: BoardState| {
+                state.current_tier = None;
+                state
+            };
+            let rival = || offer("Azcapa", Upgrade, "Catalyst of Corruption");
+            let rows = [
+                (
+                    "Xipocado's printed target is not a room",
+                    priority_board("corruption", 1),
+                    vec![offer("Xipocado", Upgrade, "Definitely Not A Room"), rival()],
+                    vec![Warning::UnresolvedOffer {
+                        printed: "Definitely Not A Room".to_string(),
+                    }],
+                ),
+                (
+                    "Xipocado's change with no current tier",
+                    unknown_tier(priority_board("corruption", 1)),
+                    vec![offer("Xipocado", Change, "Lightning Workshop"), rival()],
+                    vec![Warning::UnknownCurrentTier],
+                ),
+                (
+                    "a Royal Meeting Room change with no current tier",
+                    unknown_tier(priority_board("corruption", 1)),
+                    vec![offer("Xopec", Change, "Royal Meeting Room"), rival()],
+                    vec![Warning::UnknownCurrentTier],
+                ),
+            ];
+            for (name, state, offers, warnings) in rows {
+                let advice = advise(&state, &offers, 0, &rush(), &TempleConfig::default(), N, SEED);
+                assert_eq!(advice.priority, None, "{name}");
+                assert_eq!(advice.warnings, warnings, "{name}");
+                assert!(!advice.recommendations.is_empty(), "{name}: the rival is still ranked");
+                assert!(
+                    advice
+                        .recommendations
+                        .iter()
+                        .all(|r| r.option.architect.as_ref().map(|a| a.offer_index) == Some(1)),
+                    "{name}: only the rankable offer may be recommended:\n{}",
+                    ranking_dump(&advice)
+                );
+            }
+        }
     }
 }

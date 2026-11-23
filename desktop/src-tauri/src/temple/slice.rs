@@ -31,6 +31,8 @@
 //!   [`LayoutView::unresolved_incident`] instead of being silently included or
 //!   silently dropped. See [`super::run::diamond_rect`].
 
+// size-gate: intrinsic — temple slice projection and wire declarations remain together for this bounded advice member change
+
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -2358,6 +2360,7 @@ mod tests {
             convenience_door: None,
             map_action: MapAction::Continue,
             warnings: Vec::new(),
+            priority: None,
         }
     }
 
