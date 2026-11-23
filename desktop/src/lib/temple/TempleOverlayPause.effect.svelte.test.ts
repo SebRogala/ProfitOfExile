@@ -218,8 +218,9 @@ const clickClose = (target: HTMLElement) => clickButton(target, 88 + 33);
 
 describe('temple keep window', () => {
 	// keep:happy
-	it('a forwarded click on Keep keeps the offers past their timeout', async () => {
+	it('a forwarded click on Pause keeps the offers past their timeout', async () => {
 		const target = await render(10);
+		expect(target.querySelector('[data-action="temple.keep"]')?.textContent?.trim()).toBe('Pause');
 		await clickKeep(target);
 		vi.advanceTimersByTime(11000);
 		await settle();
@@ -229,6 +230,7 @@ describe('temple keep window', () => {
 		expect(layer.querySelector('.keepwin')?.textContent).not.toMatch(/Esc|Key/);
 		expect(layer.querySelector('[data-action="temple.keep"]')).toBeNull();
 		expect(layer.querySelector('[data-action="temple.close"]')).not.toBeNull();
+		expect(layer.querySelector('.kw-keep:not([data-action])')?.textContent?.trim()).toBe('Paused');
 	});
 
 	// keep:happy
