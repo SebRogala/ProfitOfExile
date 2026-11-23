@@ -54,4 +54,13 @@ describe('read prompt page', () => {
 		expect(prompts).toHaveLength(1);
 		expect(prompts[0].textContent).toBe('Detected Mercenary - press Ctrl + A to read');
 	});
+
+	it('draws the recalibration sweep status in the wrapping prompt', () => {
+		ssot.readPrompt = { mechanic: null, noMatch: false, recalibrating: true, seq: 3 };
+		const target = render();
+		const prompts = target.querySelectorAll('.prompt');
+		expect(prompts).toHaveLength(1);
+		expect(prompts[0].textContent).toBe('No mechanics found - running a recalibration sweep now.');
+		expect(prompts[0].classList.contains('no-match')).toBe(true);
+	});
 });

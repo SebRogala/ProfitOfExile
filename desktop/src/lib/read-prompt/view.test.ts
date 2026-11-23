@@ -10,6 +10,16 @@ function text(mechanic: ReadPromptMechanic | null, readHotkey: ReadHotkeySetting
 }
 
 describe('readPromptText', () => {
+	// keep:happy
+	it.each([
+		[null, false],
+		[null, true],
+		['incursion', false]
+	] as const)('words the recalibration sweep status first (mechanic %s, noMatch %s)', (mechanic, noMatch) => {
+		expect(readPromptText({ readPrompt: { mechanic, noMatch, recalibrating: true, seq: 3 }, readHotkey: CTRL_A }))
+			.toBe('No mechanics found - running a recalibration sweep now.');
+	});
+
 	it.each([CTRL_A, MOUSE_4, null])('shows the exact no-match message independently of the read key (%s)', (readHotkey) => {
 		expect(readPromptText({ readPrompt: { mechanic: null, noMatch: true, recalibrating: false, seq: 2 }, readHotkey }))
 			.toBe('Nothing detected. If a mechanic is open, check Settings → OCR Regions → Preview, and press Recalibrate if a region is off.');
