@@ -1576,7 +1576,10 @@ fn advice_view(advice: &Advice, exit: Option<ExitLabelView>) -> AdviceView {
                 .recommendations
                 .first()
                 .is_some_and(|r| r.option.architect.is_some()),
-        priority: None,
+        priority: advice.priority.as_ref().map(|priority| PriorityView {
+            architect_index: priority.architect_index,
+            reason: priority.reason.clone(),
+        }),
     }
 }
 

@@ -595,6 +595,7 @@ export interface AdviceView {
 	 *  surface has to recognise a warning by its wording. False when nothing
 	 *  was read at all — there is then no kill on screen to call forced. */
 	forcedKill: boolean;
+	priority?: { architectIndex: number; reason: string } | null;
 }
 
 /**
