@@ -176,6 +176,7 @@ describe('initStatusStore', () => {
 async function server(url: string): Promise<void> {
 	const { applyServerSlice } = await import('./server-base.svelte');
 	applyServerSlice({ url, defaultUrl: 'https://default.example' });
+	await vi.dynamicImportSettled();
 }
 
 describe('a server change', () => {

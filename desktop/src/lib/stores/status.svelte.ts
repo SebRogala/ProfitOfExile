@@ -12,7 +12,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { loadEntitlements, refreshEntitlements, resetEntitlements } from '$lib/stores/entitlements.svelte';
-import { syncDivineRateToServer } from '$lib/stores/divine-rate.svelte';
 import { checkForUpdate } from '$lib/updater/check';
 import { onServerUrlChange } from '$lib/stores/server-base.svelte';
 
@@ -151,7 +150,10 @@ function noteServerUrl(_url: string, previous: string | null): void {
 		resetEntitlements();
 		void refreshEntitlements();
 	}
-	void syncDivineRateToServer();
+	// Native ESM overlay entry at api.ts otherwise reads VARIANTS before initialization through SSOT.
+	void import('$lib/stores/divine-rate.svelte')
+		.then(({ syncDivineRateToServer }) => syncDivineRateToServer())
+		.catch((e) => console.warn('[store] divine-rate server sync failed:', e));
 }
 
 /**
