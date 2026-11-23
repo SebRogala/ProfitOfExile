@@ -487,10 +487,10 @@ pub(crate) mod tests {
     /// The reported frame's slot row (`font-slots-detonate-dead-chain-reaction.png`,
     /// see the fixture README), its slot rects and what the game's tooltips named.
     const REPORTED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/lab/font-slots-detonate-dead-chain-reaction.png");
-    const REPORTED_RECTS: [[i32; 4]; 3] = [[58, 42, 49, 49], [158, 42, 49, 49], [259, 42, 49, 49]];
-    const REPORTED_TRUTH: [&str; 3] = ["Toxic Rain of Sporeburst", "Fire Trap of Blasting", "Detonate Dead of Chain Reaction"];
+    pub(crate) const REPORTED_RECTS: [[i32; 4]; 3] = [[58, 42, 49, 49], [158, 42, 49, 49], [259, 42, 49, 49]];
+    pub(crate) const REPORTED_TRUTH: [&str; 3] = ["Toxic Rain of Sporeburst", "Fire Trap of Blasting", "Detonate Dead of Chain Reaction"];
 
-    fn reported_frame() -> RgbaImage {
+    pub(crate) fn reported_frame() -> RgbaImage {
         image::open(REPORTED).unwrap_or_else(|e| panic!("{REPORTED}: {e}")).to_rgba8()
     }
 

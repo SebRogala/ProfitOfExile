@@ -1080,6 +1080,45 @@ mod tests {
 
             assert_eq!(prompt_slots(&state), [false, false, false]);
         }
+
+        /// The reported slot row read under references that lack its slot-3
+        /// gem (Detonate Dead of Chain Reaction), unhovered.
+        fn missing_reference_press(state: &AppState) -> GemCommit {
+            use crate::lab::gem_icon_refs::tests::fixture_refs_transfigured_without;
+            use crate::lab::gem_icons::tests::{reported_frame, REPORTED_RECTS, REPORTED_TRUTH};
+            let token = arm_gem_context(state);
+            with_refs(state, Arc::new(fixture_refs_transfigured_without(REPORTED_TRUTH[2])));
+            let lab = LabPlacements { gem_slots: REPORTED_RECTS, ..lab_1080p() };
+            let frame = DynamicImage::ImageRgba8(reported_frame());
+            committed(read_gem_frame(state, token, &frame, (0, 0), None, &lab, |_| Vec::new())).expect("stored")
+        }
+
+        const MISSING_REFERENCE_PICKS: [&str; 3] = ["Toxic Rain of Sporeburst", "Fire Trap of Blasting", "Detonate Dead of Scavenging"];
+
+        #[test]
+        fn a_slot_without_its_reference_is_held_as_its_best_candidate_flagged_uncertain() {
+            let state = test_app_state();
+
+            let commit = missing_reference_press(&state);
+
+            assert_eq!(commit.names, MISSING_REFERENCE_PICKS, "{:?}", commit.read);
+            assert_eq!(held(&state), MISSING_REFERENCE_PICKS);
+            assert_eq!(prompt_slots(&state), [false, false, true]);
+        }
+
+        #[test]
+        fn a_flagged_pick_is_sent_to_the_server_like_a_certain_pick() {
+            let state = Arc::new(test_app_state());
+            *state.pair_code.lock().unwrap() = "fixture-pair".into();
+            let commit = missing_reference_press(&state);
+
+            let (task, release, requests) = queue_relay(state.clone(), commit);
+            release.send(()).unwrap();
+            tauri::async_runtime::block_on(task).unwrap();
+
+            let sent: Vec<serde_json::Value> = requests.try_iter().map(|payload| payload["gems"].clone()).collect();
+            assert_eq!(sent, vec![serde_json::json!(MISSING_REFERENCE_PICKS)]);
+        }
     }
 
     mod keep_critical {
@@ -1113,7 +1152,7 @@ mod tests {
     }
 
     #[test]
-    fn an_uncertain_blend_keeps_its_candidates_out_of_the_held_gems() {
+    fn an_uncertain_blend_is_held_as_one_of_its_blended_gems() {
         let state = test_app_state();
         let token = arm_gem_context(&state);
         with_refs(&state, fixture_refs().clone());
@@ -1121,7 +1160,8 @@ mod tests {
 
         let commit = committed(press(&state, token, &frame, None, &[])).expect("stored");
 
-        assert!(held(&state).is_empty());
+        let held = held(&state);
+        assert!(held.len() == 1 && ["Dark Pact", "Dark Bargain"].contains(&held[0].as_str()), "{held:?}");
         let Some(LabGemRead { slots, .. }) = last(&state) else { panic!("no last read") };
         let GemSlot::Uncertain { candidates } = &slots[0] else { panic!("{:?}", commit.read) };
         assert!(candidates.iter().any(|c| c.name == "Dark Bargain"), "{candidates:?}");
