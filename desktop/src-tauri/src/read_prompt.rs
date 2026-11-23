@@ -2,7 +2,8 @@
 //!
 //! Client.txt seams arm a mechanic, a successful read or the context's end
 //! clears it, and the SSOT carries the newest active arm that is presented
-//! (a `DivineFont` arm is recorded for the read but never presented) or the
+//! (`DivineFont` and `Incursion` arms are recorded for the read but never
+//! presented) or the
 //! no-match presentation. Nothing here grabs the screen; a read happens only on the read key
 //! (`crate::read_hotkey`). Policy: docs/OVERLAY-GUIDE.md § "Screen reading
 //! (GGG policy)".
@@ -22,7 +23,7 @@ pub enum Mechanic {
 
 // POE-438, Operator 2026-11-20: the Lab per-craft prompt is hidden for now
 // because the lookup replaces it; its arm is kept so the read path is unchanged.
-const UNPRESENTED: &[Mechanic] = &[Mechanic::DivineFont];
+const UNPRESENTED: &[Mechanic] = &[Mechanic::DivineFont, Mechanic::Incursion];
 
 /// What one Client.txt seam does to the prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

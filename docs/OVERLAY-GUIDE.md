@@ -93,12 +93,12 @@ logs must keep the user aware of what the data is used for.
   result has a fresh presentation identity, so unchanged polls cannot restore
   dismissed content. Superseded completions cannot overwrite newer results or
   Client.txt arms. Ordinary detected text remains
-  `Detected <mechanic> - press <key> to read`, outside timeout/key dismissal.
+  `Detected Mercenary - press <key> to read`, outside timeout/key dismissal.
 - **No automatic capture.** No capture is triggered by Client.txt events,
   timers, loops, retries, cursor hover or panel polling. A fixed delay between
   the press and the grab is allowed; polling until a panel appears is not.
 - **Client.txt stays automatic.** Log reading may arm readers and show the
-  "press <key> to read" prompt (POE-388); it never triggers a capture.
+  Mercenary "press <key> to read" prompt (POE-388); it never triggers a capture.
 - **Manual one-shot buttons are allowed.** Recalibrate and debug capture take
   one grab per click.
 - **Boss-loot capture key.** Its own key is a manual one-shot of the area near
@@ -298,9 +298,11 @@ amendment): no module flag governs it, so its `createModuleWindows` row is
 always granted and enabled, and its route draws the single `prompt.read`
 widget through `createReadPromptPresentation`: detected text while
 `ssot.readPrompt.mechanic` is set, or the no-match result described in
-[Screen reading](#screen-reading-ggg-policy). Since POE-438 a Divine
-Font arm is kept for the read but not presented, so the prompt shows detected
-text for Incursion and Mercenary only; the no-match result still shows for
+[Screen reading](#screen-reading-ggg-policy). Divine Font (POE-438) and
+Incursion (POE-460) arms are kept for read-key routing but not presented, so
+the prompt shows detected text for Mercenary only; see
+[Temple lifecycle](TEMPLE-LIFECYCLE.md) for Temple arming and advice clearance.
+The no-match result still shows for
 every read. A Divine Font read that leaves a gem slot uncertain shows a
 request to wait for the reveal and press again (`ssot.readPrompt.gemUncertain`,
 see [Lab Font OCR lifecycle](LAB-FONT-OCR-LIFECYCLE.md)). It is
@@ -1710,18 +1712,20 @@ touching the named path.
   be on THAT cell and no other.
 - **The read prompt, per mechanic** (POE-388): with the game focused, trigger
   each mechanic once — Alva's start line (or entering the temple), an Izaro kill
-  or a Divine Font opening, and a mercenary Inspect line. Incursion and
-  Mercenary must each show one line at the TOP CENTRE (or wherever it was
-  dragged), exactly `Detected Incursion - press <key> to read` or `Detected
-  Mercenary - …`, with `<key>` the bound read key. The Divine Font arm must
-  show no prompt (POE-438, [Overlay types](#overlay-types)), yet pressing the
-  read key at the Font must still read and look it up. Rebind the read key and
-  the shown text must follow. A completed read or the context's end (zone change,
-  Alva's END line) must take it down. Then take a debug frame dump while the
+  or a Divine Font opening, and a mercenary Inspect line. Mercenary must
+  show one line at the TOP CENTRE (or wherever it was dragged), exactly
+  `Detected Mercenary - press <key> to read`, with `<key>` the bound read key.
+  Incursion and Divine Font arms must show no prompt
+  ([Overlay types](#overlay-types)), yet pressing the read key at the Temple
+  sheet or Font must still read it. Rebind the read key and
+  the shown text must follow. A completed Mercenary read or a zone change
+  must take it down. Then take a debug frame dump while the
   prompt is up: the prompt must be ABSENT from the dumped frame (it is in
   `EXCLUDED_WHILE_GRABBING`). No capture may happen until the read key is
   pressed.
-- **Any other Alva line ends the cycle** (POE-249): with the prompt up, let Alva
+- **Historical detect-loop check: any other Alva line ends the cycle** (POE-249).
+  Current Temple behavior is specified in [Temple lifecycle](TEMPLE-LIFECYCLE.md).
+  In the retired loop, with the prompt up, let Alva
   say anything else — `Good job.` at the end of the run is the ordinary case.
   `app.log` must carry `Temple: cycle ended — Alva spoke again` (or
   `— the zone changed` when a portal or a death got there first) and the prompt
