@@ -1475,35 +1475,56 @@ mod tests {
         // plausible chest totals for uniques the temple will not drop, and the
         // advice ranks on them. Switching false -> true -> false misses each
         // time, and each answer counts Sanctum of Immortality's chest at the
-        // unique its context drops.
+        // unique its context drops — under both presets, because
+        // `value_table` computes each preset on its own arm.
         #[test]
         fn a_cradle_switch_is_served_the_table_its_context_names_each_time() {
-            let mut slot = None;
+            let custom = TempleCustomSettings {
+                rooms: BTreeMap::from([("corruption".to_string(), vec![None, None, Some(4242.0)])]),
+                ..Default::default()
+            };
+            let presets = [
+                ("default", Preset::Default, TempleCustomSettings::default()),
+                ("custom", Preset::Custom, custom),
+            ];
             let steps = [
                 (false, "Mask of the Spirit Drinker", 48.75),
                 (true, "Mask of the Stitched Demon", 106.75),
                 (false, "Mask of the Spirit Drinker", 48.75),
             ];
-            for (step, (cradle, name, chaos)) in steps.into_iter().enumerate() {
-                let (valued, source) = look_up_or_compute(
-                    &mut slot,
-                    ValuationKey {
-                        cradle,
-                        ..base_key()
-                    },
-                );
+            for (label, preset, custom) in presets {
+                let mut slot = None;
+                for (step, (cradle, name, chaos)) in steps.into_iter().enumerate() {
+                    let (valued, source) = look_up_or_compute(
+                        &mut slot,
+                        ValuationKey {
+                            preset,
+                            custom: custom.clone(),
+                            cradle,
+                            ..base_key()
+                        },
+                    );
 
-                assert_eq!(source, ValuationSource::Computed, "step {step}: the switch missed");
-                let sanctum = valued
-                    .get("sanctum_of_immortality", tier(3))
-                    .expect("sanctum is valued");
-                let unique = sanctum
-                    .drivers
-                    .iter()
-                    .find(|d| d.kind == DriverKind::UniqueDrop)
-                    .expect("sanctum has a chest driver");
-                assert_eq!(unique.name, name, "step {step} (cradle={cradle})");
-                assert_eq!(unique.chaos, Some(chaos), "step {step} (cradle={cradle})");
+                    let at = format!("{label} step {step} (cradle={cradle})");
+                    assert_eq!(source, ValuationSource::Computed, "{at}: the switch missed");
+                    let sanctum = valued
+                        .get("sanctum_of_immortality", tier(3))
+                        .expect("sanctum is valued");
+                    let unique = sanctum
+                        .drivers
+                        .iter()
+                        .find(|d| d.kind == DriverKind::UniqueDrop)
+                        .expect("sanctum has a chest driver");
+                    assert_eq!(unique.name, name, "{at}");
+                    assert_eq!(unique.chaos, Some(chaos), "{at}");
+                    if preset == Preset::Custom {
+                        assert_eq!(
+                            total(&valued, "corruption", 3),
+                            4242.0,
+                            "{at}: the row ran the Custom table",
+                        );
+                    }
+                }
             }
         }
     }
