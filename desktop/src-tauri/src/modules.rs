@@ -43,7 +43,7 @@
 //!    its `new()` in both `run()` and `settings::tests::test_app_state`.
 //! 6. SSOT slice: a field on `ssot::AppSsotSnapshot`, filled in
 //!    `ssot::build_snapshot` and `compose_snapshot`; a new slice type joins the
-//!    ssot allowlist in `scripts/rust-size-gate.sh`. Frontend side, in
+//!    ssot allowlist in `scripts/size-gate.sh`. Frontend side, in
 //!    `desktop/src/lib/stores/ssot.svelte.ts`: the field on `SsotSnapshot`,
 //!    its field and default on the `ssot` store, and its assignment in
 //!    `applySnapshot` (no generic projection exists).

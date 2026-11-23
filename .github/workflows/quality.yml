@@ -21,7 +21,7 @@ on:
       - 'Makefile'
       - '.github/workflows/quality.yml'
   push:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - '**/*.go'
       - 'go.mod'
@@ -37,6 +37,16 @@ on:
       - '.github/workflows/quality.yml'
 
 jobs:
+  size-gate:
+    runs-on: ubuntu-latest
+    env:
+      SIZE_GATE_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: make size-gate-test size-gate
+
   backend:
     runs-on: ubuntu-latest
     steps:

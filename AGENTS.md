@@ -64,6 +64,7 @@ and the documentation index before acting on them.
 
 ## Durable rules
 
+- Follow [scripts/size-gate.sh](scripts/size-gate.sh)'s plan-time duty for a split WI or reviewed intrinsic marker when touching already-over files.
 - Preserve unrelated and uncommitted user changes. Inspect overlapping diffs
   before editing.
 - PostgreSQL access uses direct, parameterized `pgx` queries; do not add an ORM.

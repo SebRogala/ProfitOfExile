@@ -1,11 +1,11 @@
 .PHONY: help build test test-integration qa up up-collector down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-size-gate desktop-test desktop-test-js desktop-build desktop-deploy desktop-sync desktop-release-windows desktop-watch merc-seed-art lab-gem-art
 
-.PHONY: size-gate-test
-size-gate-test: ## Test the uniform production-line crossing gate
-	@sh scripts/size-gate.test.sh
-
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' Makefile | sed 's/:.*## /\t/' | awk -F '\t' '{printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+.PHONY: size-gate size-gate-test desktop-check-js
+size-gate-test: ## Test the uniform production-line crossing gate
+	@sh scripts/size-gate.test.sh
 
 -include .env.local
 
@@ -44,7 +44,7 @@ test-league-rollover: ## Prove committed rollover rejects stale contributions (D
 # out for build cost: measured 37s for the whole qa run with its 119 Rust tests
 # included. Accepted trade-off — the gate pays a warm cargo build so the desktop
 # Rust tests run somewhere. Revisit if a cold build makes qa too slow to run.
-qa: test desktop-test desktop-test-js deps-check ## Run the Go suite, the desktop Rust suite, the desktop vitest suite and the dependency-contract check
+qa: test desktop-test desktop-test-js deps-check size-gate-test size-gate ## Run Go, desktop Rust/vitest, dependency contracts and the uniform 1500-line crossing gate
 
 # `npm ls --all` exits non-zero when an installed package violates a declared
 # peer range. That state is otherwise invisible until it misbehaves: the
@@ -180,8 +180,13 @@ merc-seed-art: lab-gem-art ## Fetch the merc seed gem art fixture, and the lab g
 desktop-check: ## Cargo check desktop (Rust)
 	docker compose run --rm -w /app/desktop/src-tauri desktop cargo check
 
-desktop-size-gate: ## Rust production-line ceilings and boundary greps
-	@sh scripts/rust-size-gate.sh
+size-gate: ## Uniform 1500 production-line crossing gate (base: origin/dev) and boundary greps
+	@sh scripts/size-gate.sh
+
+desktop-size-gate: size-gate ## Compatibility alias for size-gate
+
+desktop-check-js: ## Svelte/TS check desktop (svelte-check)
+	docker compose run --rm -w /app/desktop desktop sh -c 'npm run check'
 
 desktop-check-windows: ## Cargo check desktop for the Windows target (type-checks the cfg(windows) half: overlay hook, click-through, capture)
 	docker compose run --rm -w /app/desktop/src-tauri desktop sh -c 'rustup target add x86_64-pc-windows-gnu >/dev/null 2>&1; cargo check --target x86_64-pc-windows-gnu'

@@ -1,5 +1,6 @@
 /**
  * Mercenary rulesets — the declarative data model behind the Mercenaries view page.
+ * size-gate: intrinsic — declarative ruleset data transcribed from the guides; its size is the data, asserted against fixtures by rulesets.test.ts
  *
  * SIX sources, and they do not all come from the same kind of thing. Guide-a,
  * guide-b, guide-d and guide-f are transcriptions of GGG trade SAVED SEARCHES:

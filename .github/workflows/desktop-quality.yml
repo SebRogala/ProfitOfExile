@@ -17,7 +17,8 @@ on:
       - 'desktop/**'
       - 'docker-compose.yml'
       - 'Makefile'
-      - 'scripts/rust-size-gate.sh'
+      - 'scripts/size-gate.sh'
+      - 'scripts/size-gate.test.sh'
       - 'internal/exchange/testdata/wire/**'
       - 'internal/trade/testdata/**'
       - 'internal/mercenary/testdata/merc-sig-v2/**'
@@ -25,12 +26,13 @@ on:
       - 'frontend/src/**'
       - '.github/workflows/desktop-quality.yml'
   push:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - 'desktop/**'
       - 'docker-compose.yml'
       - 'Makefile'
-      - 'scripts/rust-size-gate.sh'
+      - 'scripts/size-gate.sh'
+      - 'scripts/size-gate.test.sh'
       - 'internal/exchange/testdata/wire/**'
       - 'internal/trade/testdata/**'
       - 'internal/mercenary/testdata/merc-sig-v2/**'
@@ -39,6 +41,16 @@ on:
       - '.github/workflows/desktop-quality.yml'
 
 jobs:
+  size-gate:
+    runs-on: ubuntu-latest
+    env:
+      SIZE_GATE_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: make size-gate-test size-gate
+
   desktop-web:
     runs-on: ubuntu-latest
     steps:
@@ -56,8 +68,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Rust size and boundary gates
-        run: make desktop-size-gate
       - name: Build desktop image
         run: docker compose build desktop
       # The merc seed-art fixture is NOT committed (GPL-3 repo, CC-BY-NC-SA
