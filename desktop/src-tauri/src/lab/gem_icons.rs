@@ -239,6 +239,10 @@ pub(crate) fn classify_slots(refs: &GemIconRefs, slots: &[SlotImage; 3]) -> Icon
             (set, lists, joint)
         })
         .collect();
+    classify_ranked(refs, &ranked)
+}
+
+fn classify_ranked(refs: &GemIconRefs, ranked: &[(GemSet, [Vec<Candidate>; 3], f32)]) -> IconRead {
     let Some(chosen) = ranked.iter().min_by(|a, b| a.2.total_cmp(&b.2)) else {
         return IconRead::Unavailable { joint: f32::INFINITY };
     };
@@ -603,12 +607,27 @@ pub(crate) mod tests {
     }
 
     /// Rust measurement sample retained by the kept sibling sweep's nocapture output.
+    /// Run `cargo test --lib a_washed_sibling_icon -- --nocapture` for calibration.
     fn gem_icon_pair_rmse_report() {
         let refs = crate::lab::gem_icon_refs::tests::fixture_refs_transfigured();
-        let row = |population: &GemIconRefs, label: &str, truth: &str, frame: &DynamicImage, rects: [[i32; 4]; 3], i: usize| {
+        // The report repeats clean filler crops across hundreds of rows. Reuse
+        // their rankings without bypassing the production presence/certainty rules.
+        let mut ranked_crops: Vec<(*const GemIconRefs, SlotImage, Vec<Candidate>)> = Vec::new();
+        let mut row = |population: &GemIconRefs, label: &str, truth: &str, frame: &DynamicImage, rects: [[i32; 4]; 3], i: usize| {
             let slots = slots_of(frame, rects);
-            let list = rank(&population.transfigured, &slots[i]);
-            let read = classify_slots(population, &slots);
+            let lists = slots.map(|slot| {
+                if let Some((_, _, list)) = ranked_crops.iter().find(|(prior, crop, _)| {
+                    std::ptr::eq(*prior, population) && crop.lab == slot.lab && crop.cy == slot.cy && crop.cx == slot.cx
+                }) {
+                    return list.clone();
+                }
+                let list = rank(&population.transfigured, &slot);
+                ranked_crops.push((population, slot, list.clone()));
+                list
+            });
+            let joint = lists.iter().map(|list| list[0].rmse).sum();
+            let list = &lists[i];
+            let read = classify_ranked(population, &[(GemSet::Transfigured, lists.clone(), joint)]);
             let verdict = match &read {
                 IconRead::Panel { slots, .. } => match &slots[i] {
                     IconSlot::Certain { name, .. } if name == truth => "certain-right".to_string(),
