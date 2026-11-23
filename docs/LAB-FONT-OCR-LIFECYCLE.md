@@ -134,8 +134,9 @@ as the dictionary arrives; the icon references follow once their art is in
 them a selected read waits for the loader's icon stage, including when the
 tooltip matcher is already installed. Loader failure logs unavailable resources
 without recapturing. A lab-mode change bumps the vocabulary generation and
-clears an armed context's gems and `last_gem_read`. Certain names still use the
-normal paired-comparator relay for initially armed and unarmed reads alike.
+clears an armed context's gems and `last_gem_read`. Held names, certain and
+flagged picks alike, use the normal paired-comparator relay for initially armed
+and unarmed reads alike.
 
 **Open question:** gem-read start/stop is under discussion with the Operator.
 The parity behavior above records the current implementation and resolves no
