@@ -25,6 +25,9 @@ pub enum Mechanic {
 // because the lookup replaces it; its arm is kept so the read path is unchanged.
 const UNPRESENTED: &[Mechanic] = &[Mechanic::DivineFont, Mechanic::Incursion];
 
+/// How long a presented arm's detected prompt stays up without a read.
+pub const DETECTED_PROMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// What one Client.txt seam does to the prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Change {
@@ -168,6 +171,9 @@ impl ReadPromptState {
             self.seq += 1;
         }
     }
+    /// The detected prompt of `mechanic`'s arm `id` outlived
+    /// [`DETECTED_PROMPT_TIMEOUT`]; the arm itself stays for the read.
+    pub fn expire_presentation(&mut self, _mechanic: Mechanic, _id: u64) {}
     /// The shown no-match result's identity, for its expiry.
     pub fn no_match_id(&self) -> Option<u64> {
         self.no_match.then_some(self.no_match_id)
@@ -915,6 +921,57 @@ mod tests {
             assert!(armed_id_in(&state, Mechanic::DivineFont).is_some());
             assert_eq!(shown_in(&state), Some(Mechanic::Mercenary));
         }
+
+        // AC-3
+        #[test]
+        fn a_mercenary_re_arm_is_hidden_only_by_its_own_expiry() {
+            let mut prompt = ReadPromptState::default();
+            prompt.arm(Mechanic::Mercenary);
+            let first = prompt.armed_id(Mechanic::Mercenary).unwrap();
+            prompt.arm(Mechanic::Mercenary);
+            let second = prompt.armed_id(Mechanic::Mercenary).unwrap();
+            assert_ne!(first, second);
+
+            prompt.expire_presentation(Mechanic::Mercenary, first);
+            assert_eq!(prompt.snapshot().mechanic, Some(Mechanic::Mercenary), "the first arm's expiry hid the re-arm");
+
+            prompt.expire_presentation(Mechanic::Mercenary, second);
+            assert_eq!(prompt.snapshot().mechanic, None, "the re-arm's own expiry left it presented");
+        }
+
+        // AC-2
+        #[test]
+        fn an_expiry_after_the_arm_ended_early_leaves_the_snapshot_unchanged() {
+            let endings: [(&str, fn(&crate::AppState, u64)); 3] = [
+                ("read_done", |s, id| { read_done_in(s, Mechanic::Mercenary, id); }),
+                ("area_changed", |s, _| { area_changed_in(s); }),
+                ("module off", |s, _| { set_module(s, Mechanic::Mercenary, false); modules_changed_in(s); }),
+            ];
+            for (ending, end) in endings {
+                let state = crate::settings::tests::test_app_state();
+                set_module(&state, Mechanic::Mercenary, true);
+                apply_in(&state, Change::Arm(Mechanic::Mercenary));
+                let id = armed_id_in(&state, Mechanic::Mercenary).expect("a live Mercenary arm");
+                end(&state, id);
+                let before = state.read_prompt.lock().unwrap().snapshot();
+
+                state.read_prompt.lock().unwrap().expire_presentation(Mechanic::Mercenary, id);
+
+                assert_eq!(state.read_prompt.lock().unwrap().snapshot(), before, "{ending}");
+            }
+        }
+
+        #[test]
+        fn an_expired_mercenary_prompt_keeps_its_read_routing() {
+            let mut prompt = ReadPromptState::default();
+            prompt.arm(Mechanic::Mercenary);
+            let id = prompt.armed_id(Mechanic::Mercenary).unwrap();
+
+            prompt.expire_presentation(Mechanic::Mercenary, id);
+
+            assert_eq!(prompt.armed_id(Mechanic::Mercenary), Some(id));
+            assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Mercenary));
+        }
     }
 
     mod keep_regression {
@@ -950,6 +1007,20 @@ mod tests {
                 prompt.arm(mechanic);
                 assert_eq!(prompt.snapshot().mechanic, shown, "{mechanic:?}");
             }
+        }
+
+        /// POE-471, Operator-reported: killing the mercenary without a read left
+        /// "Detected Mercenary - press <key> to read" up forever.
+        #[test]
+        fn an_unread_mercenary_prompt_is_hidden_when_its_presentation_expires() {
+            let mut prompt = ReadPromptState::default();
+            prompt.arm(Mechanic::Mercenary);
+            let id = prompt.armed_id(Mechanic::Mercenary).expect("a live Mercenary arm");
+
+            prompt.expire_presentation(Mechanic::Mercenary, id);
+
+            assert_eq!(DETECTED_PROMPT_TIMEOUT, std::time::Duration::from_secs(10));
+            assert_eq!(prompt.snapshot().mechanic, None, "the unread Mercenary prompt is still presented");
         }
     }
 
