@@ -693,6 +693,22 @@ pub struct AdviceView {
     /// agree about what silence means.
     #[serde(default)]
     pub forced_kill: bool,
+    /// The kill the advice puts first whatever else it ranks, and why
+    /// (POE-465). `advisor::Advice::priority` owns the choice.
+    ///
+    /// `serde(default)` for the same reason its neighbours carry one.
+    #[serde(default)]
+    pub priority: Option<PriorityView>,
+}
+
+/// [`advisor::AdvicePriority`] on the wire.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PriorityView {
+    /// The panel index of the offer, as [`RankedView::architect_index`].
+    pub architect_index: usize,
+    /// One short line saying why.
+    pub reason: String,
 }
 
 /// What the prices behind a board are worth saying, on the wire (POE-258).
@@ -1560,6 +1576,7 @@ fn advice_view(advice: &Advice, exit: Option<ExitLabelView>) -> AdviceView {
                 .recommendations
                 .first()
                 .is_some_and(|r| r.option.architect.is_some()),
+        priority: None,
     }
 }
 
@@ -2334,6 +2351,85 @@ mod tests {
         assert!(projected.reason.starts_with(&format!("convenience door {}", projected.door)));
         assert!(view.recommendations[0].doors.is_empty());
         assert_eq!(view.secondary_door, None);
+    }
+
+    /// POE-465: the advisor's priority kill on the existing advice wire.
+    mod advice_priority_wire {
+        use super::*;
+        use crate::temple::advisor::rules::Reason;
+
+        /// A Chasm board whose panel offers Xipocado in the SECOND block, so
+        /// a projection that reads any other index than the source's is seen.
+        fn xipocado_advice() -> Advice {
+            let layout = layout(Some(Slot::C1), &[], &[]);
+            let rooms = board_rooms(&[(Slot::C1, "Chasm")]);
+            let panel = panel(
+                "Chasm",
+                Some(6),
+                vec![
+                    offer("Tacati", "Storage Room", OfferKind::Change),
+                    offer("Xipocado", "Grand Reactor", OfferKind::Upgrade),
+                ],
+            );
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued())
+                .expect("ranks")
+        }
+
+        mod keep_happy {
+            use super::*;
+
+            // keep:happy — AC-5. The advice's priority reaches the wire as
+            // camelCase `priority` carrying the source offer's `architectIndex`
+            // and the advisor's own reason; advice without one says `null`.
+            #[test]
+            fn the_advice_priority_is_serialised_with_its_architect_index_and_reason() {
+                let qualifying = xipocado_advice();
+                assert_eq!(
+                    qualifying.priority.as_ref().map(|p| p.architect_index),
+                    Some(1),
+                    "precondition: the advisor puts Xipocado's kill (block 1) first"
+                );
+                let cases = [
+                    (
+                        "Xipocado offer",
+                        qualifying,
+                        serde_json::json!({
+                            "architectIndex": 1,
+                            "reason": Reason::ArchitectPriority.describe(),
+                        }),
+                    ),
+                    (
+                        "no priority",
+                        advice_opening(&[(Slot::C1, Slot::C2)], None),
+                        serde_json::Value::Null,
+                    ),
+                ];
+
+                for (name, advice, want) in cases {
+                    let json = serde_json::to_value(advice_view(&advice, None)).expect("serialises");
+                    assert_eq!(json.get("priority"), Some(&want), "{name}: {json}");
+                }
+            }
+        }
+
+        mod keep_regression {
+            use super::*;
+
+            // keep:regression — an advice payload from a build before POE-465
+            // has no `priority` key and must still decode, as no priority,
+            // with every other field intact.
+            #[test]
+            fn an_advice_payload_without_priority_decodes_as_none() {
+                let view = advice_view(&xipocado_advice(), None);
+                let mut json = serde_json::to_value(&view).expect("serialises");
+                json.as_object_mut().expect("advice is an object").remove("priority");
+
+                let decoded: AdviceView =
+                    serde_json::from_value(json).expect("an advice without priority decodes");
+
+                assert_eq!(decoded, AdviceView { priority: None, ..view });
+            }
+        }
     }
 
     /// One recommendation that opens exactly `doors`, with `secondary` beside
@@ -3783,6 +3879,7 @@ mod tests {
                 map_action: "leaveMap".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,
+                priority: None,
             }),
             mode: Some("chase".to_string()),
             unknown_rooms: vec!["A0".to_string()],
@@ -4630,6 +4727,7 @@ mod tests {
                     "1 of 2 architects read — the kill shown is forced, not chosen".to_string(),
                 ],
                 forced_kill: true,
+                priority: None,
             }),
             mode: Some("chase".to_string()),
             config: TempleConfig { artefacts_of_the_vaal: false, scarab_of_timelines: true },
@@ -4694,7 +4792,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]},"cradle":false},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true,"upgraded":null},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false,"upgraded":null}]},"line":{"kind":"content","content":"Extra monsters (dangerous)","rarityPct":null,"packSizePct":null,"magicPackSizePct":null,"chest":null,"sources":[]}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]},"cradle":false},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true,"upgraded":null},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false,"upgraded":null}]},"line":{"kind":"content","content":"Extra monsters (dangerous)","rarityPct":null,"packSizePct":null,"magicPackSizePct":null,"chest":null,"sources":[]}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true,"priority":null},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///

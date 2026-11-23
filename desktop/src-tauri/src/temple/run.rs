@@ -1893,6 +1893,7 @@ mod tests {
                 map_action: "continue".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,
+                priority: None,
             }),
             mode: Some("chase".to_string()),
             ..TempleSlice::default()
