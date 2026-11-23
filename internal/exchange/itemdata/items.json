@@ -7191,7 +7191,7 @@
   },
   "Metadata/Items/MapFragments/CurrencyIncursionUberFragment": {
     "category": "Fragments",
-    "icon": "https://www.poewiki.net/images/9/94/Royal_Visage_inventory_icon.png",
+    "icon": null,
     "name": "Royal Visage"
   },
   "Metadata/Items/MapFragments/CurrencyLegionFragmentEternal": {
