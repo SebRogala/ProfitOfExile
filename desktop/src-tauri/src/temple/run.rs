@@ -1322,7 +1322,7 @@ fn read_press(
         let valuing = Instant::now();
         let board = super::advisor::state::BoardState::from_reading(
             &read.layout, &slice::identities(&read.rooms), &read.panel, read.settled.as_ref());
-        let cradle = read.layout.cradle || super::advisor::cradle_in_play(&board, &read.panel.architects);
+        let cradle = super::advisor::cradle_in_play(&board, &read.panel.architects);
         let (valuation, market, valuation_source) =
             crate::temple::valuation::temple_valuation_in(app, &settings, cradle);
         stages.valuation = valuing.elapsed();

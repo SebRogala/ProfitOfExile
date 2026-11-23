@@ -682,10 +682,10 @@ fn conditional_second_door(
 }
 
 fn priority_architect(architect: &ArchitectChoice) -> bool {
-    cradle_line(architect.line)
+    cradle_line(&architect.line)
 }
 
-fn cradle_line(line: Line) -> bool {
+fn cradle_line(line: &Line) -> bool {
     line.key() == "throne_of_atziri"
 }
 
@@ -694,7 +694,7 @@ fn cradle_line(line: Line) -> bool {
 /// its line.
 pub fn cradle_in_play(board: &BoardState, offers: &[ArchitectOffer]) -> bool {
     board.rooms.iter().any(|(line, tier)| {
-        *tier == Tier::T3 && line.is_some_and(cradle_line)
+        *tier == Tier::T3 && line.as_ref().is_some_and(cradle_line)
     }) || resolve_architects(offers, board.current_tier, &mut Vec::new())
         .iter()
         .any(priority_architect)
