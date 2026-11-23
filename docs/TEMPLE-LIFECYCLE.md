@@ -78,15 +78,18 @@ Current as amended 2026-11-20 (POE-440). Homes: `temple/press.rs` (`TempleReader
 - **Selection reuses evidence.** Only a matching selected reader hands recognition
   evidence to the worker's read transaction. A losing probe publishes nothing;
   no synthetic Client.txt reason is created for an unarmed read.
-- **The read.** An uncalibrated slice (null, or no anchored Entrance origin; `locate_on_miss`) is
-  calibrated once, first, by the full-frame locate (`anchor::anchor_for_loop`) on the pressed frame.
-  A calibrated slice runs only the placed-origin recheck on the Entrance crop, with no sweep. A
-  miss is "no match" and the next reader probes. The one banked Entrance region serves the open
-  sheet and the pre-Incursion read: they are the same screen.
+- **The read.** The temple probe runs only the placed-origin recheck on the banked Entrance crop,
+  with no sweep; a miss is "no match" and the next reader probes. The one banked Entrance region
+  serves the open sheet and the pre-Incursion read: they are the same screen. Only when every
+  reader missed and the slice is uncalibrated (null, or no anchored Entrance origin) does the
+  full-frame locate (`anchor::anchor_for_loop`) run as the recalibration sweep, once per screen
+  setup, then the probe retries the same frame; the budget and its re-open triggers are
+  [ADR-035](adr/035-a-read-key-press-sweeps-only-after-every-banked-probe-missed-once-per-screen-setup.md). A sweep stopped before it ran logs
+  `Temple: calibration — cancelled` and banks nothing.
 - **A full selected read follows**, with no retry rounds and no merge with an earlier read.
   A partial read stays published until the next selected read. A routing miss leaves
   temple state unchanged; global no-match presentation belongs to the prompt owner.
-- **Geometry.** A calibration that finds the plate banks its origin at once through
+- **Geometry.** A sweep that finds the plate banks its origin at once through
   `ssot::remember_anchor_if_current`, only into the screen it was found on, whether or not it
   confirms the seed and whatever the read's outcome. A later located read still replaces a
   contradicted placement after it publishes (`run::finish`, ADR-025). Recalibrate is the manual fix

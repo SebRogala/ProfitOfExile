@@ -72,6 +72,7 @@ rollover in [ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-a
 - [ADR-032: One price engine: a key per market, a pure resolver, and a book](adr/032-one-price-engine-key-per-market-resolver-and-book.md) — Accepted; no consumer until POE-310; divine becomes a key in POE-308.
 - [ADR-033: One versioned privacy notice gates every server request](adr/033-one-versioned-privacy-notice-gates-every-server-request.md)
 - [ADR-034: Market data is retained for 21 days](adr/034-market-data-is-retained-for-21-days.md) — supersedes the retention parts of ADR-010 and ADR-011
+- [ADR-035: A read-key press sweeps only after every banked probe missed, once per screen setup](adr/035-a-read-key-press-sweeps-only-after-every-banked-probe-missed-once-per-screen-setup.md) — amends ADR-025 temple clause 4
 
 Superseded:
 

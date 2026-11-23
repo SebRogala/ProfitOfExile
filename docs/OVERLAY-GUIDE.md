@@ -68,11 +68,16 @@ logs must keep the user aware of what the data is used for.
   without a CRAFT probe. Only the first match consumes the saved frame; losing
   probes publish nothing. Module switches and lifecycle identities still gate
   selected work. Screen matches and read completion never update log recency.
-  Before any probe, every eligible reader calibrates any uncalibrated region on
-  the saved frame, once; each probe then compares only its banked region, and a
-  miss moves to the next reader. `app.log` gets one
-  `Read key: <reader> probe — no match` line per miss and one
-  `Read key: <result> in N ms (grab, calibration, probes)` line per press,
+  Each probe compares only its banked region, and a miss moves to the next
+  reader. Only after every probe missed may a reader with an uncalibrated
+  region run its recalibration sweep, once per screen setup ([ADR-035](adr/035-a-read-key-press-sweeps-only-after-every-banked-probe-missed-once-per-screen-setup.md));
+  meanwhile the read prompt shows “No mechanics found - running a
+  recalibration sweep now.” `app.log` gets one
+  `Read key: <reader> probe — no match` line per miss, a
+  `Read key: no mechanics found — running a recalibration sweep now` line when
+  the sweep starts, and one
+  `Read key: <result> in N ms (grab, calibration, probes)` line per press, where
+  `calibration` is the sweep's time (0 when none ran),
   except a suppressed one (its hide handshake timed out or the capture gate
   refused the grab), which writes none.
   `read_hotkey::dispatch_press` is the home of this order and these lines.

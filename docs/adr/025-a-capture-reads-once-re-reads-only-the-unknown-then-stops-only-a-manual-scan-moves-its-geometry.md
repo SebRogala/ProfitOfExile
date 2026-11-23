@@ -147,7 +147,7 @@ POE-278).
 | 1 one full read | POE-389: one per press — `press::TempleReader`, `run::worker_loop`, `run::read_press`, `run::read_board` | POE-390: one per press — `press::MercReader`, `run::worker_loop`, `run::read_press`, `detect::detect_tick(frame)` — placed crop (`geometry::placed_panel_crop`, `geometry::placed_layout`), then `read::pass2_texts` and `read::build_planned` with no plan |
 | 2 two partial rounds | POE-389: none — `slice::plan_read(None, …)` reads the whole board each press | POE-390: a press is a round and refills the budget — `run::round_plan` (clamps `LoopState::rounds`, plans with the full `run::RETRIES`), `read::plan_read` → `ReadPlan` / `RowPlan` from the kept capture, `read::pass2_planned`, `read::build_planned` (copies confident cells), `read::fold_unresolved_header`, `read::lines_up` |
 | 3 then stop (**temple amended by the POE-282 amendment below**) | POE-389: nothing captures between presses — `run::worker_loop` owns no grab | POE-390: nothing reads between presses — `run::worker_loop` owns no grab; a complete capture plans `ReadPlan::Nothing` → `read::carry_capture`, and `run::replaced_on_sight` checks a REMATCH on pass 1; a non-occluded missed press retires (`RETIRE_AFTER = 1`) |
-| 4 geometry moves only on a manual scan | POE-389: `run::locate_on_miss` (null/unplaced slice only), `placed_origin_contradiction`, `run::finish` → `ssot::remember_anchor`; Recalibrate is the manual fix | POE-390: `run::locate_decision` (`LocateReason::{ColdStart, ManualMiss}`, `PlacedRead`, `FallbackKey { refit, press }`), asked from `detect::detect_tick`; `refit_requested` — a placed miss while a Recalibrate is pending is a manual miss; `MERC_COLUMN_TRUSTED_LINE`; Recalibrate is the manual fix |
+| 4 geometry moves only on a manual scan | POE-440: the full-frame locate runs only as [ADR-035](035-a-read-key-press-sweeps-only-after-every-banked-probe-missed-once-per-screen-setup.md)'s sweep, after every banked probe missed — `read_hotkey::dispatch_press`, `press::TemplePending::calibrate` → `ssot::remember_anchor_if_current`, `TempleState::sweep_spent`; `placed_origin_contradiction`, `run::finish` → `ssot::remember_anchor`; Recalibrate is the manual fix (**POE-440 amendment below**) | POE-390: `run::locate_decision` (`LocateReason::{ColdStart, ManualMiss}`, `PlacedRead`, `FallbackKey { refit, press }`), asked from `detect::detect_tick`; `refit_requested` — a placed miss while a Recalibrate is pending is a manual miss; `MERC_COLUMN_TRUSTED_LINE`; Recalibrate is the manual fix |
 | 5 fresh budget (**temple amended by the POE-282 amendment below**) | POE-389: no budget or board key; each press is an independent read | POE-390: `LoopState::refill_rounds` — a full round 1 from `run::round_plan` on a new capture or one `read::panel_replaced` dropped, and `run::refills_budget` on a Recalibrate `consume_refit` acted on or a template-store generation change (`run::generation_changed`); any other press is an unknown-only round |
 
 Row numbers and section names are those of [Temple Lifecycle](../TEMPLE-LIFECYCLE.md).
@@ -322,3 +322,13 @@ the module is on, following [Overlay Guide § Screen reading (GGG policy)](../OV
 
 The merc column of "Where each clause lives" above names the POE-390 homes. Normative write-up
 in [Mercenaries Lifecycle](../MERCENARIES-LIFECYCLE.md), "Per press".
+
+## Amended 2026-11-20 (POE-440)
+
+Temple clause 4: the full-frame locate runs on a read-key press only as
+[ADR-035](035-a-read-key-press-sweeps-only-after-every-banked-probe-missed-once-per-screen-setup.md)'s
+sweep, after every banked probe missed, once per screen setup. A found plate is
+banked at once (`TemplePending::calibrate` → `ssot::remember_anchor_if_current`,
+ADR-024's POE-440 amendment). `run::finish` re-banking a located read is
+unchanged. The temple column of "Where each clause lives" row 4 names these
+homes.

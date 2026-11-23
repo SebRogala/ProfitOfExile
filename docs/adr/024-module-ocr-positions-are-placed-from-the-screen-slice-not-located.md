@@ -101,6 +101,7 @@ inputs to fixture coordinates, not panel-position constants (POE-266).
    that slice on a dimension, monitor or client-rect change, or
    `geometry_recalibrate` (`desktop/src-tauri/src/ssot.rs:814-823`,
    `:894-909`). Nothing else locates (POE-266; owner decision 2026-09-07).
+   For the temple Entrance, see the POE-440 amendment below (bank-on-find).
 
 4. **Contradictions are visible, not blocking.** If a remembered anchor
    disagrees with the shipped seed, log it once and surface the informational
@@ -418,3 +419,14 @@ Lifecycle paragraph under "Screen Geometry (SSOT)" in
 [desktop/src/lib/README.md](../../desktop/src/lib/README.md); this amendment
 restates no mechanism. The earlier sections' "POE-272 owns…" lines stay as
 dated history.
+
+## Amendment: POE-440 — the temple Entrance is banked on find (2026-11-20)
+
+Amends Decision 3 for the temple only (Operator Desk 20.11 18:26,
+`poe440-bank-entrance-1120`). A temple Entrance located by a read-key
+calibration is remembered when it is found, before and without read
+corroboration (`ssot::remember_anchor_if_current`), and only into the screen it
+was found on: a slice dropped or replaced since the frame was taken, or a
+Recalibrate since the calibration started, banks nothing. The merc rule is
+unchanged. When the calibration sweep may run is
+[ADR-035](035-a-read-key-press-sweeps-only-after-every-banked-probe-missed-once-per-screen-setup.md).
