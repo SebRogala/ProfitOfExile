@@ -420,16 +420,27 @@ pub enum LineEvent {
 /// Whether this event ends a cycle: the notice comes down and the board the
 /// loop has read is no longer about the incursion in front of the player.
 ///
-/// A START ends one as well as beginning one — starts and ends pair 341 : 342
-/// in the mining, so a second start with no end between them is theoretical,
-/// but if it happens the board from the previous incursion must not survive
-/// into the next. The temple's OWN area line ends nothing: the player walking
-/// into the temple is inside the cycle the start line opened.
-pub fn ends_epoch(event: LineEvent) -> bool {
-    matches!(
-        event,
-        LineEvent::LeftArea | LineEvent::AlvaStart | LineEvent::AlvaEnd
-    )
+/// A START over a LIVE arm ends one as well as beginning one — starts and ends
+/// pair 341 : 342 in the mining, so a second start with no end between them is
+/// theoretical, but if it happens the board from the previous incursion must
+/// not survive into the next. A START that opened a RESTING gate
+/// (`transition` is [`Transition::Armed`]`(`[`ArmReason::AlvaStart`]`)`) ends
+/// nothing: since POE-439 the player reads the sheet before *Enter Incursion*,
+/// so the board already published is the one this START is about. The
+/// temple's OWN area line ends nothing: the player walking into the temple is
+/// inside the cycle the start line opened.
+pub fn ends_epoch(event: LineEvent, transition: Transition) -> bool {
+    match event {
+        LineEvent::AlvaStart => !opened_resting_gate(transition),
+        LineEvent::LeftArea | LineEvent::AlvaEnd => true,
+        LineEvent::EnteredTemple => false,
+    }
+}
+
+/// Whether [`apply_line`]'s answer to a START says the gate was resting — the
+/// one fact [`ends_epoch`] and [`advice_end`] read to adopt a pre-entry read.
+fn opened_resting_gate(transition: Transition) -> bool {
+    transition == Transition::Armed(ArmReason::AlvaStart)
 }
 
 /// The KIND of a line, before any clock is consulted — [`classify`]'s first two
@@ -657,14 +668,23 @@ pub fn may_end_advice(line: &str) -> bool {
 /// about a screen that is minutes gone, and [`arm_at`] would launder its stamp
 /// into `now`.
 ///
-/// Both Alva kinds end the advice. A START is the next incursion beginning and
-/// an END is this one finishing, and the board behind the advice belongs to the
-/// previous one either way.
-pub fn advice_end(line: &str, last_read_ms: Option<u64>, now_ms: u64) -> Option<AdviceEnd> {
+/// An END ends the advice: this incursion is finishing. A START over a live arm
+/// ends it too — the next incursion is beginning and the board belongs to the
+/// previous one. A START that opened a resting gate (`transition`, the value
+/// [`apply_line`] returned for this line) does NOT: since POE-439 the read
+/// comes before *Enter Incursion*, so the advice already published is about the
+/// incursion this START begins.
+pub fn advice_end(
+    line: &str,
+    last_read_ms: Option<u64>,
+    now_ms: u64,
+    transition: Transition,
+) -> Option<AdviceEnd> {
     let last_read = last_read_ms?;
     match classify(line, now_ms)? {
         LineEvent::EnteredTemple => None,
         LineEvent::LeftArea => Some(AdviceEnd::LeftArea),
+        LineEvent::AlvaStart if opened_resting_gate(transition) => None,
         LineEvent::AlvaStart | LineEvent::AlvaEnd => {
             (arm_at(now_ms, line_timestamp_ms(line)) > last_read).then_some(AdviceEnd::NewIncursion)
         }
@@ -768,14 +788,14 @@ pub fn on_client_line(app: &AppHandle, line: &str) {
     }
     let now = super::run::now_ms();
     let event = classify(line, now);
-    let armed_after = {
+    let (transition, armed_after) = {
         let state = app.state::<AppState>();
         let mut arm = state.temple_state.arm.lock().unwrap_or_else(|e| e.into_inner());
         // Classified a second time inside, which is two string searches on the
         // handful of lines a map produces: one entry point for the arm beats a
         // second one that only the glue could reach.
-        apply_line(&mut arm, line, now);
-        arm.arm.is_armed(now)
+        let transition = apply_line(&mut arm, line, now);
+        (transition, arm.arm.is_armed(now))
     };
     crate::read_prompt::apply(app, crate::read_prompt::temple_change(event, armed_after));
     // A stale Alva line is the remaining `None`: it says nothing about the
@@ -783,7 +803,7 @@ pub fn on_client_line(app: &AppHandle, line: &str) {
     let Some(event) = event else {
         return;
     };
-    if ends_epoch(event) {
+    if ends_epoch(event, transition) {
         // INVALIDATE, never force. See `TempleState::epoch`.
         app.state::<AppState>()
             .temple_state
@@ -821,7 +841,7 @@ pub fn on_client_line(app: &AppHandle, line: &str) {
         // Its own guard, and only this one: the flag above has to be written on
         // a START, which is exactly the state that arrives with no advice.
         if slice.advice.is_some() {
-            if let Some(end) = advice_end(line, slice.last_read_at, now) {
+            if let Some(end) = advice_end(line, slice.last_read_at, now, transition) {
                 ended = Some(end);
                 super::slice::clear_advice(slice);
             }
@@ -1037,7 +1057,9 @@ mod tests {
             (LineEvent::AlvaEnd, true),
             (LineEvent::EnteredTemple, false),
         ] {
-            assert_eq!(ends_epoch(event), boundary, "{event:?}");
+            // The live-arm START: the transition a second START reports.
+            let transition = Transition::Extended(ArmReason::AlvaStart);
+            assert_eq!(ends_epoch(event, transition), boundary, "{event:?}");
         }
     }
 
@@ -1374,12 +1396,16 @@ mod tests {
     /// on it.
     const READ: Option<u64> = Some(NOW - 30_000);
 
+    /// What [`apply_line`] answers a START over a live arm — the transition the
+    /// START cases below model unless they say otherwise.
+    const LIVE_START: Transition = Transition::Extended(ArmReason::AlvaStart);
+
     /// The zone change, which is the unambiguous end: the board the advice
     /// describes is not on this screen and cannot be walked back to.
     #[test]
     fn leaving_the_zone_ends_the_advice() {
         assert_eq!(
-            advice_end(&map_line(NOW), READ, NOW),
+            advice_end(&map_line(NOW), READ, NOW, Transition::Disarmed),
             Some(AdviceEnd::LeftArea),
         );
     }
@@ -1388,16 +1414,16 @@ mod tests {
     /// board that follows replaces the advice by being read.
     #[test]
     fn entering_the_temple_leaves_the_advice_alone() {
-        assert_eq!(advice_end(&temple_line(NOW), READ, NOW), None);
+        assert_eq!(advice_end(&temple_line(NOW), READ, NOW, Transition::Armed(ArmReason::TempleArea)), None);
     }
 
     /// The next voice line after the read — `Good job.` at the end of the
-    /// incursion, or `Time to go.` at the start of the next one. Either way the
-    /// panel behind the advice belonged to the previous one.
+    /// incursion, or `Time to go.` over a live arm at the start of the next
+    /// one. Either way the panel behind the advice belonged to the previous one.
     #[test]
     fn an_alva_line_after_the_read_ends_the_advice() {
         assert_eq!(
-            advice_end(&alva_start(NOW), READ, NOW),
+            advice_end(&alva_start(NOW), READ, NOW, LIVE_START),
             Some(AdviceEnd::NewIncursion),
         );
     }
@@ -1412,7 +1438,7 @@ mod tests {
         let spoke = NOW - 40_000;
         let read = Some(NOW - 30_000);
 
-        assert_eq!(advice_end(&alva_start(spoke), read, NOW), None);
+        assert_eq!(advice_end(&alva_start(spoke), read, NOW, LIVE_START), None);
     }
 
     /// A line stamped in the same SECOND as the read reads as older than it.
@@ -1423,7 +1449,7 @@ mod tests {
     fn a_line_stamped_in_the_read_s_own_second_keeps_the_advice() {
         let second = NOW - 5_000;
 
-        assert_eq!(advice_end(&alva_start(second), Some(second + 400), NOW), None);
+        assert_eq!(advice_end(&alva_start(second), Some(second + 400), NOW, LIVE_START), None);
     }
 
     /// Nothing has been read, so there is nothing to end — and the app log must
@@ -1431,8 +1457,8 @@ mod tests {
     /// a panel.
     #[test]
     fn a_board_that_was_never_read_has_no_advice_to_end() {
-        assert_eq!(advice_end(&map_line(NOW), None, NOW), None);
-        assert_eq!(advice_end(&alva_start(NOW), None, NOW), None);
+        assert_eq!(advice_end(&map_line(NOW), None, NOW, Transition::Disarmed), None);
+        assert_eq!(advice_end(&alva_start(NOW), None, NOW, LIVE_START), None);
     }
 
     /// A line old enough to be about a screen that is minutes gone reaches us
@@ -1444,7 +1470,7 @@ mod tests {
     fn a_stale_alva_line_does_not_end_the_advice() {
         let ancient = NOW - LINE_STALE_MS - 1_000;
 
-        assert_eq!(advice_end(&alva_start(ancient), READ, NOW), None);
+        assert_eq!(advice_end(&alva_start(ancient), READ, NOW, Transition::Ignored), None);
     }
 
     /// Ordinary chatter is not an end. Fails if the speaker match is widened.
@@ -1452,7 +1478,7 @@ mod tests {
     fn a_line_that_is_neither_an_area_nor_alva_ends_nothing() {
         let line = stamped(NOW, "Einhar, Beastmaster: What a beast!");
 
-        assert_eq!(advice_end(&line, READ, NOW), None);
+        assert_eq!(advice_end(&line, READ, NOW, Transition::Ignored), None);
         assert!(
             !may_end_advice(&line),
             "the fast path must skip the slice lock for a line like this",
@@ -1471,7 +1497,7 @@ mod tests {
         assert!(may_end_advice(&alva_start(NOW)), "an Alva voice line");
         // A line it admits is not automatically an end — that is `advice_end`'s
         // half, and the temple line is the case that separates them.
-        assert_eq!(advice_end(&temple_line(NOW), READ, NOW), None);
+        assert_eq!(advice_end(&temple_line(NOW), READ, NOW, Transition::Armed(ArmReason::TempleArea)), None);
     }
 
     /// The two functions are asked about every line and must not have been
@@ -1495,6 +1521,50 @@ mod tests {
 
         assert_eq!(transition, Transition::Disarmed);
         assert!(!state.arm.is_armed(NOW));
-        assert_eq!(advice_end(&line, READ, NOW), Some(AdviceEnd::NewIncursion));
+        assert_eq!(advice_end(&line, READ, NOW, transition), Some(AdviceEnd::NewIncursion));
+    }
+
+    mod keep_happy {
+        use super::*;
+
+        // AC-1: a read taken before *Enter Incursion*, then the START that
+        // opens the resting gate — the read is the one this incursion is
+        // about, so neither the epoch nor the advice ends.
+        #[test]
+        fn a_start_after_an_unarmed_read_keeps_the_advice_and_the_epoch() {
+            let mut state = ArmState::default();
+            let read = Some(NOW - 10_000);
+            let line = alva_start(NOW);
+
+            let transition = apply_line(&mut state, &line, NOW);
+
+            assert_eq!(transition, Transition::Armed(ArmReason::AlvaStart));
+            assert!(!ends_epoch(LineEvent::AlvaStart, transition));
+            assert_eq!(advice_end(&line, read, NOW, transition), None);
+        }
+    }
+
+    mod keep_critical {
+        use super::*;
+
+        // AC-1: a second START over a live arm still ends the read — a stale
+        // board from the earlier incursion would otherwise stay on screen as
+        // current advice.
+        #[test]
+        fn a_second_start_over_a_live_arm_still_ends_the_read() {
+            let mut state = ArmState::default();
+            apply_line(&mut state, &alva_start(NOW - 60_000), NOW - 60_000);
+            let read = Some(NOW - 30_000);
+            let line = alva_start(NOW);
+
+            let transition = apply_line(&mut state, &line, NOW);
+
+            assert_eq!(transition, Transition::Extended(ArmReason::AlvaStart));
+            assert!(ends_epoch(LineEvent::AlvaStart, transition));
+            assert_eq!(
+                advice_end(&line, read, NOW, transition),
+                Some(AdviceEnd::NewIncursion),
+            );
+        }
     }
 }

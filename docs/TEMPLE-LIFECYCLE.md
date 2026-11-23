@@ -70,6 +70,9 @@ Current as amended 2026-11-20 (POE-440). Homes: `temple/press.rs` (`TempleReader
 
 - **Client.txt arms; it does not capture.** An Alva START line arms `AlvaStart`, entering The
   Temple of Atzoatl arms `TempleArea` (`temple/trigger.rs`). Neither grabs the screen.
+- **A START adopts a pre-entry read (POE-439).** A START that arms a resting gate keeps the
+  read already published: the temple epoch does not move and the advice stays. A START over a
+  live arm ends that read (`temple/trigger.rs` `ends_epoch`, `advice_end`).
 - **Recognition needs no log arm.** With the module running, `TempleReader::prepare`
   snapshots worker/lifecycle identity and optional `AlvaStart` or `TempleArea` reason.
   Its probe asks the temple worker to recognize the routed frame without publishing.
