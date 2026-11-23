@@ -117,19 +117,39 @@ run_gate
 expect 'keep:happy intrinsic marker cannot exempt crossing' 1 'desktop/src/data.ts: 1500 -> 1501 production lines crosses 1500'
 
 # A missed forbidden import silently lets a feature-internal dependency land.
-fixture forbidden-import
+import_case=0
+for import in 'use crate::{
+    temple::run::Session,
+};' 'use crate::temple::{slice::TempleSlice, run::Session};'; do
+import_case=$((import_case + 1))
+fixture "forbidden-import-$import_case"
 branch
-printf 'use crate::{\n    temple::run::Session,\n};\n' > desktop/src-tauri/src/ssot.rs
+printf '%s\n' "$import" > desktop/src-tauri/src/ssot.rs
 commit
 run_gate
 expect 'keep:critical multiline internal import fails' 1 'ssot -> feature internals'
+done
 
-fixture allowed-import
+import_case=0
+for import in 'use crate::{temple::slice::TempleSlice, mercenary::MercenarySlice};' 'use crate::temple::{slice::TempleSlice};' 'use crate::temple::{
+    slice::TempleSlice,
+};'; do
+import_case=$((import_case + 1))
+fixture "allowed-import-$import_case"
 branch
-echo 'use crate::{temple::slice::TempleSlice, mercenary::MercenarySlice};' > desktop/src-tauri/src/ssot.rs
+printf '%s\n' "$import" > desktop/src-tauri/src/ssot.rs
 commit
 run_gate
 excluded 'keep:critical allowed slice import passes boundary' 'ssot -> feature internals'
+done
+
+# Dropping the non-use check would silently admit feature-internal dependencies.
+fixture forbidden-non-use
+branch
+printf 'use crate::temple::{slice::TempleSlice};\nfn leak() { crate::temple::run::Session::new(); }\n' > desktop/src-tauri/src/ssot.rs
+commit
+run_gate
+expect 'keep:critical non-use feature internal path fails' 1 'ssot -> feature internals'
 
 # An invalid base must fail instead of silently trusting an empty change set.
 fixture missing-base
