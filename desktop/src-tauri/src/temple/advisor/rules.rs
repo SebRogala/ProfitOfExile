@@ -244,7 +244,6 @@ pub enum Reason {
     ExpectedValue,
     /// Xipocado's kill, or one that builds on the Cradle of Creation line,
     /// ranks first whatever the rest of the chain prefers.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     ArchitectPriority,
 }
 

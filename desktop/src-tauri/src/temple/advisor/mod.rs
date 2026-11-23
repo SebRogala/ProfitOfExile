@@ -363,6 +363,17 @@ pub fn advise(
     }
 
     let recommendations = rank(safe, profile);
+    let priority = recommendations.first().and_then(|ranked| {
+        let architect = ranked.option.architect.as_ref()?;
+        let reason = ranked
+            .reasons
+            .iter()
+            .find(|reason| **reason == Reason::ArchitectPriority)?;
+        Some(AdvicePriority {
+            architect_index: architect.offer_index,
+            reason: reason.describe(),
+        })
+    });
     let mut gambles: Vec<Gamble> = risky
         .into_iter()
         .map(|scored| Gamble {
@@ -421,7 +432,7 @@ pub fn advise(
         convenience_door,
         map_action,
         warnings,
-        priority: None,
+        priority,
     }
 }
 
@@ -670,18 +681,23 @@ fn conditional_second_door(
     }
 }
 
-/// Rank the kill by EV, the door set by the rule chain.
+fn priority_architect(architect: &ArchitectChoice) -> bool {
+    architect.architect_name.eq_ignore_ascii_case("Xipocado")
+        || architect.line.key() == "throne_of_atziri"
+}
+
+/// Rank priority kills first, then by EV; rank door sets by the rule chain.
 ///
 /// See [`rules`]'s module header for the measurement behind the split. Two
 /// stages, in order:
 ///
 /// 1. **The kill.** Each architect is priced by its best door set. Architects
 ///    R4's carve-out vetoed sort below every un-vetoed one whatever the EV says
-///    — that is the one place a rule outranks the rollout on this axis, and
-///    live board 8 is why. The rest are ordered by EV, and those inside
+///    — live board 8 is why. The rest are ordered by EV, and those inside
 ///    [`rules::noise_margin`] of the leader are re-ordered by the architect
 ///    rules — R0's "both architects are worthless, the kill is free" is exactly
-///    this band.
+///    this band. Resolved Xipocado and Cradle-line kills are then stably
+///    promoted above this ordering, including R4's veto (POE-465).
 /// 2. **The door set**, within each architect, by [`DoorKey`] with EV breaking
 ///    its ties.
 ///
@@ -771,38 +787,55 @@ fn rank(scored: Vec<Scored>, profile: &StrategyProfile) -> Vec<Ranked> {
         .get(band)
         .is_some_and(|(_, _, key)| key.vetoed() == vetoed_leader);
 
+    let priorities: Vec<_> = groups
+        .iter()
+        .map(|(_, bucket)| bucket[0].option.architect.as_ref().is_some_and(priority_architect))
+        .collect();
+    let priority_decided = priorities.contains(&true) && priorities.contains(&false);
+    let mut ordered: Vec<_> = summaries
+        .iter()
+        .enumerate()
+        .map(|(rank, (index, _, key))| {
+            // Outside the band, on the leader's side of the veto, the EV alone put
+            // this kill where it is; at rank 0 with a band of one cut by the EV,
+            // the EV alone put the *leader* where it is, which is just as much a
+            // fact about the ranking and just as auditable. A band that covers
+            // every architect is the opposite claim — the rollout had no opinion —
+            // and a band cut by the veto is the veto's claim, not the rollout's,
+            // so `ExpectedValue` must stay off both.
+            let ev_decided = if rank >= band {
+                key.vetoed() == vetoed_leader
+            } else {
+                band == 1 && ev_cut
+            };
+            let grade_decided = rank < band
+                && grade_band
+                && summaries[..band].iter().any(|(other, _, other_key)| {
+                    *other_key == *key && fallback_ranks[*other] != fallback_ranks[*index]
+                });
+            (*index, ev_decided, grade_decided)
+        })
+        .collect();
+    ordered.sort_by_key(|(index, _, _)| !priorities[*index]);
+
     // -- stage 2: the door set --------------------------------------------
     let mut out = Vec::new();
-    for (rank, (index, _, key)) in summaries.iter().enumerate() {
-        let mut bucket = std::mem::take(&mut groups[*index].1);
+    for (index, ev_decided, grade_decided) in ordered {
+        let mut bucket = std::mem::take(&mut groups[index].1);
         bucket.sort_by(|a, b| {
             b.door
                 .cmp(&a.door)
                 .then_with(|| b.estimate.mean.total_cmp(&a.estimate.mean))
         });
-        // Outside the band, on the leader's side of the veto, the EV alone put
-        // this kill where it is; at rank 0 with a band of one cut by the EV,
-        // the EV alone put the *leader* where it is, which is just as much a
-        // fact about the ranking and just as auditable. A band that covers
-        // every architect is the opposite claim — the rollout had no opinion —
-        // and a band cut by the veto is the veto's claim, not the rollout's,
-        // so `ExpectedValue` must stay off both.
-        let ev_decided = if rank >= band {
-            key.vetoed() == vetoed_leader
-        } else {
-            band == 1 && ev_cut
-        };
-        let grade_decided = rank < band
-            && grade_band
-            && summaries[..band].iter().any(|(other, _, other_key)| {
-                *other_key == *key && fallback_ranks[*other] != fallback_ranks[*index]
-            });
         out.extend(bucket.into_iter().map(|option| {
             let mut reasons = option.reasons;
-            if ev_decided {
+            if ev_decided && !priority_decided {
                 reasons.insert(0, Reason::ExpectedValue);
-            } else if grade_decided {
+            } else if grade_decided && !priority_decided {
                 reasons.insert(0, Reason::GradeFallback);
+            }
+            if priorities[index] {
+                reasons.insert(0, Reason::ArchitectPriority);
             }
             Ranked {
                 option: option.option,
