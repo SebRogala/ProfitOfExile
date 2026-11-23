@@ -1320,8 +1320,11 @@ fn read_press(
         // THIS press's settings snapshot, so the table, the ranking and the
         // echoed settings are one preset's (POE-257 WI-3).
         let valuing = Instant::now();
+        let board = super::advisor::state::BoardState::from_reading(
+            &read.layout, &slice::identities(&read.rooms), &read.panel, read.settled.as_ref());
+        let cradle = read.layout.cradle || super::advisor::cradle_in_play(&board, &read.panel.architects);
         let (valuation, market, valuation_source) =
-            crate::temple::valuation::temple_valuation_now(app, &settings);
+            crate::temple::valuation::temple_valuation_in(app, &settings, cradle);
         stages.valuation = valuing.elapsed();
         stages.valuation_source = valuation_source;
         let advising = Instant::now();

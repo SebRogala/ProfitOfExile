@@ -312,7 +312,7 @@ pub struct Driver {
     /// present (g744679169.csv row 13). Its `chaos` is the same count x the
     /// upgraded price x `drops_weight`. It is NEVER added to any total and
     /// never read by the advisor; it is carried for the overlay's bracket.
-    /// `None` on every driver that is not a chest drop.
+    /// `None` when the upgraded item is counted, and on non-chest drivers.
     pub upgraded: Option<Upgraded>,
 }
 
@@ -413,19 +413,6 @@ impl Valued {
         Valued::compute_with(market, knobs, &RoomOverrides::new())
     }
 
-    /// [`Self::compute_with`] in a read's Cradle context (POE-470): `cradle`
-    /// says whether this temple's chests drop their upgraded uniques.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
-    pub fn compute_in(
-        market: &MarketInput,
-        knobs: &Knobs,
-        overrides: &RoomOverrides,
-        cradle: bool,
-    ) -> Valued {
-        let _ = cradle;
-        Valued::compute_with(market, knobs, overrides)
-    }
-
     /// [`Self::compute`] with the Custom preset's per-room overrides applied
     /// (POE-257 D4).
     ///
@@ -434,6 +421,17 @@ impl Valued {
     /// those are [`Knobs::tier_fraction`] of whatever tier 3 is worth (epic
     /// lock L2), while a tier-1 override moves nothing but itself.
     pub fn compute_with(market: &MarketInput, knobs: &Knobs, overrides: &RoomOverrides) -> Valued {
+        Valued::compute_in(market, knobs, overrides, false)
+    }
+
+    /// [`Self::compute_with`] in a read's Cradle context (POE-470): `cradle`
+    /// says whether this temple's chests drop their upgraded uniques.
+    pub fn compute_in(
+        market: &MarketInput,
+        knobs: &Knobs,
+        overrides: &RoomOverrides,
+        cradle: bool,
+    ) -> Valued {
         // All three computed once for the whole table and BEFORE any room is
         // valued: what the ladder is rescaled on is a property of the READ,
         // not of a room, so a per-room re-derivation would be 25 answers to
@@ -442,8 +440,8 @@ impl Valued {
         // off `measured_floor` (POE-262) and the two instrumental lines keep
         // ADR-022 §4's own anchor-and-cap, which has its own board evidence.
         let top_sale_delta = top_tier3_sale_delta(market);
-        let instrumental_cap = lowest_sale_priced_room_total(market, knobs);
-        let measured_floor = lowest_summed_room_total(market, knobs);
+        let instrumental_cap = lowest_sale_priced_room_total(market, knobs, cradle);
+        let measured_floor = lowest_summed_room_total(market, knobs, cradle);
         // The one branch the whole fallback rule turns on (epic lock L4). A
         // read that prices nothing — cold before the first poll, or stale —
         // still has a term that would survive it: a poedb rarity
@@ -463,7 +461,7 @@ impl Valued {
                     instrumental(line, live, top_sale_delta, instrumental_cap)
                 }
                 None if !live => cold_fallback(line),
-                None => value_tier3(line, market, knobs, measured_floor),
+                None => value_tier3(line, market, knobs, measured_floor, cradle),
             };
             let scaled = |tier: usize| match at(tier) {
                 Some(chaos) => overridden(line, tier_of(tier), chaos),
@@ -594,7 +592,7 @@ fn top_tier3_sale_delta(market: &MarketInput) -> Option<f64> {
 /// An above-floor room always sums its own sale, so valuing one here can never
 /// re-enter the fallback branch this result feeds — the recursion the missing
 /// argument would otherwise imply cannot happen.
-fn lowest_sale_priced_room_total(market: &MarketInput, knobs: &Knobs) -> Option<f64> {
+fn lowest_sale_priced_room_total(market: &MarketInput, knobs: &Knobs, cradle: bool) -> Option<f64> {
     if !market.prices_anything() {
         return None;
     }
@@ -609,7 +607,7 @@ fn lowest_sale_priced_room_total(market: &MarketInput, knobs: &Knobs) -> Option<
                 .is_some_and(|quote| quote.above_floor)
                 && market.sale_delta(room, Tier::T3) > 0.0
         })
-        .map(|line| value_tier3(line, market, knobs, None).total)
+        .map(|line| value_tier3(line, market, knobs, None, cradle).total)
         .fold(None, |lowest: Option<f64>, total| {
             Some(lowest.map_or(total, |low| low.min(total)))
         })
@@ -654,14 +652,14 @@ fn lowest_sale_priced_room_total(market: &MarketInput, knobs: &Knobs) -> Option<
 /// that summed something never reads a rung, and a room that did is filtered
 /// out by its [`Priced::Fallback`] verdict before its (cold) total is looked
 /// at.
-fn lowest_summed_room_total(market: &MarketInput, knobs: &Knobs) -> Option<f64> {
+fn lowest_summed_room_total(market: &MarketInput, knobs: &Knobs, cradle: bool) -> Option<f64> {
     if !market.prices_anything() {
         return None;
     }
     LINES
         .iter()
         .filter(|line| !INSTRUMENTAL_LINES.contains(&line.mechanical_line()))
-        .map(|line| value_tier3(line, market, knobs, None))
+        .map(|line| value_tier3(line, market, knobs, None, cradle))
         .filter(|value| matches!(value.priced, Priced::Market | Priced::Partial))
         .fold(None, |lowest: Option<f64>, value| {
             Some(lowest.map_or(value.total, |low| low.min(value.total)))
@@ -850,6 +848,7 @@ fn value_tier3(
     market: &MarketInput,
     knobs: &Knobs,
     measured_floor: Option<f64>,
+    cradle: bool,
 ) -> RoomValue {
     let room = line
         .name(Tier::T3)
@@ -880,18 +879,19 @@ fn value_tier3(
     let mut drops = 0.0;
     let weight = rate(knobs.drops_weight);
 
-    // POE-370: a chest room's uniques are a pool; each base item counts at
+    // POE-370: a chest room's uniques are a pool; each item counts at
     // the rate / N (equal weight, the sheet author's guess — SHEET_UNIQUES_330).
     let pool = drops_row.uniques();
     for item in pool {
+        let name = if cradle { item.upgraded() } else { item.base() };
         drops += push_drop(
             &mut drivers,
             DriverKind::UniqueDrop,
-            item.base(),
+            name,
             tier.uniques_per_run().map(|e| e.per_item(pool.len())),
-            market.price(item.base()).map(UnitPrice::from_feed),
+            market.price(name).map(UnitPrice::from_feed),
             weight,
-            Some((item.upgraded(), market.price(item.upgraded()).map(|q| q.chaos))),
+            (!cradle).then(|| (item.upgraded(), market.price(item.upgraded()).map(|q| q.chaos))),
         );
     }
     // --- bonus ---
@@ -1116,8 +1116,8 @@ fn scale_from_tier3(line: &RoomLine, tier3: &RoomValue, knobs: &Knobs) -> RoomVa
 /// The owner's rule, 2026-09-07: *"What I expected from the advisor and prices,
 /// was that they are cached, and computed on update, and module uses already
 /// computed weightings each time."* The table is a function of the preset, the
-/// Custom rates and overrides, and the market read — nothing about the board on
-/// screen — so rebuilding it per read was rebuilding an unchanged answer.
+/// Custom rates and overrides, the market read and the Cradle context, so
+/// rebuilding it per read was rebuilding an unchanged answer.
 /// Measured on the PC's release build (`app.log` 2026-09-06 23:33) that cost
 /// **193-245 ms of a 666 ms read** with the advisor's own ranking, 13-22 ms of
 /// it, lumped in; `run::ReadStages` now times the two apart.
@@ -1161,12 +1161,21 @@ pub fn temple_valuation_now(
     app: &AppHandle,
     settings: &TempleSettings,
 ) -> (Valued, MarketInput, ValuationSource) {
+    temple_valuation_in(app, settings, false)
+}
+
+/// The cached table in the live read's Cradle context.
+pub fn temple_valuation_in(
+    app: &AppHandle,
+    settings: &TempleSettings,
+    cradle: bool,
+) -> (Valued, MarketInput, ValuationSource) {
     let market = temple_market_now(app);
     let key = ValuationKey {
         preset: settings.preset,
         custom: settings.custom.clone(),
         market: market.clone(),
-        cradle: false,
+        cradle,
     };
     let state = app.state::<AppState>();
     {
@@ -1217,7 +1226,7 @@ pub fn warm_temple_valuation(app: &AppHandle) {
         // `run::settings_snapshot` is that read, and taking it through the same
         // function `run::full_read` does keeps one settings reader in the module.
         let settings = super::run::settings_snapshot(&app);
-        let _ = temple_valuation_now(&app, &settings);
+        let _ = temple_valuation_in(&app, &settings, false);
     });
 }
 

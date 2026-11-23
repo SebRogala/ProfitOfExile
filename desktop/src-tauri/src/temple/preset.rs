@@ -511,11 +511,21 @@ impl EntryRefusal {
 /// on purpose. The place a refused entry has to be reported is the load,
 /// once, where a user can act on it.
 pub fn value_table(preset: Preset, custom: &TempleCustomSettings, market: &MarketInput) -> Valued {
+    value_table_in(preset, custom, market, false)
+}
+
+/// The preset's table in the read's Cradle context.
+pub fn value_table_in(
+    preset: Preset,
+    custom: &TempleCustomSettings,
+    market: &MarketInput,
+    cradle: bool,
+) -> Valued {
     match preset {
-        Preset::Default => Valued::compute(market, &Knobs::default()),
+        Preset::Default => Valued::compute_in(market, &Knobs::default(), &RoomOverrides::new(), cradle),
         Preset::Custom => {
             let (overrides, _) = custom.overrides();
-            Valued::compute_with(market, &custom.knobs(), &overrides)
+            Valued::compute_in(market, &custom.knobs(), &overrides, cradle)
         }
     }
 }
@@ -524,8 +534,8 @@ pub fn value_table(preset: Preset, custom: &TempleCustomSettings, market: &Marke
 
 /// Everything the 25 x 3 table is a function of, and nothing else.
 ///
-/// [`value_table`] reads exactly three things: which preset is in force, the
-/// Custom table's rates and overrides, and the market read. So two keys that
+/// [`value_table_in`] reads which preset is in force, the Custom table's rates
+/// and overrides, the market read and the Cradle context. So two keys that
 /// compare equal cannot produce two different tables, which is what makes a
 /// stored table safe to hand back without recomputing it.
 ///
@@ -630,14 +640,14 @@ pub fn cached_valuation(slot: &Option<CachedValuation>, key: &ValuationKey) -> O
     }
 }
 
-/// The table the key names: [`value_table`] read out of the key's own three
+/// The table the key names: [`value_table_in`] read out of the key's own
 /// fields, and the ONE build a missed lookup performs.
 ///
 /// Separate from [`cached_valuation`] so the caller can run it with no lock
-/// held, and named on the key rather than on the three fields so a caller
+/// held, and named on the key rather than on the fields so a caller
 /// cannot compute one thing and store it under a key for another.
 pub fn compute_valuation(key: &ValuationKey) -> Valued {
-    value_table(key.preset, &key.custom, &key.market)
+    value_table_in(key.preset, &key.custom, &key.market, key.cradle)
 }
 
 /// What a miss leaves behind for the next lookup.

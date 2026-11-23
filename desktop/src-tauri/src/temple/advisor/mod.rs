@@ -71,7 +71,7 @@ use std::collections::BTreeSet;
 use crate::temple::lattice::{Edge, Slot};
 use crate::temple::panel::{self, ArchitectOffer};
 use crate::temple::rooms::{self, OfferKind};
-use crate::temple::strategy::{Mode, StrategyProfile, TempleConfig, Tier};
+use crate::temple::strategy::{Line, Mode, StrategyProfile, TempleConfig, Tier};
 
 use rollout::{Estimate, Opening, Rng, Sim, Valuation};
 use rules::{ArchKey, ArchitectChoice, Decision, DoorKey, Reason, RvVerdict};
@@ -682,16 +682,22 @@ fn conditional_second_door(
 }
 
 fn priority_architect(architect: &ArchitectChoice) -> bool {
-    architect.line.key() == "throne_of_atziri"
+    cradle_line(architect.line)
+}
+
+fn cradle_line(line: Line) -> bool {
+    line.key() == "throne_of_atziri"
 }
 
 /// Whether a read values its chests in the Cradle context (POE-470 D3): a
 /// Cradle of Creation on `board`, or a panel kill in `offers` that builds on
 /// its line.
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub fn cradle_in_play(board: &BoardState, offers: &[ArchitectOffer]) -> bool {
-    let _ = (board, offers);
-    false
+    board.rooms.iter().any(|(line, tier)| {
+        *tier == Tier::T3 && line.is_some_and(cradle_line)
+    }) || resolve_architects(offers, board.current_tier, &mut Vec::new())
+        .iter()
+        .any(priority_architect)
 }
 
 /// Rank priority kills first, then by EV; rank door sets by the rule chain.
