@@ -12,7 +12,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
-import { applySnapshot, type SsotSnapshot } from '$lib/stores/ssot.svelte';
+import { applySnapshot, ssot, type SsotSnapshot } from '$lib/stores/ssot.svelte';
 import { templeSliceDefault, type CaptureRect, type TempleSlice } from '$lib/temple/slice';
 
 const calls: [string, unknown][] = [];
@@ -231,6 +231,24 @@ describe('temple keep window', () => {
 		await clickKeep(target);
 		busHandlers['overlay-dismiss-key']({ payload: { gen: 1, shortcut: esc } });
 		await settle();
+		await settle();
+		expect(target.querySelectorAll('.box')).toHaveLength(0);
+		expect(target.querySelector('.keepwin')).toBeNull();
+	});
+
+	// keep:regression
+	it('clear advice then re-read counts down', async () => {
+		const target = await render(10);
+		await clickKeep(target);
+		// An area change: `slice::clear_advice` drops the advice and leaves the status and read stamp.
+		vi.advanceTimersByTime(1000);
+		applySnapshot({ temple: { ...ssot.temple, advice: null } } as unknown as SsotSnapshot);
+		await settle();
+		vi.advanceTimersByTime(1000);
+		applySnapshot({ temple: temple(Date.now()) } as unknown as SsotSnapshot);
+		await settle();
+		expect(offersLayer(target)?.querySelectorAll('.box')).toHaveLength(2);
+		vi.advanceTimersByTime(11000);
 		await settle();
 		expect(target.querySelectorAll('.box')).toHaveLength(0);
 		expect(target.querySelector('.keepwin')).toBeNull();
