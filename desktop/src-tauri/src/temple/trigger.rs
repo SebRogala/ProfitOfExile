@@ -27,7 +27,7 @@
 //! | `Good job.` | 168 | end |
 //! | `Good job, exile.` | 174 | end |
 //! | `Just in time.` | 1 | end (no incursion followed it) |
-//! | `No wonder it's lost…`, `At last... Atzoatl.` | — | temple banter; an end by the same rule |
+//! | `No wonder it's lost…`, `At last... Atzoatl.` | — | classified as END; advice clearance follows `docs/TEMPLE-LIFECYCLE.md` § Per press |
 //! | temple entry | `Generating level N area "Incursion_Temple8"`, then `: You have entered The Temple of Atzoatl.` |
 //!
 //! # Why the phrases, and why only for the START
@@ -643,10 +643,9 @@ pub fn may_end_advice(line: &str) -> bool {
 /// a second return value: the arm is about whether to look at the screen and
 /// this is about whether what was last seen still holds, and the two answers
 /// diverge on every line that matters. `: You have entered <a map>` disarms AND
-/// ends the advice; `Alva, Master Explorer: Good job.` ARMS (the player may
-/// open the panel to see what the kill changed) and ends the advice of the
-/// incursion that just finished; the temple's own area line arms and ends
-/// nothing.
+/// ends the advice; `Alva, Master Explorer: Good job.` stands a START arm down
+/// and ends the advice of the incursion that just finished; the temple's own
+/// area line arms and ends nothing.
 ///
 /// `None` for a board that was never read (`last_read_ms` is `None`) — there is
 /// nothing to end, and answering otherwise would put a log line on every zone
@@ -669,8 +668,9 @@ pub fn may_end_advice(line: &str) -> bool {
 /// about a screen that is minutes gone, and [`arm_at`] would launder its stamp
 /// into `now`.
 ///
-/// An END ends the advice: this incursion is finishing. A START over a live arm
-/// ends it too — the next incursion is beginning and the board belongs to the
+/// Temple-area banter follows `docs/TEMPLE-LIFECYCLE.md` § Per press.
+/// Other END lines end the advice: this incursion is finishing. A START over a
+/// live arm ends it too — the next incursion is beginning and the board belongs to the
 /// previous one. A START that opened a resting gate (`transition`, the value
 /// [`apply_line`] returned for this line) does NOT: since POE-439 the read
 /// comes before *Enter Incursion*, so the advice already published is about the
@@ -686,6 +686,7 @@ pub fn advice_end(
         LineEvent::EnteredTemple => None,
         LineEvent::LeftArea => Some(AdviceEnd::LeftArea),
         LineEvent::AlvaStart if opened_resting_gate(transition) => None,
+        LineEvent::AlvaEnd if transition == Transition::Extended(ArmReason::TempleArea) => None,
         LineEvent::AlvaStart | LineEvent::AlvaEnd => {
             (arm_at(now_ms, line_timestamp_ms(line)) > last_read).then_some(AdviceEnd::NewIncursion)
         }
