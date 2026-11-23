@@ -1726,6 +1726,8 @@ mod tests {
                     tier.rarity_pct(),
                     tier.pack_size_pct(),
                     tier.magic_pack_size_pct(),
+                    tier.atlas_drop_pct(),
+                    tier.map_corrupt_device_uses(),
                 ]
                 .into_iter()
                 .flatten()
@@ -1796,6 +1798,37 @@ mod tests {
                     [Some((1.0, measured)), Some((2.0, measured)), Some((3.0, measured))],
                     "{key} pack size"
                 );
+            }
+        }
+
+        // POE-466 AC-2/AC-4: Factory carries Vertolka's 20/40/60 % atlas drops
+        // and Atlas of Worlds his 1/3/5 map corrupt device uses, each his guess
+        // from the 2026-11-20 feedback; no other line states either quantity.
+        #[test]
+        fn factory_atlas_drops_and_atlas_device_uses_are_vertolkas_guesses_on_their_rooms_only() {
+            for row in DROPS.iter() {
+                let key = row.key();
+                let read = |field: fn(TierDrops) -> Option<Estimate>| -> Vec<Option<f64>> {
+                    row.tiers().iter().map(|t| field(*t).map(Estimate::value)).collect()
+                };
+                let (atlas, uses): (Vec<Option<f64>>, Vec<Option<f64>>) = match key {
+                    "factory" => (vec![Some(20.0), Some(40.0), Some(60.0)], vec![None, None, None]),
+                    "atlas_of_worlds" => (vec![None, None, None], vec![Some(1.0), Some(3.0), Some(5.0)]),
+                    _ => (vec![None, None, None], vec![None, None, None]),
+                };
+                assert_eq!(read(TierDrops::atlas_drop_pct), atlas, "{key} atlas drops");
+                assert_eq!(read(TierDrops::map_corrupt_device_uses), uses, "{key} device uses");
+                for (index, t) in row.tiers().iter().enumerate() {
+                    for estimate in [t.atlas_drop_pct(), t.map_corrupt_device_uses()].into_iter().flatten() {
+                        assert!(estimate.is_guess(), "{key} tier {} estimate is not a guess", index + 1);
+                        assert!(
+                            is_vertolka_feedback_1120(estimate.source()),
+                            "{key} tier {} cites {:?}",
+                            index + 1,
+                            estimate.source()
+                        );
+                    }
+                }
             }
         }
     }
