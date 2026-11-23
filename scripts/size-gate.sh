@@ -88,18 +88,9 @@ cd desktop/src-tauri/src || exit 1
 ! grep -rn 'crate::mercenary::' temple/ || { echo "temple -> mercenary import"; exit 1; }
 # ssot may name only slice types from features (H2). Join use statements and
 # expand grouped paths before checking; retain the grep for non-use paths.
-grep -rlE 'crate::(temple|mercenary)::' ssot*.rs ssot/ 2>/dev/null |
+if ! grep -rl '' ssot*.rs ssot/ 2>/dev/null |
 while IFS= read -r source; do
 awk '
-FNR==1 { collecting=0 }
-collecting || /^[[:space:]]*(pub(\([^)]*\))?[[:space:]]+)?use[[:space:]]/ {
-	collecting=($0 !~ /;/); next
-}
-{ print FILENAME ":" FNR ":" $0 }
-' "$source"
-done | grep -E 'crate::(temple|mercenary)::' \
-	| grep -vE '::(slice::TempleSlice|MercenarySlice|sync::MercSyncStatus)' && { echo "ssot -> feature internals"; exit 1; }
-if ! awk '
 function check(path) {
 	if (path ~ /(^|::)(temple|mercenary)(::|$)/ &&
 	    path !~ /(^|::)temple::slice::TempleSlice$/ &&
@@ -118,21 +109,34 @@ function group(prefix, path, token) {
 	}
 }
 function inspect(statement) {
-	sub(/^.*use[[:space:]]+/, "", statement)
+	sub(/^[[:space:]]*(pub(\([^)]*\))?[[:space:]]+)?use[[:space:]]+/, "", statement)
 	gsub(/[{},;]/, " & ", statement)
 	n=split(statement, tokens, /[[:space:]]+/); pos=1
 	group("")
 }
-FNR==1 { joined=""; collecting=0 }
-collecting || /^[[:space:]]*(pub(\([^)]*\))?[[:space:]]+)?use[[:space:]]/ {
-	joined=joined " " $0; collecting=1
-	if (/;/) { inspect(joined); joined=""; collecting=0 }
+function consume(fragment, complete) {
+	if (collecting || fragment ~ /^[[:space:]]*(pub(\([^)]*\))?[[:space:]]+)?use[[:space:]]/) {
+		joined=joined " " fragment; collecting=!complete
+		if (complete) { inspect(joined); joined="" }
+	} else print FILENAME ":" FNR ":" fragment
+}
+{
+	remainder=$0
+	while (match(remainder, /;/)) {
+		fragment=substr(remainder, 1, RSTART)
+		remainder=substr(remainder, RSTART+1)
+		consume(fragment, 1)
+	}
+	consume(remainder, 0)
 }
 END { exit bad }
-' ssot*.rs ssot/*.rs; then
+' "$source" || exit 1
+done > "$scratch/ssot-non-use"; then
 	echo "ssot -> feature internals"
 	exit 1
 fi
+grep -E 'crate::(temple|mercenary)::' "$scratch/ssot-non-use" \
+	| grep -vE '::(slice::TempleSlice|MercenarySlice|sync::MercSyncStatus)' && { echo "ssot -> feature internals"; exit 1; }
 # lab reads only the frame the read key hands it (POE-391)
 ! grep -rn 'capture_screen' lab_scan.rs lab/ font_*.rs || { echo "lab code grabs the screen outside read_hotkey"; exit 1; }
 # only settings/ and persist_settings may write the settings file (H3)

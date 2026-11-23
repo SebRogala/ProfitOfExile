@@ -45,10 +45,10 @@ expect() {
 	fi
 }
 excluded() {
-	if [ "$status" -eq 0 ] && ! printf '%s\n' "$output" | grep -F "$2:"; then
+	if [ "$status" -eq 0 ] && ! printf '%s\n' "$output" | grep -F "$2"; then
 		echo "ok   - $1"
 	else
-		echo "FAIL - $1 (exit $status; unexpected size violation for $2)"
+		echo "FAIL - $1 (exit $status; unexpected diagnostic: $2)"
 		printf '%s\n' "$output"
 		fail=1
 	fi
@@ -83,7 +83,7 @@ branch
 { lines 1450; echo '<style>'; lines 300; echo '</style>'; } > desktop/src/View.svelte
 commit
 run_gate
-excluded 'keep:happy Svelte style excluded' desktop/src/View.svelte
+excluded 'keep:happy Svelte style excluded' desktop/src/View.svelte:
 
 fixture rust-tests
 { lines 1400; printf '#[cfg(test)]\nmod tests {\n'; lines 898; echo '}'; } > desktop/src-tauri/src/tests.rs
@@ -91,14 +91,14 @@ branch
 { lines 1400; printf '#[cfg(test)]\nmod tests {\n'; lines 948; echo '}'; } > desktop/src-tauri/src/tests.rs
 commit
 run_gate
-excluded 'keep:happy Rust test module excluded' desktop/src-tauri/src/tests.rs
+excluded 'keep:happy Rust test module excluded' desktop/src-tauri/src/tests.rs:
 
 fixture go-tests
 branch
 lines 2000 > large_test.go
 commit
 run_gate
-excluded 'keep:happy Go test file excluded' large_test.go
+excluded 'keep:happy Go test file excluded' large_test.go:
 
 fixture intrinsic
 { echo '// size-gate: intrinsic — fixture data'; lines 1599; } > desktop/src/data.ts
@@ -128,6 +128,21 @@ printf '%s\n' "$import" > desktop/src-tauri/src/ssot.rs
 commit
 run_gate
 expect 'keep:critical multiline internal import fails' 1 'ssot -> feature internals'
+done
+
+# Missing nested or same-line imports silently admits feature dependencies.
+for location in ssot.rs ssot/nested/path.rs; do
+import_case=0
+for import in 'use crate::temple::run::Session;' 'use crate::temple::run::Session; use std::fmt;' 'use std::fmt; use crate::temple::run::Session;' 'use crate::temple::{slice::TempleSlice}; fn leak() { crate::temple::run::Session::new(); }'; do
+import_case=$((import_case + 1))
+fixture "forbidden-statement-$location-$import_case"
+branch
+mkdir -p desktop/src-tauri/src/ssot/nested
+printf '%s\n' "$import" > "desktop/src-tauri/src/$location"
+commit
+run_gate
+expect "keep:critical $location statement $import_case rejects silent dependency" 1 'ssot -> feature internals'
+done
 done
 
 import_case=0
