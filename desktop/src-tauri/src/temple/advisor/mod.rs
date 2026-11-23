@@ -3557,9 +3557,9 @@ mod tests {
                 "AdvancesTarget",
                 "R1Apex",
             ],
-            // 3 Chasm late — the Apex, free at last. Both kills are priority
-            // kills (POE-465): Xopec's builds Royal Meeting Room on the Cradle
-            // of Creation line, and the other is Xipocado's.
+            // 3 Chasm late — the Apex, free at last. Xopec's kill is the
+            // priority kill (POE-465): it builds on the Cradle of Creation
+            // line. Xipocado's change builds Lightning Workshop, which is not.
             &["R1Apex", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs", "ArchitectPriority"],
             // 4 Chasm merge — one door changes anything, and it is RV that
             // makes it worth a key.
@@ -3877,7 +3877,13 @@ mod tests {
     }
 
 
-    // ======================= POE-465: Xipocado and the Cradle of Creation line
+    // ================================ POE-465: the Cradle of Creation line
+
+    /// The reason a priority kill carries, as the overlay prints it. The
+    /// surviving architect acts, so the kill that builds the Cradle is the
+    /// one that leaves Xipocado alive.
+    const CRADLE_PRIORITY_REASON: &str =
+        "priority: Cradle of Creation — kill this architect so Xipocado builds it";
 
     /// Each recommendation as `(offer index, doors)`, best first.
     fn ranked_sequence(advice: &Advice) -> Vec<(Option<usize>, String)> {
@@ -3931,6 +3937,10 @@ mod tests {
         Vetoed,
         /// Every kill on the board qualifies.
         AllQualify,
+        /// A Xipocado block that does not build on the Cradle line sits
+        /// outside `qualifying`, so the architect's name alone must not
+        /// qualify it.
+        XipocadoOffTheLine,
     }
 
     struct PriorityRow {
@@ -3973,6 +3983,9 @@ mod tests {
                 .recommendations
                 .iter()
                 .all(|r| qualifies(r.option.architect.as_ref().map(|a| a.offer_index))),
+            Precondition::XipocadoOffTheLine => row.offers.iter().enumerate().any(|(i, o)| {
+                o.architect_name.eq_ignore_ascii_case("Xipocado") && !row.qualifying.contains(&i)
+            }),
         };
         if !precondition_holds {
             failures.push(format!("{}: the board no longer tests the priority:\n{dump}", row.name));
@@ -3994,7 +4007,7 @@ mod tests {
         let want_priority = row.expected.first().and_then(|(index, _)| *index).map(|top| {
             AdvicePriority {
                 architect_index: top,
-                reason: Reason::ArchitectPriority.describe(),
+                reason: CRADLE_PRIORITY_REASON.to_string(),
             }
         });
         if advice.priority != want_priority {
@@ -4052,19 +4065,18 @@ mod tests {
     mod keep_happy {
         use super::*;
 
-        // keep:happy — AC-1. Xipocado's kill ranks first under either offer
-        // kind and any letter case, although it prices below a Locus/Doryani
-        // kill or R4's carve-out vetoes it, and although Grand Reactor is not
-        // on the Cradle line. Every other option stays, after it.
+        // keep:happy — AC-1. A kill that builds on the Cradle of Creation
+        // line ranks first under either offer kind, whoever prints it,
+        // although it prices below the rival kill. Every other option stays,
+        // after it.
         #[test]
-        fn a_xipocado_offer_is_killed_first_over_every_other_preference() {
-            let (eight, _) = board_eight();
+        fn a_cradle_line_offer_is_killed_first_over_a_higher_expected_value() {
             assert_priority_rows(&[
                 PriorityRow {
-                    name: "change, upper case, lower EV",
+                    name: "change printing Cradle of Creation, lower EV",
                     state: priority_board("corruption", 1),
                     offers: vec![
-                        offer("XIPOCADO", Change, "Grand Reactor"),
+                        offer("Tzamoto", Change, "Cradle of Creation"),
                         offer("Azcapa", Upgrade, "Catalyst of Corruption"),
                     ],
                     keys: 1,
@@ -4074,11 +4086,11 @@ mod tests {
                     expected: kill_groups(&[0, 1], &PRIORITY_BOARD_DOORS),
                 },
                 PriorityRow {
-                    name: "upgrade, lower case, lower EV",
-                    state: priority_board("conduit_of_lightning", 1),
+                    name: "upgrade to Hall of Lords in the second block, lower EV",
+                    state: priority_board("throne_of_atziri", 1),
                     offers: vec![
                         offer("Azcapa", Change, "Corruption Chamber"),
-                        offer("xipocado", Upgrade, "Grand Reactor"),
+                        offer("Xopec", Upgrade, "Hall of Lords"),
                     ],
                     keys: 1,
                     profile: rush(),
@@ -4086,25 +4098,80 @@ mod tests {
                     precondition: Precondition::LowerEv,
                     expected: kill_groups(&[1, 0], &PRIORITY_BOARD_DOORS),
                 },
-                PriorityRow {
-                    name: "upgrade across the R4 carve-out veto",
-                    state: eight,
-                    offers: vec![
-                        offer("Xipocado", Upgrade, "Engineering Department"),
-                        offer("Juatalotli", Change, "Storage Room"),
-                    ],
-                    keys: 0,
-                    profile: carve_out_profile(),
-                    qualifying: &[0],
-                    precondition: Precondition::Vetoed,
-                    expected: kill_groups(&[0, 1], &["no door"]),
-                },
             ]);
         }
     }
 
     mod keep_critical {
         use super::*;
+
+        // keep:critical — AC-1. Silent consequence: the overlay names
+        // Xipocado's box as the priority kill, a plausible instruction the
+        // player trusts, and killing Xipocado is the one move that guarantees
+        // Xipocado cannot build the Cradle. A Xipocado block whose kill does
+        // not build on the Cradle line, on a board with no Cradle-line offer,
+        // gets no priority under either offer kind, any letter case or R4's
+        // carve-out veto: the ranking it would have overridden stands.
+        #[test]
+        fn a_xipocado_offer_off_the_cradle_line_gets_no_priority() {
+            let (eight, _) = board_eight();
+            let rows: [(&str, BoardState, Vec<ArchitectOffer>, u8, StrategyProfile, usize); 3] = [
+                (
+                    "change, upper case, lower EV",
+                    priority_board("corruption", 1),
+                    vec![
+                        offer("XIPOCADO", Change, "Grand Reactor"),
+                        offer("Azcapa", Upgrade, "Catalyst of Corruption"),
+                    ],
+                    1,
+                    rush(),
+                    1,
+                ),
+                (
+                    "upgrade, lower case, lower EV",
+                    priority_board("conduit_of_lightning", 1),
+                    vec![
+                        offer("Azcapa", Change, "Corruption Chamber"),
+                        offer("xipocado", Upgrade, "Grand Reactor"),
+                    ],
+                    1,
+                    rush(),
+                    0,
+                ),
+                (
+                    "upgrade the R4 carve-out vetoes",
+                    eight,
+                    vec![
+                        offer("Xipocado", Upgrade, "Engineering Department"),
+                        offer("Juatalotli", Change, "Storage Room"),
+                    ],
+                    0,
+                    carve_out_profile(),
+                    1,
+                ),
+            ];
+            let mut failures = Vec::new();
+            for (name, state, offers, keys, profile, top) in rows {
+                let advice =
+                    advise(&state, &offers, keys, &profile, &TempleConfig::default(), N, SEED);
+                let first = advice
+                    .recommendations
+                    .first()
+                    .and_then(|r| r.option.architect.as_ref().map(|a| a.offer_index));
+                let marked = advice
+                    .recommendations
+                    .iter()
+                    .any(|r| has_reason(r, |x| matches!(x, Reason::ArchitectPriority)));
+                if advice.priority.is_some() || marked || first != Some(top) {
+                    failures.push(format!(
+                        "{name}: priority {:?}, ArchitectPriority marked={marked}, top kill {first:?} (want {top})\n{}",
+                        advice.priority,
+                        ranking_dump(&advice)
+                    ));
+                }
+            }
+            assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+        }
 
         // keep:critical — AC-2 and AC-3. Silent consequence: the overlay
         // points at the wrong architect block, a plausible kill the player
@@ -4161,29 +4228,30 @@ mod tests {
                     precondition: Precondition::Vetoed,
                     expected: kill_groups(&[0, 1], &["no door"]),
                 },
-                // Both qualify and the EV ranks the later panel block first:
-                // that order stands, not the panel's.
+                // Both build the same tier-2 room on the Cradle line, so the
+                // priority separates neither: the order the ranking gave them
+                // stands.
                 PriorityRow {
-                    name: "two priority kills keep their expected-value order",
+                    name: "two priority kills keep their ranked order",
                     state: priority_board("corruption", 1),
                     offers: vec![
                         offer("Xopec", Change, "Royal Meeting Room"),
-                        offer("Xipocado", Upgrade, "Catalyst of Corruption"),
+                        offer("Tzamoto", Change, "Cradle of Creation"),
                     ],
                     keys: 1,
                     profile: rush(),
                     qualifying: &[0, 1],
                     precondition: Precondition::AllQualify,
-                    expected: kill_groups(&[1, 0], &PRIORITY_BOARD_DOORS),
+                    expected: kill_groups(&[0, 1], &PRIORITY_BOARD_DOORS),
                 },
                 PriorityRow {
-                    name: "case 3: Royal Meeting Room (tier 1) beside Xipocado",
+                    name: "case 3: Royal Meeting Room (tier 1) beside an off-line Xipocado",
                     state: three.state,
                     offers: three.offers,
                     keys: three.keys,
                     profile: rush(),
-                    qualifying: &[0, 1],
-                    precondition: Precondition::AllQualify,
+                    qualifying: &[0],
+                    precondition: Precondition::XipocadoOffTheLine,
                     expected: kill_groups(&[0, 1], &["A0-B0", "no door"]),
                 },
             ]);
@@ -4193,10 +4261,63 @@ mod tests {
     mod keep_regression {
         use super::*;
 
-        // keep:regression — AC-4. Boards with neither a Xipocado offer nor a
-        // Cradle-line kill keep their recommendation order and publish no
-        // priority. Case 8 prints Grand Reactor from another architect, so
-        // the printed target alone must not qualify.
+        // keep:regression — POE-465 AC-1, the reported board. Standing in
+        // Torment Cells (torture line, tier 1), Xipocado's box prints Torture
+        // Cages and Tzamoto's prints Cradle of Creation. The surviving
+        // architect acts, so killing Tzamoto (block 1) is what builds the
+        // Cradle: that kill ranks first, carries the priority, and Xipocado's
+        // kill carries none. Fails while the architect's name alone qualifies
+        // block 0.
+        #[test]
+        fn the_torment_cells_board_puts_the_kill_that_builds_the_cradle_first() {
+            let offers = vec![
+                offer("Xipocado", Upgrade, "Torture Cages"),
+                offer("Tzamoto", Change, "Cradle of Creation"),
+            ];
+            let advice = advise(
+                &priority_board("sadists_den", 1),
+                &offers,
+                1,
+                &rush(),
+                &TempleConfig::default(),
+                N,
+                SEED,
+            );
+            let dump = ranking_dump(&advice);
+
+            assert_eq!(
+                advice
+                    .recommendations
+                    .first()
+                    .and_then(|r| r.option.architect.as_ref().map(|a| a.offer_index)),
+                Some(1),
+                "the top recommendation must kill Tzamoto's block:\n{dump}"
+            );
+            assert_eq!(
+                advice.priority,
+                Some(AdvicePriority {
+                    architect_index: 1,
+                    reason: CRADLE_PRIORITY_REASON.to_string(),
+                }),
+                "\n{dump}"
+            );
+            let marked_xipocado: Vec<String> = advice
+                .recommendations
+                .iter()
+                .filter(|r| r.option.architect.as_ref().map(|a| a.offer_index) == Some(0))
+                .filter(|r| has_reason(r, |x| matches!(x, Reason::ArchitectPriority)))
+                .map(|r| r.option.doors_label())
+                .collect();
+            assert!(
+                marked_xipocado.is_empty(),
+                "Xipocado's kill options carry ArchitectPriority: {marked_xipocado:?}\n{dump}"
+            );
+        }
+
+        // keep:regression — AC-4. Boards without a Cradle-line kill keep
+        // their recommendation order and publish no priority. Case 8 prints
+        // Grand Reactor from another architect, so the printed target alone
+        // must not qualify.
         #[test]
         fn a_board_without_a_qualifying_offer_keeps_its_ranking_and_no_priority() {
             let rows: [(cases::Case, Vec<(Option<usize>, &str)>); 2] = [
@@ -4264,9 +4385,9 @@ mod tests {
                     }],
                 ),
                 (
-                    "Xipocado's change with no current tier",
+                    "a Cradle of Creation change with no current tier",
                     unknown_tier(priority_board("corruption", 1)),
-                    vec![offer("Xipocado", Change, "Lightning Workshop"), rival()],
+                    vec![offer("Tzamoto", Change, "Cradle of Creation"), rival()],
                     vec![Warning::UnknownCurrentTier],
                 ),
                 (
