@@ -3997,6 +3997,19 @@ mod tests {
         board(&[(D1, line, tier), (E2, "gem", 3)], &[(D1, E1), (E1, E2)], D1, 5)
     }
 
+    /// The door sets [`priority_board`] enumerates at one key, in the order
+    /// the door chain ranks them inside every kill's group.
+    const PRIORITY_BOARD_DOORS: [&str; 6] =
+        ["C0-D1", "C1-D1", "D0-D1", "D1-D2", "D1-E0", "no door"];
+
+    /// `(offer index, doors)` for whole kill groups, `kills` best first.
+    fn kill_groups(kills: &[usize], doors: &[&'static str]) -> Vec<(Option<usize>, &'static str)> {
+        kills
+            .iter()
+            .flat_map(|kill| doors.iter().map(move |door| (Some(*kill), *door)))
+            .collect()
+    }
+
     fn carve_out_profile() -> StrategyProfile {
         let mut profile = rush();
         profile.r4_keep_upgrade_targets = true;
@@ -4025,7 +4038,7 @@ mod tests {
                     profile: rush(),
                     qualifying: &[0],
                     precondition: Precondition::LowerEv,
-                    expected: vec![],
+                    expected: kill_groups(&[0, 1], &PRIORITY_BOARD_DOORS),
                 },
                 PriorityRow {
                     name: "upgrade, lower case, lower EV",
@@ -4038,7 +4051,7 @@ mod tests {
                     profile: rush(),
                     qualifying: &[1],
                     precondition: Precondition::LowerEv,
-                    expected: vec![],
+                    expected: kill_groups(&[1, 0], &PRIORITY_BOARD_DOORS),
                 },
                 PriorityRow {
                     name: "upgrade across the R4 carve-out veto",
@@ -4051,7 +4064,7 @@ mod tests {
                     profile: carve_out_profile(),
                     qualifying: &[0],
                     precondition: Precondition::Vetoed,
-                    expected: vec![],
+                    expected: kill_groups(&[0, 1], &["no door"]),
                 },
             ]);
         }
@@ -4087,7 +4100,7 @@ mod tests {
                     profile: rush(),
                     qualifying: &[1],
                     precondition: Precondition::LowerEv,
-                    expected: vec![],
+                    expected: kill_groups(&[1, 0], &PRIORITY_BOARD_DOORS),
                 },
                 PriorityRow {
                     name: "Cradle of Creation (tier 3), lower EV",
@@ -4100,7 +4113,7 @@ mod tests {
                     profile: rush(),
                     qualifying: &[0],
                     precondition: Precondition::LowerEv,
-                    expected: vec![],
+                    expected: kill_groups(&[0, 1], &PRIORITY_BOARD_DOORS),
                 },
                 PriorityRow {
                     name: "Hall of Lords upgrade across the R4 carve-out veto",
@@ -4113,7 +4126,22 @@ mod tests {
                     profile: carve_out_profile(),
                     qualifying: &[0],
                     precondition: Precondition::Vetoed,
-                    expected: vec![],
+                    expected: kill_groups(&[0, 1], &["no door"]),
+                },
+                // Both qualify and the EV ranks the later panel block first:
+                // that order stands, not the panel's.
+                PriorityRow {
+                    name: "two priority kills keep their expected-value order",
+                    state: priority_board("corruption", 1),
+                    offers: vec![
+                        offer("Xopec", Change, "Royal Meeting Room"),
+                        offer("Xipocado", Upgrade, "Catalyst of Corruption"),
+                    ],
+                    keys: 1,
+                    profile: rush(),
+                    qualifying: &[0, 1],
+                    precondition: Precondition::AllQualify,
+                    expected: kill_groups(&[1, 0], &PRIORITY_BOARD_DOORS),
                 },
                 PriorityRow {
                     name: "case 3: Royal Meeting Room (tier 1) beside Xipocado",
@@ -4123,7 +4151,7 @@ mod tests {
                     profile: rush(),
                     qualifying: &[0, 1],
                     precondition: Precondition::AllQualify,
-                    expected: vec![],
+                    expected: kill_groups(&[0, 1], &["A0-B0", "no door"]),
                 },
             ]);
         }
