@@ -67,10 +67,17 @@ impl PressStamp {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Arm {
+    mechanic: Mechanic,
+    id: u64,
+    presentation_expired: bool,
+}
+
 /// Active arms retain their immutable identities beneath the presentation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReadPromptState {
-    active: Vec<(Mechanic, u64)>,
+    active: Vec<Arm>,
     seq: u64,
     lab_context: u64,
     last_client_mechanic: Option<Mechanic>,
@@ -97,22 +104,22 @@ impl ReadPromptState {
         if mechanic == Mechanic::DivineFont {
             self.gem_uncertain = [false; 3];
         }
-        self.active.retain(|(m, _)| *m != mechanic);
-        self.active.push((mechanic, self.seq));
+        self.active.retain(|arm| arm.mechanic != mechanic);
+        self.active.push(Arm { mechanic, id: self.seq, presentation_expired: false });
     }
     /// The identity of `mechanic`'s live arm, taken when a press is accepted
     /// so its read completes only that arm.
     pub fn armed_id(&self, mechanic: Mechanic) -> Option<u64> {
-        self.active.iter().find(|(m, _)| *m == mechanic).map(|(_, id)| *id)
+        self.active.iter().find(|arm| arm.mechanic == mechanic).map(|arm| arm.id)
     }
     /// A read of `mechanic`'s arm `id` succeeded. A newer arm of the same
     /// mechanic, made while that read ran, stays armed.
     pub fn read_done(&mut self, mechanic: Mechanic, id: u64) {
-        self.active.retain(|entry| *entry != (mechanic, id));
+        self.active.retain(|arm| arm.mechanic != mechanic || arm.id != id);
     }
     /// The context of `mechanic` ended.
     pub fn end(&mut self, mechanic: Mechanic) {
-        self.active.retain(|(m, _)| *m != mechanic);
+        self.active.retain(|arm| arm.mechanic != mechanic);
         if mechanic == Mechanic::DivineFont {
             self.lab_context = 0;
             self.gem_uncertain = [false; 3];
@@ -139,7 +146,11 @@ impl ReadPromptState {
     }
     pub fn snapshot(&self) -> ReadPromptSnapshot {
         ReadPromptSnapshot {
-            mechanic: if self.no_match || self.recalibrating { None } else { self.active.iter().rev().map(|(m, _)| *m).find(|m| !UNPRESENTED.contains(m)) },
+            mechanic: if self.no_match || self.recalibrating { None } else {
+                self.active.iter().rev()
+                    .find(|arm| !arm.presentation_expired && !UNPRESENTED.contains(&arm.mechanic))
+                    .map(|arm| arm.mechanic)
+            },
             no_match: self.no_match,
             recalibrating: self.recalibrating,
             seq: self.seq,
@@ -173,7 +184,11 @@ impl ReadPromptState {
     }
     /// The detected prompt of `mechanic`'s arm `id` outlived
     /// [`DETECTED_PROMPT_TIMEOUT`]; the arm itself stays for the read.
-    pub fn expire_presentation(&mut self, _mechanic: Mechanic, _id: u64) {}
+    pub fn expire_presentation(&mut self, mechanic: Mechanic, id: u64) {
+        if let Some(arm) = self.active.iter_mut().find(|arm| arm.mechanic == mechanic && arm.id == id) {
+            arm.presentation_expired = true;
+        }
+    }
     /// The shown no-match result's identity, for its expiry.
     pub fn no_match_id(&self) -> Option<u64> {
         self.no_match.then_some(self.no_match_id)
@@ -279,10 +294,13 @@ pub fn apply_in(state: &crate::AppState, change: Change) -> bool {
 /// [`apply_in`] with `pause` run between the unlocked module check and the
 /// prompt edit, where a concurrent module toggle can land.
 fn apply_paused_in(state: &crate::AppState, change: Change, pause: &mut dyn FnMut()) -> bool {
+    apply_captured_in(state, change, pause).0
+}
+fn apply_captured_in(state: &crate::AppState, change: Change, pause: &mut dyn FnMut()) -> (bool, Option<(Mechanic, u64)>) {
     if let Change::Arm(mechanic) = change {
         state.read_prompt.lock().unwrap_or_else(|e| e.into_inner()).last_client_mechanic = Some(mechanic);
         if !module_on(state, mechanic) {
-            return false;
+            return (false, None);
         }
     }
     pause();
@@ -292,17 +310,27 @@ fn apply_paused_in(state: &crate::AppState, change: Change, pause: &mut dyn FnMu
     // their flag before taking read_prompt, preserving WI-1's lock order.
     let _font_session = matches!(change, Change::Arm(Mechanic::DivineFont))
         .then(|| state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner()));
-    edit_in(state, |p| match change {
-        Change::Arm(mechanic) if !module_on(state, mechanic) => {}
-        Change::Arm(Mechanic::DivineFont) => {
-            let token = state.lab_scan.font_context.load(std::sync::atomic::Ordering::SeqCst);
-            if token != 0 {
-                p.lab_context = token;
-                p.arm(Mechanic::DivineFont);
+    let mut armed = None;
+    let changed = edit_in(state, |p| {
+        match change {
+            Change::Arm(mechanic) if !module_on(state, mechanic) => {}
+            Change::Arm(Mechanic::DivineFont) => {
+                let token = state.lab_scan.font_context.load(std::sync::atomic::Ordering::SeqCst);
+                if token != 0 {
+                    p.lab_context = token;
+                    p.arm(Mechanic::DivineFont);
+                }
             }
+            Change::Arm(mechanic) => {
+                p.arm(mechanic);
+                if !UNPRESENTED.contains(&mechanic) {
+                    armed = p.armed_id(mechanic).map(|id| (mechanic, id));
+                }
+            }
+            _ => p.apply(change),
         }
-        _ => p.apply(change),
-    })
+    });
+    (changed, armed)
 }
 /// Hides the prompt of every mechanic whose module is now off.
 pub fn modules_changed_in(state: &crate::AppState) -> bool {
@@ -376,7 +404,16 @@ fn emit_if(app: &AppHandle, changed: bool) {
 }
 pub fn apply(app: &AppHandle, change: Option<Change>) {
     if let Some(change) = change {
-        emit_if(app, apply_in(&app.state::<crate::AppState>(), change));
+        let (changed, armed) = apply_captured_in(&app.state::<crate::AppState>(), change, &mut || {});
+        emit_if(app, changed);
+        if let Some((mechanic, id)) = armed {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(DETECTED_PROMPT_TIMEOUT);
+                let changed = edit_in(&app.state::<crate::AppState>(), |p| p.expire_presentation(mechanic, id));
+                emit_if(&app, changed);
+            });
+        }
     }
 }
 /// A read of the arm `id` (from [`armed_id_in`] at the press) succeeded;
