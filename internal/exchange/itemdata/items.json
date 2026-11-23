@@ -7189,6 +7189,11 @@
     "icon": "https://www.poewiki.net/images/e/ea/Sacred_Blossom_inventory_icon.png",
     "name": "Sacred Blossom"
   },
+  "Metadata/Items/MapFragments/CurrencyIncursionUberFragment": {
+    "category": "Fragments",
+    "icon": "https://www.poewiki.net/images/9/94/Royal_Visage_inventory_icon.png",
+    "name": "Royal Visage"
+  },
   "Metadata/Items/MapFragments/CurrencyLegionFragmentEternal": {
     "category": "Legion",
     "icon": "https://www.poewiki.net/images/3/39/Timeless_Eternal_Emblem_inventory_icon.png",
