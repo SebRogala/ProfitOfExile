@@ -24,7 +24,7 @@
 //! Timelines scarab act on the line, not on the tier (the scarab is inactive in
 //! 3.30, POE-377; the double-tier node alone still does).
 //!
-//! # Two terms have no price, and say so rather than reading zero
+//! # Unpriced terms say so rather than reading zero
 //!
 //! - **Pack size.** [`drops::TierDrops::pack_size_pct`](super::drops::TierDrops::pack_size_pct)
 //!   carries poedb's measured percentage, and nobody has stated what a point of
@@ -34,6 +34,8 @@
 //!   the one stated exception to the last bullet below: a term left out is
 //!   still listed, but a driver has to be listed against a rate, and pack size
 //!   has none.
+//! - **Magic pack size, atlas drops and map corrupt device uses** also have no
+//!   valuation rate. Like pack size, their tier data adds no chaos driver or knob.
 //! - **A term with no count or no price** contributes nothing and is still
 //!   listed as a [`Driver`] with `chaos: None`, so the explanation box shows
 //!   what was left out instead of quietly showing a smaller total.

@@ -19,7 +19,7 @@
 //! [`LineDrops::has_guess`] answers "is anything in this room's value guessed?"
 //! so the overlay (POE-260) can mark it.
 //!
-//! Five sources for the NUMBERS, and only five:
+//! Sources for the numbers:
 //!
 //! - [`POEDB`] — the room's own page on poedb.tw, read 2026-09-06. This is the
 //!   game's data: the rarity / pack-size lines, the item-chance stat
@@ -37,6 +37,11 @@
 //!   [`SHEET_LOCUS_330`], [`SHEET_CRADLE_330`] and [`SHEET_GLITTERING_330`]:
 //!   the corruption rooms' rarity and pack size, the Cradle of Creation line's
 //!   magic pack size and Glittering Halls' rarity. Measured.
+//!
+//! - [`VERTOLKA_FEEDBACK_1120`] — Discord player feedback, 2026-11-20,
+//!   points 5–8: rarity, Factory atlas drops and map corrupt device uses.
+//!   Unverified feedback, carried as [`Basis::Guess`]; Hall of War's existing
+//!   measured pack size is preserved.
 //!
 //! # Uniques drop at tier 3 only
 //!
@@ -146,6 +151,9 @@ pub const VERTOLKA_MSG: &str = "Vertolka, 2026-09-06 message (POE-124)";
 /// (Operator ruling T28 2026-11-13 00:20).
 pub const SHEET_UNIQUES_330: &str = "Vertolka's sheet export 2026-11-13: g744679169.csv row 13 (use non-upgraded version / count 25% of value; the upgraded version only with a Cradle of Creation), rows 28-29 (Glittering Halls: Sacrificial Heart and the Tempered jewels; Museum of Artefacts: Soul Catcher), gid0.csv rows 13 and 25; equal-weight pool per the Operator ruling 2026-11-13 00:20 (the sheet author's guess)";
 
+/// Unverified player feedback; the numeric claims are guesses.
+pub const VERTOLKA_FEEDBACK_1120: &str = "Vertolka, Discord 2026-11-20, points 5–8: room rarity, Factory atlas drops, Hall of War pack size and map corrupt device uses; unverified player feedback";
+
 /// The short label a tooltip prints for `source`: who stated the figure and
 /// the date it was read. The full citations above stay the record; these are
 /// their only compact form. An unmapped source falls through unchanged, which
@@ -153,6 +161,7 @@ pub const SHEET_UNIQUES_330: &str = "Vertolka's sheet export 2026-11-13: g744679
 /// cites.
 pub fn source_label(source: &'static str) -> &'static str {
     match source {
+        VERTOLKA_FEEDBACK_1120 => "Vertolka Discord 2026-11-20",
         POEDB => "poedb 2026-09-06",
         SHEET_LOCUS_330 => "3.30 sheet 2026-11-13, unconfirmed",
         SHEET_CRADLE_330 | SHEET_GLITTERING_330 => "3.30 sheet 2026-11-13",
@@ -300,6 +309,8 @@ pub struct TierDrops {
     rarity_pct: Option<Estimate>,
     pack_size_pct: Option<Estimate>,
     magic_pack_size_pct: Option<Estimate>,
+    atlas_drop_pct: Option<Estimate>,
+    map_corrupt_device_uses: Option<Estimate>,
 }
 
 impl TierDrops {
@@ -310,6 +321,8 @@ impl TierDrops {
         rarity_pct: None,
         pack_size_pct: None,
         magic_pack_size_pct: None,
+        atlas_drop_pct: None,
+        map_corrupt_device_uses: None,
     };
 
     /// Expected tier-3 chest uniques per run. Always `None` at tiers 1 and 2 —
@@ -334,6 +347,16 @@ impl TierDrops {
         self.magic_pack_size_pct
     }
 
+    /// Increased atlas (map) drops, in percent; unpriced.
+    pub fn atlas_drop_pct(self) -> Option<Estimate> {
+        self.atlas_drop_pct
+    }
+
+    /// Map corrupt device uses; unpriced.
+    pub fn map_corrupt_device_uses(self) -> Option<Estimate> {
+        self.map_corrupt_device_uses
+    }
+
     /// Whether nobody has stated anything at all about this tier.
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn is_empty(self) -> bool {
@@ -348,6 +371,8 @@ impl TierDrops {
             self.rarity_pct,
             self.pack_size_pct,
             self.magic_pack_size_pct,
+            self.atlas_drop_pct,
+            self.map_corrupt_device_uses,
         ])
     }
 }
@@ -411,6 +436,21 @@ impl LineDrops {
     /// The draft prose for a content line, or `None` for a chest line.
     pub fn content(self) -> Option<&'static str> {
         self.content
+    }
+
+    /// Content for the built tier, derived from the tier's numeric facts.
+    pub fn content_at(self, tier: Tier) -> Option<String> {
+        let content = self.content()?;
+        let facts = self.tier(tier)?;
+        if let Some(atlas) = facts.atlas_drop_pct() {
+            Some(format!("{content}; +{}% atlas drops", atlas.value()))
+        } else if let Some(uses) = facts.map_corrupt_device_uses() {
+            Some(format!("{content}; {} map corrupt device uses", uses.value()))
+        } else if self.key == "hall_of_war" {
+            facts.pack_size_pct().map(|pack| format!("{content}; +{}% pack size", pack.value()))
+        } else {
+            Some(content.to_string())
+        }
     }
 
     /// How this line is drawn. A unique-bearing row is a chest; the other rows
@@ -500,17 +540,22 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "atlas_of_worlds",
         uniques: &[],
-        // 3.30 patch note: the device has "multiple uses in higher-tier rooms";
-        // sheet export 2026-11-13 gid0.csv row 23 "corrupt maps for second time
-        // (higher tier provide more uses)" (its 1/3/5? counts not adopted) and
-        // g744679169.csv row 30 "All tiers has the device, higher tiers have
-        // more uses".
-        content: Some("Map drops; re-corrupt maps (uses rise by tier)"),
+        // VERTOLKA_FEEDBACK_1120 supplies the previously unadopted use counts.
+        content: Some("Map drops"),
         note: None,
         tiers: [
-            TierDrops::NONE,
-            TierDrops::NONE,
-            TierDrops::NONE,
+            TierDrops {
+                map_corrupt_device_uses: Some(Estimate::guess(1.0, VERTOLKA_FEEDBACK_1120)),
+                ..TierDrops::NONE
+            },
+            TierDrops {
+                map_corrupt_device_uses: Some(Estimate::guess(3.0, VERTOLKA_FEEDBACK_1120)),
+                ..TierDrops::NONE
+            },
+            TierDrops {
+                map_corrupt_device_uses: Some(Estimate::guess(5.0, VERTOLKA_FEEDBACK_1120)),
+                ..TierDrops::NONE
+            },
         ],
     },
     LineDrops {
@@ -522,21 +567,24 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(4.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(8.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(12.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },
@@ -548,21 +596,24 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(4.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(8.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
-                rarity_pct: Some(Estimate::measured(12.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },
@@ -585,21 +636,24 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(4.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(8.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
-                rarity_pct: Some(Estimate::measured(12.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },
@@ -611,21 +665,24 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(4.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(8.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
-                rarity_pct: Some(Estimate::measured(12.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },
@@ -650,21 +707,27 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(4.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
+                atlas_drop_pct: Some(Estimate::guess(20.0, VERTOLKA_FEEDBACK_1120)),
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(8.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
+                atlas_drop_pct: Some(Estimate::guess(40.0, VERTOLKA_FEEDBACK_1120)),
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(12.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
+                atlas_drop_pct: Some(Estimate::guess(60.0, VERTOLKA_FEEDBACK_1120)),
+                ..TierDrops::NONE
             },
         ],
     },
@@ -688,18 +751,21 @@ pub const DROPS: [LineDrops; 25] = [
                 rarity_pct: Some(Estimate::measured(12.0, SHEET_GLITTERING_330)),
                 pack_size_pct: None,
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(24.0, SHEET_GLITTERING_330)),
                 pack_size_pct: None,
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
                 rarity_pct: Some(Estimate::measured(36.0, SHEET_GLITTERING_330)),
                 pack_size_pct: None,
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },
@@ -711,21 +777,24 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(4.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(8.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(12.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },
@@ -751,18 +820,21 @@ pub const DROPS: [LineDrops; 25] = [
                 rarity_pct: None,
                 pack_size_pct: Some(Estimate::measured(10.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: Some(Estimate::measured(20.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: Some(Estimate::measured(30.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },
@@ -790,21 +862,24 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(4.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(8.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
-                rarity_pct: Some(Estimate::measured(12.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },
@@ -821,21 +896,24 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(4.0, SHEET_LOCUS_330)),
+                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(1.0, SHEET_LOCUS_330)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(8.0, SHEET_LOCUS_330)),
+                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(2.0, SHEET_LOCUS_330)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(12.0, SHEET_LOCUS_330)),
+                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(3.0, SHEET_LOCUS_330)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },
@@ -854,6 +932,7 @@ pub const DROPS: [LineDrops; 25] = [
                 rarity_pct: None,
                 pack_size_pct: None,
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },
@@ -876,21 +955,24 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(4.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(8.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
-                rarity_pct: Some(Estimate::measured(12.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },
@@ -926,21 +1008,24 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(4.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(8.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::measured(12.0, POEDB)),
+                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },
@@ -958,18 +1043,21 @@ pub const DROPS: [LineDrops; 25] = [
                 rarity_pct: None,
                 pack_size_pct: None,
                 magic_pack_size_pct: Some(Estimate::measured(10.0, SHEET_CRADLE_330)),
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: None,
                 magic_pack_size_pct: Some(Estimate::measured(20.0, SHEET_CRADLE_330)),
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: None,
                 magic_pack_size_pct: Some(Estimate::measured(30.0, SHEET_CRADLE_330)),
+                ..TierDrops::NONE
             },
         ],
     },
@@ -984,18 +1072,21 @@ pub const DROPS: [LineDrops; 25] = [
                 rarity_pct: None,
                 pack_size_pct: None,
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: None,
                 pack_size_pct: None,
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
                 rarity_pct: None,
                 pack_size_pct: None,
                 magic_pack_size_pct: None,
+                ..TierDrops::NONE
             },
         ],
     },

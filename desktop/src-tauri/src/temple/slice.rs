@@ -1,4 +1,5 @@
 //! The `temple` SSOT slice and the pure projection that fills it (POE-171).
+//! size-gate: intrinsic — One public Temple projection owns its private serializers; this change only passes tier context to its existing line projection.
 //!
 //! Everything in this file is a **wire type plus the pure function that builds
 //! it**: a [`reader::TempleLayout`], the per-plate [`panel::RoomReading`]s, the
@@ -1306,7 +1307,7 @@ pub fn value_rows(valuation: &Valued) -> Vec<RoomValueRowView> {
                     room_value_view(&tiers[1], valuation),
                     room_value_view(&tiers[2], valuation),
                 ],
-                line: line_view(line),
+                line: line_view(line, Tier::T3),
             })
         })
         .collect();
@@ -1359,7 +1360,7 @@ fn offer_view(
                 .get(r.line.key(), r.built_tier)
                 .map(|value| room_value_view(value, valuation))
         }),
-        line: resolved.as_ref().map(|r| line_view(r.line)),
+        line: resolved.as_ref().map(|r| line_view(r.line, r.built_tier)),
     }
 }
 
@@ -1425,12 +1426,12 @@ fn chest_view(row: &drops::LineDrops) -> Option<ChestView> {
     })
 }
 
-fn line_view(line: &rooms::RoomLine) -> LineView {
+fn line_view(line: &rooms::RoomLine, tier: Tier) -> LineView {
     let row = line.drops();
     let [rarity, pack, magic_pack] = LADDERS.map(|(_, select)| ladder_values(row.tiers(), select));
     LineView {
         kind: row.kind(),
-        content: row.content().map(str::to_string),
+        content: row.content_at(tier),
         rarity_pct: rarity,
         pack_size_pct: pack,
         magic_pack_size_pct: magic_pack,

@@ -157,33 +157,25 @@ prose blurb and Recipe block agreeing on every row).
   pre-3.30 30 c Crucible of Flame glove guess went with them. The rooms' own
   area modifiers and descriptions stay (`LineDrops::content`, drops.rs).
 
-### Temple room bonuses per tier (3.30, 2026-11-13)
+### Temple room bonuses per tier (current model, 2026-11-23)
 
-Carried in `desktop/src-tauri/src/temple/drops.rs`. Percentages are `increased
-Rarity of Items` / `increased Pack Size` / `increased Magic Pack Size` in this
-area, tier 1 / tier 2 / tier 3. Twelve of the 25 lines print no such line at
-all and are `None` rather than zero. Item quantity was removed in 3.30.0
-(POE-369; sheet g744679169.csv row 8 "remove IIQ bunuses").
+The numeric home is `desktop/src-tauri/src/temple/drops.rs` (`DROPS` and its
+source constants). Absent bonuses are `None`, distinct from zero. Item
+quantity was removed in 3.30.0 (POE-369; sheet g744679169.csv row 8).
 
-| Line (room key) | Rarity % | Pack size % | Magic pack size % |
-|---|---|---|---|
-| the standard eight (see below) | 4 / 8 / 12 | 1 / 2 / 3 | — |
-| Factory | 4 / 8 / 12 | 1 / 2 / 3 | — |
-| corruption (Locus of Corruption line) | 4 / 8 / 12 | 1 / 2 / 3 | — |
-| Glittering Halls | 12 / 24 / 36 | — | — |
-| Hall of War | — | 10 / 20 / 30 | — |
-| Cradle of Creation (`throne_of_atziri`) | — | — | 10 / 20 / 30 |
+POE-466 adopts Vertolka's Discord feedback of 2026-11-20, points 5–8, for
+rarity on every previously rarity-bearing line except Glittering Halls,
+Factory's atlas-drop bonus and Atlas of Worlds' map corrupt device uses.
+These are **unverified player feedback**, stored as guesses under
+`VERTOLKA_FEEDBACK_1120`, not independently measured game facts. Hall of War's
+existing measured pack-size data is confirmed by the feedback and retained.
+The existing description slot derives its bonus text from the offered tier;
+the value table describes tier 3.
 
-Sources: the standard eight and Factory, poedb.tw room pages (2026-09-06).
-Corruption: Vertolka sheet (`SHEET_LOCUS_330`; gid0.csv row 10,
-g744679169.csv row 24), author confirmation relayed by the Operator 2026-11-13
-00:14. Glittering Halls: `SHEET_GLITTERING_330` and the patch notes "up to 36%
-for the Glittering Halls (previously 60%)". Cradle of Creation:
-`SHEET_CRADLE_330`, per tier confirmed by the Operator 2026-11-13 00:20.
-
-The standard eight are `chamber_of_iron`, `conduit_of_lightning`,
-`crucible_of_flame`, `defense_research_lab`, `hall_of_champions`,
-`hybridisation_chamber`, `sanctum_of_immortality` and `upgrade` (Temple Nexus).
+Pack-size sources remain the poedb room pages (2026-09-06), except Locus of
+Corruption's `SHEET_LOCUS_330`. Glittering Halls retains
+`SHEET_GLITTERING_330`; Cradle of Creation retains `SHEET_CRADLE_330`, whose
+per-tier interpretation the Operator confirmed on 2026-11-13 00:20.
 
 Two places where Vertolka's sheet claims a bonus and poedb prints no percentage:
 Toxic Grove ("increase quantity/rarity") and Storm of Corruption ("high rarity
@@ -207,8 +199,8 @@ buff"). Both are recorded as absent rather than as a figure nobody wrote down.
   half was removed in 3.30.0 (POE-369). The default rarity rate is
   `C_PER_RARITY_BASE` (`desktop/src-tauri/src/temple/valuation.rs`), a
   starting base to tune; its value is under [Not validated](#not-validated).
-  **Pack size and magic pack size have no rate** and are deliberately not
-  priced. Both are flagged wherever they reach a number
+  **Pack size, magic pack size, atlas drops and device uses have no rate**
+  and add no chaos driver. The valuation header records the unpriced policy
   ([ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md)).
 
 ## Divine Font
@@ -454,12 +446,15 @@ Recorded so the status is explicit, not so they can be built on.
   - Cradle bracket: the upgraded unique from the same chest, only with a Cradle
     of Creation, shown as 25 % of the upgraded price (g744679169.csv row 13;
     the cell prints the contribution).
-  - Operator 2026-11-13 00:14, verbatim: "4-6% per tier it should be 4% from
-    rarity and 1-2% from redirected from quantity and yeah pack size 1% per
-    tier". The extra 1-2 %/tier redirected from quantity is unmeasured and has
-    no value term; the sheet's 6 % upper bound is not adopted.
-  - Sheet "?" rows not adopted: Factory rarity "4%-24%?" (gid0.csv rows 11-12);
-    Sadist Den "Atziri is possesed?" / "from T2 architect and Atziri? are
-    possesed" (gid0.csv row 24); Atlas device uses "1/3/5?" (gid0.csv row 23).
+  - Room rarity, Factory atlas drops and map corrupt device uses: unverified
+    Discord feedback, adopted by POE-466; see the current room-bonus section
+    and `drops.rs::VERTOLKA_FEEDBACK_1120` for provenance and tier values.
+  - Superseded history: the 2026-11-13 reading used 4 % rarity per tier and
+    left the extra 1–2 % redirected from quantity unadopted. POE-466 replaces
+    that reading with the later feedback's rarity; it adds no quantity term.
+    The old uncertain Factory rarity and Atlas device-use sheet rows
+    (gid0.csv rows 11–12 and 23) no longer govern those fields.
+  - Sheet "?" row still not adopted: Sadist Den "Atziri is possesed?" /
+    "from T2 architect and Atziri? are possesed" (gid0.csv row 24).
   - The chest-absence chance ("no longer always contain a special chest") is
     read as covered by the flat 0.25 (drops.rs, inferred).
