@@ -22,7 +22,7 @@
 <WidgetHost module={PROMPT_WINDOW_LABEL}>
 	{#snippet content(spec, configMode)}
 		{#if spec.id === 'prompt.read' && text}
-			<ReadPrompt {text} noMatch={ssot.readPrompt.noMatch} />
+			<ReadPrompt {text} noMatch={ssot.readPrompt.noMatch || ssot.readPrompt.recalibrating} />
 		{:else if configMode}
 			<p class="placeholder">{spec.label}</p>
 		{/if}

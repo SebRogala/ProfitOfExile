@@ -17,14 +17,17 @@ export const MECHANIC_WORDS: Record<ReadPromptMechanic, string> = {
 
 export const NO_MATCH_TEXT = 'Nothing detected. If a mechanic is open, check Settings → OCR Regions → Preview, and press Recalibrate if a region is off.';
 
+export const RECALIBRATING_TEXT = 'No mechanics found - running a recalibration sweep now.';
+
 /**
- * No-match guidance, detected mechanic/key, or null while neither is present
- * (detected text also waits for the bound read key).
+ * Recalibration sweep status, no-match guidance, detected mechanic/key, or null
+ * while none is present (detected text also waits for the bound read key).
  */
 export function readPromptText(source: {
 	readPrompt: ReadPromptSnapshot;
 	readHotkey: ReadHotkeySettings | null;
 }): string | null {
+	if (source.readPrompt.recalibrating) return RECALIBRATING_TEXT;
 	if (source.readPrompt.noMatch) return NO_MATCH_TEXT;
 	const mechanic = source.readPrompt.mechanic;
 	if (mechanic === null || source.readHotkey === null) return null;
