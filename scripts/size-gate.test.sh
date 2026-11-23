@@ -144,12 +144,15 @@ excluded 'keep:critical allowed slice import passes boundary' 'ssot -> feature i
 done
 
 # Dropping the non-use check would silently admit feature-internal dependencies.
-fixture forbidden-non-use
+for location in ssot.rs ssot/nested/path.rs; do
+fixture "forbidden-non-use-$location"
 branch
-printf 'use crate::temple::{slice::TempleSlice};\nfn leak() { crate::temple::run::Session::new(); }\n' > desktop/src-tauri/src/ssot.rs
+mkdir -p desktop/src-tauri/src/ssot/nested
+printf 'use crate::temple::{slice::TempleSlice};\nfn leak() { crate::temple::run::Session::new(); }\n' > "desktop/src-tauri/src/$location"
 commit
 run_gate
 expect 'keep:critical non-use feature internal path fails' 1 'ssot -> feature internals'
+done
 
 # An invalid base must fail instead of silently trusting an empty change set.
 fixture missing-base

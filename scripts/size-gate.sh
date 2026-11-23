@@ -88,13 +88,16 @@ cd desktop/src-tauri/src || exit 1
 ! grep -rn 'crate::mercenary::' temple/ || { echo "temple -> mercenary import"; exit 1; }
 # ssot may name only slice types from features (H2). Join use statements and
 # expand grouped paths before checking; retain the grep for non-use paths.
+grep -rlE 'crate::(temple|mercenary)::' ssot*.rs ssot/ 2>/dev/null |
+while IFS= read -r source; do
 awk '
 FNR==1 { collecting=0 }
 collecting || /^[[:space:]]*(pub(\([^)]*\))?[[:space:]]+)?use[[:space:]]/ {
 	collecting=($0 !~ /;/); next
 }
 { print FILENAME ":" FNR ":" $0 }
-' ssot*.rs ssot/*.rs | grep -E 'crate::(temple|mercenary)::' \
+' "$source"
+done | grep -E 'crate::(temple|mercenary)::' \
 	| grep -vE '::(slice::TempleSlice|MercenarySlice|sync::MercSyncStatus)' && { echo "ssot -> feature internals"; exit 1; }
 if ! awk '
 function check(path) {
