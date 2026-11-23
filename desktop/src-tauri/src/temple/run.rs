@@ -74,11 +74,11 @@ use super::slice::{self, TempleSettings, TempleSlice, TempleStatus};
 
 mod hint;
 
-pub use hint::{anchored_screen, hint_for_capture};
+pub use hint::hint_for_capture;
 use hint::{
-    cheap_hint_from_screen, hint_disagreement_line, hint_from_slice, hint_line, locate_on_miss,
+    cheap_hint_from_screen, hint_from_slice, hint_line, locate_on_miss,
     placed_origin_contradiction, placed_origin_contradiction_line, publish_anchor_scale,
-    remember_fallback_anchor, screen_from_anchor, GEOMETRY_NOTICE_LINE,
+    remember_fallback_anchor, GEOMETRY_NOTICE_LINE,
 };
 
 /// How often a waiting worker checks its stop signal, and the slice every
@@ -1074,7 +1074,7 @@ fn clipped_roi_announcement(
 
 /// The `k` CHECK (POE-234 WI-2): the line that fires when the ratio this board
 /// implies disagrees with the constant the app converts through — and, since it
-/// is [`screen_from_anchor`]'s gate, the reason a measurement is withheld from
+/// is [`hint::screen_from_anchor`]'s gate, the reason a measurement is withheld from
 /// the shared slice.
 ///
 /// It was POE-227 D3's unconditional instrumentation line, printed on every full
@@ -1194,6 +1194,7 @@ impl TempleProbe {
     /// The located Entrance origin, capture-relative.
     pub fn origin(&self) -> (i32, i32) { self.found.origin }
     /// Whether the Entrance was located by calibration's sweep.
+    #[cfg(test)]
     pub fn located(&self) -> bool { self.located }
 }
 
@@ -1493,6 +1494,7 @@ pub fn finish(result: Result<TempleSlice, String>, fallback_origin: Option<(i32,
 
 #[cfg(test)]
 mod tests {
+    use super::hint::{anchored_screen, screen_from_anchor};
     use super::*;
     use crate::modules::MODULE_THREAD_POLL_CEILING;
 
