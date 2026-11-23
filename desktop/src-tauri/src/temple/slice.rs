@@ -2920,7 +2920,7 @@ mod tests {
         let view = offer_view(0, &input, None, &valued());
         let line = view.line.expect("a resolved offer carries line facts");
 
-        assert_eq!(line.rarity_pct, Some([4.0, 8.0, 12.0]));
+        assert_eq!(line.rarity_pct, Some([6.0, 12.0, 18.0]));
     }
 
     #[test]
@@ -4885,10 +4885,10 @@ mod tests {
     }
 
     /// Locus of Corruption's tier-3 total on the committed capture, and the
-    /// board's top room: its 846 c sale delta plus 12 c rarity (12 % from the
-    /// 3.30 sheet, gid0.csv row 10, at the 1 c base). POE-366 removed the vial
-    /// term that once sat on top of it.
-    const LOCUS_T3: f64 = 858.0;
+    /// board's top room: its 846 c sale delta plus 18 c rarity (18 % from
+    /// Vertolka's 2026-11-20 feedback, POE-466, at the 1 c base). POE-366
+    /// removed the vial term that once sat on top of it.
+    const LOCUS_T3: f64 = 864.0;
 
     /// The valuation the bridge tests price against: the committed Allflame
     /// capture under the Default preset, whose top tier-3 room is Locus of
@@ -4955,11 +4955,40 @@ mod tests {
         }
     }
 
+    /// The short label Vertolka's 2026-11-20 feedback prints under (POE-466).
+    /// Pinned here and in both TypeScript fixtures; the tooltip has room for
+    /// 40 characters (`every_cited_source_has_a_short_label`).
+    const FEEDBACK_1120_LABEL: &str = "Vertolka Discord 2026-11-20";
+
+    /// One upgrade offer per tier of the three lines POE-466 describes per
+    /// tier, printed at the room it builds: Factory, Hall of War, Atlas of
+    /// Worlds, tier 1 first.
+    const TIER_OFFER_TARGETS: [&str; 9] = [
+        "Workshop",
+        "Engineering Department",
+        "Factory",
+        "Guardhouse",
+        "Barracks",
+        "Hall of War",
+        "Surveyor's Study",
+        "Office of Cartography",
+        "Atlas of Worlds",
+    ];
+
+    /// The offer box's description for an upgrade printed at `target`: the
+    /// tier it builds and the line's content text at that tier.
+    fn offered_description(target: &str) -> (Option<u8>, Option<String>) {
+        let view = offer_view(0, &offer("Quipolatl", target, OfferKind::Upgrade), None, &valued());
+        (view.built_tier, view.line.and_then(|line| line.content))
+    }
+
     mod keep_happy {
         use super::*;
 
         // AC-1: every row of the editor table carries its line's facts, off the
-        // one projection the offer box uses, and none of them is empty.
+        // one projection the offer box uses, and none of them is empty. The row
+        // describes the line at tier 3, so it is the tier-3 offer's line facts
+        // (POE-466: the description text is per built tier).
         #[test]
         fn value_rows_carry_each_lines_facts_from_drops() {
             let rows = value_rows(&allflame_valuation());
@@ -4969,7 +4998,11 @@ mod tests {
                     .iter()
                     .find(|line| line.key() == row.key)
                     .expect("every row is one of the 25 lines");
-                assert_eq!(row.line, line_view(line), "{}", row.key);
+                let top = line.name(Tier::T3).expect("every line has a tier-3 room");
+                let t3_offer =
+                    offer_view(0, &offer("Quipolatl", top, OfferKind::Upgrade), None, &valued());
+                assert_eq!(t3_offer.built_tier, Some(3), "{} precondition", row.key);
+                assert_eq!(Some(&row.line), t3_offer.line.as_ref(), "{}", row.key);
                 assert!(
                     row.line.content.is_some()
                         || row.line.chest.is_some()
@@ -5001,8 +5034,9 @@ mod tests {
             }
         }
 
-        // AC-2: the Locus and Cradle rows show the 3.30 sheet's figures, cited to
-        // that sheet.
+        // AC-2: the Locus and Cradle rows show their figures, cited to their
+        // sources: Locus's pack size and Cradle's magic packs to the 3.30
+        // sheet, Locus's rarity to Vertolka's 2026-11-20 feedback (POE-466).
         #[test]
         fn locus_and_cradle_lines_carry_the_330_sheet_figures() {
             let rows = value_rows(&allflame_valuation());
@@ -5021,10 +5055,10 @@ mod tests {
             };
 
             let locus = find("corruption");
-            assert_eq!(locus.line.rarity_pct, Some([4.0, 8.0, 12.0]));
+            assert_eq!(locus.line.rarity_pct, Some([6.0, 12.0, 18.0]));
             assert_eq!(locus.line.pack_size_pct, Some([1.0, 2.0, 3.0]));
             let locus_label = drops::source_label(drops::SHEET_LOCUS_330).to_string();
-            assert_eq!(labels(locus, "rarity_pct"), [locus_label.clone()]);
+            assert_eq!(labels(locus, "rarity_pct"), [FEEDBACK_1120_LABEL]);
             assert_eq!(labels(locus, "pack_size_pct"), [locus_label]);
 
             let cradle = find("throne_of_atziri");
@@ -5035,10 +5069,93 @@ mod tests {
                 [drops::source_label(drops::SHEET_CRADLE_330).to_string()]
             );
         }
+
+        // POE-466 AC-2: a Factory offer names the atlas drops of the tier it
+        // builds.
+        #[test]
+        fn a_factory_offer_names_its_built_tiers_atlas_drops() {
+            for (target, tier, text) in [
+                ("Workshop", 1, "Extra item drops; +20% atlas drops"),
+                ("Engineering Department", 2, "Extra item drops; +40% atlas drops"),
+                ("Factory", 3, "Extra item drops; +60% atlas drops"),
+            ] {
+                assert_eq!(
+                    offered_description(target),
+                    (Some(tier), Some(text.to_string())),
+                    "{target}"
+                );
+            }
+        }
+
+        // POE-466 AC-3: a Hall of War offer names the pack size of the tier it
+        // builds; tier 2 reads "+20% pack size".
+        #[test]
+        fn a_hall_of_war_offer_names_its_built_tiers_pack_size() {
+            for (target, tier, text) in [
+                ("Guardhouse", 1, "Rare monster packs; +10% pack size"),
+                ("Barracks", 2, "Rare monster packs; +20% pack size"),
+                ("Hall of War", 3, "Rare monster packs; +30% pack size"),
+            ] {
+                assert_eq!(
+                    offered_description(target),
+                    (Some(tier), Some(text.to_string())),
+                    "{target}"
+                );
+            }
+        }
+
+        // POE-466 AC-4: an Atlas of Worlds line offer names the map corrupt
+        // device uses of the tier it builds; tier 3 reads "5 map corrupt
+        // device uses".
+        #[test]
+        fn an_atlas_of_worlds_offer_names_its_built_tiers_device_uses() {
+            for (target, tier, text) in [
+                ("Surveyor's Study", 1, "Map drops; 1 map corrupt device uses"),
+                ("Office of Cartography", 2, "Map drops; 3 map corrupt device uses"),
+                ("Atlas of Worlds", 3, "Map drops; 5 map corrupt device uses"),
+            ] {
+                assert_eq!(
+                    offered_description(target),
+                    (Some(tier), Some(text.to_string())),
+                    "{target}"
+                );
+            }
+        }
     }
 
     mod keep_critical {
         use super::*;
+
+        // The mounted offer-box test reads this fixture; a stale copy would let
+        // it pass on descriptions the app no longer shows.
+        #[test]
+        fn tier_offers_fixture_matches_the_projection() {
+            let fresh = serde_json::Value::Array(
+                TIER_OFFER_TARGETS
+                    .iter()
+                    .enumerate()
+                    .map(|(index, target)| {
+                        serde_json::to_value(offer_view(
+                            index,
+                            &offer("Quipolatl", target, OfferKind::Upgrade),
+                            None,
+                            &valued(),
+                        ))
+                        .expect("an offer view serialises")
+                    })
+                    .collect(),
+            );
+            let committed: serde_json::Value = serde_json::from_str(include_str!(
+                "../../../src/lib/temple/fixtures/tier-offers.json"
+            ))
+            .expect("tier-offers.json is JSON");
+            assert_eq!(
+                committed,
+                fresh,
+                "desktop/src/lib/temple/fixtures/tier-offers.json drifted; paste:\n{}",
+                serde_json::to_string_pretty(&fresh).expect("offers serialise")
+            );
+        }
 
         // WI-2's rendered tooltip test reads this fixture; a stale copy would let
         // it pass on figures the app no longer shows.
@@ -5588,11 +5705,11 @@ mod tests {
         );
         assert_eq!(ranked[0].1, LOCUS_T3, "Locus of Corruption, its sale delta plus rarity");
         assert_eq!(ranked[1].1, 390.0, "Doryani's Institute, its sale delta");
-        assert!(close(ranked[2].1, 60.75), "Sanctum of Immortality");
-        assert!(close(ranked[3].1, 59.625), "Conduit of Lightning");
+        assert!(close(ranked[2].1, 66.75), "Sanctum of Immortality");
+        assert!(close(ranked[3].1, 65.625), "Conduit of Lightning");
         assert!(close(ranked[4].1, 37.0), "Glittering Halls is fifth");
         assert_eq!(ranked[5].0, "defense_research_lab", "Defense Research Lab sixth");
-        assert!(close(ranked[5].1, 30.85), "Defense Research Lab");
+        assert!(close(ranked[5].1, 36.85), "Defense Research Lab");
         assert_eq!(ranked[6].0, "upgrade", "and Temple Nexus seventh");
         assert!(close(ranked[6].1, 21.15), "Temple Nexus");
     }
@@ -5650,8 +5767,8 @@ mod tests {
     /// offers, the advice is to switch — and to switch onto the corruption
     /// line rather than the gem one.
     ///
-    /// The board is Pools of Restoration (the Sanctum of Immortality line at tier 1, worth 48.60
-    /// on the committed capture) against Corruption Chamber (686.40) and
+    /// The board is Pools of Restoration (the Sanctum of Immortality line at tier 1, worth 53.40
+    /// on the committed capture) against Corruption Chamber (691.20) and
     /// Gemcutter's Workshop (312.00). Under the shipped rusher fixture all
     /// three of those rooms score ZERO — it prices tiers 1 and 2 at nothing
     /// and the Sanctum line not at all — so the kill would be a free choice and
@@ -5710,7 +5827,7 @@ mod tests {
             .total;
         let corruption = valued.get("corruption", Tier::T2).expect("valued").total;
         let gem = valued.get("gem", Tier::T2).expect("valued").total;
-        assert!(close(staying, 48.6), "the room left is worth {staying}");
+        assert!(close(staying, 53.4), "the room left is worth {staying}");
         assert!(close(corruption, LOCUS_T3 * 0.8), "the corruption switch is {corruption}");
         assert!(close(gem, 312.0), "the gem switch is {gem}");
         assert!(staying < gem && gem < corruption, "switching wins either way");

@@ -1235,7 +1235,9 @@ mod tests {
     }
 
     // Every row's content prose, in DROPS order, pinned in one table. POE-369
-    // updated four lines to the 3.30 notes (Apex, Atlas, Factory, Throne).
+    // updated four lines to the 3.30 notes (Apex, Atlas, Factory, Throne);
+    // POE-466 moved Atlas's per-tier device uses out of its prose and into its
+    // tier data, leaving "Map drops".
     // The box clamps content to two lines, so every string is at most 46
     // characters. Fails if any line's text is edited, blanked, moved or grown
     // past the clamp.
@@ -1243,7 +1245,7 @@ mod tests {
     fn every_rooms_content_text_is_this() {
         const EXPECTED: [(&str, Option<&str>); 25] = [
             ("apex_of_ascension", Some("Sacrifice a unique for uniques of its worth")),
-            ("atlas_of_worlds", Some("Map drops; re-corrupt maps (uses rise by tier)")),
+            ("atlas_of_worlds", Some("Map drops")),
             ("chamber_of_iron", Some("Armour drops")),
             ("conduit_of_lightning", None),
             ("court_of_sealed_death", Some("Arcanist & Diviner strongboxes")),
@@ -1337,15 +1339,17 @@ mod tests {
     }
 
     // poedb's numbers are the game's and must never be stored as a guess.
-    // Fails if a poedb percentage is demoted to Guess.
+    // Since POE-466 Crucible's rarity is Vertolka's feedback, so its pack size
+    // is the poedb percentage left on it. Fails if a poedb percentage is
+    // demoted to Guess.
     #[test]
     fn crucibles_percentages_are_measured_not_guessed() {
         let crucible = drops_for("crucible_of_flame");
         let t3 = crucible.tier(Tier::T3).expect("tier 3 exists");
-        let rarity = t3.rarity_pct().expect("poedb states the percentage");
-        assert_eq!(rarity.value(), 12.0);
-        assert_eq!(rarity.basis(), Basis::Measured { source: POEDB });
-        assert!(!rarity.is_guess());
+        let pack = t3.pack_size_pct().expect("poedb states the percentage");
+        assert_eq!(pack.value(), 3.0);
+        assert_eq!(pack.basis(), Basis::Measured { source: POEDB });
+        assert!(!pack.is_guess());
     }
 
     // Factory's rarity and pack size are the plain room lines. Fails if
@@ -1355,7 +1359,7 @@ mod tests {
         let factory = drops_for("factory");
         assert_eq!(
             factory.tiers()[2].rarity_pct().map(Estimate::value),
-            Some(12.0)
+            Some(18.0)
         );
         assert_eq!(
             factory.tiers()[2].pack_size_pct().map(Estimate::source),
@@ -1416,24 +1420,16 @@ mod tests {
         }
     }
 
-    // POE-369, T24/T27: the 3.30 sheet gives the corruption rooms 4 % rarity
-    // and 1 % pack size per tier, not yet confirmed in game. The extra 1-2 %
-    // redirected from quantity has no value term, which the exact 4/8/12
-    // pins. Fails if a tier's figure, its basis or the unverified marking
+    // POE-369, T24/T27: the 3.30 sheet gives the corruption rooms 1 % pack
+    // size per tier, not yet confirmed in game; POE-466 replaced the sheet's
+    // 4 % rarity with Vertolka's 6 % per tier (see
+    // `keep_happy::the_ten_rarity_lines_carry_vertolkas_6_12_18_rarity`).
+    // Fails if a pack-size figure, its basis or the unverified marking
     // drifts, or if the room gains a unique rate.
     #[test]
-    fn the_corruption_rooms_add_the_sheets_rarity_and_pack_size() {
+    fn the_corruption_rooms_add_the_sheets_pack_size() {
         let locus = drops_for("corruption");
         let measured = Basis::Measured { source: SHEET_LOCUS_330 };
-        let rarity: Vec<Option<(f64, Basis)>> = locus
-            .tiers()
-            .iter()
-            .map(|t| t.rarity_pct().map(|e| (e.value(), e.basis())))
-            .collect();
-        assert_eq!(
-            rarity,
-            vec![Some((4.0, measured)), Some((8.0, measured)), Some((12.0, measured))]
-        );
         let pack: Vec<Option<(f64, Basis)>> = locus
             .tiers()
             .iter()
@@ -1504,17 +1500,38 @@ mod tests {
     }
 
     // has_guess is what POE-257/260 read to mark a value as somebody's
-    // estimate: the set it is true on is exactly the eight chest lines carrying
-    // the 3.30 sheet's 0.25. Fails if a Guess is stored as Measured or if has_guess
-    // stops walking the tiers.
+    // estimate: the set it is true on is the eight chest lines carrying the
+    // 3.30 sheet's 0.25, the ten lines carrying Vertolka's 2026-11-20 rarity
+    // and Atlas of Worlds with his device uses (POE-466), in DROPS order.
+    // Hall of War is out: its pack size stays poedb's measured figure. Fails
+    // if a Guess is stored as Measured or if has_guess stops walking the
+    // tiers.
     #[test]
-    fn has_guess_marks_every_chest_line_and_no_other() {
+    fn has_guess_marks_every_line_carrying_an_estimate_and_no_other() {
         let guessed: Vec<&str> = DROPS
             .iter()
             .filter(|row| row.has_guess())
             .map(|row| row.key())
             .collect();
-        assert_eq!(guessed, CHEST_LINES);
+        assert_eq!(
+            guessed,
+            [
+                "atlas_of_worlds",
+                "chamber_of_iron",
+                "conduit_of_lightning",
+                "crucible_of_flame",
+                "defense_research_lab",
+                "factory",
+                "glittering_halls",
+                "hall_of_champions",
+                "hybridisation_chamber",
+                "corruption",
+                "museum_of_artefacts",
+                "sanctum_of_immortality",
+                "upgrade",
+                "toxic_grove",
+            ]
+        );
 
         // Every guessed unique rate is attributed to the 3.30 sheet.
         for row in DROPS.iter() {
@@ -1577,7 +1594,7 @@ mod tests {
     // ---------------------------------------------------------- numbers --
 
     // Every area bonus poedb prints is one figure and its multiples: T1, twice
-    // T1, three times T1, for rarity and pack size alike (4/8/12, 1/2/3,
+    // T1, three times T1, for rarity and pack size alike (6/12/18, 1/2/3,
     // 12/24/36, 10/20/30). That
     // shape is what makes a slipped digit visible at all — 6 for 60 reads as
     // perfectly plausible on its own. Fails on Glittering Halls tier-3 rarity
@@ -1631,15 +1648,103 @@ mod tests {
         sources
     }
 
+    /// Whether `source` is Vertolka's Discord feedback of 2026-11-20 (POE-466,
+    /// points 5-8). Read off the citation's own words because the plan names
+    /// what it states (who, where, when), not the constant that will hold it.
+    fn is_vertolka_feedback_1120(source: &str) -> bool {
+        source.contains("Vertolka") && source.contains("Discord") && source.contains("2026-11-20")
+    }
+
+    /// The ten lines whose rarity Vertolka's 2026-11-20 feedback sets to
+    /// 6 % per tier: every line carrying rarity before POE-466 except
+    /// Glittering Halls.
+    const FEEDBACK_RARITY_LINES: [&str; 10] = [
+        "chamber_of_iron",
+        "conduit_of_lightning",
+        "crucible_of_flame",
+        "defense_research_lab",
+        "factory",
+        "hall_of_champions",
+        "hybridisation_chamber",
+        "corruption",
+        "sanctum_of_immortality",
+        "upgrade",
+    ];
+
+    mod keep_happy {
+        use super::*;
+
+        // POE-466 AC-1: the ten lines read 6/12/18 % rarity, each figure
+        // Vertolka's guess, and keep the pack size they carried (1/2/3 % from
+        // poedb, or the 3.30 sheet on Locus).
+        #[test]
+        fn the_ten_rarity_lines_carry_vertolkas_6_12_18_rarity() {
+            for key in FEEDBACK_RARITY_LINES {
+                let tiers = drops_for(key).tiers();
+                let rarity: Vec<Option<f64>> =
+                    tiers.iter().map(|t| t.rarity_pct().map(Estimate::value)).collect();
+                assert_eq!(rarity, [Some(6.0), Some(12.0), Some(18.0)], "{key} rarity");
+                for (index, t) in tiers.iter().enumerate() {
+                    let estimate = t.rarity_pct().expect("rarity is stated");
+                    assert!(estimate.is_guess(), "{key} tier {} rarity is not a guess", index + 1);
+                    assert!(
+                        is_vertolka_feedback_1120(estimate.source()),
+                        "{key} tier {} rarity cites {:?}",
+                        index + 1,
+                        estimate.source()
+                    );
+                }
+                let pack_source = if key == "corruption" { SHEET_LOCUS_330 } else { POEDB };
+                let pack: Vec<Option<(f64, Basis)>> = tiers
+                    .iter()
+                    .map(|t| t.pack_size_pct().map(|e| (e.value(), e.basis())))
+                    .collect();
+                let measured = Basis::Measured { source: pack_source };
+                assert_eq!(
+                    pack,
+                    [Some((1.0, measured)), Some((2.0, measured)), Some((3.0, measured))],
+                    "{key} pack size"
+                );
+            }
+        }
+    }
+
     mod keep_critical {
         use super::*;
 
+        // POE-466 AC-1's other half. A feedback rarity copied onto Glittering
+        // Halls or onto a line that states none would silently move those
+        // rooms' chaos values, and the ranking the advisor trusts with them.
+        #[test]
+        fn glittering_halls_and_the_three_rarity_free_lines_keep_their_rarity() {
+            let measured = Basis::Measured { source: SHEET_GLITTERING_330 };
+            let halls: Vec<Option<(f64, Basis)>> = drops_for("glittering_halls")
+                .tiers()
+                .iter()
+                .map(|t| t.rarity_pct().map(|e| (e.value(), e.basis())))
+                .collect();
+            assert_eq!(
+                halls,
+                [Some((12.0, measured)), Some((24.0, measured)), Some((36.0, measured))]
+            );
+            for key in ["toxic_grove", "storm_of_corruption", "museum_of_artefacts"] {
+                for (index, t) in drops_for(key).tiers().iter().enumerate() {
+                    assert_eq!(t.rarity_pct(), None, "{key} tier {} gained rarity", index + 1);
+                }
+            }
+        }
+
         // A source with no short label would print its multi-sentence citation
         // into a three-line tooltip; this fails on the first one DROPS cites.
+        // POE-466: Vertolka's 2026-11-20 feedback is among them.
         #[test]
         fn every_cited_source_has_a_short_label() {
             let sources = cited_sources();
             assert!(sources.contains(&SHEET_LOCUS_330) && sources.contains(&POEDB));
+            assert!(
+                sources.iter().any(|source| is_vertolka_feedback_1120(source)),
+                "DROPS cites no Vertolka 2026-11-20 feedback source: {sources:?}"
+            );
             for source in sources {
                 let label = source_label(source);
                 assert_ne!(label, source, "no short label for {source}");

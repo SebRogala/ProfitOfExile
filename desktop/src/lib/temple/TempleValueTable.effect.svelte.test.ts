@@ -130,12 +130,30 @@ describe('TempleValueTable room tooltip', () => {
 		const cradle = FIXTURE.find((e) => e.name === 'Cradle of Creation')!.line;
 
 		const locusTip = hover(target, 'Locus of Corruption').textContent ?? '';
-		expect(locusTip).toContain('Rarity 4/8/12 %');
+		expect(locusTip).toContain('Rarity 6/12/18 %');
 		expect(locusTip).toContain('Pack size 1/2/3 %');
 		expect(locusTip).toContain(locus.sources[0].label);
 
 		const cradleTip = hover(target, 'Cradle of Creation').textContent ?? '';
 		expect(cradleTip).toContain('Magic packs 10/20/30 %');
 		expect(cradleTip).toContain(cradle.sources[0].label);
+	});
+
+	// keep:happy — POE-466 AC-1/AC-2, rendered: Locus and Factory read
+	// Vertolka's 6/12/18 % rarity under its short source, their pack size
+	// stays 1/2/3 %, and Factory's tier-3 text names its atlas drops.
+	it('keep:happy — Locus and Factory tooltips render the feedback rarity and its source', () => {
+		const target = render();
+
+		const locusTip = hover(target, 'Locus of Corruption').textContent ?? '';
+		expect(locusTip).toContain('Rarity 6/12/18 %');
+		expect(locusTip).toContain('Pack size 1/2/3 %');
+		expect(locusTip).toContain('Rarity est.: Vertolka Discord 2026-11-20');
+
+		const factoryTip = hover(target, 'Factory').textContent ?? '';
+		expect(factoryTip).toContain('Extra item drops; +60% atlas drops');
+		expect(factoryTip).toContain('Rarity 6/12/18 %');
+		expect(factoryTip).toContain('Pack size 1/2/3 %');
+		expect(factoryTip).toContain('Rarity est.: Vertolka Discord 2026-11-20');
 	});
 });

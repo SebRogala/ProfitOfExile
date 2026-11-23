@@ -16,7 +16,7 @@
     "key": "atlas_of_worlds",
     "line": {
       "chest": null,
-      "content": "Map drops; re-corrupt maps (uses rise by tier)",
+      "content": "Map drops; 5 map corrupt device uses",
       "kind": "content",
       "magicPackSizePct": null,
       "packSizePct": null,
@@ -38,15 +38,15 @@
         3.0
       ],
       "rarityPct": [
-        4.0,
-        8.0,
-        12.0
+        6.0,
+        12.0,
+        18.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": false,
-          "label": "poedb 2026-09-06"
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
         },
         {
           "figure": "pack_size_pct",
@@ -80,15 +80,15 @@
         3.0
       ],
       "rarityPct": [
-        4.0,
-        8.0,
-        12.0
+        6.0,
+        12.0,
+        18.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": false,
-          "label": "poedb 2026-09-06"
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
         },
         {
           "figure": "pack_size_pct",
@@ -158,15 +158,15 @@
         3.0
       ],
       "rarityPct": [
-        4.0,
-        8.0,
-        12.0
+        6.0,
+        12.0,
+        18.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": false,
-          "label": "poedb 2026-09-06"
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
         },
         {
           "figure": "pack_size_pct",
@@ -200,15 +200,15 @@
         3.0
       ],
       "rarityPct": [
-        4.0,
-        8.0,
-        12.0
+        6.0,
+        12.0,
+        18.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": false,
-          "label": "poedb 2026-09-06"
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
         },
         {
           "figure": "pack_size_pct",
@@ -236,7 +236,7 @@
     "key": "factory",
     "line": {
       "chest": null,
-      "content": "Extra item drops",
+      "content": "Extra item drops; +60% atlas drops",
       "kind": "content",
       "magicPackSizePct": null,
       "packSizePct": [
@@ -245,15 +245,15 @@
         3.0
       ],
       "rarityPct": [
-        4.0,
-        8.0,
-        12.0
+        6.0,
+        12.0,
+        18.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": false,
-          "label": "poedb 2026-09-06"
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
         },
         {
           "figure": "pack_size_pct",
@@ -322,15 +322,15 @@
         3.0
       ],
       "rarityPct": [
-        4.0,
-        8.0,
-        12.0
+        6.0,
+        12.0,
+        18.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": false,
-          "label": "poedb 2026-09-06"
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
         },
         {
           "figure": "pack_size_pct",
@@ -358,7 +358,7 @@
     "key": "hall_of_war",
     "line": {
       "chest": null,
-      "content": "Rare monster packs",
+      "content": "Rare monster packs; +30% pack size",
       "kind": "content",
       "magicPackSizePct": null,
       "packSizePct": [
@@ -413,15 +413,15 @@
         3.0
       ],
       "rarityPct": [
-        4.0,
-        8.0,
-        12.0
+        6.0,
+        12.0,
+        18.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": false,
-          "label": "poedb 2026-09-06"
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
         },
         {
           "figure": "pack_size_pct",
@@ -445,15 +445,15 @@
         3.0
       ],
       "rarityPct": [
-        4.0,
-        8.0,
-        12.0
+        6.0,
+        12.0,
+        18.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": false,
-          "label": "3.30 sheet 2026-11-13, unconfirmed"
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
         },
         {
           "figure": "pack_size_pct",
@@ -523,15 +523,15 @@
         3.0
       ],
       "rarityPct": [
-        4.0,
-        8.0,
-        12.0
+        6.0,
+        12.0,
+        18.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": false,
-          "label": "poedb 2026-09-06"
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
         },
         {
           "figure": "pack_size_pct",
@@ -581,15 +581,15 @@
         3.0
       ],
       "rarityPct": [
-        4.0,
-        8.0,
-        12.0
+        6.0,
+        12.0,
+        18.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": false,
-          "label": "poedb 2026-09-06"
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
         },
         {
           "figure": "pack_size_pct",

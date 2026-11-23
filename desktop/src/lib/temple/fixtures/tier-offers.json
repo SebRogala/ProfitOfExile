@@ -1,0 +1,524 @@
+[
+  {
+    "architectName": "Quipolatl",
+    "builtTier": 1,
+    "displayName": "Workshop",
+    "grade": "B1",
+    "index": 0,
+    "kind": "upgrade",
+    "line": {
+      "chest": null,
+      "content": "Extra item drops; +20% atlas drops",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        6.0,
+        12.0,
+        18.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "lineTop": "Factory",
+    "printedTarget": "Workshop",
+    "rect": null,
+    "value": {
+      "asOf": null,
+      "drivers": [
+        {
+          "chaos": 100.0,
+          "count": null,
+          "guessed": false,
+          "kind": "grade_fallback",
+          "lowConfidence": false,
+          "name": "B1",
+          "unitPrice": null,
+          "upgraded": null,
+          "windowPriced": false
+        },
+        {
+          "chaos": 80.0,
+          "count": 0.8,
+          "guessed": false,
+          "kind": "tier_fraction",
+          "lowConfidence": false,
+          "name": "Factory",
+          "unitPrice": 100.0,
+          "upgraded": null,
+          "windowPriced": false
+        }
+      ],
+      "guessed": false,
+      "league": "",
+      "priced": "fallback",
+      "scaledFromTier3": 100.0,
+      "total": 80.0
+    }
+  },
+  {
+    "architectName": "Quipolatl",
+    "builtTier": 2,
+    "displayName": "Engineering Department",
+    "grade": "B1",
+    "index": 1,
+    "kind": "upgrade",
+    "line": {
+      "chest": null,
+      "content": "Extra item drops; +40% atlas drops",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        6.0,
+        12.0,
+        18.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "lineTop": "Factory",
+    "printedTarget": "Engineering Department",
+    "rect": null,
+    "value": {
+      "asOf": null,
+      "drivers": [
+        {
+          "chaos": 100.0,
+          "count": null,
+          "guessed": false,
+          "kind": "grade_fallback",
+          "lowConfidence": false,
+          "name": "B1",
+          "unitPrice": null,
+          "upgraded": null,
+          "windowPriced": false
+        },
+        {
+          "chaos": 80.0,
+          "count": 0.8,
+          "guessed": false,
+          "kind": "tier_fraction",
+          "lowConfidence": false,
+          "name": "Factory",
+          "unitPrice": 100.0,
+          "upgraded": null,
+          "windowPriced": false
+        }
+      ],
+      "guessed": false,
+      "league": "",
+      "priced": "fallback",
+      "scaledFromTier3": 100.0,
+      "total": 80.0
+    }
+  },
+  {
+    "architectName": "Quipolatl",
+    "builtTier": 3,
+    "displayName": "Factory",
+    "grade": "B1",
+    "index": 2,
+    "kind": "upgrade",
+    "line": {
+      "chest": null,
+      "content": "Extra item drops; +60% atlas drops",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "rarityPct": [
+        6.0,
+        12.0,
+        18.0
+      ],
+      "sources": [
+        {
+          "figure": "rarity_pct",
+          "guessed": true,
+          "label": "Vertolka Discord 2026-11-20"
+        },
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "lineTop": "Factory",
+    "printedTarget": "Factory",
+    "rect": null,
+    "value": {
+      "asOf": null,
+      "drivers": [
+        {
+          "chaos": 100.0,
+          "count": null,
+          "guessed": false,
+          "kind": "grade_fallback",
+          "lowConfidence": false,
+          "name": "B1",
+          "unitPrice": null,
+          "upgraded": null,
+          "windowPriced": false
+        }
+      ],
+      "guessed": false,
+      "league": "",
+      "priced": "fallback",
+      "scaledFromTier3": null,
+      "total": 100.0
+    }
+  },
+  {
+    "architectName": "Quipolatl",
+    "builtTier": 1,
+    "displayName": "Guardhouse",
+    "grade": "D4",
+    "index": 3,
+    "kind": "upgrade",
+    "line": {
+      "chest": null,
+      "content": "Rare monster packs; +10% pack size",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        10.0,
+        20.0,
+        30.0
+      ],
+      "rarityPct": null,
+      "sources": [
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "lineTop": "Hall of War",
+    "printedTarget": "Guardhouse",
+    "rect": null,
+    "value": {
+      "asOf": null,
+      "drivers": [
+        {
+          "chaos": 5.0,
+          "count": null,
+          "guessed": false,
+          "kind": "grade_fallback",
+          "lowConfidence": false,
+          "name": "D4",
+          "unitPrice": null,
+          "upgraded": null,
+          "windowPriced": false
+        },
+        {
+          "chaos": 4.0,
+          "count": 0.8,
+          "guessed": false,
+          "kind": "tier_fraction",
+          "lowConfidence": false,
+          "name": "Hall of War",
+          "unitPrice": 5.0,
+          "upgraded": null,
+          "windowPriced": false
+        }
+      ],
+      "guessed": false,
+      "league": "",
+      "priced": "fallback",
+      "scaledFromTier3": 5.0,
+      "total": 4.0
+    }
+  },
+  {
+    "architectName": "Quipolatl",
+    "builtTier": 2,
+    "displayName": "Barracks",
+    "grade": "D4",
+    "index": 4,
+    "kind": "upgrade",
+    "line": {
+      "chest": null,
+      "content": "Rare monster packs; +20% pack size",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        10.0,
+        20.0,
+        30.0
+      ],
+      "rarityPct": null,
+      "sources": [
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "lineTop": "Hall of War",
+    "printedTarget": "Barracks",
+    "rect": null,
+    "value": {
+      "asOf": null,
+      "drivers": [
+        {
+          "chaos": 5.0,
+          "count": null,
+          "guessed": false,
+          "kind": "grade_fallback",
+          "lowConfidence": false,
+          "name": "D4",
+          "unitPrice": null,
+          "upgraded": null,
+          "windowPriced": false
+        },
+        {
+          "chaos": 4.0,
+          "count": 0.8,
+          "guessed": false,
+          "kind": "tier_fraction",
+          "lowConfidence": false,
+          "name": "Hall of War",
+          "unitPrice": 5.0,
+          "upgraded": null,
+          "windowPriced": false
+        }
+      ],
+      "guessed": false,
+      "league": "",
+      "priced": "fallback",
+      "scaledFromTier3": 5.0,
+      "total": 4.0
+    }
+  },
+  {
+    "architectName": "Quipolatl",
+    "builtTier": 3,
+    "displayName": "Hall of War",
+    "grade": "D4",
+    "index": 5,
+    "kind": "upgrade",
+    "line": {
+      "chest": null,
+      "content": "Rare monster packs; +30% pack size",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": [
+        10.0,
+        20.0,
+        30.0
+      ],
+      "rarityPct": null,
+      "sources": [
+        {
+          "figure": "pack_size_pct",
+          "guessed": false,
+          "label": "poedb 2026-09-06"
+        }
+      ]
+    },
+    "lineTop": "Hall of War",
+    "printedTarget": "Hall of War",
+    "rect": null,
+    "value": {
+      "asOf": null,
+      "drivers": [
+        {
+          "chaos": 5.0,
+          "count": null,
+          "guessed": false,
+          "kind": "grade_fallback",
+          "lowConfidence": false,
+          "name": "D4",
+          "unitPrice": null,
+          "upgraded": null,
+          "windowPriced": false
+        }
+      ],
+      "guessed": false,
+      "league": "",
+      "priced": "fallback",
+      "scaledFromTier3": null,
+      "total": 5.0
+    }
+  },
+  {
+    "architectName": "Quipolatl",
+    "builtTier": 1,
+    "displayName": "Surveyor's Study",
+    "grade": "E1",
+    "index": 6,
+    "kind": "upgrade",
+    "line": {
+      "chest": null,
+      "content": "Map drops; 1 map corrupt device uses",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "lineTop": "Atlas of Worlds",
+    "printedTarget": "Surveyor's Study",
+    "rect": null,
+    "value": {
+      "asOf": null,
+      "drivers": [
+        {
+          "chaos": 2.0,
+          "count": null,
+          "guessed": false,
+          "kind": "grade_fallback",
+          "lowConfidence": false,
+          "name": "E1",
+          "unitPrice": null,
+          "upgraded": null,
+          "windowPriced": false
+        },
+        {
+          "chaos": 1.6,
+          "count": 0.8,
+          "guessed": false,
+          "kind": "tier_fraction",
+          "lowConfidence": false,
+          "name": "Atlas of Worlds",
+          "unitPrice": 2.0,
+          "upgraded": null,
+          "windowPriced": false
+        }
+      ],
+      "guessed": false,
+      "league": "",
+      "priced": "fallback",
+      "scaledFromTier3": 2.0,
+      "total": 1.6
+    }
+  },
+  {
+    "architectName": "Quipolatl",
+    "builtTier": 2,
+    "displayName": "Office of Cartography",
+    "grade": "E1",
+    "index": 7,
+    "kind": "upgrade",
+    "line": {
+      "chest": null,
+      "content": "Map drops; 3 map corrupt device uses",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "lineTop": "Atlas of Worlds",
+    "printedTarget": "Office of Cartography",
+    "rect": null,
+    "value": {
+      "asOf": null,
+      "drivers": [
+        {
+          "chaos": 2.0,
+          "count": null,
+          "guessed": false,
+          "kind": "grade_fallback",
+          "lowConfidence": false,
+          "name": "E1",
+          "unitPrice": null,
+          "upgraded": null,
+          "windowPriced": false
+        },
+        {
+          "chaos": 1.6,
+          "count": 0.8,
+          "guessed": false,
+          "kind": "tier_fraction",
+          "lowConfidence": false,
+          "name": "Atlas of Worlds",
+          "unitPrice": 2.0,
+          "upgraded": null,
+          "windowPriced": false
+        }
+      ],
+      "guessed": false,
+      "league": "",
+      "priced": "fallback",
+      "scaledFromTier3": 2.0,
+      "total": 1.6
+    }
+  },
+  {
+    "architectName": "Quipolatl",
+    "builtTier": 3,
+    "displayName": "Atlas of Worlds",
+    "grade": "E1",
+    "index": 8,
+    "kind": "upgrade",
+    "line": {
+      "chest": null,
+      "content": "Map drops; 5 map corrupt device uses",
+      "kind": "content",
+      "magicPackSizePct": null,
+      "packSizePct": null,
+      "rarityPct": null,
+      "sources": []
+    },
+    "lineTop": "Atlas of Worlds",
+    "printedTarget": "Atlas of Worlds",
+    "rect": null,
+    "value": {
+      "asOf": null,
+      "drivers": [
+        {
+          "chaos": 2.0,
+          "count": null,
+          "guessed": false,
+          "kind": "grade_fallback",
+          "lowConfidence": false,
+          "name": "E1",
+          "unitPrice": null,
+          "upgraded": null,
+          "windowPriced": false
+        }
+      ],
+      "guessed": false,
+      "league": "",
+      "priced": "fallback",
+      "scaledFromTier3": null,
+      "total": 2.0
+    }
+  }
+]
