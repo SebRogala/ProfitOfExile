@@ -592,8 +592,8 @@ mod dispatch_tests {
         let world = Arc::new(World::default());
         if !selected { world.misses.lock().unwrap().push("a"); }
         let state = Arc::new(crate::settings::tests::test_app_state());
-        state.modules_enabled.lock().unwrap().insert("temple".into(), true);
-        crate::read_prompt::apply_in(&state, crate::read_prompt::Change::Arm(crate::read_prompt::Mechanic::Incursion));
+        state.modules_enabled.lock().unwrap().insert(crate::mercenary::MODULE_ID.into(), true);
+        crate::read_prompt::apply_in(&state, crate::read_prompt::Change::Arm(crate::read_prompt::Mechanic::Mercenary));
         let (tx, rx) = mpsc::channel();
         let mut shared = sample(PRESSED, true);
         shared.dismiss = vec![shared.settings.shortcut.clone()];
@@ -621,21 +621,21 @@ mod dispatch_tests {
     fn failed_hide_handshake_preserves_prompt_without_capture() {
         let (grabs, snapshot) = result_pipeline(false, false, None);
         assert_eq!(grabs, 0);
-        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Incursion), no_match: false, seq: 1, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Mercenary), no_match: false, seq: 1, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     #[test]
     fn dispatched_selected_frame_does_not_publish_no_match() {
         let (grabs, snapshot) = result_pipeline(true, true, None);
         assert_eq!(grabs, 1);
-        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Incursion), no_match: false, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Mercenary), no_match: false, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     #[test]
     fn dispatched_capture_failure_preserves_prompt() {
         let (grabs, snapshot) = result_pipeline(false, true, Some(CaptureError::Failed("no monitor".into())));
         assert_eq!(grabs, 1);
-        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Incursion), no_match: false, seq: 1, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Mercenary), no_match: false, seq: 1, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     fn route(world: &Arc<World>, readers: &[&dyn ScreenReader<Arc<World>>]) -> DispatchOutcome {

@@ -399,13 +399,13 @@ mod tests {
     #[test]
     fn no_match_projects_a_result_over_retained_arms() {
         let mut prompt = ReadPromptState::default();
-        prompt.arm(Mechanic::Incursion);
-        let arm = prompt.armed_id(Mechanic::Incursion);
+        prompt.arm(Mechanic::Mercenary);
+        let arm = prompt.armed_id(Mechanic::Mercenary);
         let stamp = prompt.accept_press();
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
         assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: true });
-        assert_eq!(prompt.armed_id(Mechanic::Incursion), arm);
-        assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Incursion));
+        assert_eq!(prompt.armed_id(Mechanic::Mercenary), arm);
+        assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Mercenary));
     }
 
     #[test]
@@ -421,13 +421,13 @@ mod tests {
     #[test]
     fn selected_result_replaces_no_match_without_clearing_retained_arms() {
         let mut prompt = ReadPromptState::default();
-        prompt.arm(Mechanic::Incursion);
+        prompt.arm(Mechanic::Mercenary);
         let stamp = prompt.accept_press();
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
         let stamp = prompt.accept_press();
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Mercenary));
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Incursion), no_match: false, seq: 3, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
-        assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Incursion));
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, seq: 3, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Mercenary));
     }
 
     #[test]
@@ -464,14 +464,14 @@ mod tests {
     #[test]
     fn an_old_selected_completion_preserves_a_newer_arm_of_the_same_mechanic() {
         let mut prompt = ReadPromptState::default();
-        prompt.arm(Mechanic::Incursion);
-        let arm = prompt.armed_id(Mechanic::Incursion).unwrap();
+        prompt.arm(Mechanic::Mercenary);
+        let arm = prompt.armed_id(Mechanic::Mercenary).unwrap();
         let stamp = prompt.accept_press();
-        prompt.arm(Mechanic::Incursion);
-        prompt.read_done(Mechanic::Incursion, arm);
-        prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Temple));
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Incursion), no_match: false, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
-        assert_eq!(prompt.armed_id(Mechanic::Incursion), Some(2));
+        prompt.arm(Mechanic::Mercenary);
+        prompt.read_done(Mechanic::Mercenary, arm);
+        prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Mercenary));
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(prompt.armed_id(Mechanic::Mercenary), Some(2));
     }
 
     #[test]
@@ -486,11 +486,10 @@ mod tests {
     #[test]
     fn completion_preserves_client_recency() {
         let mut prompt = ReadPromptState::default();
-        prompt.apply(Change::Arm(Mechanic::Incursion));
         prompt.apply(Change::Arm(Mechanic::Mercenary));
         prompt.read_done(Mechanic::Mercenary, prompt.armed_id(Mechanic::Mercenary).unwrap());
         assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Mercenary));
-        assert_eq!(prompt.snapshot().mechanic, Some(Mechanic::Incursion));
+        assert_eq!(prompt.snapshot().mechanic, None);
     }
     #[test]
     fn context_end_preserves_client_recency() {
@@ -626,15 +625,6 @@ mod tests {
     }
 
     #[test]
-    fn each_armed_mechanic_is_the_one_shown() {
-        for mechanic in [Mechanic::Incursion, Mechanic::Mercenary] {
-            let mut prompt = ReadPromptState::default();
-            prompt.arm(mechanic);
-            assert_eq!(prompt.snapshot().mechanic, Some(mechanic));
-        }
-    }
-
-    #[test]
     fn each_font_round_arm_is_a_new_prompt() {
         let mut prompt = ReadPromptState::default();
         prompt.arm(Mechanic::DivineFont);
@@ -645,13 +635,17 @@ mod tests {
     }
 
     #[test]
-    fn reading_the_shown_mechanic_shows_the_older_active_one_again() {
+    fn reading_the_shown_mercenary_keeps_the_older_temple_arm() {
         let mut prompt = ReadPromptState::default();
         prompt.arm(Mechanic::Incursion);
+        let temple = prompt.armed_id(Mechanic::Incursion);
         prompt.arm(Mechanic::Mercenary);
+        assert_eq!(prompt.snapshot().mechanic, Some(Mechanic::Mercenary));
         prompt.read_done(Mechanic::Mercenary, prompt.armed_id(Mechanic::Mercenary).unwrap());
-        assert_eq!(prompt.snapshot().mechanic, Some(Mechanic::Incursion));
-        prompt.read_done(Mechanic::Incursion, prompt.armed_id(Mechanic::Incursion).unwrap());
+        assert_eq!(prompt.armed_id(Mechanic::Mercenary), None);
+        assert_eq!(prompt.armed_id(Mechanic::Incursion), temple);
+        prompt.read_done(Mechanic::Incursion, temple.unwrap());
+        assert_eq!(prompt.armed_id(Mechanic::Incursion), None);
         assert_eq!(prompt.snapshot().mechanic, None);
     }
 
@@ -672,23 +666,25 @@ mod tests {
         prompt.arm(Mechanic::Incursion);
         prompt.arm(Mechanic::Mercenary);
         prompt.area_changed();
-        assert_eq!(prompt.snapshot().mechanic, Some(Mechanic::Incursion));
+        assert_eq!(prompt.armed_id(Mechanic::Mercenary), None);
+        assert!(prompt.armed_id(Mechanic::Incursion).is_some());
         prompt.end(Mechanic::Incursion);
+        assert_eq!(prompt.armed_id(Mechanic::Incursion), None);
         assert!(prompt.armed_id(Mechanic::DivineFont).is_some());
         assert_eq!(prompt.snapshot().mechanic, None);
     }
 
     #[test]
-    fn the_temple_area_shows_the_prompt_again_after_a_read_under_a_start_arm() {
+    fn the_temple_area_re_arms_the_read_after_a_read_under_a_start_arm() {
         let mut temple = Temple::new();
         temple.line(&alva_start(NOW));
-        assert_eq!(temple.shown(), Some(Mechanic::Incursion));
         let a = temple.prompt.armed_id(Mechanic::Incursion).unwrap();
         temple.prompt.read_done(Mechanic::Incursion, a);
-        assert_eq!(temple.shown(), None);
+        assert_eq!(temple.prompt.armed_id(Mechanic::Incursion), None);
         let transition = temple.line(&temple_line(NOW));
         assert_eq!(transition, Transition::Extended(ArmReason::TempleArea));
-        assert_eq!(temple.shown(), Some(Mechanic::Incursion));
+        let b = temple.prompt.armed_id(Mechanic::Incursion).expect("the temple area re-arms the read");
+        assert!(b > a);
     }
 
     #[test]
@@ -697,11 +693,12 @@ mod tests {
         temple.line(&alva_start(NOW));
         let a = temple.prompt.armed_id(Mechanic::Incursion).unwrap();
         temple.line(&temple_line(NOW));
-        temple.prompt.read_done(Mechanic::Incursion, a);
-        assert_eq!(temple.shown(), Some(Mechanic::Incursion));
         let b = temple.prompt.armed_id(Mechanic::Incursion).unwrap();
+        assert_ne!(a, b);
+        temple.prompt.read_done(Mechanic::Incursion, a);
+        assert_eq!(temple.prompt.armed_id(Mechanic::Incursion), Some(b));
         temple.prompt.read_done(Mechanic::Incursion, b);
-        assert_eq!(temple.shown(), None);
+        assert_eq!(temple.prompt.armed_id(Mechanic::Incursion), None);
     }
 
     #[test]
@@ -711,39 +708,35 @@ mod tests {
         let a = temple.prompt.armed_id(Mechanic::Incursion).unwrap();
         temple.prompt.arm(Mechanic::Mercenary);
         temple.prompt.read_done(Mechanic::Incursion, a);
+        assert_eq!(temple.prompt.armed_id(Mechanic::Incursion), None);
         temple.prompt.end(Mechanic::Mercenary);
         assert_eq!(temple.shown(), None);
     }
 
     #[test]
-    fn the_temple_area_with_no_start_shows_the_prompt() {
+    fn alva_banter_inside_the_temple_keeps_the_read_arm() {
         let mut temple = Temple::new();
         temple.line(&temple_line(NOW));
-        assert_eq!(temple.shown(), Some(Mechanic::Incursion));
-    }
-
-    #[test]
-    fn alva_banter_inside_the_temple_keeps_the_prompt() {
-        let mut temple = Temple::new();
-        temple.line(&temple_line(NOW));
+        let arm = temple.prompt.armed_id(Mechanic::Incursion);
+        assert!(arm.is_some());
         temple.line(&alva_banter(NOW));
-        assert_eq!(temple.shown(), Some(Mechanic::Incursion));
+        assert_eq!(temple.prompt.armed_id(Mechanic::Incursion), arm);
     }
 
     #[test]
-    fn leaving_the_area_clears_the_temple_prompt() {
+    fn leaving_the_area_clears_the_temple_arm() {
         let mut temple = Temple::new();
         temple.line(&temple_line(NOW));
         temple.line(&map_line(NOW));
-        assert_eq!(temple.shown(), None);
+        assert_eq!(temple.prompt.armed_id(Mechanic::Incursion), None);
     }
 
     #[test]
-    fn an_end_line_map_side_clears_a_start_prompt() {
+    fn an_end_line_map_side_clears_a_start_arm() {
         let mut temple = Temple::new();
         temple.line(&alva_start(NOW));
         temple.line(&alva_end(NOW));
-        assert_eq!(temple.shown(), None);
+        assert_eq!(temple.prompt.armed_id(Mechanic::Incursion), None);
     }
 
     #[test]
@@ -791,16 +784,16 @@ mod tests {
                 crate::lab::font_context::arm_font_context(&state);
             }
             assert!(apply_in(&state, Change::Arm(mechanic)));
-            if mechanic == Mechanic::DivineFont {
-                assert!(armed_id_in(&state, mechanic).is_some());
-            } else {
+            if mechanic == Mechanic::Mercenary {
                 assert_eq!(shown_in(&state), Some(mechanic));
+            } else {
+                assert!(armed_id_in(&state, mechanic).is_some(), "{mechanic:?} not armed with its module on");
             }
         }
     }
 
     #[test]
-    fn a_temple_line_with_the_temple_module_off_shows_no_prompt() {
+    fn a_temple_line_with_the_temple_module_off_records_no_arm() {
         let state = crate::settings::tests::test_app_state();
         set_module(&state, Mechanic::Incursion, false);
         let line = temple_line(NOW);
@@ -810,27 +803,30 @@ mod tests {
         let change = temple_change(event, arm.arm.is_armed(NOW));
         assert_eq!(change, Some(Change::Arm(Mechanic::Incursion)));
         apply_in(&state, change.unwrap());
-        assert_eq!(shown_in(&state), None);
+        assert_eq!(armed_id_in(&state, Mechanic::Incursion), None);
     }
 
     #[test]
-    fn turning_the_temple_module_off_hides_its_shown_prompt_only() {
+    fn turning_the_temple_module_off_ends_its_arm_only() {
         let state = crate::settings::tests::test_app_state();
         set_module(&state, Mechanic::Mercenary, true);
         set_module(&state, Mechanic::Incursion, true);
         apply_in(&state, Change::Arm(Mechanic::Mercenary));
         apply_in(&state, Change::Arm(Mechanic::Incursion));
+        let mercenary = armed_id_in(&state, Mechanic::Mercenary);
         set_module(&state, Mechanic::Incursion, false);
-        assert!(modules_changed_in(&state));
+        modules_changed_in(&state);
+        assert_eq!(armed_id_in(&state, Mechanic::Incursion), None);
+        assert_eq!(armed_id_in(&state, Mechanic::Mercenary), mercenary);
         assert_eq!(shown_in(&state), Some(Mechanic::Mercenary));
     }
 
     #[test]
     fn a_module_turned_off_during_an_arm_leaves_no_prompt() {
         let state = crate::settings::tests::test_app_state();
-        set_module(&state, Mechanic::Incursion, true);
-        apply_paused_in(&state, Change::Arm(Mechanic::Incursion), &mut || {
-            set_module(&state, Mechanic::Incursion, false);
+        set_module(&state, Mechanic::Mercenary, true);
+        apply_paused_in(&state, Change::Arm(Mechanic::Mercenary), &mut || {
+            set_module(&state, Mechanic::Mercenary, false);
             modules_changed_in(&state);
         });
         assert_eq!(shown_in(&state), None);
@@ -879,7 +875,7 @@ mod tests {
         #[test]
         fn a_sweep_presents_recalibrating_until_its_no_match_finishes() {
             let mut prompt = ReadPromptState::default();
-            prompt.arm(Mechanic::Incursion);
+            prompt.arm(Mechanic::Mercenary);
             let stamp = prompt.accept_press();
             prompt.begin_sweep();
             assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: false, recalibrating: true, seq: 2, gem_uncertain: [false; 3], recalibrate_offer: false });
@@ -901,6 +897,21 @@ mod tests {
         }
 
         #[test]
+        fn a_temple_arming_line_records_the_read_without_presenting_incursion() {
+            for line in [alva_start(NOW), temple_line(NOW)] {
+                let mut temple = Temple::new();
+                temple.line(&line);
+                let arm = temple.prompt.armed_id(Mechanic::Incursion).unwrap_or_else(|| panic!("{line}: no read arm"));
+                assert_eq!(temple.prompt.last_client_mechanic(), Some(Mechanic::Incursion), "{line}");
+                assert_eq!(temple.shown(), None, "{line}");
+                temple.prompt.read_done(Mechanic::Incursion, arm + 1);
+                assert_eq!(temple.prompt.armed_id(Mechanic::Incursion), Some(arm), "{line}: another identity consumed the arm");
+                temple.prompt.read_done(Mechanic::Incursion, arm);
+                assert_eq!(temple.prompt.armed_id(Mechanic::Incursion), None, "{line}");
+            }
+        }
+
+        #[test]
         fn a_mercenary_arm_still_raises_its_prompt_over_a_live_lab_arm() {
             let state = crate::settings::tests::test_app_state();
             set_module(&state, Mechanic::Mercenary, true);
@@ -910,6 +921,24 @@ mod tests {
             apply_in(&state, Change::Arm(Mechanic::DivineFont));
             assert!(armed_id_in(&state, Mechanic::DivineFont).is_some());
             assert_eq!(shown_in(&state), Some(Mechanic::Mercenary));
+        }
+    }
+
+    mod keep_regression {
+        use super::*;
+
+        /// POE-460, Operator-reported: a Temple arm leaked "Detected Incursion - press <key>".
+        #[test]
+        fn only_a_mercenary_arm_is_presented() {
+            for (mechanic, shown) in [
+                (Mechanic::Mercenary, Some(Mechanic::Mercenary)),
+                (Mechanic::Incursion, None),
+                (Mechanic::DivineFont, None),
+            ] {
+                let mut prompt = ReadPromptState::default();
+                prompt.arm(mechanic);
+                assert_eq!(prompt.snapshot().mechanic, shown, "{mechanic:?}");
+            }
         }
     }
 
