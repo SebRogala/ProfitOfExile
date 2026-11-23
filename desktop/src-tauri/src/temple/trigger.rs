@@ -1543,6 +1543,96 @@ mod tests {
             assert!(!ends_epoch(LineEvent::AlvaStart, transition));
             assert_eq!(advice_end(&line, read, NOW, transition), None);
         }
+
+        // AC-1 (POE-460): a read taken before the portal, then the portal's
+        // START over the resting gate, the temple's own area line and Alva's
+        // banter inside it — every line answered with the transition
+        // `apply_line` really returned — leaves the advice, and with it the
+        // door diamond, standing. The banter is stamped AFTER the read, which
+        // is what separates it from the stale-line and same-second cases.
+        #[test]
+        fn a_pre_entry_read_survives_into_the_temple_banter() {
+            for banter in ["At last... Atzoatl.", "No wonder it's lost…"] {
+                let mut state = ArmState::default();
+                let read = Some(NOW - 10_000);
+                let steps = [
+                    (alva_start(NOW - 5_000), NOW - 5_000, Transition::Armed(ArmReason::AlvaStart)),
+                    (temple_line(NOW - 2_000), NOW - 2_000, Transition::Extended(ArmReason::TempleArea)),
+                    (
+                        stamped(NOW, &format!("Alva, Master Explorer: {banter}")),
+                        NOW,
+                        Transition::Extended(ArmReason::TempleArea),
+                    ),
+                ];
+
+                for (line, at, expected_transition) in steps {
+                    let transition = apply_line(&mut state, &line, at);
+
+                    assert_eq!(transition, expected_transition, "{banter:?} walk: {line}");
+                    assert_eq!(
+                        advice_end(&line, read, at, transition),
+                        None,
+                        "{banter:?} walk: the advice must survive {line}",
+                    );
+                }
+            }
+        }
+    }
+
+    mod keep_regression {
+        use super::*;
+
+        // POE-460, Operator-reported: inside the temple, Alva's banter after a
+        // read took the door diamond down. Here the read is taken in the
+        // temple itself — the area line armed a resting gate, so the banter
+        // reaches `advice_end` over an arm the entry alone opened.
+        #[test]
+        fn temple_banter_after_an_in_temple_read_keeps_the_advice() {
+            let mut state = ArmState::default();
+            let entry = temple_line(NOW - 20_000);
+            assert_eq!(
+                apply_line(&mut state, &entry, NOW - 20_000),
+                Transition::Armed(ArmReason::TempleArea),
+            );
+            let read = Some(NOW - 10_000);
+            let banter = stamped(NOW, "Alva, Master Explorer: At last... Atzoatl.");
+
+            let transition = apply_line(&mut state, &banter, NOW);
+
+            assert_eq!(transition, Transition::Extended(ArmReason::TempleArea));
+            assert_eq!(advice_end(&banter, read, NOW, transition), None);
+        }
+
+        // AC-2 (POE-460): keeping the advice through the banter must not keep
+        // it past the two natural ends — leaving the area after the temple
+        // walk, and the closing line of an incursion over its START arm. Each
+        // closing line is answered with the transition `apply_line` returned.
+        #[test]
+        fn a_kept_read_still_ends_on_its_natural_clears() {
+            let walk_into_the_temple = vec![
+                (alva_start(NOW - 5_000), NOW - 5_000),
+                (temple_line(NOW - 2_000), NOW - 2_000),
+                (stamped(NOW - 1_000, "Alva, Master Explorer: At last... Atzoatl."), NOW - 1_000),
+            ];
+            let map_side_incursion = vec![(alva_start(NOW - 60_000), NOW - 60_000)];
+            let cases = [
+                ("leaving the temple", walk_into_the_temple, map_line(NOW), Transition::Disarmed, AdviceEnd::LeftArea),
+                ("Good job. over a START arm", map_side_incursion, alva_end(NOW), Transition::Disarmed, AdviceEnd::NewIncursion),
+            ];
+
+            for (name, prelude, closing, expected_transition, expected_end) in cases {
+                let mut state = ArmState::default();
+                let read = Some(NOW - 10_000);
+                for (line, at) in &prelude {
+                    apply_line(&mut state, line, *at);
+                }
+
+                let transition = apply_line(&mut state, &closing, NOW);
+
+                assert_eq!(transition, expected_transition, "{name}");
+                assert_eq!(advice_end(&closing, read, NOW, transition), Some(expected_end), "{name}");
+            }
+        }
     }
 
     mod keep_critical {

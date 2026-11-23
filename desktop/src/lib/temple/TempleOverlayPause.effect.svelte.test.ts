@@ -89,6 +89,28 @@ function temple(readAt: number): TempleSlice {
 	} as TempleSlice;
 }
 
+/** A read that settled a current room: `temple()` with the room's diamond
+ *  (the shape only has to be drawable) and the panel's room name. */
+function drawable(readAt: number): TempleSlice {
+	const slice = temple(readAt);
+	return {
+		...slice,
+		layout: {
+			...slice.layout!,
+			diamond: {
+				corners: [[2, 0], [0, 2], [-2, 0], [0, -2]],
+				seals: [
+					{ neighbour: 'C2', edge: 'C1-C2', pos: [2, 0] },
+					{ neighbour: 'C0', edge: 'C0-C1', pos: [-2, 0] }
+				],
+				topIcon: [1, -1],
+				bottomIcon: [-1, 1]
+			}
+		},
+		panel: { ...slice.panel!, room: 'Chamber of Iron' }
+	} as TempleSlice;
+}
+
 function seed(timeoutSeconds: number) {
 	applySnapshot({
 		temple: temple(Date.now()),
@@ -252,6 +274,37 @@ describe('temple keep window', () => {
 		await settle();
 		expect(target.querySelectorAll('.box')).toHaveLength(0);
 		expect(target.querySelector('.keepwin')).toBeNull();
+	});
+
+	// keep:happy — POE-460 AC-1/AC-2 on the rendered route: the door diamond
+	// stands for as long as Rust keeps the advice, and goes with it.
+	it('the door diamond lives exactly as long as the advice', async () => {
+		const readAt = Date.now();
+		const target = await render(10);
+		applySnapshot({ temple: drawable(readAt) } as unknown as SsotSnapshot);
+		await settle();
+		const door = () => target.querySelector<HTMLElement>('.widget[data-widget="temple.door"]');
+		const drawn = () => ({
+			room: door()?.querySelector('.room')?.textContent ?? null,
+			seals: door()?.querySelectorAll('svg.shape .seal').length ?? 0
+		});
+		expect(drawn()).toEqual({ room: 'Chamber of Iron', seals: 2 });
+
+		// The portal's START, then the temple's entry and Alva's banter: each
+		// publish moves the cycle flag and keeps the advice and the read stamp.
+		for (const waitingForPanel of [true, false, false]) {
+			vi.advanceTimersByTime(1000);
+			applySnapshot({ temple: { ...ssot.temple, waitingForPanel } } as unknown as SsotSnapshot);
+			await settle();
+			expect(drawn()).toEqual({ room: 'Chamber of Iron', seals: 2 });
+		}
+
+		// A natural clear (`slice::clear_advice`): advice and mode go, the
+		// status and the read stamp stay.
+		applySnapshot({ temple: { ...ssot.temple, advice: null, mode: null, waitingForPanel: false } } as unknown as SsotSnapshot);
+		await settle();
+		expect(door()?.querySelector('svg.shape')).toBeNull();
+		expect(door()?.querySelector('.room')).toBeNull();
 	});
 
 	// keep:critical — a hot rect with no countdown behind it would swallow game clicks for nothing.
