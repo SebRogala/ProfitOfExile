@@ -47,12 +47,18 @@ describe('read prompt page', () => {
 		expect(target.querySelector('.prompt')).toBeNull();
 	});
 
-	it('draws the detected text for a mercenary arm', () => {
+	it('removes the detected text when a mercenary arm presentation expires', () => {
 		ssot.readPrompt = { mechanic: 'mercenary', noMatch: false, recalibrating: false, seq: 2 };
 		const target = render();
 		const prompts = target.querySelectorAll('.prompt');
 		expect(prompts).toHaveLength(1);
 		expect(prompts[0].textContent).toBe('Detected Mercenary - press Ctrl + A to read');
+
+		ssot.readPrompt = { mechanic: null, noMatch: false, recalibrating: false, seq: 2 };
+		flushSync();
+
+		expect(target.querySelectorAll('.prompt')).toHaveLength(0);
+		expect(target.textContent).not.toContain('Detected Mercenary');
 	});
 
 	it('draws the recalibration sweep status in the wrapping prompt', () => {
