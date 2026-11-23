@@ -485,14 +485,6 @@ mod tests {
     }
 
     #[test]
-    fn completion_preserves_client_recency() {
-        let mut prompt = ReadPromptState::default();
-        prompt.apply(Change::Arm(Mechanic::Mercenary));
-        prompt.read_done(Mechanic::Mercenary, prompt.armed_id(Mechanic::Mercenary).unwrap());
-        assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Mercenary));
-        assert_eq!(prompt.snapshot().mechanic, None);
-    }
-    #[test]
     fn context_end_preserves_client_recency() {
         let mut prompt = ReadPromptState::default();
         prompt.apply(Change::Arm(Mechanic::Mercenary));
@@ -927,6 +919,24 @@ mod tests {
 
     mod keep_regression {
         use super::*;
+
+        // keep:regression — without it, completing one read could hand recency back to an older
+        // still-armed mechanic, so the read hotkey dispatches to the wrong reader.
+        #[test]
+        fn completion_preserves_client_recency() {
+            let mut prompt = ReadPromptState::default();
+            prompt.arm(Mechanic::Incursion);
+            let incursion = prompt.armed_id(Mechanic::Incursion).expect("older Incursion arm");
+            prompt.arm(Mechanic::Mercenary);
+            let mercenary = prompt.armed_id(Mechanic::Mercenary).expect("newer Mercenary arm");
+
+            prompt.read_done(Mechanic::Mercenary, mercenary);
+
+            assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Mercenary));
+            assert_eq!(prompt.armed_id(Mechanic::Incursion), Some(incursion));
+            assert_eq!(prompt.armed_id(Mechanic::Mercenary), None);
+            assert_eq!(prompt.snapshot().mechanic, None);
+        }
 
         /// POE-460, Operator-reported: a Temple arm leaked "Detected Incursion - press <key>".
         #[test]
