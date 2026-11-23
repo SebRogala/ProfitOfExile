@@ -3707,15 +3707,17 @@ mod tests {
         );
     }
 
-    /// The 2026-10-17 tier rungs change three kills from the strategy fixture.
-    /// Boards 1 and 3 record "kill either"; board 8 records a door, whose
+    /// The 2026-10-17 tier rungs change two kills from the strategy fixture.
+    /// Board 1 records "kill either"; board 8 records a door, whose
     /// separate regression stays unchanged. Board 8 now prefers the B4
     /// Conduit upgrade over the E2 explosives change on the cold read too.
     /// Board 7 still plays the recorded Sanctum change, and board 2 still
-    /// upgrades corruption. Pin the exact differences so a ranking change
-    /// cannot silently move another board.
+    /// upgrades corruption. Board 3 no longer moves: under either profile the
+    /// Cradle-line priority (POE-465) kills Xopec's throne_of_atziri change.
+    /// Pin the exact differences so a ranking change cannot silently move
+    /// another board.
     #[test]
-    fn the_production_tier_rungs_change_three_fixture_kills() {
+    fn the_production_tier_rungs_change_two_fixture_kills() {
         let production = production_profile();
 
         let moved: Vec<(&str, Option<(OfferKind, String, u8)>, Option<(OfferKind, String, u8)>)> =
@@ -3735,11 +3737,6 @@ mod tests {
                     "1 Tombs",
                     Some((Change, "museum_of_artefacts".to_string(), 1)),
                     Some((Change, "hall_of_champions".to_string(), 1)),
-                ),
-                (
-                    "3 Chasm-late",
-                    Some((Change, "throne_of_atziri".to_string(), 1)),
-                    Some((Change, "conduit_of_lightning".to_string(), 1)),
                 ),
                 (
                     "8 LightningWorkshop",
@@ -3847,7 +3844,8 @@ mod tests {
 
     /// The kill on every walked board at the capture's prices. These are
     /// the valuation's current answers, including the C1 instrumental rung
-    /// for Temple Nexus. Board 7 retains the recorded Sanctum change; board
+    /// for Temple Nexus. Board 3 kills Xopec's Cradle-line change, the
+    /// POE-465 priority. Board 7 retains the recorded Sanctum change; board
     /// 8 chooses the Conduit upgrade on both cold and live reads now.
     /// Fails if the bridge stops copying the valuation into the profile.
     #[test]
@@ -3864,7 +3862,7 @@ mod tests {
             vec![
                 ("1 Tombs", Some((Change, "hall_of_champions".to_string(), 1))),
                 ("2 CorruptionChamber", Some((Upgrade, "corruption".to_string(), 2))),
-                ("3 Chasm-late", Some((Change, "conduit_of_lightning".to_string(), 1))),
+                ("3 Chasm-late", Some((Change, "throne_of_atziri".to_string(), 1))),
                 ("4 Chasm-merge", Some((Change, "hybridisation_chamber".to_string(), 1))),
                 ("5 PoisonGarden", Some((Change, "upgrade".to_string(), 2))),
                 ("6 Cloister-blind", Some((Change, "hall_of_champions".to_string(), 1))),
