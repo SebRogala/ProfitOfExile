@@ -35,7 +35,7 @@
 //!   [`Basis::Guess`]; [`VERTOLKA_MSG`] was the source before it.
 //! - Vertolka's 3.30 sheet export, 2026-11-13 (POE-369) — the rows cited by
 //!   [`SHEET_LOCUS_330`], [`SHEET_CRADLE_330`] and [`SHEET_GLITTERING_330`]:
-//!   the corruption rooms' rarity and pack size, the Cradle of Creation line's
+//!   the corruption rooms' pack size, the Cradle of Creation line's
 //!   magic pack size and Glittering Halls' rarity. Measured.
 //!
 //! - [`VERTOLKA_FEEDBACK_1120`] — Discord player feedback, 2026-11-20,
