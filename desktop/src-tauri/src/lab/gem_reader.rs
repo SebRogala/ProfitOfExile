@@ -234,13 +234,15 @@ impl LabGemRead {
 
     /// This read over the previous one of the same context: a slot this press
     /// did not read keeps its previous value, and a slot a tooltip resolved
-    /// stays resolved when this press's icon match is uncertain.
+    /// stays resolved until another tooltip reads it: the tooltip prints the
+    /// name, while an icon match can take a tinted sibling variant.
     fn over(mut self, previous: Option<&LabGemRead>) -> Self {
         let Some(previous) = previous.filter(|p| p.token == self.token) else { return self };
         for (slot, before) in self.slots.iter_mut().zip(&previous.slots) {
             let keep = match (&*slot, before) {
                 (GemSlot::Unread, _) => true,
-                (GemSlot::Uncertain { .. }, GemSlot::Certain { source: SlotSource::Tooltip, .. }) => true,
+                (GemSlot::Certain { source: SlotSource::Tooltip, .. }, _) => false,
+                (_, GemSlot::Certain { source: SlotSource::Tooltip, .. }) => true,
                 _ => false,
             };
             if keep {

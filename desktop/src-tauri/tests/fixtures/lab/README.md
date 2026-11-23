@@ -9,6 +9,20 @@ set. `lab::gem_icons` tests read it as is, upscaled to 4K, and pasted at its
 16:10 place. A screenshot of a running game, so it is committed (unlike the
 icon art in `../lab-gem-art/`).
 
+## `font-slots-detonate-dead-chain-reaction.png`
+
+Real Divine Font slot row from the Operator's Discord bug report (2026-11-21),
+saved with the POE-455 patch. The tooltips named Toxic Rain of Sporeburst,
+Fire Trap of Blasting and Detonate Dead of Chain Reaction, left to right.
+The regression test requires all three exact names with certainty.
+
+The missing-reference and washed-sibling tests extend this frame. The Rust
+calibration helper `gem_icon_pair_rmse_report`, run by the kept sibling test,
+also measures the 1080p/4K/16:10 frames and 13 sibling pairs under gold/white
+washes, offsets and scales. Run it with
+`cargo test --lib a_washed_sibling_icon -- --nocapture`. The certainty
+constants and their measured derivation live in `lab::gem_icons`.
+
 ## `gem-sets.json`
 
 Names only: `{normal, transfigured, iconless}`.

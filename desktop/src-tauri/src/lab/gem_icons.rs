@@ -26,8 +26,26 @@ const FINE_TOP: usize = 25;
 /// Candidates an uncertain slot reports.
 const TOP_CANDIDATES: usize = 3;
 /// A slot is certain when its second-best reference (in the chosen set) scores
-/// at least this many times its best (C2).
-pub(crate) const UNCERTAIN_MARGIN: f32 = 1.1;
+/// at least this many times its best (C2), and its best is within
+/// [`SLOT_RMSE_MAX`].
+///
+/// Rust calibration (2026-11-23, `gem_icon_pair_rmse_report`): 361 rows,
+/// including 1080p/4K/16:10, the reported frame with and without its true
+/// reference, and 13 sibling pairs in both directions under offsets,
+/// scales and gold/white washes. The 53 wrong nearest matches have margins
+/// 1.001-1.371; the maximum is Massacre's 50% gold wash (RMSE 18.766).
+/// The 12 clean real slots have margins >=1.428. Choose 1.4 between these
+/// extrema: an RMSE cut alone would reject clean slots before that sibling.
+/// Together the cuts withhold 115 of the 308 correct nearest matches in
+/// this degraded sample; they need a tooltip instead of an icon guess.
+pub(crate) const UNCERTAIN_MARGIN: f32 = 1.4;
+/// Rust sample: clean real slots score 13.408-21.122; omitting Chain
+/// Reaction yields Scavenging at 27.690. Choose 24 below their midpoint
+/// (24.406), retaining the clean slots and withholding the missing art.
+/// Across all rows, correct nearest scores span 0.545-37.773 and wrong
+/// scores 18.385-37.539; this ceiling and the margin reject all 53 wrong
+/// matches, retaining certainty for all 12 clean real slots.
+pub(crate) const SLOT_RMSE_MAX: f32 = 24.0;
 
 /// The presence gate: above this sum of the three slots' best RMSE (chosen
 /// set, 48 px) the frame holds no gem panel and the reader writes nothing.
@@ -257,7 +275,7 @@ fn classify_ranked(refs: &GemIconRefs, ranked: &[(GemSet, [Vec<Candidate>; 3], f
     let other_joint = ranked.iter().find(|r| r.0 != *set).map(|r| r.2);
     let slots = lists.clone().map(|list| {
         let margin = list.get(1).map_or(f32::INFINITY, |second| second.rmse / list[0].rmse);
-        if margin >= UNCERTAIN_MARGIN && !refs.incomplete {
+        if margin >= UNCERTAIN_MARGIN && list[0].rmse <= SLOT_RMSE_MAX && !refs.incomplete {
             IconSlot::Certain { name: list[0].name.clone(), margin }
         } else {
             IconSlot::Uncertain { candidates: list.into_iter().take(TOP_CANDIDATES).collect() }
@@ -646,7 +664,7 @@ pub(crate) mod tests {
                 nearest = if list[0].name == truth { "correct" } else { "wrong" },
             );
         };
-        println!("UNCERTAIN_MARGIN {UNCERTAIN_MARGIN}; best, second-best and margin measured below");
+        println!("SLOT_RMSE_MAX {SLOT_RMSE_MAX}, UNCERTAIN_MARGIN {UNCERTAIN_MARGIN}; best, second-best and margin measured below");
         println!("{:<60} | {:<38} | {:>6} | {:>6} | {:>5} | verdict", "case", "best", "best", "2nd", "margin");
         let fixture = fixture_frame();
         for (label, frame, slice) in [
