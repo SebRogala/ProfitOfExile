@@ -424,6 +424,7 @@ function boxesOf(target: HTMLElement) {
 	return [...(offersLayer(target)?.querySelectorAll('.box') ?? [])];
 }
 
+const GO_WITH_CRADLE = 'always go with Cradle';
 const BANNER = (why: string) => ({ first: true, beforeTitle: true, bang: '!', call: 'JUST DO IT!', why });
 
 describe('temple priority alert (POE-465)', () => {
@@ -431,7 +432,7 @@ describe('temple priority alert (POE-465)', () => {
 		const target = await render(10, '', alerted(Date.now()));
 
 		expect(boxesOf(target).map(alertOf)).toEqual([
-			{ alert: true, pick: true, compact: false, banner: BANNER('builds Cradle of Creation') },
+			{ alert: true, pick: true, compact: false, banner: BANNER(GO_WITH_CRADLE) },
 			{ alert: false, pick: false, compact: false, banner: null }
 		]);
 	});
@@ -441,7 +442,7 @@ describe('temple priority alert (POE-465)', () => {
 		const target = await render(10, '', alerted(Date.now()));
 
 		expect(boxesOf(target).map(alertOf)).toEqual([
-			{ alert: true, pick: true, compact: true, banner: BANNER('builds Cradle of Creation') },
+			{ alert: true, pick: true, compact: true, banner: BANNER(GO_WITH_CRADLE) },
 			{ alert: false, pick: false, compact: true, banner: null }
 		]);
 	});
@@ -451,7 +452,7 @@ describe('temple priority alert (POE-465)', () => {
 		const target = await render(10, '', alerted(Date.now()));
 
 		expect(boxesOf(target).map(alertOf)).toEqual([
-			{ alert: true, pick: true, compact: false, banner: BANNER('builds Cradle of Creation') },
+			{ alert: true, pick: true, compact: false, banner: BANNER(GO_WITH_CRADLE) },
 			{ alert: false, pick: false, compact: false, banner: null }
 		]);
 	});
@@ -466,7 +467,7 @@ describe('temple priority alert (POE-465)', () => {
 		]);
 	});
 
-	it('keep:happy tells a forced Hall of Lords tier-2 kill to keep upgrading, beside its four-digit value', async () => {
+	it('keep:happy tells a forced Hall of Lords tier-2 kill to go with Cradle, beside its four-digit value', async () => {
 		const target = await render(
 			10,
 			'',
@@ -474,7 +475,7 @@ describe('temple priority alert (POE-465)', () => {
 		);
 		const [upper] = boxesOf(target);
 
-		expect(alertOf(upper).banner).toEqual(BANNER('always upgrade to Cradle'));
+		expect(alertOf(upper).banner).toEqual(BANNER(GO_WITH_CRADLE));
 		expect(upper.querySelector('.forced')?.textContent).toBe('(only architect read)');
 		expect(upper.querySelector('.val .num')?.textContent).toBe('1240c');
 	});
@@ -487,7 +488,7 @@ describe('temple priority alert (POE-465)', () => {
 		);
 
 		expect(boxesOf(target).map(alertOf)).toEqual([
-			{ alert: true, pick: false, compact: false, banner: BANNER('builds Cradle of Creation') },
+			{ alert: true, pick: false, compact: false, banner: BANNER(GO_WITH_CRADLE) },
 			{ alert: false, pick: true, compact: false, banner: null }
 		]);
 	});
@@ -502,7 +503,7 @@ describe('temple priority alert (POE-465)', () => {
 		} as TempleSlice;
 		const target = await render(10, '', board);
 
-		expect(boxesOf(target).map((box) => alertOf(box).banner?.why ?? null)).toEqual([null, 'builds Cradle of Creation']);
+		expect(boxesOf(target).map((box) => alertOf(box).banner?.why ?? null)).toEqual([null, GO_WITH_CRADLE]);
 	});
 
 	it('keep:happy shows both boxes measured and placed after a read that gains the alert', async () => {

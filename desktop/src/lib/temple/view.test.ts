@@ -2364,17 +2364,17 @@ describe('offerBoxSignature', () => {
 	// POE-465: the priority banner adds 20 px to the box it sits on, so its
 	// presence is a shape change in either form.
 	it.each([false, true])('keep:happy moves the signature when the priority alert appears (compact %s)', (compact) => {
-		const alerted = box({ priority: 'builds Cradle of Creation' });
+		const alerted = box({ priority: 'always go with Cradle' });
 		const plain = box({ priority: null });
 
 		expect(offerBoxSignature(alerted, compact)).not.toBe(offerBoxSignature(plain, compact));
 	});
 
 	it.each([false, true])('keep:happy keeps the signature when only the priority wording changes (compact %s)', (compact) => {
-		const tier3 = box({ priority: 'builds Cradle of Creation' });
-		const tier2 = box({ priority: 'always upgrade to Cradle' });
+		const approved = box({ priority: 'always go with Cradle' });
+		const alternate = box({ priority: 'alternate alert wording' });
 
-		expect(offerBoxSignature(tier2, compact)).toBe(offerBoxSignature(tier3, compact));
+		expect(offerBoxSignature(alternate, compact)).toBe(offerBoxSignature(approved, compact));
 	});
 
 });
@@ -2831,8 +2831,7 @@ describe('offerBoxes — the Cradle bracket (POE-370)', () => {
 
 describe('offerBoxes — the priority alert (POE-465)', () => {
 	const CRADLE = 'Cradle of Creation';
-	const BUILDS_CRADLE = 'builds Cradle of Creation';
-	const ON_THE_WAY = 'always upgrade to Cradle';
+	const GO_WITH_CRADLE = 'always go with Cradle';
 	const PRIORITY_REASON = 'priority: Cradle of Creation — kill this architect so Xipocado builds it';
 	/** An offer on the Queen's line (Royal Meeting Room / Hall of Lords /
 	 *  Cradle of Creation), resolved, at the tier it builds. */
@@ -2862,13 +2861,52 @@ describe('offerBoxes — the priority alert (POE-465)', () => {
 			},
 			NOW
 		).map((box) => box.priority);
+	/** Renders two boxes and reads each one's alert class and banner parts. */
+	const banners = (boxes: OfferBox[]) => {
+		const window = new Window();
+		try {
+			const document = window.document as unknown as Document;
+			document.body.innerHTML = render(TempleOfferBoxes, {
+				props: {
+					boxes,
+					blocks: [
+						{ x: 1300, y: 140, w: 280, h: 43 },
+						{ x: 1300, y: 190, w: 280, h: 43 }
+					],
+					panel: { x: 1300, y: 100, w: 300, h: 400 },
+					obstacles: [{ x: 1100, y: 40, w: 500, h: 400 }],
+					host: { width: 1920, height: 1080 },
+					width: 300
+				}
+			}).body;
+			return [...document.querySelectorAll('.box')].map((box) => ({
+				alert: box.classList.contains('alert'),
+				bang: box.querySelector('.prio .bang')?.textContent ?? null,
+				call: box.querySelector('.prio .call')?.textContent ?? null,
+				why: box.querySelector('.prio .why')?.textContent ?? null
+			}));
+		} finally {
+			window.happyDOM.close();
+		}
+	};
 
-	it('keep:happy alerts the tier-3 Queen-line offer the priority names, and only that one', () => {
-		const boxes = priorities([queen({ index: 0 }), other({ index: 1 })], {
-			priority: { architectIndex: 0, reason: PRIORITY_REASON }
-		});
+	it('keep:happy alerts the tier-3 Queen-line upgrade the priority names, and only that one', () => {
+		const boxes = offerBoxes(
+			{
+				...templeSliceDefault(),
+				status: 'read',
+				advice: advice({ priority: { architectIndex: 0, reason: PRIORITY_REASON } }),
+				panel: { room: null, roomRect: null, offers: [queen({ index: 0, kind: 'upgrade' }), other({ index: 1 })], incursionsRemaining: 6 },
+				market: LIVE_MARKET
+			},
+			NOW
+		);
 
-		expect(boxes).toEqual([BUILDS_CRADLE, null]);
+		expect(boxes.map((box) => box.priority)).toEqual([GO_WITH_CRADLE, null]);
+		expect(banners(boxes)).toEqual([
+			{ alert: true, bang: '!', call: 'JUST DO IT!', why: GO_WITH_CRADLE },
+			{ alert: false, bang: null, call: null, why: null }
+		]);
 	});
 
 	it('keep:happy alerts only Tzamoto on the Torment Cells board', () => {
@@ -2897,50 +2935,24 @@ describe('offerBoxes — the priority alert (POE-465)', () => {
 			NOW
 		);
 
-		expect(boxes.map((box) => box.priority)).toEqual([null, ON_THE_WAY]);
-
-		const window = new Window();
-		try {
-			const document = window.document as unknown as Document;
-			document.body.innerHTML = render(TempleOfferBoxes, {
-				props: {
-					boxes,
-					blocks: [
-						{ x: 1300, y: 140, w: 280, h: 43 },
-						{ x: 1300, y: 190, w: 280, h: 43 }
-					],
-					panel: { x: 1300, y: 100, w: 300, h: 400 },
-					obstacles: [{ x: 1100, y: 40, w: 500, h: 400 }],
-					host: { width: 1920, height: 1080 },
-					width: 300
-				}
-			}).body;
-			const rendered = [...document.querySelectorAll('.box')].map((box) => ({
-				alert: box.classList.contains('alert'),
-				bang: box.querySelector('.prio .bang')?.textContent ?? null,
-				call: box.querySelector('.prio .call')?.textContent ?? null,
-				why: box.querySelector('.prio .why')?.textContent ?? null
-			}));
-
-			expect(rendered).toEqual([
-				{ alert: false, bang: null, call: null, why: null },
-				{ alert: true, bang: '!', call: 'JUST DO IT!', why: ON_THE_WAY }
-			]);
-		} finally {
-			window.happyDOM.close();
-		}
+		expect(boxes.map((box) => box.priority)).toEqual([null, GO_WITH_CRADLE]);
+		expect(banners(boxes)).toEqual([
+			{ alert: false, bang: null, call: null, why: null },
+			{ alert: true, bang: '!', call: 'JUST DO IT!', why: GO_WITH_CRADLE }
+		]);
 	});
 
 	it.each([
 		{ room: 'Royal Meeting Room', tier: 1 },
-		{ room: 'Hall of Lords', tier: 2 }
-	])('keep:happy tells a tier-$tier $room offer to keep upgrading toward the Cradle', ({ room, tier }) => {
+		{ room: 'Hall of Lords', tier: 2 },
+		{ room: CRADLE, tier: 3 }
+	])('keep:happy tells a tier-$tier $room offer to always go with Cradle', ({ room, tier }) => {
 		const boxes = priorities([other({ index: 0 }), queen({ index: 1, displayName: room, builtTier: tier })], {
 			recommendations: [ranked({ architectIndex: 1 })],
 			priority: { architectIndex: 1, reason: PRIORITY_REASON }
 		});
 
-		expect(boxes).toEqual([null, ON_THE_WAY]);
+		expect(boxes).toEqual([null, GO_WITH_CRADLE]);
 	});
 
 	it.each([
@@ -2978,17 +2990,17 @@ describe('offerBoxes — the priority alert (POE-465)', () => {
 		{
 			name: 'one Queen-line offer worth less than the other line',
 			offers: [queen({ index: 0, value: value({ total: 64 }) }), other({ index: 1, value: value({ total: 500 }) })],
-			want: [BUILDS_CRADLE, null]
+			want: [GO_WITH_CRADLE, null]
 		},
 		{
 			name: 'two Queen-line offers, the lower one worth more',
 			offers: [queen({ index: 0, value: value({ total: 64 }) }), queen({ index: 1, value: value({ total: 96 }) })],
-			want: [null, BUILDS_CRADLE]
+			want: [null, GO_WITH_CRADLE]
 		},
 		{
 			name: 'two Queen-line offers, the upper one worth more',
 			offers: [queen({ index: 0, value: value({ total: 96 }) }), queen({ index: 1, value: value({ total: 64 }) })],
-			want: [BUILDS_CRADLE, null]
+			want: [GO_WITH_CRADLE, null]
 		},
 		{
 			name: 'two Queen-line offers of equal worth',
@@ -2996,12 +3008,12 @@ describe('offerBoxes — the priority alert (POE-465)', () => {
 				queen({ index: 0, displayName: 'Hall of Lords', builtTier: 2, value: value({ total: 80 }) }),
 				queen({ index: 1, value: value({ total: 80 }) })
 			],
-			want: [ON_THE_WAY, null]
+			want: [GO_WITH_CRADLE, null]
 		},
 		{
 			name: 'an unresolved offer beside a Queen-line one',
 			offers: [unresolved({ index: 0 }), queen({ index: 1, value: value({ total: 64 }) })],
-			want: [null, BUILDS_CRADLE]
+			want: [null, GO_WITH_CRADLE]
 		},
 		{
 			name: 'an unresolved offer beside another line',
@@ -3011,7 +3023,7 @@ describe('offerBoxes — the priority alert (POE-465)', () => {
 		{
 			name: 'a legacy payload with no priority field',
 			offers: [queen({ index: 0, value: value({ total: 64 }) }), queen({ index: 1, value: value({ total: 96 }) })],
-			want: [null, BUILDS_CRADLE],
+			want: [null, GO_WITH_CRADLE],
 			legacy: true
 		}
 	] as { name: string; offers: OfferView[]; want: (string | null)[]; legacy?: boolean }[])(
