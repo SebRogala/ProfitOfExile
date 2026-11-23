@@ -205,6 +205,7 @@
 	const compact = $derived(
 		offersCompact({
 			driverCounts: boxes.map((box) => box.driverCount),
+			alerts: boxes.map((box) => box.priority !== null),
 			blocks,
 			panel,
 			host
@@ -462,6 +463,7 @@
 	<div
 		class="box"
 		class:pick={box.pick}
+		class:alert={box.priority !== null}
 		class:compact
 		style="left:{placements[i]?.x ?? 0}px;top:{placements[i]?.y ?? 0}px;width:{width}px;{placements[
 			i
@@ -471,6 +473,13 @@
 		bind:offsetWidth={widths[i]}
 		bind:offsetHeight={heights[i]}
 	>
+		{#if box.priority !== null}
+			<div class="prio">
+				<span class="bang">!</span>
+				<span class="call">JUST DO IT!</span>
+				<span class="why">{box.priority}</span>
+			</div>
+		{/if}
 		<!-- Two fixed header lines: the value belongs to the room line, while
 		     the kind/tier, the completeness chip and the provenance word share
 		     the second. -->
@@ -656,6 +665,60 @@
 	.box.pick {
 		border-color: var(--color-lab-cyan);
 		box-shadow: 0 3px 12px rgb(0 0 0 / 50%);
+	}
+
+	.box.alert {
+		border-color: var(--color-lab-red);
+		box-shadow: 0 3px 12px rgb(0 0 0 / 50%);
+	}
+
+	/* Approved banner row: 22 - 10 + 8 = 20 px beyond the normal box. */
+	.prio {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		height: 22px;
+		margin: -10px -12px 8px;
+		background: rgb(239 68 68 / 16%);
+		border-bottom: 1px solid rgb(239 68 68 / 45%);
+		box-sizing: border-box;
+		border-radius: 4px 4px 0 0;
+		padding-right: 10px;
+		white-space: nowrap;
+		overflow: hidden;
+	}
+
+	.bang {
+		flex: 0 0 auto;
+		width: 22px;
+		height: 21px;
+		background: var(--color-lab-red);
+		color: #fff;
+		font-size: 14px;
+		font-weight: 800;
+		line-height: 21px;
+		text-align: center;
+		border-radius: 4px 0 0 0;
+	}
+
+	.prio .call {
+		flex: 0 0 auto;
+		font-size: 12px;
+		font-weight: 800;
+		line-height: 15px;
+		letter-spacing: 0.06em;
+		color: #fff;
+	}
+
+	.prio .why {
+		flex: 0 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		font-size: 11px;
+		font-weight: 500;
+		line-height: 15px;
+		color: var(--color-lab-text);
 	}
 
 	/* Faint by COLOUR, never by opacity. `opacity: 0.75` over an 88 % ground

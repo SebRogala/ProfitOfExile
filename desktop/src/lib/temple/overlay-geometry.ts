@@ -359,7 +359,8 @@ export const FULL_BOX_MAX_CSS = 290;
 
 /** What two FULL boxes and the gap between them need, CSS px —
  * `290 * 2 + STACK_GAP_CSS` = 588. This is the clearance [`offersCompact`]
- * demands before it lets the pair render full.
+ * demands before it lets an unalerted pair render full. The priority banner
+ * adds 20 px on alerted boards in `offersCompact`.
  * It uses the WORST case rather than the design's typical one, because the box
  * that gets clamped for want of it is the LOWER one, and a clamped box lands
  * on the box above it and is then moved or dropped entirely. */
@@ -415,16 +416,17 @@ export const MAX_FOLDABLE_DRIVERS = 5;
 export function offersCompact(input: {
 	/** Every box's driver-row count, in box order (`OfferBox.driverCount`). */
 	driverCounts: readonly number[];
+	alerts?: readonly boolean[];
 	/** Each offer's block rect in CSS px, `blocks[i]` for box `i`. */
 	blocks: readonly (WidgetRect | null)[];
 	/** The side panel's OCR crop in CSS px. */
 	panel: WidgetRect | null;
 	host: HostSize;
 }): boolean {
-	const { driverCounts, blocks, panel, host } = input;
+	const { driverCounts, alerts = [], blocks, panel, host } = input;
 	if (driverCounts.some((count) => count > MAX_FOLDABLE_DRIVERS)) return true;
 	const top = blocks[0]?.y ?? panel?.y ?? BANNER_TOP_CSS;
-	return host.height - top < FULL_PAIR_CSS;
+	return host.height - top < FULL_PAIR_CSS + (alerts.some(Boolean) ? 20 : 0);
 }
 
 /**

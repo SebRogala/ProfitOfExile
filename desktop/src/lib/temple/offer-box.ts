@@ -39,6 +39,7 @@ export interface OfferBox {
 	/** Whether this is the block the top recommendation chose — the cyan frame,
 	 *  which is the whole of the pointer. */
 	pick: boolean;
+	priority: string | null;
 	/** `"only architect read"` on the pick when the kill was forced rather than
 	 *  chosen, else null.
 	 *
@@ -634,6 +635,7 @@ export function offerBoxSignature(box: OfferBox, compact: boolean): string {
 	return [
 		box.offer.index,
 		compact ? 'compact' : 'full',
+		box.priority ? 'priority' : '-',
 		box.state ?? 'none',
 		box.drivers.length,
 		box.fold ? 'fold' : '-',
@@ -696,6 +698,19 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 	const panel = slice.panel;
 	if (advice === null || panel === null) return [];
 	const chosenIndex = topRecommendation(advice)?.architectIndex ?? null;
+	const queenOffers = panel.offers.filter((offer) => offer.lineTop === 'Cradle of Creation');
+	let priorityOffer: OfferView | undefined;
+	const priority = advice.priority;
+	if (priority != null) {
+		priorityOffer = queenOffers.find((offer) => offer.index === priority.architectIndex);
+	} else if (chosenIndex === null) {
+		for (const offer of queenOffers) {
+			if (
+				priorityOffer === undefined ||
+				(offer.value?.total ?? -Infinity) > (priorityOffer.value?.total ?? -Infinity)
+			) priorityOffer = offer;
+		}
+	}
 	// One line for the whole read, not one per box: both boxes are priced off
 	// the same market by construction (Rust values a read once), so a per-box
 	// answer would be the same string twice with room to drift.
@@ -727,6 +742,10 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 			builds: offerBoxBuilds(offer),
 			content,
 			pick,
+			priority:
+				offer !== priorityOffer ? null
+					: offer.builtTier === 3 ? 'builds Cradle of Creation'
+						: offer.builtTier === 1 || offer.builtTier === 2 ? 'always upgrade to Cradle' : null,
 			// Only on the pick: the note says the kill on the frame was the only
 			// one there was, and a note on the block the advisor did NOT choose
 			// would be saying that about the wrong box.
