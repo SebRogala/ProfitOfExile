@@ -3958,10 +3958,11 @@ mod tests {
             ));
         }
 
-        let top = row.expected[0].0.expect("a priority row ranks a kill first");
-        let want_priority = Some(AdvicePriority {
-            architect_index: top,
-            reason: Reason::ArchitectPriority.describe(),
+        let want_priority = row.expected.first().and_then(|(index, _)| *index).map(|top| {
+            AdvicePriority {
+                architect_index: top,
+                reason: Reason::ArchitectPriority.describe(),
+            }
         });
         if advice.priority != want_priority {
             failures.push(format!(
@@ -4138,8 +4139,29 @@ mod tests {
         #[test]
         fn a_board_without_a_qualifying_offer_keeps_its_ranking_and_no_priority() {
             let rows: [(cases::Case, Vec<(Option<usize>, &str)>); 2] = [
-                (cases::case_2_corruption_chamber(), vec![]),
-                (cases::case_8_lightning_workshop(), vec![]),
+                (
+                    cases::case_2_corruption_chamber(),
+                    vec![
+                        (Some(0), "B1-C2"),
+                        (Some(0), "B1-C1"),
+                        (Some(1), "B1-C2"),
+                        (Some(1), "B1-C1"),
+                        (Some(1), "A0-B1"),
+                        (Some(1), "B0-B1"),
+                        (Some(1), "no door"),
+                    ],
+                ),
+                (
+                    cases::case_8_lightning_workshop(),
+                    vec![
+                        (Some(1), "B0-C1"),
+                        (Some(1), "B1-C1"),
+                        (Some(1), "no door"),
+                        (Some(0), "B0-C1"),
+                        (Some(0), "B1-C1"),
+                        (Some(0), "no door"),
+                    ],
+                ),
             ];
             let mut failures = Vec::new();
             for (case, expected) in rows {
