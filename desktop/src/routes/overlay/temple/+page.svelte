@@ -168,9 +168,13 @@
 	 *  so the leave-the-map banner inside this same snippet survives a read that
 	 *  produced a map verdict and no ranking, which is what it is gated on. */
 	const offersVisible = $derived(overlayShowsBoard(temple.status));
+	/** The dismissal's show gate is the ADVICE as well as the panel: an area
+	 *  change (`slice::clear_advice`) drops the advice and leaves the status
+	 *  and read stamp, so only this ends a Keep and lets the next read count
+	 *  down. Without advice neither the boxes nor the banner draw anything. */
 	const offersDismissal = createDismissal({
 		spec: widgetsFor(TEMPLE_WINDOW_LABEL).find((spec) => spec.id === 'temple.offers')!,
-		shown: () => offersVisible,
+		shown: () => offersVisible && temple.advice !== null,
 		contentKey: () => temple.lastReadAt,
 		settings: () => ssot.overlayDismiss
 	});

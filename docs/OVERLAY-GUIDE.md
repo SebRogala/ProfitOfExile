@@ -526,7 +526,10 @@ the timer, compass, path-strip and comparator widgets.
   (66×22, `data-hot data-action="temple.close"`); it names no dismissal key.
   One forwarded click on Keep calls `createDismissal`'s `pause()`; the keep is
   one-way, with no un-pause. Kept, it reads `TIMER STOPPED` and withdraws
-  Keep's hot rect; a re-read keeps it Kept with the timer stopped. One
+  Keep's hot rect; a re-read keeps it Kept with the timer stopped. The
+  dismissal's show gate is the sheet status AND the advice, so an area change
+  (`slice::clear_advice` nulls the advice, keeping status and read stamp) ends
+  the keep and the next read counts down again. One
   forwarded click on Close, in either state, calls `close()`, which hides the
   boxes and the window together exactly as the dismissal key or an area change
   does. The route registers both actions without `interact`, which would
