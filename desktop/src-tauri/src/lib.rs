@@ -1,6 +1,7 @@
 // size-gate: intrinsic — native command registration stays in the existing application entrypoint
 mod capture;
 mod clock;
+mod exchange_read;
 mod client_txt_discovery;
 mod fingerprint;
 mod focus;

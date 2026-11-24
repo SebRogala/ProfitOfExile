@@ -1,0 +1,83 @@
+{
+  "source": "POE-477 measurement: Faustus Currency Exchange at 1920x1080, Windows.Media.Ocr en-US over the top Competing Trades row and the I want / I have name boxes after row prep. OCR text only; no screenshot.",
+  "rows": {
+    "ember-for-chaos": {
+      "ratio": "130 : 1",
+      "stock": "1",
+      "want": ["Chaos Orb"],
+      "have": ["Allflame Ember of", "the Ethereal"]
+    },
+    "ember-for-chaos-split-stock": {
+      "ratio": "130 : 1",
+      "stock": "8 125",
+      "want": ["Chaos Orb"],
+      "have": ["Allflame Ember of", "the Ethereal"]
+    },
+    "divine-for-ember-one-on-left": {
+      "ratio": "1 : 6.12",
+      "stock": "3",
+      "want": ["Allflame Ember of", "the Ethereal"],
+      "have": ["Divine Orb"]
+    },
+    "outbid-prefixed-top-row": {
+      "ratio": "> 160 : 1",
+      "stock": "1",
+      "want": ["Chaos Orb"],
+      "have": ["Allflame Ember of", "the Ethereal"]
+    },
+    "undercut-prefixed-top-row": {
+      "ratio": "< 112 : 1",
+      "stock": "1",
+      "want": ["Chaos Orb"],
+      "have": ["Allflame Ember of", "the Ethereal"]
+    },
+    "ratio-missing-a-side": {
+      "ratio": "130 :",
+      "stock": "1",
+      "want": ["Chaos Orb"],
+      "have": ["Allflame Ember of", "the Ethereal"]
+    },
+    "ratio-misread-letters": {
+      "ratio": "l3O : |",
+      "stock": "1",
+      "want": ["Chaos Orb"],
+      "have": ["Allflame Ember of", "the Ethereal"]
+    },
+    "ratio-empty": {
+      "ratio": "",
+      "stock": "1",
+      "want": ["Chaos Orb"],
+      "have": ["Allflame Ember of", "the Ethereal"]
+    },
+    "ratio-neither-side-one": {
+      "ratio": "4 : 3",
+      "stock": "1",
+      "want": ["Chaos Orb"],
+      "have": ["Allflame Ember of", "the Ethereal"]
+    },
+    "ratio-zero-side": {
+      "ratio": "0 : 1",
+      "stock": "1",
+      "want": ["Chaos Orb"],
+      "have": ["Allflame Ember of", "the Ethereal"]
+    },
+    "want-name-missing": {
+      "ratio": "130 : 1",
+      "stock": "1",
+      "want": [],
+      "have": ["Allflame Ember of", "the Ethereal"]
+    },
+    "have-name-blank": {
+      "ratio": "130 : 1",
+      "stock": "1",
+      "want": ["Chaos Orb"],
+      "have": ["", "  "]
+    },
+    "neither-side-currency": {
+      "ratio": "130 : 1",
+      "stock": "1",
+      "want": ["Exalted Orb"],
+      "have": ["Allflame Ember of", "the Ethereal"]
+    }
+  }
+}
