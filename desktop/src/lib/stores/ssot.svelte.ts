@@ -898,6 +898,7 @@ export async function setShowAllLensFeeders(show: boolean): Promise<void> {
 	} finally {
 		endWrite(['showAllLensFeeders']);
 	}
+}
 
 /** Set the dedication-mode farming market on its own.
  *
