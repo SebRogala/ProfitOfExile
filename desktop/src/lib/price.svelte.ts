@@ -53,6 +53,28 @@ export function getDivineRate(): number {
  */
 export type PriceUnit = 'auto' | 'divine' | 'chaos';
 
+type PriceParts = { amount: string; unit?: 'c' | 'd' };
+
+export function formatPriceParts(chaos: number): PriceParts {
+	return priceParts(chaos, 'auto');
+}
+
+function priceParts(chaos: number, unit: PriceUnit): PriceParts {
+	// An em dash, not "0c": the rest of the UI renders unknown that way, and a
+	// zero here reads as a real valuation of nothing.
+	if (!Number.isFinite(chaos)) return { amount: '\u2014' };
+	if (divineRate > 0 && unit !== 'chaos') {
+		const divines = chaos / divineRate;
+		if (unit === 'divine' || Math.abs(chaos) >= DIVINE_DISPLAY_FLOOR * divineRate) {
+			return {
+				amount: divines.toFixed(Math.abs(divines) < 1 ? 2 : 1),
+				unit: DIVINE_SUFFIX,
+			};
+		}
+	}
+	return { amount: String(Math.round(chaos)), unit: CHAOS_SUFFIX };
+}
+
 /**
  * Format a chaos amount for display: "412c", or "15.4d" once the unit says so.
  * Fractions of a chaos are not meaningful, so chaos is rounded. Below a single
@@ -60,22 +82,15 @@ export type PriceUnit = 'auto' | 'divine' | 'chaos';
  * divine number alone gives no sense of scale down there.
  */
 export function formatPrice(chaos: number, unit: PriceUnit = 'auto'): string {
-	// An em dash, not "0c": the rest of the UI renders unknown that way, and a
-	// zero here reads as a real valuation of nothing.
-	if (!Number.isFinite(chaos)) return '\u2014';
-	if (divineRate > 0 && unit !== 'chaos') {
-		const divines = chaos / divineRate;
-		if (unit === 'divine' || Math.abs(chaos) >= DIVINE_DISPLAY_FLOOR * divineRate) {
-			if (Math.abs(divines) < 1) {
-				// A fraction of a divine is hard to size on its own — "0.06d" says
-				// little, and it is the chaos figure you would actually pay. Only
-				// reachable with a pinned unit: auto never converts this low.
-				return `${divines.toFixed(2)}${DIVINE_SUFFIX} (${Math.round(chaos)}${CHAOS_SUFFIX})`;
-			}
-			return `${divines.toFixed(1)}${DIVINE_SUFFIX}`;
-		}
+	const parts = priceParts(chaos, unit);
+	const formatted = parts.amount + (parts.unit ?? '');
+	if (parts.unit === DIVINE_SUFFIX && Math.abs(chaos / divineRate) < 1) {
+		// A fraction of a divine is hard to size on its own — "0.06d" says
+		// little, and it is the chaos figure you would actually pay. Only
+		// reachable with a pinned unit: auto never converts this low.
+		return `${formatted} (${priceParts(chaos, 'chaos').amount}${CHAOS_SUFFIX})`;
 	}
-	return `${Math.round(chaos)}${CHAOS_SUFFIX}`;
+	return formatted;
 }
 
 /**
