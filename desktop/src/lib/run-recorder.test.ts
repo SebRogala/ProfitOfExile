@@ -5,7 +5,7 @@ import { resetServerBaseForTests } from '$lib/stores/server-base.svelte';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
-// No layout: the run is still posted, with has_golden_door=false.
+// A failed layout load (null): the run is still posted, with has_golden_door=false.
 vi.mock('$lib/compass/layout-loader', () => ({ fetchLabLayout: vi.fn(async () => null) }));
 
 const CARRIER = 'http://carrier.test:8080';

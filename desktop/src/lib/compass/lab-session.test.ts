@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createLabSession, type CompassSettings, type LabNavEvent, type LabSessionHooks } from './lab-session.svelte';
+import type { fetchLabLayout } from './layout-loader';
 import type { LabLayout, NavState } from './navigation';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+
+/** What the loader resolves with: a layout, `{ missing }` for an all-404 answer, or null for a failure. */
+type LayoutResult = Awaited<ReturnType<typeof fetchLabLayout>>;
 
 type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void };
 function deferred<T>(): Deferred<T> {
@@ -54,12 +58,12 @@ function makeHarness() {
 	const handlers = new Map<string, Set<(e: { payload: unknown }) => void>>();
 	const unlistened: string[] = [];
 	const held = new Map<string, Deferred<unknown>[]>();
-	const heldLayouts: Deferred<LabLayout | null>[] = [];
+	const heldLayouts: Deferred<LayoutResult>[] = [];
 	const heldListens = new Map<string, Deferred<() => void>>();
 	const state = {
 		settingsReply: {} as CompassSettings | Error,
 		catchupEvents: [] as unknown[] | Error,
-		layoutReply: makeLayout() as LabLayout | null
+		layoutReply: makeLayout() as LayoutResult
 	};
 
 	const invoke = vi.fn(async (command: string) => {
@@ -126,8 +130,8 @@ function makeHarness() {
 			held.set(command, queue);
 			return d;
 		},
-		holdLayout(): Deferred<LabLayout | null> {
-			const d = deferred<LabLayout | null>();
+		holdLayout(): Deferred<LayoutResult> {
+			const d = deferred<LayoutResult>();
 			heldLayouts.push(d);
 			return d;
 		},
@@ -507,14 +511,18 @@ describe('lab session settings poll', () => {
 		expect(h.session.navState.strategy).toBe('darkshrines');
 	});
 
-	it('keeps an already locked difficulty when a tick names another', async () => {
+	it('keeps a newer LayoutChanged difficulty when a tick repeats the unchanged saved one', async () => {
+		// Only a saved value that changed re-locks; an unchanged one, polled every
+		// 2 s, must not undo a later event.
 		const h = makeHarness();
 		h.state.settingsReply = { difficulty: 'Cruel' };
 		h.session.acquire({});
 		await flush();
-		h.state.settingsReply = { difficulty: 'Uber' };
+		h.state.layoutReply = makeLayout('Merciless');
+		h.send('lab-nav', { type: 'LayoutChanged', difficulty: 'Merciless' });
+		await flush();
 		await vi.advanceTimersByTimeAsync(2000);
-		expect(h.session.lockedDifficulty).toBe('Cruel');
+		expect(h.session.lockedDifficulty).toBe('Merciless');
 	});
 
 	it('locks the difficulty a tick names while none is locked', async () => {

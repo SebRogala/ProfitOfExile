@@ -44,6 +44,7 @@ function layoutResponse() {
 // which ignores the status blow up on the missing json() and reach the catch,
 // so the "no layout published" test would go green for the wrong reason.
 const NOT_FOUND = { ok: false, status: 404, json: async () => ({ error: 'no layout for difficulty' }) };
+const SERVER_ERROR = { ok: false, status: 500, json: async () => ({ error: 'internal error' }) };
 
 /** Difficulty segment of a `/api/lab/layout/<difficulty>` URL. */
 function requestedDifficulties(fetchMock: ReturnType<typeof vi.fn>): string[] {
@@ -172,14 +173,16 @@ describe('fetchLabLayout', () => {
 
 	it('prefers the difficulty the triggering event named over the locked one', async () => {
 		// LayoutChanged carries the difficulty the planner just switched to, so it
-		// is newer than whatever this window settled on earlier.
+		// is newer than whatever this window settled on earlier. A 404 for it is
+		// that difficulty missing, never a cue to fall back to the default order.
 		carry(SERVER);
-		const fetchMock = vi.fn(async () => layoutResponse());
+		const fetchMock = vi.fn(async () => NOT_FOUND);
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-		await fetchLabLayout({ preferredDifficulty: 'Cruel', lockedDifficulty: 'Uber', log: () => {} });
+		const result = await fetchLabLayout({ preferredDifficulty: 'Cruel', lockedDifficulty: 'Uber', log: () => {} });
 
 		expect(requestedDifficulties(fetchMock)).toEqual(['Cruel']);
+		expect(result).toEqual({ missing: ['Cruel'] });
 	});
 
 	it('walks the default difficulty order and stops at the first one published', async () => {
@@ -193,11 +196,20 @@ describe('fetchLabLayout', () => {
 		expect(requestedDifficulties(fetchMock)).toEqual(DEFAULT_DIFFICULTY_ORDER.slice(0, 3));
 	});
 
-	it('returns null when no difficulty has a published layout', async () => {
+	it('reports the layout missing only when every candidate answers 404', async () => {
+		// Missing clears the caller's layout; null keeps it. A server error is an
+		// outage, so a 500 among the 404s has to stay null.
 		carry(SERVER);
 		globalThis.fetch = vi.fn(async () => NOT_FOUND) as unknown as typeof fetch;
+		const allNotFound = await fetchLabLayout({ log: () => {} });
 
-		expect(await fetchLabLayout({ log: () => {} })).toBeNull();
+		globalThis.fetch = vi.fn(async (url: string) =>
+			url.endsWith('/Merciless') ? SERVER_ERROR : NOT_FOUND,
+		) as unknown as typeof fetch;
+		const oneServerError = await fetchLabLayout({ log: () => {} });
+
+		expect(allNotFound).toEqual({ missing: DEFAULT_DIFFICULTY_ORDER });
+		expect(oneServerError).toBeNull();
 	});
 
 	it('returns null rather than rejecting when the request fails', async () => {
