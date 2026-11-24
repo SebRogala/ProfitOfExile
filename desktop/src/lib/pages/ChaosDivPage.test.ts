@@ -9,6 +9,9 @@ import { flushSync, mount, unmount } from 'svelte';
 import ChaosDivPage from './ChaosDivPage.svelte';
 
 vi.mock('$lib/stores/divine-rate.svelte', () => ({ currentDivineRate: () => null }));
+// The `unit` project resolves no browser condition, and vite-plugin-svelte inlines `svelte`,
+// so NODE_OPTIONS conditions never reach it: bare `svelte` is the server entry, whose `mount` throws.
+vi.mock('svelte', () => vi.importActual<typeof import('svelte')>('../../../node_modules/svelte/src/index-client.js'));
 
 let mounted: Record<string, unknown> | null = null;
 let writeText: ReturnType<typeof vi.fn>;
