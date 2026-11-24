@@ -1908,4 +1908,34 @@ mod tests {
             serde_json::to_string_pretty(&fresh).expect("pairs serialise")
         );
     }
+
+    mod keep_regression {
+        use super::*;
+
+        // keep:regression — POE-487 (poedb room pages 2026-11-24): rarity per
+        // tier is 8/12/16 %, and Locus of Corruption's 8/12/12 %.
+        #[test]
+        fn rarity_lines_read_poedbs_8_12_16_and_locus_8_12_12() {
+            let cases: [(&str, [Option<f64>; 3]); 10] = [
+                ("chamber_of_iron", [Some(8.0), Some(12.0), Some(16.0)]),
+                ("conduit_of_lightning", [Some(8.0), Some(12.0), Some(16.0)]),
+                ("crucible_of_flame", [Some(8.0), Some(12.0), Some(16.0)]),
+                ("defense_research_lab", [Some(8.0), Some(12.0), Some(16.0)]),
+                ("factory", [Some(8.0), Some(12.0), Some(16.0)]),
+                ("hall_of_champions", [Some(8.0), Some(12.0), Some(16.0)]),
+                ("hybridisation_chamber", [Some(8.0), Some(12.0), Some(16.0)]),
+                ("sanctum_of_immortality", [Some(8.0), Some(12.0), Some(16.0)]),
+                ("upgrade", [Some(8.0), Some(12.0), Some(16.0)]),
+                ("corruption", [Some(8.0), Some(12.0), Some(12.0)]),
+            ];
+            for (key, expected) in cases {
+                let rarity: Vec<Option<f64>> = drops_for(key)
+                    .tiers()
+                    .iter()
+                    .map(|t| t.rarity_pct().map(Estimate::value))
+                    .collect();
+                assert_eq!(rarity, expected, "{key} rarity");
+            }
+        }
+    }
 }

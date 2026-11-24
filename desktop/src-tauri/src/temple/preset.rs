@@ -1538,4 +1538,19 @@ mod tests {
             }
         }
     }
+
+    mod keep_regression {
+        use super::*;
+
+        // keep:regression — POE-487: the shipped chaos per rarity point is
+        // 0.5, while a saved Custom table keeps the value it stored.
+        #[test]
+        fn shipped_c_per_rarity_is_half_a_chaos_without_overriding_a_stored_one() {
+            assert_eq!(Knobs::default().c_per_rarity, 0.5);
+
+            let stored: TempleCustomSettings = serde_json::from_str(r#"{"cPerRarity": 2.5}"#)
+                .expect("a stored cPerRarity deserialises");
+            assert_eq!(stored.knobs().c_per_rarity, 2.5);
+        }
+    }
 }
