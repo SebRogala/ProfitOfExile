@@ -108,6 +108,7 @@ fn grouped_digits(text: &str) -> Option<String> {
 
 fn positive_decimal(text: &str) -> Option<f64> {
     let text = text.trim_matches(|c: char| c.is_whitespace() && c != '\n' && c != '\r');
+    let text = text.trim_end_matches([',', '.']);
     let normalized = if let Some((integer, fraction)) = text.split_once('.') {
         if fraction.is_empty() || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
             return None;
