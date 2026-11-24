@@ -1901,9 +1901,9 @@ mod tests {
         use super::*;
 
         // keep:regression — POE-487 (poedb room pages 2026-11-24): rarity per
-        // tier is 8/12/16 %, and Locus of Corruption's 8/12/12 %.
+        // tier is 8/12/16 %, Locus of Corruption's 8/12/12 % with pack size 1/2/2 %.
         #[test]
-        fn rarity_lines_read_poedbs_8_12_16_and_locus_8_12_12() {
+        fn locus_and_rarity_lines_read_poedbs_2026_11_24_ladders() {
             let cases: [(&str, [Option<f64>; 3]); 10] = [
                 ("chamber_of_iron", [Some(8.0), Some(12.0), Some(16.0)]),
                 ("conduit_of_lightning", [Some(8.0), Some(12.0), Some(16.0)]),
@@ -1924,6 +1924,12 @@ mod tests {
                     .collect();
                 assert_eq!(rarity, expected, "{key} rarity");
             }
+            let locus_pack: Vec<Option<f64>> = drops_for("corruption")
+                .tiers()
+                .iter()
+                .map(|t| t.pack_size_pct().map(Estimate::value))
+                .collect();
+            assert_eq!(locus_pack, [Some(1.0), Some(2.0), Some(2.0)], "corruption pack size");
         }
     }
 }
