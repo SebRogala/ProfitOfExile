@@ -5,7 +5,7 @@
 	import { createSettingsUpdateController } from '$lib/updater/settings-update.svelte';
 	import { store } from '$lib/stores/status.svelte';
 	import { hasFeature, MERC_FEATURE, TEMPLE_FEATURE, BETA_FEATURE } from '$lib/stores/entitlements.svelte';
-	import { ssot, fetchSsot, setBossLootSettings } from '$lib/stores/ssot.svelte';
+	import { ssot, fetchSsot, setBossLootSettings, setShowAllLensFeeders } from '$lib/stores/ssot.svelte';
 	import { nav } from '$lib/stores/navigation.svelte';
 	import ReadHotkeySetting from '$lib/components/ReadHotkeySetting.svelte';
 	import OverlayDismissSetting from '$lib/components/OverlayDismissSetting.svelte';
@@ -683,6 +683,11 @@
 				<span class="setting-label">Number format</span>
 				<SegmentedButtons value={numberFormat()} title="Thousands separator" options={NUMBER_FORMAT_OPTIONS} onselect={(value) => setNumberFormat(parseNumberFormat(value))} />
 				<span class="setting-value mono">{groupNumber('11225')}c</span>
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Facetor's Lens: all feeders</span>
+				<Toggle checked={ssot.showAllLensFeeders} label="Facetor's Lens: all feeders" onchange={setShowAllLensFeeders} />
 			</div>
 
 			<div class="setting-row">

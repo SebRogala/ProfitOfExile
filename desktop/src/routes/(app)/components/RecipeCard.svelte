@@ -8,7 +8,7 @@
 		sub?: string;
 		cell: PriceCell;
 		/** Rendered at the row's end, after the price. */
-		action?: Snippet;
+		action?: Snippet<[string]>;
 	}
 
 	let {
@@ -18,6 +18,7 @@
 		gives,
 		costs = [],
 		ev = null,
+		evSubtitle = 'lens − support',
 		source,
 		age,
 	}: {
@@ -27,6 +28,7 @@
 		gives: Row[];
 		costs?: Row[];
 		ev?: EvCell | null;
+		evSubtitle?: string;
 		source: string;
 		age: { text: string; stale: boolean } | null;
 	} = $props();
@@ -40,7 +42,7 @@
 		{:else}
 			<span class="rc-nil">{r.cell.kind === 'loading' ? 'pricing…' : 'no price'}</span>
 		{/if}
-		{#if r.action}{@render r.action()}{/if}
+		{#if r.action}{@render r.action(r.name)}{/if}
 	</div>
 {/snippet}
 
@@ -60,7 +62,7 @@
 
 	{#if ev}
 		<div class="rc-ev">
-			<span class="rc-name"><span class="rc-ev-label">EV per craft</span><small>lens − support</small></span>
+			<span class="rc-name"><span class="rc-ev-label">EV per craft</span><small>{evSubtitle}</small></span>
 			{#if ev.kind === 'value'}
 				<span class="rc-ev-value" class:negative={ev.negative}>{ev.text}</span>
 			{:else}

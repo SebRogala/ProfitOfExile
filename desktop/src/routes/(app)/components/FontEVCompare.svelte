@@ -269,17 +269,27 @@
 
 	{#if showRecipes}
 		{@const exceptional = exceptionalView(exceptionalPrices, nowMs, (c) => formatPrice(c))}
-		{@const lens = lensView(craft, nowMs, (c) => formatPrice(c), (c) => formatPriceSigned(c))}
-		{#snippet supportBuy()}
-			{@const supportUrl = exceptionalSupportTradeUrl(ssot.league)}
-			{#if supportUrl}
-				<Tooltip text="Buy the cheapest Exceptional Support Gem lv 3+"><a
+		{@const lens = lensView(craft, nowMs, (c) => formatPrice(c), (c) => formatPriceSigned(c), ssot.showAllLensFeeders)}
+		{#snippet feederBuy(name: string)}
+			{@const feeder = lens.costs.find((row) => row.name === name)!}
+			{@const url = feeder.source === 'trade' ? exceptionalSupportTradeUrl(ssot.league) : feeder.url}
+			{#if url}
+				<Tooltip text={feeder.source === 'trade' ? 'Buy the cheapest Exceptional Support Gem lv 3+' : `Buy ${feeder.name} · any corruption`}><a
 					class="buy-btn buy-blue"
-					href={supportUrl}
+					href={url}
 					target="_blank"
 				>BUY</a></Tooltip>
-			{:else}
+			{:else if feeder.source === 'trade'}
 				<span class="buy-btn buy-blue buy-disabled" aria-disabled="true" title="League not detected — trade link unavailable">BUY</span>
+			{/if}
+		{/snippet}
+		{#snippet lensBuy()}
+			{#if lens.lensUrl}
+				<Tooltip text="Buy Facetor's Lens · stored experience ≥ 999,627,000"><a
+					class="buy-btn buy-blue"
+					href={lens.lensUrl}
+					target="_blank"
+				>BUY</a></Tooltip>
 			{/if}
 		{/snippet}
 		<div class="recipe-grid">
@@ -295,10 +305,11 @@
 				title={'Facetor’s Lens · 60%'}
 				option={'Sacrifice a Gem to gain 60% of its experience as a Facetor’s Lens'}
 				givesLabel="Gives"
-				gives={[{ name: 'Facetor’s Lens', sub: 'stored experience ≥ 999,627,000', cell: lens.lens }]}
-				costs={[{ name: 'Exceptional Support Gem lv 3+', cell: lens.support, action: supportBuy }]}
+				gives={[{ name: 'Facetor’s Lens', sub: 'stored experience ≥ 999,627,000', cell: lens.lens, action: lens.lensUrl ? lensBuy : undefined }]}
+				costs={lens.costs.map((row) => ({ name: row.name, sub: row.sub, cell: row.cell, action: row.source === 'trade' || row.url ? feederBuy : undefined }))}
 				ev={lens.ev}
-				source={'trade · median of the 3 lowest'}
+				evSubtitle={lens.evSubtitle}
+				source={lens.source}
 				age={lens.age}
 			/>
 		</div>
