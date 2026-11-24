@@ -5,6 +5,7 @@
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
+	import BuyButton from '$lib/components/BuyButton.svelte';
 	import InfoTooltip from './InfoTooltip.svelte';
 	import RecipeCard from './RecipeCard.svelte';
 	import { invoke } from '@tauri-apps/api/core';
@@ -274,22 +275,24 @@
 			{@const feeder = lens.costs.find((row) => row.name === name)!}
 			{@const url = feeder.source === 'trade' ? exceptionalSupportTradeUrl(ssot.league) : feeder.url}
 			{#if url}
-				<Tooltip text={feeder.source === 'trade' ? 'Buy the cheapest Exceptional Support Gem lv 3+' : `Buy ${feeder.name} · any corruption`}><a
-					class="buy-btn buy-blue"
+				<Tooltip text={feeder.source === 'trade' ? 'Buy the cheapest Exceptional Support Gem lv 3+' : `Buy ${feeder.name} · any corruption`}><BuyButton
+					label="BUY"
 					href={url}
-					target="_blank"
-				>BUY</a></Tooltip>
+					colour="blue"
+					width="fixed"
+				/></Tooltip>
 			{:else if feeder.source === 'trade'}
-				<span class="buy-btn buy-blue buy-disabled" aria-disabled="true" title="League not detected — trade link unavailable">BUY</span>
+				<BuyButton label="BUY" href={null} colour="blue" width="fixed" title="League not detected — trade link unavailable" />
 			{/if}
 		{/snippet}
 		{#snippet lensBuy()}
 			{#if lens.lensUrl}
-				<Tooltip text="Buy Facetor's Lens · stored experience ≥ 999,627,000"><a
-					class="buy-btn buy-blue"
+				<Tooltip text="Buy Facetor's Lens · stored experience ≥ 999,627,000"><BuyButton
+					label="BUY"
 					href={lens.lensUrl}
-					target="_blank"
-				>BUY</a></Tooltip>
+					colour="blue"
+					width="fixed"
+				/></Tooltip>
 			{/if}
 		{/snippet}
 		<div class="recipe-grid">
@@ -401,13 +404,14 @@
 								{#each COLORS as color}
 									{@const url = cheapestCorruptedTradeUrl(color, row.poolKey === 'transfigured', ssot.league, row.variant)}
 									{#if url}
-										<Tooltip text="Buy cheapest corrupted {row.variant} {color} {row.poolKey === 'transfigured' ? 'transfigured ' : ''}gems"><a
-											class="buy-btn buy-{color.toLowerCase()}"
+										<Tooltip text="Buy cheapest corrupted {row.variant} {color} {row.poolKey === 'transfigured' ? 'transfigured ' : ''}gems"><BuyButton
+											label={color}
 											href={url}
-											target="_blank"
-										>{color}</a></Tooltip>
+											colour={color.toLowerCase() as 'red' | 'green' | 'blue'}
+											width="fixed"
+										/></Tooltip>
 									{:else}
-										<span class="buy-btn buy-{color.toLowerCase()} buy-disabled" aria-disabled="true" title="League not detected — trade link unavailable">{color}</span>
+										<BuyButton label={color} href={null} colour={color.toLowerCase() as 'red' | 'green' | 'blue'} width="fixed" title="League not detected — trade link unavailable" />
 									{/if}
 								{/each}
 							</div>
@@ -553,13 +557,14 @@
 									{#each COLORS as color}
 										{@const url = buyBaseUrl(variant, color, ssot.league)}
 										{#if url}
-											<Tooltip text="Buy cheapest {color} base gem ({variant})"><a
-												class="buy-btn buy-{color.toLowerCase()}"
+											<Tooltip text="Buy cheapest {color} base gem ({variant})"><BuyButton
+												label={color}
 												href={url}
-												target="_blank"
-											>{color}</a></Tooltip>
+												colour={color.toLowerCase() as 'red' | 'green' | 'blue'}
+												width="fixed"
+											/></Tooltip>
 										{:else}
-											<span class="buy-btn buy-{color.toLowerCase()} buy-disabled" aria-disabled="true" title="League not detected — trade link unavailable">{color}</span>
+											<BuyButton label={color} href={null} colour={color.toLowerCase() as 'red' | 'green' | 'blue'} width="fixed" title="League not detected — trade link unavailable" />
 										{/if}
 									{/each}
 								</div>
@@ -728,14 +733,6 @@
 	.buy-col {
 		width: 80px;
 	}
-	.buy-disabled {
-		display: block;
-		text-align: center;
-		font-size: 0.75rem;
-		color: var(--color-lab-text-secondary);
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
 	.buy-buttons {
 		display: flex;
 		flex-direction: column;
@@ -744,36 +741,6 @@
 		justify-content: center;
 		height: 100%;
 	}
-	.buy-btn {
-		display: block;
-		width: 56px;
-		padding: 3px 0;
-		font-size: 0.6875rem;
-		font-weight: 700;
-		text-align: center;
-		text-decoration: none;
-		letter-spacing: 0.04em;
-		border: 1px solid;
-		cursor: pointer;
-	}
-	.buy-red {
-		color: var(--color-lab-red);
-		border-color: rgba(239, 68, 68, 0.4);
-		background: rgba(239, 68, 68, 0.08);
-	}
-	.buy-red:hover { background: rgba(239, 68, 68, 0.2); }
-	.buy-green {
-		color: var(--color-lab-green);
-		border-color: rgba(34, 197, 94, 0.4);
-		background: rgba(34, 197, 94, 0.08);
-	}
-	.buy-green:hover { background: rgba(34, 197, 94, 0.2); }
-	.buy-blue {
-		color: var(--color-lab-blue, #3b82f6);
-		border-color: rgba(59, 130, 246, 0.4);
-		background: rgba(59, 130, 246, 0.08);
-	}
-	.buy-blue:hover { background: rgba(59, 130, 246, 0.2); }
 	.buy-na {
 		color: var(--color-lab-text-secondary);
 		font-size: 0.75rem;

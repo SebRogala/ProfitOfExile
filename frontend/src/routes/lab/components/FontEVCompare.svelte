@@ -4,6 +4,7 @@
 	import { formatPrice, formatPriceSigned, type PriceUnit } from '$lib/price.svelte';
 	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
+	import BuyButton from '$lib/components/BuyButton.svelte';
 
 	let { refreshKey = 0, league = '', labMode = 'normal' }: { refreshKey?: number; league?: string; labMode?: 'normal' | 'dedication' } = $props();
 
@@ -311,14 +312,15 @@
 								{#each COLORS as color}
 									{@const url = cheapestCorruptedTradeUrl(color, row.poolKey === 'transfigured', league, row.variant)}
 									{#if url}
-										<a
-											class="buy-btn buy-{color.toLowerCase()}"
+										<BuyButton
+											label={color}
 											href={url}
-											target="_blank"
+											colour={color.toLowerCase() as 'red' | 'green' | 'blue'}
+											width="fixed"
 											title="Buy cheapest corrupted {row.variant} {color} {row.poolKey === 'transfigured' ? 'transfigured ' : ''}gems"
-										>{color}</a>
+										/>
 									{:else}
-										<span class="buy-btn buy-{color.toLowerCase()} buy-disabled" aria-disabled="true" title="League not detected — trade link unavailable">{color}</span>
+										<BuyButton label={color} href={null} colour={color.toLowerCase() as 'red' | 'green' | 'blue'} width="fixed" title="League not detected — trade link unavailable" />
 									{/if}
 								{/each}
 							</div>
@@ -458,14 +460,15 @@
 									{#each COLORS as color}
 										{@const url = buyBaseUrl(variant, color, league)}
 										{#if url}
-											<a
-												class="buy-btn buy-{color.toLowerCase()}"
+											<BuyButton
+												label={color}
 												href={url}
-												target="_blank"
+												colour={color.toLowerCase() as 'red' | 'green' | 'blue'}
+												width="fixed"
 												title="Buy cheapest {color} base gem ({variant})"
-											>{color}</a>
+											/>
 										{:else}
-											<span class="buy-btn buy-{color.toLowerCase()} buy-disabled" aria-disabled="true" title="League not detected — trade link unavailable">{color}</span>
+											<BuyButton label={color} href={null} colour={color.toLowerCase() as 'red' | 'green' | 'blue'} width="fixed" title="League not detected — trade link unavailable" />
 										{/if}
 									{/each}
 								</div>
@@ -545,10 +548,6 @@
 </section>
 
 <style>
-	.buy-disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
-	}
 	.section {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
@@ -705,36 +704,6 @@
 		justify-content: center;
 		height: 100%;
 	}
-	.buy-btn {
-		display: block;
-		width: 56px;
-		padding: 3px 0;
-		font-size: 0.6875rem;
-		font-weight: 700;
-		text-align: center;
-		text-decoration: none;
-		letter-spacing: 0.04em;
-		border: 1px solid;
-		cursor: pointer;
-	}
-	.buy-red {
-		color: var(--color-lab-red);
-		border-color: rgba(239, 68, 68, 0.4);
-		background: rgba(239, 68, 68, 0.08);
-	}
-	.buy-red:hover { background: rgba(239, 68, 68, 0.2); }
-	.buy-green {
-		color: var(--color-lab-green);
-		border-color: rgba(34, 197, 94, 0.4);
-		background: rgba(34, 197, 94, 0.08);
-	}
-	.buy-green:hover { background: rgba(34, 197, 94, 0.2); }
-	.buy-blue {
-		color: var(--color-lab-blue, #3b82f6);
-		border-color: rgba(59, 130, 246, 0.4);
-		background: rgba(59, 130, 246, 0.08);
-	}
-	.buy-blue:hover { background: rgba(59, 130, 246, 0.2); }
 	.buy-na {
 		color: var(--color-lab-text-secondary);
 		font-size: 0.75rem;
