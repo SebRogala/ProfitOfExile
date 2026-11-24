@@ -72,7 +72,7 @@ const ROOTS: MirrorRoot[] = [
 				'desktop tab follows the ssot normal variant, hands its rankings query up to the Tauri-bound controller, loads/saves the low-confidence toggle through Tauri settings and uses the shared Tooltip; web keeps a local tab, fetches its own page, a league prop and InfoTooltip',
 			'InfoTooltip.svelte': 'desktop wraps the shared Tooltip component; web implements its own hover/pin panel',
 			'BestPlays.svelte':
-				'desktop reads ssot and uses the shared Tooltip; web takes a league prop and uses InfoTooltip',
+				'desktop reads ssot, uses the shared Tooltip and shows prices with currency icons; web takes a league prop, uses InfoTooltip and title attributes and shows prices as text',
 			'Header.svelte': 'web header carries the Normal/Dedication lab selector and a title attribute; desktop uses the shared Tooltip and no lab selector',
 			'FontEV.svelte': 'desktop shared Tooltip vs web InfoTooltip',
 			'SignalBadge.svelte': 'desktop Tooltip vs web title attribute',

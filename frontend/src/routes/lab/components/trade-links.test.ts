@@ -80,8 +80,8 @@ for (const league of [undefined, ' \t ', 'New League']) {
 			const root = attach(BestPlays, { plays: [gem as GemPlay], league: status.league });
 			click(root.querySelector('tbody tr'));
 			await settle();
-			expect(root.textContent).toContain('Buy Base');
-			expect(root.textContent).toContain('Buy 20/0');
+			expect(root.textContent).toContain('BUY BASE');
+			expect(root.textContent).toContain('BUY 20/0');
 			checkLinks(root, resolved, 2);
 			if (!resolved) expect(root.querySelectorAll('[aria-disabled="true"]')).toHaveLength(2);
 		});
