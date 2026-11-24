@@ -413,7 +413,14 @@ pub fn placements_for(screen: Option<&ScreenSlice>) -> Placements {
         merc: Some(MercPlacements {
             panel: [merc_origin[0], merc_origin[1], merc_seed[2], merc_seed[3]],
         }),
-        exchange: None,
+        exchange: Some(ExchangePlacements {
+            panel: [
+                client[0] + (240.0 / 0.9 * scale).round() as i32,
+                client[1] + (115.0 / 0.9 * scale).round() as i32,
+                (775.0 / 0.9 * scale).round() as i32,
+                (850.0 / 0.9 * scale).round() as i32,
+            ],
+        }),
         lab,
     }
 }

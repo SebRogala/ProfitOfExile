@@ -174,13 +174,13 @@ pub fn polled_keys(read: &Shortcut, dismiss: &[Shortcut]) -> std::collections::B
 pub enum ReaderId { Temple, Font, Gem, Mercenary, Exchange }
 
 impl ReaderId {
-    fn mechanic(self) -> crate::read_prompt::Mechanic {
+    fn mechanic(self) -> Option<crate::read_prompt::Mechanic> {
         use crate::read_prompt::Mechanic;
         match self {
-            Self::Temple => Mechanic::Incursion,
-            Self::Font | Self::Gem => Mechanic::DivineFont,
-            Self::Mercenary => Mechanic::Mercenary,
-            Self::Exchange => todo!("POE-477 WI-2: the exchange reader has no read-prompt mechanic"),
+            Self::Temple => Some(Mechanic::Incursion),
+            Self::Font | Self::Gem => Some(Mechanic::DivineFont),
+            Self::Mercenary => Some(Mechanic::Mercenary),
+            Self::Exchange => None,
         }
     }
 }
@@ -254,7 +254,7 @@ pub fn prepare_press<C>(
         if pendings.iter().any(|(existing, _)| *existing == id) { continue; }
         if let Some(pending) = reader.prepare(ctx, &press) { pendings.push((id, pending)); }
     }
-    pendings.sort_by_key(|(id, _)| if *id == ReaderId::Font { 0 } else if Some(id.mechanic()) == recent { 1 } else { 2 });
+    pendings.sort_by_key(|(id, _)| if *id == ReaderId::Font { 0 } else if recent.is_some() && id.mechanic() == recent { 1 } else { 2 });
     PreparedPress { delay, pendings, dismissed: Vec::new(), finish: None, log: None, sweep: None }
 }
 

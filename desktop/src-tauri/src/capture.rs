@@ -737,19 +737,24 @@ pub fn preprocess_for_ocr_rows(img: &image::DynamicImage) -> image::DynamicImage
 }
 
 /// [`preprocess_for_ocr_rows`] under an explicit engine limit, padding included.
-pub fn preprocess_for_ocr_rows_within(img: &image::DynamicImage, _limit: Option<u32>) -> image::DynamicImage {
-    img.clone()
+pub fn preprocess_for_ocr_rows_within(img: &image::DynamicImage, limit: Option<u32>) -> image::DynamicImage {
+    let contrasted = contrast_stretched(img);
+    let (w, h) = contrasted.dimensions();
+    let pad = limit.map_or(40, |limit| 40.min(limit.saturating_sub(1) / 2));
+    let factor = limit.map_or(3.0, |limit| {
+        ((limit.saturating_sub(2 * pad)) as f64 / w.max(h).max(1) as f64).min(3.0)
+    });
+    let out_w = (w as f64 * factor).floor().max(1.0) as u32;
+    let out_h = (h as f64 * factor).floor().max(1.0) as u32;
+    let mut scaled = image::imageops::resize(&contrasted, out_w, out_h, image::imageops::FilterType::Lanczos3);
+    image::imageops::invert(&mut scaled);
+    let mut padded = image::GrayImage::from_pixel(out_w + 2 * pad, out_h + 2 * pad, image::Luma([255]));
+    image::imageops::replace(&mut padded, &scaled, pad.into(), pad.into());
+    image::DynamicImage::ImageLuma8(padded)
 }
 
-fn preprocess_with(
-    img: &image::DynamicImage,
-    filter: image::imageops::FilterType,
-) -> image::DynamicImage {
-    let gray = img.to_luma8();
-    let (w, h) = gray.dimensions();
-
-    // Increase contrast: stretch histogram
-    let mut contrasted = gray.clone();
+fn contrast_stretched(img: &image::DynamicImage) -> image::GrayImage {
+    let mut contrasted = img.to_luma8();
     let (mut min_val, mut max_val) = (255u8, 0u8);
     for p in contrasted.pixels() {
         min_val = min_val.min(p.0[0]);
@@ -762,6 +767,16 @@ fn preprocess_with(
             p.0[0] = (normalized * 255.0) as u8;
         }
     }
+
+    contrasted
+}
+
+fn preprocess_with(
+    img: &image::DynamicImage,
+    filter: image::imageops::FilterType,
+) -> image::DynamicImage {
+    let contrasted = contrast_stretched(img);
+    let (w, h) = contrasted.dimensions();
 
     // Upscale EVERY crop 2×, with no size gate (POE-164). Text size tracks the
     // glyph height inside the band, not the band's own dimensions, so a crop

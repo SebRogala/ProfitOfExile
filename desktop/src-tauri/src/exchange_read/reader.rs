@@ -26,12 +26,12 @@ impl ExchangeReadHandle {
 
 /// One exchange press, prepared and waiting for its frame.
 pub struct ExchangePending {
-    #[allow(dead_code)]
     standing: Option<crate::ssot::ScreenSlice>,
-    #[allow(dead_code)]
     ocr: RecognizeLines,
-    #[allow(dead_code)]
     result: ExchangeReadHandle,
+    panel: Option<[i32; 4]>,
+    scale: f32,
+    probe_error: bool,
 }
 
 /// Prepares one press. `standing` is the published screen slice at press
@@ -41,15 +41,68 @@ pub fn prepare(
     ocr: RecognizeLines,
 ) -> (ExchangePending, ExchangeReadHandle) {
     let result = ExchangeReadHandle::default();
-    (ExchangePending { standing, ocr, result: result.clone() }, result)
+    (ExchangePending { standing, ocr, result: result.clone(), panel: None, scale: 1.0, probe_error: false }, result)
+}
+
+impl ExchangePending {
+    fn read_crop(&mut self, frame: &crate::capture::Capture, rect: [i32; 4]) -> Result<Vec<crate::ocr::OcrLineBox>, String> {
+        let [px, py, _, _] = self.panel.ok_or("exchange panel unplaced")?;
+        let [dx, dy, w, h] = rect.map(|v| (v as f32 * self.scale).round() as i32);
+        let (x, y) = (px + dx, py + dy);
+        if x < 0 || y < 0 || w <= 0 || h <= 0
+            || i64::from(x) + i64::from(w) > i64::from(frame.image.width())
+            || i64::from(y) + i64::from(h) > i64::from(frame.image.height())
+        {
+            return Err("exchange crop outside pressed frame".into());
+        }
+        let crop = frame.image.crop_imm(x as u32, y as u32, w as u32, h as u32);
+        let prepared = crate::capture::preprocess_for_ocr_rows(&crop);
+        (self.ocr)(&prepared)
+    }
+
+    fn selection(&mut self, frame: &crate::capture::Capture) -> ExchangeReadResult {
+        use super::parse::{parse_top_row, ExchangeReadError::*};
+        if self.probe_error {
+            return Err(RatioUnreadable);
+        }
+        let mut row = self.read_crop(frame, [290, 342, 197, 26]).map_err(|_| RatioUnreadable)?;
+        row.sort_by_key(|word| word.x);
+        let split = row.windows(2).enumerate()
+            .max_by_key(|(_, pair)| i64::from(pair[1].x) - i64::from(pair[0].x) - i64::from(pair[0].w))
+            .map(|(index, _)| index + 1).ok_or(RatioUnreadable)?;
+        let (ratio, stock) = row.split_at(split);
+        let ratio = ratio.iter().map(|word| word.text.as_str()).collect::<Vec<_>>().join(" ");
+        let stock = stock.iter().map(|word| word.text.as_str()).collect::<Vec<_>>().join(" ");
+        let mut want = self.read_crop(frame, [65, 111, 190, 28]).map_err(|_| NamesUnreadable)?;
+        let mut have = self.read_crop(frame, [565, 103, 160, 46]).map_err(|_| NamesUnreadable)?;
+        want.sort_by_key(|line| (line.y, line.x));
+        have.sort_by_key(|line| (line.y, line.x));
+        let want: Vec<_> = want.iter().map(|line| line.text.as_str()).collect();
+        let have: Vec<_> = have.iter().map(|line| line.text.as_str()).collect();
+        parse_top_row(&ratio, &stock, &want, &have)
+    }
 }
 
 impl<C> crate::read_hotkey::PendingRead<C> for ExchangePending {
-    fn probe(&mut self, _frame: &Arc<crate::capture::Capture>, _ctx: &C) -> Result<bool, String> {
-        Ok(false)
+    fn probe(&mut self, frame: &Arc<crate::capture::Capture>, _ctx: &C) -> Result<bool, String> {
+        let screen = self.standing.filter(|_| crate::ssot::screen_matches(
+            &self.standing, (frame.image.width(), frame.image.height()), frame.origin, frame.client,
+        )).unwrap_or_else(|| crate::ssot::screen_from_capture(frame));
+        self.panel = crate::ssot::placements(&screen).exchange.map(|placement| placement.panel);
+        self.scale = screen.ui_scale / crate::ssot::ui_scale_for_height(1080);
+        match self.read_crop(frame, [295, 298, 185, 21]) {
+            Ok(lines) => Ok(lines.iter().flat_map(|line| line.text.split_whitespace()).collect::<Vec<_>>().join(" ") == "COMPETING TRADES"),
+            Err(_) => {
+                self.probe_error = true;
+                Ok(true)
+            }
+        }
     }
 
-    fn consume(self: Box<Self>, _frame: Result<&Arc<crate::capture::Capture>, &str>, _ctx: &C) {}
+    fn consume(mut self: Box<Self>, frame: Result<&Arc<crate::capture::Capture>, &str>, _ctx: &C) {
+        let selection = frame.map_err(|_| ExchangeReadError::RatioUnreadable).and_then(|frame| self.selection(frame));
+        *self.result.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(selection);
+    }
 }
 
 #[cfg(test)]

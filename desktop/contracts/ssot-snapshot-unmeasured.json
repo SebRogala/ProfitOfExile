@@ -351,6 +351,7 @@
   "placements": {
     "temple": null,
     "merc": null,
+    "exchange": null,
     "lab": {
       "gem": [
         0,
