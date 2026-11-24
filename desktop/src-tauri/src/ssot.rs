@@ -512,6 +512,7 @@ pub struct AppSsotSnapshot {
     /// The "Read screen" shortcut and delay (POE-387), read from the owner
     /// `AppState.read_hotkey` at snapshot time — not stored in `AppState.ssot`.
     pub read_hotkey: crate::read_hotkey::ReadHotkeySettings,
+    pub exchange_read: crate::exchange_read::ExchangeReadSettings,
     pub overlay_dismiss: crate::overlay_dismiss::DismissSnapshot,
     /// The "press <key> to read" prompt (POE-388), read from the owner
     /// `AppState.read_prompt` at snapshot time — not stored in `AppState.ssot`.
@@ -643,6 +644,7 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         default_url: crate::settings::DEFAULT_SERVER_URL.to_string(),
     };
     let read_hotkey = state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let exchange_read = state.exchange_read.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let read_prompt = state.read_prompt.lock().unwrap_or_else(|e| e.into_inner()).snapshot();
     let mut snapshot = compose_snapshot(
         base,
@@ -660,6 +662,7 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     );
     snapshot.server = server;
     snapshot.read_hotkey = read_hotkey;
+    snapshot.exchange_read = exchange_read;
     snapshot.read_prompt = read_prompt;
     crate::overlay_dismiss::with_settings(state, snapshot)
 }

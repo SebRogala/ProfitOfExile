@@ -977,6 +977,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     let boss_loot = state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let number_format = *state.loot.number_format.lock().unwrap_or_else(|e| e.into_inner());
     let read_hotkey = state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let exchange_read = state.exchange_read.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let overlay_dismiss = state.overlay_dismiss.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let temple = state.temple_state.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     // Bound HERE rather than inside the struct literal below: a temporary
@@ -996,7 +997,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     Settings {
         boss_loot,
         read_hotkey: Salvaged::new(read_hotkey),
-        exchange_read: Salvaged::new(Default::default()),
+        exchange_read: Salvaged::new(exchange_read),
         overlay_dismiss: Salvaged::new(overlay_dismiss),
         number_format: Some(number_format),
         client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
@@ -1087,8 +1088,20 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
             fallback
         }
     };
+    let exchange_read = match settings.exchange_read.validate()
+        .and_then(|()| settings.exchange_read.apart_from(&read_hotkey.shortcut, &boss_loot))
+    {
+        Ok(()) if !settings.exchange_read.was_salvaged() => (*settings.exchange_read).clone(),
+        result => {
+            let reason = result.err().unwrap_or_else(|| "did not parse".into());
+            let fallback = crate::exchange_read::fallback_apart_from(&read_hotkey.shortcut, &boss_loot);
+            rejected.push(format!("read exchange shortcut: {reason}; using key {}", fallback.shortcut.key));
+            fallback
+        }
+    };
     *state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()) = boss_loot;
     *state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()) = read_hotkey;
+    *state.exchange_read.lock().unwrap_or_else(|e| e.into_inner()) = exchange_read;
     let overlay_dismiss = match settings.overlay_dismiss.validate() {
         Ok(()) if !settings.overlay_dismiss.was_salvaged() => (*settings.overlay_dismiss).clone(),
         result => {

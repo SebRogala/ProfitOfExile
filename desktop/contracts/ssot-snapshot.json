@@ -448,6 +448,14 @@
     "delayMs": 150,
     "recalibrateSeconds": 10
   },
+  "exchangeRead": {
+    "shortcut": {
+      "key": 2,
+      "shift": false,
+      "ctrl": false,
+      "alt": true
+    }
+  },
   "overlayDismiss": {
     "timeoutSeconds": 10,
     "shortcut": {

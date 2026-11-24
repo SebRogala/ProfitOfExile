@@ -862,6 +862,10 @@ pub(crate) fn store_settings(state: &crate::AppState, settings: LootSettings) ->
     settings.validate()?;
     let read = state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()).shortcut.clone();
     crate::read_hotkey::apart_from_boss_loot(&read, &settings)?;
+    let exchange = state.exchange_read.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if exchange.shortcut == settings.capture_shortcut || exchange.shortcut == settings.preview_shortcut {
+        return Err("Boss loot shortcuts must differ from the read exchange shortcut".into());
+    }
     *state
         .loot.settings
         .lock()

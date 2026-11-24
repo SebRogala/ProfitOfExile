@@ -787,6 +787,7 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	applyModules(snap.modules, dispatchedAtSeq);
 	if (snap.bossLoot !== undefined) ssot.bossLoot = snap.bossLoot;
 	if (snap.readHotkey !== undefined) ssot.readHotkey = snap.readHotkey;
+	if (snap.exchangeRead !== undefined) ssot.exchangeRead = snap.exchangeRead;
 	if (snap.overlayDismiss !== undefined) ssot.overlayDismiss = snap.overlayDismiss;
 	if (snap.readPrompt !== undefined) ssot.readPrompt = snap.readPrompt;
 	applyMercenary(snap.mercenary);

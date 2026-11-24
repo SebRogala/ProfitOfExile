@@ -58,7 +58,7 @@ pub fn apart_from_boss_loot(
     loot: &crate::loot_capture::LootSettings,
 ) -> Result<(), String> {
     if *read == loot.capture_shortcut || *read == loot.preview_shortcut {
-        return Err("The read screen shortcut must differ from the boss loot shortcuts".into());
+        return Err("Read screen shortcut must differ from the boss loot and read exchange shortcuts".into());
     }
     Ok(())
 }
@@ -106,6 +106,10 @@ pub(crate) fn store_settings(state: &crate::AppState, settings: ReadHotkeySettin
     settings.validate()?;
     let loot = state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     apart_from_boss_loot(&settings.shortcut, &loot)?;
+    let exchange = state.exchange_read.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if settings.shortcut == exchange.shortcut {
+        return Err("Read screen shortcut must differ from the boss loot and read exchange shortcuts".into());
+    }
     *state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()) = settings;
     Ok(())
 }
@@ -165,8 +169,8 @@ impl DismissPoll {
 }
 
 #[cfg(any(windows, test))]
-pub fn polled_keys(read: &Shortcut, _exchange: &Shortcut, dismiss: &[Shortcut]) -> std::collections::BTreeSet<u16> {
-    [16, 17, 18, read.key].into_iter().chain(dismiss.iter().map(|shortcut| shortcut.key)).collect()
+pub fn polled_keys(read: &Shortcut, exchange: &Shortcut, dismiss: &[Shortcut]) -> std::collections::BTreeSet<u16> {
+    [16, 17, 18, read.key, exchange.key].into_iter().chain(dismiss.iter().map(|shortcut| shortcut.key)).collect()
 }
 
 /// A reader identity used for first-match ordering and dispatch results.
@@ -280,16 +284,23 @@ pub fn dispatch_press<C>(
         return DispatchOutcome::Suppressed;
     }
     sleep(armed.delay);
+    let exchange = matches!(armed.pendings.as_slice(), [(ReaderId::Exchange, _)]);
+    let prefix = if exchange { "Exchange read:" } else { "Read key:" };
     let mut log = armed.log.take();
     let mut write = |line: String| if let Some(log) = log.as_mut() { log(line) };
     let ms = |since: std::time::Instant| since.elapsed().as_millis();
     let started = std::time::Instant::now();
     let frame = match grab() {
         // Nothing grabbed and already logged by capture; the press is a no-op.
-        Err(crate::capture::CaptureError::NotAccepted) => return DispatchOutcome::Suppressed,
+        Err(crate::capture::CaptureError::NotAccepted) => {
+            if exchange {
+                write(format!("{prefix} privacy refused in {} ms (grab {} ms, calibration 0 ms, probes 0 ms)", ms(started), ms(started)));
+            }
+            return DispatchOutcome::Suppressed;
+        }
         Err(crate::capture::CaptureError::Failed(e)) => {
-            log::warn!("read hotkey: screen grab failed: {e}");
-            write(format!("Read key: failed in {} ms (grab {} ms, calibration 0 ms, probes 0 ms)", ms(started), ms(started)));
+            log::warn!("{prefix} screen grab failed: {e}");
+            write(format!("{prefix} failed in {} ms (grab {} ms, calibration 0 ms, probes 0 ms)", ms(started), ms(started)));
             return DispatchOutcome::Failed(e);
         }
         Ok(capture) => std::sync::Arc::new(capture),
@@ -307,11 +318,11 @@ pub fn dispatch_press<C>(
                 break;
             }
             Ok(false) => {
-                write(format!("Read key: {id:?} probe — no match, {} ms", ms(probe_started)));
+                write(format!("{prefix} {id:?} probe — no match, {} ms", ms(probe_started)));
                 missed.push((id, pending));
             }
             Err(error) => {
-                log::warn!("read hotkey: probe failed: {error}");
+                log::warn!("{prefix} probe failed: {error}");
                 outcome = DispatchOutcome::Failed(error);
                 break;
             }
@@ -325,7 +336,7 @@ pub fn dispatch_press<C>(
     if let (true, Some(notice)) = (outcome == DispatchOutcome::NoMatch, notice) {
         let mut sweep: Vec<_> = missed.into_iter().filter_map(|(id, mut p)| p.needs_calibration(&frame, ctx).then_some((id, p))).collect();
         if !sweep.is_empty() {
-            write("Read key: no mechanics found — running a recalibration sweep now".to_string());
+            write(format!("{prefix} no mechanics found — running a recalibration sweep now"));
             notice();
         }
         for (id, mut pending) in sweep.drain(..) {
@@ -338,7 +349,7 @@ pub fn dispatch_press<C>(
                 }
                 Ok(false) => {}
                 Err(error) => {
-                    log::warn!("read hotkey: probe failed: {error}");
+                    log::warn!("{prefix} probe failed: {error}");
                     outcome = DispatchOutcome::Failed(error);
                     break;
                 }
@@ -352,7 +363,7 @@ pub fn dispatch_press<C>(
         _ => "nothing detected".to_string(),
     };
     write(format!(
-        "Read key: {result} in {} ms (grab {grab_ms} ms, calibration {calibration_ms} ms, probes {probes_ms} ms)",
+        "{prefix} {result} in {} ms (grab {grab_ms} ms, calibration {calibration_ms} ms, probes {probes_ms} ms)",
         ms(started),
     ));
     outcome
@@ -390,9 +401,10 @@ pub fn run_sampler<C>(
     queue: &std::sync::mpsc::Sender<PreparedPress<C>>,
     on_accept: &mut dyn FnMut() -> Accepted,
     on_dismiss: &mut dyn FnMut(&Shortcut) -> u64,
-    _on_exchange: &mut dyn FnMut(&Press) -> ExchangePress<C>,
+    on_exchange: &mut dyn FnMut(&Press) -> ExchangePress<C>,
 ) {
     let mut poll = ReadPoll::default();
+    let mut exchange_poll = ReadPoll::default();
     let mut dismiss_poll = DismissPoll::default();
     while let Some(s) = sample() {
         let dismissed = dismiss_poll.poll(&s, on_dismiss);
@@ -406,6 +418,18 @@ pub fn run_sampler<C>(
             if queue.send(armed).is_err() {
                 return;
             }
+        }
+        if let Some(press) = exchange_poll.poll(&s.down, s.foreground, &s.exchange.shortcut, cursor) {
+            let exchange = on_exchange(&press);
+            let armed = PreparedPress {
+                delay: std::time::Duration::from_millis(u64::from(s.settings.delay_ms)),
+                pendings: vec![(ReaderId::Exchange, exchange.pending)],
+                dismissed: Vec::new(),
+                finish: Some(exchange.finish),
+                log: None,
+                sweep: None,
+            };
+            if queue.send(armed).is_err() { return; }
         }
     }
 }
@@ -461,7 +485,22 @@ pub fn spawn_read_hotkey(app: tauri::AppHandle, cancel: std::sync::Arc<std::sync
                 Box::new(move |outcome| crate::read_prompt::finish_read(&result_app, stamp, outcome)),
                 Box::new(move || crate::read_prompt::begin_sweep(&notice_app)),
             )
-        }, &mut |shortcut| crate::overlay_dismiss::publish(&app, shortcut), &mut |_| todo!("POE-477 WI-3: exchange press"));
+        }, &mut |shortcut| crate::overlay_dismiss::publish(&app, shortcut), &mut |_| {
+            use tauri::Emitter;
+            let pressed_at_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default().as_millis() as u64;
+            let standing = *app.state::<crate::AppState>().screen.lock().unwrap_or_else(|e| e.into_inner());
+            let (pending, handle) = crate::exchange_read::reader::prepare(standing, Box::new(crate::ocr::recognize_lines));
+            let result_app = app.clone();
+            ExchangePress {
+                pending: Box::new(pending),
+                finish: Box::new(move |outcome| crate::exchange_read::finish(outcome, handle.take(), pressed_at_ms, &mut |event| {
+                    if let Err(error) = result_app.emit("exchange-read", event) {
+                        log::warn!("Exchange read: event emission failed: {error}");
+                    }
+                })),
+            }
+        });
     });
 }
 

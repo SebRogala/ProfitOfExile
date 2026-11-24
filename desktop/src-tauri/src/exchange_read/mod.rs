@@ -4,6 +4,7 @@ pub mod parse;
 pub mod reader;
 
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
 use crate::read_hotkey::{DispatchOutcome, Shortcut};
 use parse::ExchangeSelection;
@@ -22,17 +23,56 @@ impl Default for ExchangeReadSettings {
     }
 }
 
+impl ExchangeReadSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        self.shortcut.validate()?;
+        if matches!(self.shortcut.key, 1 | 2)
+            && !self.shortcut.shift && !self.shortcut.ctrl && !self.shortcut.alt
+        {
+            return Err("Plain left or right click cannot be the read exchange shortcut".into());
+        }
+        Ok(())
+    }
+
+    pub fn apart_from(&self, read: &Shortcut, loot: &crate::loot_capture::LootSettings) -> Result<(), String> {
+        if self.shortcut == *read
+            || self.shortcut == loot.capture_shortcut
+            || self.shortcut == loot.preview_shortcut
+        {
+            return Err("Read exchange shortcut must differ from the read screen and boss loot shortcuts".into());
+        }
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub fn exchange_read_set_settings(app: tauri::AppHandle, settings: ExchangeReadSettings) -> Result<(), String> {
+    store_settings(&app.state::<crate::AppState>(), settings)?;
+    crate::persist_settings(&app);
+    crate::ssot::emit_ssot(&app);
+    Ok(())
+}
+
 /// The owner write behind the Settings row; refuses before touching state.
-pub(crate) fn store_settings(_state: &crate::AppState, _settings: ExchangeReadSettings) -> Result<(), String> {
-    Err("not implemented".into())
+pub(crate) fn store_settings(state: &crate::AppState, settings: ExchangeReadSettings) -> Result<(), String> {
+    settings.validate()?;
+    let read = state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()).shortcut.clone();
+    let loot = state.loot.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    settings.apart_from(&read, &loot)?;
+    *state.exchange_read.lock().unwrap_or_else(|e| e.into_inner()) = settings;
+    Ok(())
 }
 
 /// What stands in for a refused or clashing exchange binding at load.
 pub fn fallback_apart_from(
-    _read: &Shortcut,
-    _loot: &crate::loot_capture::LootSettings,
+    read: &Shortcut,
+    loot: &crate::loot_capture::LootSettings,
 ) -> ExchangeReadSettings {
-    ExchangeReadSettings::default()
+    let default = ExchangeReadSettings::default();
+    [2, 4, 5, 6].into_iter()
+        .map(|key| ExchangeReadSettings { shortcut: Shortcut { key, ..default.shortcut.clone() } })
+        .find(|candidate| candidate.apart_from(read, loot).is_ok())
+        .unwrap_or_default()
 }
 
 /// Every code an exchange press can fail with.
@@ -66,11 +106,28 @@ pub struct ExchangeReadEvent {
 /// Turns one exchange press's dispatch outcome and its reader's result into
 /// its one `exchange-read` event.
 pub fn finish(
-    _outcome: DispatchOutcome,
-    _read: Option<ExchangeReadResult>,
-    _pressed_at_ms: u64,
-    _emit: &mut dyn FnMut(ExchangeReadEvent),
+    outcome: DispatchOutcome,
+    read: Option<ExchangeReadResult>,
+    pressed_at_ms: u64,
+    emit: &mut dyn FnMut(ExchangeReadEvent),
 ) {
+    use parse::ExchangeReadError;
+    use ExchangeReadFailure::*;
+    let outcome = match outcome {
+        DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Exchange) => match read {
+            Some(Ok(selection)) => ExchangeReadOutcome::Selection(selection),
+            result => ExchangeReadOutcome::Error(match result {
+                Some(Err(ExchangeReadError::NamesUnreadable)) => NamesUnreadable,
+                Some(Err(ExchangeReadError::NoCurrencySide)) => NoCurrencySide,
+                _ => RatioUnreadable,
+            }),
+        },
+        DispatchOutcome::NoMatch => ExchangeReadOutcome::Error(PanelNotFound),
+        DispatchOutcome::Failed(_) => ExchangeReadOutcome::Error(GrabFailed),
+        DispatchOutcome::Suppressed => ExchangeReadOutcome::Error(PrivacyRefused),
+        DispatchOutcome::Selected(_) => ExchangeReadOutcome::Error(RatioUnreadable),
+    };
+    emit(ExchangeReadEvent { pressed_at_ms, outcome });
 }
 
 #[cfg(test)]

@@ -1328,6 +1328,7 @@ pub fn run() {
             loot_capture::boss_loot_submit,
             loot_capture::boss_loot_rebind,
             read_hotkey::read_hotkey_set_settings,
+            exchange_read::exchange_read_set_settings,
             overlay_dismiss::overlay_dismiss_set_settings,
             overlay_dismiss::overlay_dismiss_host,
             overlay_dismiss::overlay_dismiss_ack,
