@@ -1679,22 +1679,6 @@ pub(crate) mod tests {
         crate::exchange_read::ExchangeReadSettings { shortcut: alt_shortcut(5) }
     }
 
-    mod keep_happy {
-        use super::*;
-
-        // keep:happy — AC-3: the Settings row shows the binding the owner holds.
-        #[test]
-        fn the_read_exchange_binding_echoes_through_ssot() {
-            let state = test_app_state();
-            *state.exchange_read.lock().unwrap() = custom_exchange_read();
-            let json = serde_json::to_value(crate::ssot::build_snapshot(&state)).unwrap();
-            assert_eq!(
-                json["exchangeRead"],
-                serde_json::json!({"shortcut": {"key": 5, "shift": false, "ctrl": false, "alt": true}}),
-            );
-        }
-    }
-
     mod keep_critical {
         use super::*;
 
@@ -4548,6 +4532,18 @@ pub(crate) mod tests {
                     "row {name}",
                 );
             }
+        }
+
+        // keep:happy — AC-3: the Settings row shows the binding the owner holds.
+        #[test]
+        fn the_read_exchange_binding_echoes_through_ssot() {
+            let state = test_app_state();
+            *state.exchange_read.lock().unwrap() = custom_exchange_read();
+            let json = serde_json::to_value(crate::ssot::build_snapshot(&state)).unwrap();
+            assert_eq!(
+                json["exchangeRead"],
+                serde_json::json!({"shortcut": {"key": 5, "shift": false, "ctrl": false, "alt": true}}),
+            );
         }
     }
 
