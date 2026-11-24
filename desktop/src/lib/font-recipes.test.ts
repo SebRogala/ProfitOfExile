@@ -215,6 +215,31 @@ describe('lensView with the four feeder choices', () => {
 		expect(v.source).toBe('trade · poe.ninja');
 	});
 
+	// keep:critical — wrong external action: a BUY link carrying a non-PoE server URL
+	// opens a malicious page (or runs a javascript: URL) from the desktop webview.
+	it('keeps only pathofexile.com trade URLs from the server as Lens and feeder links', () => {
+		const withUrl = (url: string) => {
+			const c = feederCraft(12400, [30, 12, 20, 7], 3, 12393);
+			return {
+				...c,
+				outcome: { ...c.outcome, tradeUrl: url },
+				feeder: { ...c.feeder, tradeUrl: url },
+				feeders: c.feeders!.map((f) => ({ ...f, tradeUrl: url })),
+			};
+		};
+		const links = (url: string, showAll: boolean) => {
+			const v = view(withUrl(url), showAll);
+			return { lensUrl: v.lensUrl, urls: v.costs.map((r) => r.url) };
+		};
+		for (const rejected of ['javascript:alert(1)', 'https://evil.example/trade/x']) {
+			expect(links(rejected, true), `${rejected}, all feeders`).toEqual({ lensUrl: null, urls: [null, null, null, null] });
+			expect(links(rejected, false), `${rejected}, cheapest feeder`).toEqual({ lensUrl: null, urls: [null] });
+		}
+		const mirage = 'https://www.pathofexile.com/trade/search/Mirage?q=%7B%22query%22%3A%7B%22type%22%3A%22Facetor%27s%20Lens%22%7D%7D';
+		expect(links(mirage, true)).toEqual({ lensUrl: mirage, urls: [mirage, mirage, mirage, mirage] });
+		expect(links(mirage, false)).toEqual({ lensUrl: mirage, urls: [mirage] });
+	});
+
 	// keep:regression
 	it.each([false, true])(
 		'an older server payload (setting %s) keeps its one trade row, server ev, median footer and no Lens search',
