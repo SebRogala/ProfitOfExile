@@ -38,11 +38,14 @@ describe('resolved item amount', () => {
 describe('handoff calculation vectors', () => {
 	for (const vector of fixture.vectors) {
 		describe(vector.case, () => {
-			for (const key of ['perItemChaos', 'totalChaos', 'totalDivine', 'split', 'tableShown', 'rows'] as const) {
+			for (const key of ['perItemChaos', 'totalChaos', 'totalDivine', 'split', 'tableShown'] as const) {
 				it(`produces the specified ${key}`, () => {
 					expect(calculateChaosDiv(vector.input as ChaosDivInput)[key]).toEqual(vector.expect[key]);
 				});
 			}
+			it('keep:regression: produces the specified rows, each order scaled to the items it can fill', () => {
+				expect(calculateChaosDiv(vector.input as ChaosDivInput).rows).toEqual(vector.expect.rows);
+			});
 			if ('minimumOrderMessage' in vector.expect) {
 				it('shows the specified minimum whole order message', () => {
 					expect(calculateChaosDiv(vector.input as ChaosDivInput).minimumOrderMessage).toBe(vector.expect.minimumOrderMessage);
@@ -50,6 +53,27 @@ describe('handoff calculation vectors', () => {
 			}
 		});
 	}
+});
+
+describe('scaled undercut and outbid orders', () => {
+	const rowAt = (input: ChaosDivInput, ratio: string) => {
+		const row = calculateChaosDiv(input).rows.find((candidate) => candidate.ratio === ratio);
+		if (!row) throw new Error(`no ${ratio} row`);
+		return { iWant: row.iWant, iHave: row.iHave, leftOver: row.leftOver };
+	};
+	const selling: ChaosDivInput = { ...defaults(), mode: 'sell', currency: 'chaos', amountKind: 'items', amount: 4, ratio: 140, oneSide: 'right' };
+	it.each([
+		{ ratio: '139.75 : 1', iWant: 559, iHave: 4, leftOver: 0 },
+		{ ratio: '139.67 : 1', iWant: 419, iHave: 3, leftOver: 1 },
+		{ ratio: '139.50 : 1', iWant: 558, iHave: 4, leftOver: 0 },
+		{ ratio: '139 : 1', iWant: 556, iHave: 4, leftOver: 0 }
+	])('keep:happy: selling four items at 140 : 1 lists $ratio as $iWant for $iHave with $leftOver left over', ({ ratio, ...expected }) => {
+		expect(rowAt(selling, ratio)).toEqual(expected);
+	});
+	it('keep:happy: buying four items at 1 : 140 scales the 1 : 140.50 outbid to all four items', () => {
+		const buying: ChaosDivInput = { ...defaults(), mode: 'buy', currency: 'chaos', amountKind: 'items', amount: 4, ratio: 140, oneSide: 'left' };
+		expect(rowAt(buying, '1 : 140.50')).toEqual({ iWant: 4, iHave: 562, leftOver: 0 });
+	});
 });
 
 describe('mode changes', () => {
