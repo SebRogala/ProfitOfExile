@@ -42,6 +42,10 @@ function cell(chaos: number | null, format: (chaos: number) => string): PriceCel
 	return chaos === null ? { kind: 'missing' } : { kind: 'price', text: format(chaos) };
 }
 
+function safeTradeUrl(url: string | null | undefined): string | null {
+	return url?.startsWith('https://www.pathofexile.com/trade/') ? url : null;
+}
+
 /**
  * `craft` undefined = the Font response has not arrived (loading); null = the
  * server sent no `lens` key (older server), which reads as unpriced.
@@ -69,7 +73,7 @@ export function lensView(
 		return {
 			name: FEEDER_NAMES[index], sub, source,
 			cell: loading ? { kind: 'loading' } : cell(feeder?.chaos ?? null, format),
-			url: feeder?.tradeUrl ?? null,
+			url: safeTradeUrl(feeder?.tradeUrl),
 		};
 	});
 	const evValue = modern ? craft?.evCheapest : craft?.ev;
@@ -95,7 +99,7 @@ export function lensView(
 	}
 	return {
 		lens: loading ? { kind: 'loading' } : cell(lensChaos, format),
-		lensUrl: craft?.outcome.tradeUrl ?? null,
+		lensUrl: safeTradeUrl(craft?.outcome.tradeUrl),
 		costs,
 		source: modern ? 'trade · poe.ninja' : 'trade · median of the 3 lowest',
 		evSubtitle: modern ? 'lens − cheapest feeder' : 'lens − support',
