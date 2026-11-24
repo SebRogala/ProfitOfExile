@@ -350,7 +350,7 @@
 		margin-left: 4px;
 	}
 	.col-signals {
-		width: 180px;
+		width: 224px;
 	}
 	.col-signals :global(.signal-badge + .signal-badge) {
 		margin-left: 6px;
