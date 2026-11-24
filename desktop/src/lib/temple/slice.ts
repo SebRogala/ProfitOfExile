@@ -875,7 +875,7 @@ export function templeSliceDefault(): TempleSlice {
 		preset: 'default',
 		custom: {
 			tierFraction: 0.8,
-			cPerRarity: 1.0,
+			cPerRarity: 0.5,
 			dropsWeight: 1.0,
 			comboPremium: 0.0,
 			rooms: {}

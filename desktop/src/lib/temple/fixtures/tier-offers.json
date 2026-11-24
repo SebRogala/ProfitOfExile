@@ -17,15 +17,15 @@
         3.0
       ],
       "rarityPct": [
-        6.0,
+        8.0,
         12.0,
-        18.0
+        16.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": true,
-          "label": "Vertolka Discord 2026-11-20"
+          "guessed": false,
+          "label": "poedb 2026-11-24"
         },
         {
           "figure": "pack_size_pct",
@@ -88,15 +88,15 @@
         3.0
       ],
       "rarityPct": [
-        6.0,
+        8.0,
         12.0,
-        18.0
+        16.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": true,
-          "label": "Vertolka Discord 2026-11-20"
+          "guessed": false,
+          "label": "poedb 2026-11-24"
         },
         {
           "figure": "pack_size_pct",
@@ -159,15 +159,15 @@
         3.0
       ],
       "rarityPct": [
-        6.0,
+        8.0,
         12.0,
-        18.0
+        16.0
       ],
       "sources": [
         {
           "figure": "rarity_pct",
-          "guessed": true,
-          "label": "Vertolka Discord 2026-11-20"
+          "guessed": false,
+          "label": "poedb 2026-11-24"
         },
         {
           "figure": "pack_size_pct",
