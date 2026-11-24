@@ -165,7 +165,7 @@ impl DismissPoll {
 }
 
 #[cfg(any(windows, test))]
-pub fn polled_keys(read: &Shortcut, dismiss: &[Shortcut]) -> std::collections::BTreeSet<u16> {
+pub fn polled_keys(read: &Shortcut, _exchange: &Shortcut, dismiss: &[Shortcut]) -> std::collections::BTreeSet<u16> {
     [16, 17, 18, read.key].into_iter().chain(dismiss.iter().map(|shortcut| shortcut.key)).collect()
 }
 
@@ -227,6 +227,13 @@ pub struct PreparedPress<C> {
 pub type FinishedRead = Box<dyn FnOnce(DispatchOutcome) + Send>;
 pub type PressLog = Box<dyn FnMut(String) + Send>;
 pub type SweepNotice = Box<dyn FnOnce() + Send>;
+
+/// What a Read exchange press brings to the shared queue: its one reader and
+/// its own result hook.
+pub struct ExchangePress<C> {
+    pub pending: Box<dyn PendingRead<C>>,
+    pub finish: FinishedRead,
+}
 
 /// What accepting a press gives it: its result hook and its sweep permission.
 #[derive(Default)]
@@ -369,6 +376,7 @@ pub struct Sample {
     pub down: std::collections::BTreeSet<u16>,
     pub foreground: bool,
     pub settings: ReadHotkeySettings,
+    pub exchange: crate::exchange_read::ExchangeReadSettings,
     pub dismiss: Vec<Shortcut>,
 }
 
@@ -382,6 +390,7 @@ pub fn run_sampler<C>(
     queue: &std::sync::mpsc::Sender<PreparedPress<C>>,
     on_accept: &mut dyn FnMut() -> Accepted,
     on_dismiss: &mut dyn FnMut(&Shortcut) -> u64,
+    _on_exchange: &mut dyn FnMut(&Press) -> ExchangePress<C>,
 ) {
     let mut poll = ReadPoll::default();
     let mut dismiss_poll = DismissPoll::default();
@@ -452,7 +461,7 @@ pub fn spawn_read_hotkey(app: tauri::AppHandle, cancel: std::sync::Arc<std::sync
                 Box::new(move |outcome| crate::read_prompt::finish_read(&result_app, stamp, outcome)),
                 Box::new(move || crate::read_prompt::begin_sweep(&notice_app)),
             )
-        }, &mut |shortcut| crate::overlay_dismiss::publish(&app, shortcut));
+        }, &mut |shortcut| crate::overlay_dismiss::publish(&app, shortcut), &mut |_| todo!("POE-477 WI-3: exchange press"));
     });
 }
 
@@ -463,7 +472,8 @@ mod platform {
         let state = app.state::<crate::AppState>();
         let settings = state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let dismiss = state.overlay_dismiss.lock().unwrap_or_else(|e| e.into_inner()).shortcuts();
-        let down = polled_keys(&settings.shortcut, &dismiss)
+        let exchange = state.exchange_read.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let down = polled_keys(&settings.shortcut, &exchange.shortcut, &dismiss)
             .into_iter()
             .filter(|key| {
                 (unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(*key as i32) }
@@ -473,7 +483,7 @@ mod platform {
             })
             .collect();
         let foreground = state.game_in_foreground.load(std::sync::atomic::Ordering::SeqCst);
-        Some(Sample { down, foreground, settings, dismiss })
+        Some(Sample { down, foreground, settings, exchange, dismiss })
     }
     pub fn cursor() -> Option<(i32, i32)> {
         let mut p = windows::Win32::Foundation::POINT::default();
@@ -485,7 +495,7 @@ mod platform {
 mod platform {
     use super::*;
     pub fn sample(_app: &tauri::AppHandle) -> Option<Sample> {
-        Some(Sample { down: Default::default(), foreground: false, settings: ReadHotkeySettings::default(), dismiss: Vec::new() })
+        Some(Sample { down: Default::default(), foreground: false, settings: ReadHotkeySettings::default(), exchange: Default::default(), dismiss: Vec::new() })
     }
     pub fn cursor() -> Option<(i32, i32)> {
         None
@@ -578,7 +588,7 @@ mod dispatch_tests {
     fn press_once(world: &Arc<World>, state: &Arc<crate::AppState>) -> usize {
         let (tx, rx) = mpsc::channel();
         let mut samples = vec![sample(PRESSED, true)].into_iter();
-        run_sampler(world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || accept_in(state), &mut |_| panic!("no dismissal"));
+        run_sampler(world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || accept_in(state), &mut |_| panic!("no dismissal"), &mut no_exchange);
         drop(tx);
         let mut grabs = 0;
         run_dispatcher(world, rx, &mut |_| {}, &mut || { grabs += 1; Ok(capture(1)) }, &mut |_| panic!("no dismissal to await"));
@@ -599,7 +609,7 @@ mod dispatch_tests {
         let mut shared = sample(PRESSED, true);
         shared.dismiss = vec![shared.settings.shortcut.clone()];
         let mut samples = vec![shared].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || accept_in(&state), &mut |_| 1);
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || accept_in(&state), &mut |_| 1, &mut no_exchange);
         drop(tx);
         let mut grabs = 0;
         let mut error = capture_error;
@@ -721,11 +731,171 @@ mod dispatch_tests {
             down: keys.iter().copied().collect(),
             foreground,
             settings: ReadHotkeySettings::default(),
+            exchange: crate::exchange_read::ExchangeReadSettings::default(),
             dismiss: crate::overlay_dismiss::DismissSettings::default().shortcuts(),
         }
     }
     /// Ctrl+A, the default read key.
     const PRESSED: &[u16] = &[17, 65];
+    /// Alt + Right click, the default Read exchange binding.
+    const EXCHANGE: &[u16] = &[18, 2];
+
+    fn no_exchange(_: &Press) -> ExchangePress<Arc<World>> {
+        panic!("no exchange press expected")
+    }
+
+    /// What the sampler and dispatcher did with a run of samples when the
+    /// exchange reader is "x" and the read key serves only reader A.
+    #[derive(Debug, PartialEq)]
+    struct ExchangeRun {
+        grabs: u32,
+        /// Exchange presses prepared by the sampler, counted before any dispatch.
+        prepared_at_press: usize,
+        /// What each exchange press's own result hook received.
+        exchange_outcomes: Vec<DispatchOutcome>,
+        /// Read-prompt acceptances, which only read-key presses take.
+        read_accepts: usize,
+    }
+
+    fn run_with_exchange(world: &Arc<World>, samples: Vec<Sample>) -> ExchangeRun {
+        let (tx, rx) = mpsc::channel();
+        let mut samples = samples.into_iter();
+        let outcomes = Arc::new(Mutex::new(Vec::new()));
+        let mut prepared = 0;
+        let mut accepts = 0;
+        run_sampler(world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut || {
+            accepts += 1;
+            Accepted::default()
+        }, &mut |_| panic!("no dismissal"), &mut |_press| {
+            prepared += 1;
+            let sink = outcomes.clone();
+            ExchangePress {
+                pending: Box::new(TestPending { name: "x", context: String::new() }),
+                finish: Box::new(move |outcome| sink.lock().unwrap().push(outcome)),
+            }
+        });
+        drop(tx);
+        let prepared_at_press = prepared;
+        let mut grabs = 0;
+        run_dispatcher(world, rx, &mut |_| {}, &mut || {
+            grabs += 1;
+            Ok(capture(grabs))
+        }, &mut |_| panic!("an exchange press carries no dismissal"));
+        let exchange_outcomes = outcomes.lock().unwrap().clone();
+        ExchangeRun { grabs, prepared_at_press, exchange_outcomes, read_accepts: accepts }
+    }
+
+    fn exchange_sample(keys: &[u16], foreground: bool, binding: &Shortcut) -> Sample {
+        Sample { exchange: crate::exchange_read::ExchangeReadSettings { shortcut: binding.clone() }, ..sample(keys, foreground) }
+    }
+
+    mod keep_critical {
+        use super::*;
+
+        fn alt_right() -> Shortcut {
+            crate::exchange_read::ExchangeReadSettings::default().shortcut
+        }
+
+        // keep:critical — irreversible/silent: a Read exchange press that grabs
+        // more than once breaks the one-capture-per-press rule, and one routed
+        // through the read-key readers fills a module from a frame the player
+        // pressed to read the exchange.
+        #[test]
+        fn one_read_exchange_press_grabs_once_and_reads_only_through_the_exchange_reader() {
+            let shift_middle = Shortcut { key: 4, shift: true, ctrl: false, alt: false };
+            for (binding, keys) in [(alt_right(), EXCHANGE), (shift_middle, &[16, 4][..])] {
+                let world = Arc::new(World::default());
+
+                let run = run_with_exchange(&world, vec![exchange_sample(keys, true, &binding), exchange_sample(&[], true, &binding)]);
+
+                assert_eq!(
+                    run,
+                    ExchangeRun { grabs: 1, prepared_at_press: 1, exchange_outcomes: vec![DispatchOutcome::Selected(ReaderId::Exchange)], read_accepts: 0 },
+                    "{binding:?}",
+                );
+                assert_eq!(*world.probes.lock().unwrap(), vec![("x", 1)], "{binding:?}");
+                assert_eq!(*world.consumed.lock().unwrap(), vec![("x", String::new(), Ok(1))], "{binding:?}");
+                assert!(world.armed_order.lock().unwrap().is_empty(), "{binding:?}: a read-key reader was armed");
+            }
+        }
+
+        // keep:critical — irreversible: a held binding taken as repeated presses
+        // grabs a frame per sampler tick.
+        #[test]
+        fn holding_the_read_exchange_binding_is_one_press() {
+            let world = Arc::new(World::default());
+            let held = || exchange_sample(EXCHANGE, true, &alt_right());
+
+            let run = run_with_exchange(&world, vec![held(), held(), held()]);
+
+            assert_eq!((run.grabs, run.prepared_at_press, run.exchange_outcomes.len()), (1, 1, 1));
+        }
+
+        // keep:critical — irreversible: a grab on an inexact chord or with the
+        // game in the background captures a screen the player never pressed
+        // the exchange binding on.
+        #[test]
+        fn an_inexact_chord_or_a_background_game_makes_no_exchange_press() {
+            let cases: [(&[u16], bool); 6] = [
+                (&[16, 18, 2], true),
+                (&[17, 18, 2], true),
+                (&[2], true),
+                (&[18], true),
+                (&[18, 4], true),
+                (EXCHANGE, false),
+            ];
+            for (keys, foreground) in cases {
+                let world = Arc::new(World::default());
+
+                let run = run_with_exchange(&world, vec![exchange_sample(keys, foreground, &alt_right())]);
+
+                assert_eq!(
+                    run,
+                    ExchangeRun { grabs: 0, prepared_at_press: 0, exchange_outcomes: Vec::new(), read_accepts: 0 },
+                    "keys {keys:?}, foreground {foreground}",
+                );
+            }
+        }
+
+        // keep:critical — silent (AC-4): a read-key press that reaches the
+        // exchange reader fills the Companion from a frame read for another module.
+        #[test]
+        fn a_read_key_press_never_reaches_the_exchange_reader() {
+            let world = Arc::new(World::default());
+
+            let run = run_with_exchange(&world, vec![exchange_sample(PRESSED, true, &alt_right())]);
+
+            assert_eq!(
+                run,
+                ExchangeRun { grabs: 1, prepared_at_press: 0, exchange_outcomes: Vec::new(), read_accepts: 1 },
+            );
+            assert_eq!(*world.probes.lock().unwrap(), vec![("a", 1)]);
+        }
+
+        // keep:critical — silent (AC-4): a read-key press after an exchange press
+        // that shares or replaces the exchange press's result reports a second
+        // or a wrong exchange outcome.
+        #[test]
+        fn a_read_key_press_after_an_exchange_press_leaves_the_exchange_outcome_alone() {
+            let world = Arc::new(World::default());
+            let binding = alt_right();
+
+            let run = run_with_exchange(&world, vec![
+                exchange_sample(EXCHANGE, true, &binding),
+                exchange_sample(&[], true, &binding),
+                exchange_sample(PRESSED, true, &binding),
+            ]);
+
+            assert_eq!(
+                run,
+                ExchangeRun { grabs: 2, prepared_at_press: 1, exchange_outcomes: vec![DispatchOutcome::Selected(ReaderId::Exchange)], read_accepts: 1 },
+            );
+            assert_eq!(
+                *world.consumed.lock().unwrap(),
+                vec![("x", String::new(), Ok(1)), ("a", String::new(), Ok(2))],
+            );
+        }
+    }
 
     #[test]
     fn a_shared_press_grabs_only_after_every_host_acknowledges_its_dismissal() {
@@ -745,7 +915,7 @@ mod dispatch_tests {
             let gen = ledger.publish(shortcut).gen;
             events.lock().unwrap().push(format!("dismiss({gen})"));
             gen
-        });
+        }, &mut no_exchange);
         drop(tx);
         run_dispatcher(&world, rx, &mut |_| events.lock().unwrap().push("sleep".into()), &mut || {
             assert!(world.probes.lock().unwrap().is_empty(), "capture before probing");
@@ -804,10 +974,10 @@ mod dispatch_tests {
             let mut f = sample(&[70], true);
             f.settings.shortcut = Shortcut { key: 70, shift: false, ctrl: false, alt: false };
             f.dismiss = vec![f.settings.shortcut.clone(), crate::overlay_dismiss::DismissSettings::default().shortcut];
-            let esc = Sample { down: [27].into_iter().collect(), foreground: true, settings: f.settings.clone(), dismiss: f.dismiss.clone() };
+            let esc = Sample { down: [27].into_iter().collect(), foreground: true, settings: f.settings.clone(), exchange: f.exchange.clone(), dismiss: f.dismiss.clone() };
             let (tx, rx) = mpsc::channel();
             let mut samples = vec![f, esc].into_iter();
-            run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |s| ledger.publish(s).gen);
+            run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |s| ledger.publish(s).gen, &mut no_exchange);
             drop(tx);
             ledger.ack("temple", 2);
             let elapsed = Cell::new(Duration::ZERO);
@@ -846,7 +1016,7 @@ mod dispatch_tests {
         shared.dismiss = vec![shared.settings.shortcut.clone(), Shortcut { key: 71, ..shared.settings.shortcut.clone() }];
         let (tx, rx) = mpsc::channel();
         let mut samples = vec![shared].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |s| ledger.publish(s).gen);
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |s| ledger.publish(s).gen, &mut no_exchange);
         drop(tx);
         ledger.ack("temple", 2);
         let elapsed = Cell::new(Duration::ZERO);
@@ -877,7 +1047,7 @@ mod dispatch_tests {
         run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |s| {
             dismissed.push(s.key);
             dismissed.len() as u64
-        });
+        }, &mut no_exchange);
         assert_eq!(dismissed, vec![27]);
         assert!(rx.try_recv().is_err());
     }
@@ -893,14 +1063,15 @@ mod dispatch_tests {
         }
         let dismiss = settings.shortcuts();
         assert_eq!(dismiss.len(), 3);
-        assert_eq!(polled_keys(&ReadHotkeySettings::default().shortcut, &dismiss), [16,17,18,27,65,70,71].into_iter().collect());
+        let exchange = crate::exchange_read::ExchangeReadSettings::default().shortcut;
+        assert_eq!(polled_keys(&ReadHotkeySettings::default().shortcut, &exchange, &dismiss), [2,16,17,18,27,65,70,71].into_iter().collect());
     }
 
     /// Runs the sampler over `samples` and the dispatcher to the end; returns grab count.
     fn run_pipeline(world: &Arc<World>, readers: &[&dyn ScreenReader<Arc<World>>], samples: Vec<Sample>) -> usize {
         let (tx, rx) = mpsc::channel();
         let mut samples = samples.into_iter();
-        run_sampler(world, readers, &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |_| panic!("no dismissal"));
+        run_sampler(world, readers, &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |_| panic!("no dismissal"), &mut no_exchange);
         drop(tx);
         let mut grabs = 0;
         run_dispatcher(world, rx, &mut |_| {}, &mut || {
@@ -1142,7 +1313,7 @@ mod dispatch_tests {
             grabs
         });
         let mut samples = vec![sample(PRESSED, true), sample(&[], true), sample(PRESSED, true)].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |_| panic!("no dismissal"));
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |_| panic!("no dismissal"), &mut no_exchange);
         // The first grab is still blocked, yet both presses were armed.
         assert_eq!(world.armed_order.lock().unwrap().len(), 2);
         drop(tx);
@@ -1179,7 +1350,7 @@ mod dispatch_tests {
         let (tx, rx) = mpsc::channel();
         // The delay setting changes on the tick after the press, while it is queued.
         let mut samples = vec![with_delay(PRESSED, 300), with_delay(&[], 900)].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |_| panic!("no dismissal"));
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |_| panic!("no dismissal"), &mut no_exchange);
         drop(tx);
         let events = Mutex::new(Vec::new());
         run_dispatcher(
@@ -1200,7 +1371,7 @@ mod dispatch_tests {
         *world.context.lock().unwrap() = "x".into();
         let (tx, rx) = mpsc::channel();
         let mut samples = vec![sample(PRESSED, true)].into_iter();
-        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |_| panic!("no dismissal"));
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |_| panic!("no dismissal"), &mut no_exchange);
         drop(tx);
         *world.context.lock().unwrap() = "y".into();
         let mut grabs = 0;
@@ -1341,5 +1512,61 @@ mod tests {
     #[test]
     fn read_hotkey_accepts_a_mouse_button_as_the_key() {
         assert_eq!(key(4).validate(), Ok(()));
+    }
+
+    mod keep_critical {
+        use super::*;
+        use crate::exchange_read::ExchangeReadSettings;
+
+        const READ_CLASH: &str = "Read screen shortcut must differ from the boss loot and read exchange shortcuts";
+        const LOOT_CLASH: &str = "Boss loot shortcuts must differ from the read exchange shortcut";
+
+        fn alt(key: u16) -> Shortcut {
+            Shortcut { key, shift: false, ctrl: false, alt: true }
+        }
+        fn state_with_exchange(shortcut: Shortcut) -> crate::AppState {
+            let state = test_app_state();
+            *state.exchange_read.lock().unwrap() = ExchangeReadSettings { shortcut };
+            state
+        }
+
+        // keep:critical — silent: a read key on a boss-loot or the stored read
+        // exchange key makes one press start two reads, so one of them reads a
+        // frame the player pressed for the other.
+        #[test]
+        fn a_read_screen_shortcut_on_a_boss_loot_or_the_read_exchange_key_is_refused_and_the_stored_one_kept() {
+            let loot = LootSettings::default();
+            let cases = [
+                (alt(2), loot.capture_shortcut.clone()),
+                (alt(2), loot.preview_shortcut.clone()),
+                (alt(2), alt(2)),
+                (alt(5), alt(5)),
+            ];
+            for (exchange, candidate) in cases {
+                let state = state_with_exchange(exchange.clone());
+                let refused = ReadHotkeySettings { shortcut: candidate.clone(), delay_ms: 100, ..ReadHotkeySettings::default() };
+                assert_eq!(store_settings(&state, refused), Err(READ_CLASH.to_string()), "exchange {exchange:?}, read {candidate:?}");
+                assert_eq!(read_of(&state), ReadHotkeySettings::default(), "exchange {exchange:?}, read {candidate:?}");
+            }
+        }
+
+        // keep:critical — silent: a boss-loot key on the stored read exchange key
+        // makes one press both read the exchange and capture boss loot.
+        #[test]
+        fn a_boss_loot_shortcut_on_the_read_exchange_key_is_refused_and_the_stored_ones_kept() {
+            let on_capture = |key: Shortcut| LootSettings { capture_shortcut: key, auto_save_seconds: 30, ..Default::default() };
+            let on_preview = |key: Shortcut| LootSettings { preview_shortcut: key, auto_save_seconds: 30, ..Default::default() };
+            let cases = [
+                (alt(2), on_capture(alt(2))),
+                (alt(2), on_preview(alt(2))),
+                (alt(5), on_capture(alt(5))),
+            ];
+            for (exchange, refused) in cases {
+                let state = state_with_exchange(exchange.clone());
+                let label = format!("exchange {exchange:?}, loot {:?}/{:?}", refused.capture_shortcut, refused.preview_shortcut);
+                assert_eq!(crate::loot_capture::store_settings(&state, refused), Err(LOOT_CLASH.to_string()), "{label}");
+                assert_eq!(loot_of(&state), LootSettings::default(), "{label}");
+            }
+        }
     }
 }

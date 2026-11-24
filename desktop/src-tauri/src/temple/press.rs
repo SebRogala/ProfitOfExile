@@ -361,7 +361,7 @@ mod tests {
     }
 
     fn sample(keys: &[u16]) -> Sample {
-        Sample { down: keys.iter().copied().collect(), foreground: true, settings: ReadHotkeySettings::default(), dismiss: Vec::new() }
+        Sample { down: keys.iter().copied().collect(), foreground: true, settings: ReadHotkeySettings::default(), exchange: Default::default(), dismiss: Vec::new() }
     }
     /// Ctrl+A, the default read key.
     const PRESSED: &[u16] = &[17, 65];
@@ -379,7 +379,7 @@ mod tests {
         let readers: &[&dyn ScreenReader<World>] = &[&TEMPLE_READER];
         let (queue, presses) = mpsc::channel();
         let mut samples = samples.into_iter();
-        run_sampler(world, readers, &mut || samples.next(), &mut || None, &queue, &mut confirming, &mut |_| 0);
+        run_sampler(world, readers, &mut || samples.next(), &mut || None, &queue, &mut confirming, &mut |_| 0, &mut |_| panic!("no exchange press"));
         drop(queue);
         let mut grabs = 0;
         run_dispatcher(world, presses, &mut |_| {}, &mut || {

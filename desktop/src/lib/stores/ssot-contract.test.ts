@@ -15,6 +15,7 @@ import type {
 	BossLootSlice,
 	Placements,
 	ReadHotkeySettings,
+	ExchangeReadSettings,
 	DismissSnapshot,
 	ReadPromptSnapshot,
 	ScreenSlice,
@@ -40,6 +41,7 @@ const snapshotKeys: Record<keyof SsotSnapshot, true> = {
 	placements: true,
 	server: true,
 	readHotkey: true,
+	exchangeRead: true,
 	overlayDismiss: true,
 	readPrompt: true
 };
@@ -48,6 +50,10 @@ const readHotkeyKeys: Record<keyof ReadHotkeySettings, true> = {
 	shortcut: true,
 	delayMs: true,
 	recalibrateSeconds: true
+};
+
+const exchangeReadKeys: Record<keyof ExchangeReadSettings, true> = {
+	shortcut: true
 };
 
 const overlayDismissKeys: Record<keyof DismissSnapshot, true> = {
@@ -170,6 +176,7 @@ describe('ssot-snapshot.json golden matches SsotSnapshot', () => {
 		['placements', placementsKeys],
 		['server', serverKeys],
 		['readHotkey', readHotkeyKeys],
+		['exchangeRead', exchangeReadKeys],
 		['overlayDismiss', overlayDismissKeys],
 		['readPrompt', readPromptKeys]
 	] as const)('carries exactly the %s slice keys', (slice, table) => {

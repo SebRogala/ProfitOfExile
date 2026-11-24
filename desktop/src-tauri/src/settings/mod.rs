@@ -119,6 +119,7 @@ impl Default for LabSettings {
 pub struct Settings {
     pub boss_loot: crate::loot_capture::LootSettings,
     pub read_hotkey: Salvaged<crate::read_hotkey::ReadHotkeySettings>,
+    pub exchange_read: Salvaged<crate::exchange_read::ExchangeReadSettings>,
     pub overlay_dismiss: Salvaged<crate::overlay_dismiss::DismissSettings>,
     /// None means the legacy numberFormat preference has not migrated yet.
     pub number_format: Option<crate::loot_capture::NumberFormat>,
@@ -752,6 +753,7 @@ impl Default for Settings {
         Self {
             boss_loot: Default::default(),
             read_hotkey: Salvaged::new(Default::default()),
+            exchange_read: Salvaged::new(Default::default()),
             overlay_dismiss: Salvaged::new(Default::default()),
             number_format: None,
             client_txt_path: crate::detect_client_txt_path(),
@@ -994,6 +996,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     Settings {
         boss_loot,
         read_hotkey: Salvaged::new(read_hotkey),
+        exchange_read: Salvaged::new(Default::default()),
         overlay_dismiss: Salvaged::new(overlay_dismiss),
         number_format: Some(number_format),
         client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
@@ -1656,6 +1659,102 @@ pub(crate) mod tests {
         assert_eq!(state.read_hotkey.lock().unwrap().shortcut, ctrl(81));
     }
 
+    fn alt_shortcut(key: u16) -> crate::read_hotkey::Shortcut {
+        crate::read_hotkey::Shortcut { key, shift: false, ctrl: false, alt: true }
+    }
+    fn custom_exchange_read() -> crate::exchange_read::ExchangeReadSettings {
+        crate::exchange_read::ExchangeReadSettings { shortcut: alt_shortcut(5) }
+    }
+
+    mod keep_happy {
+        use super::*;
+
+        // keep:happy — AC-3: the Settings row shows the binding the owner holds.
+        #[test]
+        fn the_read_exchange_binding_echoes_through_ssot() {
+            let state = test_app_state();
+            *state.exchange_read.lock().unwrap() = custom_exchange_read();
+            let json = serde_json::to_value(crate::ssot::build_snapshot(&state)).unwrap();
+            assert_eq!(
+                json["exchangeRead"],
+                serde_json::json!({"shortcut": {"key": 5, "shift": false, "ctrl": false, "alt": true}}),
+            );
+        }
+    }
+
+    mod keep_critical {
+        use super::*;
+
+        // keep:critical — irreversible: a saved Read exchange binding lost on
+        // restart silently rebinds the player's chosen shortcut.
+        #[test]
+        fn the_read_exchange_binding_survives_a_restart_through_the_settings_file() {
+            let dir = fresh_test_dir("exchange_read_restart");
+            let path = dir.join(SETTINGS_FILENAME);
+            let before = test_app_state();
+            *before.exchange_read.lock().unwrap() = custom_exchange_read();
+            save_to(&path, &from_state(&before)).unwrap();
+            let after = test_app_state();
+            let rejected = apply_to_state(&load_from(&path).unwrap(), &after);
+            let _ = fs::remove_dir_all(&dir);
+            assert_eq!(rejected, Vec::<String>::new());
+            assert_eq!(*after.exchange_read.lock().unwrap(), custom_exchange_read());
+        }
+
+        // keep:critical — irreversible: any other command's save rebuilds the
+        // whole file from the owners, so a binding not read back is erased.
+        #[test]
+        fn the_read_exchange_binding_survives_an_unrelated_settings_write() {
+            let state = test_app_state();
+            let mut settings = Settings::default();
+            settings.exchange_read = Salvaged::new(custom_exchange_read());
+            assert_eq!(apply_to_state(&settings, &state), Vec::<String>::new());
+            *state.sidebar_open.lock().unwrap() = false;
+            assert_eq!(*from_state(&state).exchange_read, custom_exchange_read());
+        }
+
+        // keep:critical — irreversible: a malformed block that fails the whole
+        // file, or that is dropped without a report, loses every other setting
+        // or hides why the binding changed.
+        #[test]
+        fn a_malformed_read_exchange_block_loads_the_default_and_keeps_the_other_settings() {
+            for block in [r#"{"shortcut":{"key":"right","shift":false,"ctrl":false,"alt":true}}"#, "7", r#"{"shortcut":{"key":65536}}"#] {
+                let json = format!(r#"{{"sidebar_open":false,"boss_loot":{{"autoSaveSeconds":30}},"exchange_read":{block}}}"#);
+                let (state, rejected) = apply_settings_file("exchange_read_malformed", &json);
+                assert!(rejected.iter().any(|line| line.contains("read exchange shortcut")), "{block}: {rejected:?}");
+                assert_eq!(*state.exchange_read.lock().unwrap(), crate::exchange_read::ExchangeReadSettings::default(), "{block}");
+                assert_eq!(from_state(&state).boss_loot.auto_save_seconds, 30, "{block}");
+                assert!(!from_state(&state).sidebar_open, "{block}");
+            }
+        }
+
+        // keep:critical — irreversible/silent: a stored binding that clashes with
+        // the read key or a boss-loot key (or is a plain click) either panics at
+        // start or makes one press start two reads; the read key keeps its own.
+        #[test]
+        fn a_clashing_or_refused_stored_read_exchange_binding_falls_back_to_the_first_free_candidate() {
+            let ctrl_a = r#"{"shortcut":{"key":65,"shift":false,"ctrl":true,"alt":false},"delayMs":0}"#;
+            let alt_right_read = r#"{"shortcut":{"key":2,"shift":false,"ctrl":false,"alt":true},"delayMs":0}"#;
+            let cases = [
+                (r#""read_hotkey":{alt_right_read}"#.replace("{alt_right_read}", alt_right_read), 2, 4),
+                (format!(r#""read_hotkey":{ctrl_a},"exchange_read":{{"shortcut":{{"key":65,"shift":false,"ctrl":true,"alt":false}}}}"#), 65, 2),
+                (r#""boss_loot":{"captureShortcut":{"key":4,"shift":false,"ctrl":false,"alt":true}},"exchange_read":{"shortcut":{"key":4,"shift":false,"ctrl":false,"alt":true}}"#.to_string(), 65, 2),
+                (r#""exchange_read":{"shortcut":{"key":2,"shift":false,"ctrl":false,"alt":false}}"#.to_string(), 65, 2),
+                (
+                    format!(r#""read_hotkey":{alt_right_read},"boss_loot":{{"captureShortcut":{{"key":4,"shift":false,"ctrl":false,"alt":true}},"previewShortcut":{{"key":5,"shift":false,"ctrl":false,"alt":true}}}}"#),
+                    2,
+                    6,
+                ),
+            ];
+            for (fields, read_key, exchange_key) in cases {
+                let (state, rejected) = apply_settings_file("exchange_read_fallback", &format!("{{{fields}}}"));
+                assert_eq!(state.read_hotkey.lock().unwrap().shortcut.key, read_key, "{fields}: {rejected:?}");
+                assert_eq!(state.exchange_read.lock().unwrap().shortcut, alt_shortcut(exchange_key), "{fields}: {rejected:?}");
+                assert!(rejected.iter().any(|line| line.contains("read exchange shortcut")), "{fields}: {rejected:?}");
+            }
+        }
+    }
+
     /// The GPU-free flag has no `AppState` owner, so an unrelated save rebuilt
     /// from `from_state` must carry the stored choice forward, not reset it.
     #[test]
@@ -1994,6 +2093,7 @@ pub(crate) mod tests {
         crate::AppState {
             loot: crate::loot_capture::LootState::new(),
             read_hotkey: Mutex::new(crate::read_hotkey::ReadHotkeySettings::default()),
+            exchange_read: Mutex::new(crate::exchange_read::ExchangeReadSettings::default()),
             overlay_dismiss: Mutex::new(crate::overlay_dismiss::DismissSettings::default()),
             dismiss_ledger: crate::overlay_dismiss::DismissLedger::default(),
             read_prompt: Mutex::new(crate::read_prompt::ReadPromptState::default()),

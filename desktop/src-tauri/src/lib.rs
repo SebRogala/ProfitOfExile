@@ -377,6 +377,8 @@ pub struct AppState {
     pub loot: loot_capture::LootState,
     /// The "Read screen" shortcut and press-to-grab delay. Taken alone.
     pub read_hotkey: Mutex<read_hotkey::ReadHotkeySettings>,
+    /// The "Read exchange" binding (POE-477). Taken alone.
+    pub exchange_read: Mutex<exchange_read::ExchangeReadSettings>,
     pub overlay_dismiss: Mutex<overlay_dismiss::DismissSettings>,
     pub dismiss_ledger: overlay_dismiss::DismissLedger,
     /// The "press <key> to read" prompt (POE-388). Taken alone.
@@ -1254,6 +1256,7 @@ pub fn run() {
     let app_state = AppState {
         loot: loot_capture::LootState::new(),
         read_hotkey: Mutex::new(read_hotkey::ReadHotkeySettings::default()),
+        exchange_read: Mutex::new(exchange_read::ExchangeReadSettings::default()),
         overlay_dismiss: Mutex::new(overlay_dismiss::DismissSettings::default()),
         dismiss_ledger: overlay_dismiss::DismissLedger::default(),
         read_prompt: Mutex::new(read_prompt::ReadPromptState::default()),

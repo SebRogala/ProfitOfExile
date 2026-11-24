@@ -28,6 +28,14 @@
     "delayMs": 0,
     "recalibrateSeconds": 5
   },
+  "exchange_read": {
+    "shortcut": {
+      "key": 2,
+      "shift": false,
+      "ctrl": false,
+      "alt": true
+    }
+  },
   "overlay_dismiss": {
     "timeoutSeconds": 10,
     "shortcut": {

@@ -283,6 +283,11 @@ export interface ReadHotkeySettings {
 	recalibrateSeconds: number;
 }
 
+/** `AppSsotSnapshot.exchangeRead` on the Rust side (POE-477). */
+export interface ExchangeReadSettings {
+	shortcut: BossLootShortcut;
+}
+
 export type DismissInheritance<T> = 'inherit' | { override: T };
 
 export interface OverlayDismiss {
@@ -375,6 +380,8 @@ export interface SsotSnapshot {
 	server?: ServerSlice;
 	/** The "Read screen" shortcut and press-to-grab delay, Rust-owned. */
 	readHotkey?: ReadHotkeySettings;
+	/** The "Read exchange" binding, Rust-owned. */
+	exchangeRead?: ExchangeReadSettings;
 	overlayDismiss?: DismissSnapshot;
 	/** The read prompt, Rust-owned by `read_prompt.rs`. */
 	readPrompt?: ReadPromptSnapshot;
@@ -442,6 +449,8 @@ export const ssot = $state({
 	placements: null as Placements | null,
 	/** Unknown until Rust answers; the default lives in `read_hotkey.rs`. */
 	readHotkey: null as ReadHotkeySettings | null,
+	/** Unknown until Rust answers; the default lives in `exchange_read/mod.rs`. */
+	exchangeRead: null as ExchangeReadSettings | null,
 	overlayDismiss: null as DismissSnapshot | null,
 	/** No prompt until Rust answers. */
 	readPrompt: { mechanic: null, noMatch: false, recalibrating: false, seq: 0, gemUncertain: [false, false, false], recalibrateOffer: false } as ReadPromptSnapshot,

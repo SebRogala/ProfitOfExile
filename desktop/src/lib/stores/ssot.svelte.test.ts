@@ -1796,6 +1796,31 @@ describe('the readHotkey slice', () => {
 	});
 });
 
+describe('the exchangeRead slice', () => {
+	const exchangeRead = { shortcut: { key: 5, shift: false, ctrl: false, alt: true } };
+
+	beforeEach(() => {
+		vi.resetModules();
+	});
+
+	afterEach(async () => {
+		const core = await import('@tauri-apps/api/core');
+		vi.mocked(core.invoke).mockReset();
+	});
+
+	// keep:happy — AC-3: the Settings row shows the binding Rust holds.
+	it('keep:happy takes the Read exchange binding from get_ssot and is unknown before it', async () => {
+		const core = await import('@tauri-apps/api/core');
+		vi.mocked(core.invoke).mockImplementation(async (command: string) =>
+			command === 'get_ssot' ? { league: { name: null }, exchangeRead } : undefined
+		);
+		const mod = await import('./ssot.svelte');
+		expect(mod.ssot.exchangeRead).toBeNull();
+		await mod.fetchSsot();
+		expect(mod.ssot.exchangeRead).toEqual(exchangeRead);
+	});
+});
+
 describe('the overlayDismiss slice', () => {
 	it('waits for Rust defaults and retains the latest settings across partial snapshots', async () => {
 		const mod = await import('./ssot.svelte');
