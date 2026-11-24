@@ -41,6 +41,21 @@ function render(): HTMLElement {
 }
 
 describe('read prompt page', () => {
+	it('keep:happy splits the recalibrate offer into a warning header and a body with Ctrl and A key chips', () => {
+		ssot.readPrompt = {
+			mechanic: null, noMatch: true, recalibrateOffer: true, recalibrating: false, seq: 5,
+			gemUncertain: [false, false, false]
+		};
+		const target = render();
+		const notice = target.querySelector('[data-kind]');
+		const header = notice?.querySelector('[data-part="header"]');
+		const body = notice?.querySelector('[data-part="body"]');
+		expect(header?.textContent).toBe('No mechanics detected');
+		expect(body?.textContent).toBe('Press Ctrl + A within 5 s to recalibrate');
+		expect(Array.from(body?.querySelectorAll('kbd') ?? [], (key) => key.textContent)).toEqual(['Ctrl', 'A']);
+		expect(notice?.getAttribute('data-kind')).toBe('warning');
+	});
+
 	it('draws no prompt when no mechanic is presented', () => {
 		ssot.readPrompt = { mechanic: null, noMatch: false, recalibrating: false, seq: 1 };
 		const target = render();
