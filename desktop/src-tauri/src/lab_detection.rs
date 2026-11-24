@@ -15,6 +15,7 @@ enum LabKind {
 #[derive(Default)]
 pub struct LabDetection {
     kind: Option<LabKind>,
+    layout_difficulty: Option<&'static str>,
     in_lab_area: bool,
     manual_override: bool,
 }
@@ -22,10 +23,10 @@ pub struct LabDetection {
 impl LabDetection {
     pub fn observe_area(&mut self, level: u32, area: &str) {
         self.in_lab_area = area.contains("Labyrinth");
-        if !self.in_lab_area || self.kind.is_some() {
+        if !self.in_lab_area {
             return;
         }
-        self.kind = match level {
+        let kind = match level {
             33 => Some(LabKind::Normal),
             55 => Some(LabKind::Cruel),
             68 => Some(LabKind::Merciless),
@@ -33,6 +34,25 @@ impl LabDetection {
             83 => Some(LabKind::Offering),
             _ => None,
         };
+        if area != "Labyrinth_Airlock" {
+            let difficulty = match kind {
+                Some(LabKind::Normal) => Some("Normal"),
+                Some(LabKind::Cruel) => Some("Cruel"),
+                Some(LabKind::Merciless) => Some("Merciless"),
+                Some(LabKind::Eternal | LabKind::Offering) => Some("Uber"),
+                _ => None,
+            };
+            if difficulty.is_some() {
+                self.layout_difficulty = difficulty;
+            }
+        }
+        if self.kind.is_none() {
+            self.kind = kind;
+        }
+    }
+
+    pub fn layout_difficulty(&self) -> Option<&'static str> {
+        self.layout_difficulty
     }
 
     pub fn observe_font<'a>(

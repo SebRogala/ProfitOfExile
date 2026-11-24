@@ -364,6 +364,7 @@ fn emit_lab_mode_change(app: &AppHandle) {
 pub(crate) struct LabDetectionUpdate {
     pub(crate) detected: Option<&'static str>,
     changed_type: bool,
+    changed_layout_difficulty: Option<&'static str>,
     pub(crate) mode_change: Option<(String, &'static str)>,
 }
 
@@ -374,17 +375,20 @@ pub(crate) fn record_lab_detection(
     state: &AppState,
     update: impl FnOnce(&mut lab_detection::LabDetection),
 ) -> LabDetectionUpdate {
-    let (detected, changed_type, mode_change) = {
+    let (detected, changed_type, changed_layout_difficulty, mode_change) = {
         let mut detection = state.lab_scan.detection.lock().unwrap_or_else(|e| e.into_inner());
         let previous = detection.detected_type();
+        let previous_layout = detection.layout_difficulty();
         update(&mut detection);
         let detected = detection.detected_type();
+        let changed_layout_difficulty = detection.layout_difficulty()
+            .filter(|difficulty| Some(*difficulty) != previous_layout);
         let mode_change = detection.automatic_mode().and_then(|mode| {
             change_lab_mode(state, mode).map(|change| (change.previous, mode))
         });
-        (detected, previous != detected, mode_change)
+        (detected, previous != detected, changed_layout_difficulty, mode_change)
     };
-    LabDetectionUpdate { detected, changed_type, mode_change }
+    LabDetectionUpdate { detected, changed_type, changed_layout_difficulty, mode_change }
 }
 
 pub(crate) fn publish_lab_detection(app: &AppHandle, update: LabDetectionUpdate) {
@@ -407,7 +411,7 @@ fn publish_lab_detection_with(
     update: LabDetectionUpdate,
     mut log: impl FnMut(String),
     mut mode_change: impl FnMut(),
-    _emit_nav: impl FnMut(serde_json::Value),
+    mut emit_nav: impl FnMut(serde_json::Value),
 ) {
     if update.changed_type {
         if let Some(kind) = update.detected {
@@ -417,6 +421,9 @@ fn publish_lab_detection_with(
     if let Some((old, mode)) = update.mode_change {
         log(format!("Lab mode auto-switch: {} -> {} (detected {})", old, mode, update.detected.unwrap_or("Unknown")));
         mode_change();
+    }
+    if let Some(difficulty) = update.changed_layout_difficulty {
+        emit_nav(serde_json::json!({"type": "LayoutChanged", "difficulty": difficulty}));
     }
 }
 
