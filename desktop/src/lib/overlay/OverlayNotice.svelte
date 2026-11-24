@@ -11,7 +11,10 @@
 
 <script lang="ts">
 	let { kind, header, body, keys, progress = false, reason }: OverlayNoticeProps = $props();
-	const bodyParts = $derived(keys ? body.split(keys) : [body]);
+	const keyOffset = $derived(keys ? body.indexOf(keys, body.startsWith('Press ') ? 'Press '.length : 0) : -1);
+	const bodyParts = $derived(keys && keyOffset >= 0
+		? [body.slice(0, keyOffset), body.slice(keyOffset + keys.length)]
+		: [body]);
 </script>
 
 <div class="notice {kind}" data-kind={kind} role="status">
