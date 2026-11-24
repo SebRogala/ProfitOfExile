@@ -4505,7 +4505,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"status":"idle","waitingForPanel":false,"readRetry":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":false},"preset":"default","custom":{"tierFraction":0.8,"cPerRarity":1.0,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"market":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
+            r#"{"status":"idle","waitingForPanel":false,"readRetry":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":false},"preset":"default","custom":{"tierFraction":0.8,"cPerRarity":0.5,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"market":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
         );
     }
 
@@ -5822,7 +5822,7 @@ mod tests {
             .total;
         let corruption = valued.get("corruption", Tier::T2).expect("valued").total;
         let gem = valued.get("gem", Tier::T2).expect("valued").total;
-        assert!(close(staying, 53.4), "the room left is worth {staying}");
+        assert!(close(staying, 45.4), "the room left is worth {staying}");
         assert!(close(corruption, LOCUS_T3 * 0.8), "the corruption switch is {corruption}");
         assert!(close(gem, 312.0), "the gem switch is {gem}");
         assert!(staying < gem && gem < corruption, "switching wins either way");
