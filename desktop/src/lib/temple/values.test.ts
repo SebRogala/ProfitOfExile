@@ -710,7 +710,7 @@ describe('roomTooltip', () => {
 		const cradleTip = roomTooltip(cradle);
 
 		expect(locusTip).toContain('Rarity 8/12/12 %');
-		expect(locusTip).toContain('Pack size 1/2/3 %');
+		expect(locusTip).toContain('Pack size 1/2/2 %');
 		expect(locusTip).toContain(locus.sources[0].label);
 		expect(cradleTip).toContain('Magic packs 10/20/30 %');
 		expect(cradleTip).toContain(cradle.sources[0].label);

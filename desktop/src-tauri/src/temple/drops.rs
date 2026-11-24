@@ -34,8 +34,8 @@
 //!   (POE-370): the chest rooms' unique pools and the 25 % share. A
 //!   [`Basis::Guess`]; [`VERTOLKA_MSG`] was the source before it.
 //! - Vertolka's 3.30 sheet export, 2026-11-13 (POE-369) — the rows cited by
-//!   [`SHEET_LOCUS_330`], [`SHEET_CRADLE_330`] and [`SHEET_GLITTERING_330`]:
-//!   the corruption rooms' pack size, the Cradle of Creation line's
+//!   [`SHEET_CRADLE_330`] and [`SHEET_GLITTERING_330`]:
+//!   the Cradle of Creation line's
 //!   magic pack size and Glittering Halls' rarity. Measured.
 //!
 //! - [`VERTOLKA_FEEDBACK_1120`] — Discord player feedback, 2026-11-20,
@@ -43,7 +43,7 @@
 //!   Unverified feedback, carried as [`Basis::Guess`]; Hall of War's existing
 //!   measured pack size is preserved.
 //! - [`POEDB_ROOMS_1124`] — room pages read 2026-11-24, confirming the
-//!   corrected rarity ladders (POE-487). Measured.
+//!   corrected rarity ladders and Locus pack size (POE-487). Measured.
 //!
 //! # Uniques drop at tier 3 only
 //!
@@ -136,9 +136,6 @@ pub const POEDB: &str = "poedb.tw room page, 2026-09-06";
 /// Vertolka's room sheet, read 2026-09-06 — the source of [`LineDrops::note`].
 #[allow(dead_code)] // Named by the docs only since POE-367 removed the temple-mod rows that cited it.
 pub const VERTOLKA_SHEET: &str = "Vertolka's sheet, 2026-09-06";
-/// The 3.30 corruption-room bonus (POE-369, Operator ruling T27 2026-11-13
-/// 00:14: "4% from rarity ... and yeah pack size 1% per tier").
-pub const SHEET_LOCUS_330: &str = "Vertolka's sheet export 2026-11-13: gid0.csv row 10 (Locus of Corruption 4-6% rarity, 1% pack size per tier) and g744679169.csv row 24 (1% pack size per tier where the room gives 4% IIR), read at the standard eight's 4/8/12 and 1/2/3; not yet confirmed in game";
 /// The 3.30 Cradle of Creation bonus (POE-369, Operator ruling T28 2026-11-13
 /// 00:20 confirmed 10 % per tier).
 pub const SHEET_CRADLE_330: &str = "Vertolka's sheet export 2026-11-13: gid0.csv row 8 (Cradle of Creations 10% to magic monster pack size) and g744679169.csv row 24 (Cradle of Creation 10% to magic pack size), read per tier like Hall of War's 10/20/30; per tier confirmed by the Operator 2026-11-13 00:20";
@@ -155,8 +152,8 @@ pub const SHEET_UNIQUES_330: &str = "Vertolka's sheet export 2026-11-13: g744679
 
 /// Unverified player feedback for Factory atlas drops and map corrupt device uses.
 pub const VERTOLKA_FEEDBACK_1120: &str = "Vertolka, Discord 2026-11-20, points 5–8: Factory atlas drops and map corrupt device uses; unverified player feedback";
-/// Room rarity confirmed against the poedb room pages (POE-487).
-pub const POEDB_ROOMS_1124: &str = "poedb.tw room pages, read 2026-11-24; Vertolka's 2026-11-24 rarity correction confirmed";
+/// Room rarity and Locus pack size confirmed against the poedb room pages (POE-487).
+pub const POEDB_ROOMS_1124: &str = "poedb.tw room pages, read 2026-11-24; Vertolka's 2026-11-24 rarity correction and Locus pack size confirmed";
 
 /// The short label a tooltip prints for `source`: who stated the figure and
 /// the date it was read. The full citations above stay the record; these are
@@ -168,7 +165,6 @@ pub fn source_label(source: &'static str) -> &'static str {
         VERTOLKA_FEEDBACK_1120 => "Vertolka Discord 2026-11-20",
         POEDB => "poedb 2026-09-06",
         POEDB_ROOMS_1124 => "poedb 2026-11-24",
-        SHEET_LOCUS_330 => "3.30 sheet 2026-11-13, unconfirmed",
         SHEET_CRADLE_330 | SHEET_GLITTERING_330 => "3.30 sheet 2026-11-13",
         SHEET_UNIQUES_330 => "3.30 sheet 2026-11-13, guess",
         other => other,
@@ -902,21 +898,21 @@ pub const DROPS: [LineDrops; 25] = [
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(8.0, POEDB_ROOMS_1124)),
-                pack_size_pct: Some(Estimate::measured(1.0, SHEET_LOCUS_330)),
+                pack_size_pct: Some(Estimate::measured(1.0, POEDB_ROOMS_1124)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
-                pack_size_pct: Some(Estimate::measured(2.0, SHEET_LOCUS_330)),
+                pack_size_pct: Some(Estimate::measured(2.0, POEDB_ROOMS_1124)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
                 rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
-                pack_size_pct: Some(Estimate::measured(3.0, SHEET_LOCUS_330)),
+                pack_size_pct: Some(Estimate::measured(2.0, POEDB_ROOMS_1124)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
@@ -1515,15 +1511,15 @@ mod tests {
         }
     }
 
-    // POE-369, T24/T27: the 3.30 sheet gives the corruption rooms 1 % pack
-    // size per tier, not yet confirmed in game. Rarity is independently pinned
+    // POE-487: poedb confirms Locus pack size at 1/2/2 %.
+    // Rarity is independently pinned
     // by `keep_happy::the_ten_rarity_lines_carry_poedbs_measured_rarity`.
-    // Fails if a pack-size figure, its basis or the unverified marking
+    // Fails if a pack-size figure or its basis
     // drifts, or if the room gains a unique rate.
     #[test]
-    fn the_corruption_rooms_add_the_sheets_pack_size() {
+    fn the_corruption_rooms_add_poedbs_pack_size() {
         let locus = drops_for("corruption");
-        let measured = Basis::Measured { source: SHEET_LOCUS_330 };
+        let measured = Basis::Measured { source: POEDB_ROOMS_1124 };
         let pack: Vec<Option<(f64, Basis)>> = locus
             .tiers()
             .iter()
@@ -1531,9 +1527,8 @@ mod tests {
             .collect();
         assert_eq!(
             pack,
-            vec![Some((1.0, measured)), Some((2.0, measured)), Some((3.0, measured))]
+            vec![Some((1.0, measured)), Some((2.0, measured)), Some((2.0, measured))]
         );
-        assert!(SHEET_LOCUS_330.contains("not yet confirmed in game"));
         assert!(locus.uniques().is_empty());
         assert!(locus.tiers().iter().all(|t| t.uniques_per_run().is_none()));
     }
@@ -1687,6 +1682,10 @@ mod tests {
     #[test]
     fn every_pack_size_bonus_is_its_tier_one_figure_times_the_tier() {
         for row in DROPS.iter() {
+            // Locus uses poedb's 1/2/2 % pack ladder (POE-487).
+            if row.key() == "corruption" {
+                continue;
+            }
             let tiers = row.tiers();
             let value = |index: usize| tiers[index].pack_size_pct().map(Estimate::value);
             let Some(t1) = value(0) else {
@@ -1751,8 +1750,7 @@ mod tests {
     mod keep_happy {
         use super::*;
 
-        // POE-487 AC-1: measured rarity keeps the pack size already carried (1/2/3 % from
-        // poedb, or the 3.30 sheet on Locus).
+        // POE-487 AC-1: poedb pack size is 1/2/3 %, except Locus's 1/2/2 %.
         #[test]
         fn the_ten_rarity_lines_carry_poedbs_measured_rarity() {
             for key in POEDB_RARITY_LINES {
@@ -1775,7 +1773,8 @@ mod tests {
                         estimate.source()
                     );
                 }
-                let pack_source = if key == "corruption" { SHEET_LOCUS_330 } else { POEDB };
+                let pack_source = if key == "corruption" { POEDB_ROOMS_1124 } else { POEDB };
+                let pack_t3 = if key == "corruption" { 2.0 } else { 3.0 };
                 let pack: Vec<Option<(f64, Basis)>> = tiers
                     .iter()
                     .map(|t| t.pack_size_pct().map(|e| (e.value(), e.basis())))
@@ -1783,7 +1782,7 @@ mod tests {
                 let measured = Basis::Measured { source: pack_source };
                 assert_eq!(
                     pack,
-                    [Some((1.0, measured)), Some((2.0, measured)), Some((3.0, measured))],
+                    [Some((1.0, measured)), Some((2.0, measured)), Some((pack_t3, measured))],
                     "{key} pack size"
                 );
             }
@@ -1852,7 +1851,7 @@ mod tests {
         #[test]
         fn every_cited_source_has_a_short_label() {
             let sources = cited_sources();
-            assert!(sources.contains(&SHEET_LOCUS_330) && sources.contains(&POEDB));
+            assert!(sources.contains(&POEDB_ROOMS_1124) && sources.contains(&POEDB));
             assert!(
                 sources.iter().any(|source| is_vertolka_feedback_1120(source)),
                 "DROPS cites no Vertolka 2026-11-20 feedback source: {sources:?}"

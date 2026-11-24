@@ -5031,10 +5031,10 @@ mod tests {
         }
 
         // AC-2: the Locus and Cradle rows show their figures, cited to their
-        // sources: Locus's pack size and Cradle's magic packs to the 3.30
-        // sheet, Locus's rarity to poedb's 2026-11-24 reading (POE-487).
+        // sources: Cradle's magic packs to the 3.30 sheet, Locus's pack size
+        // and rarity to poedb's 2026-11-24 reading (POE-487).
         #[test]
-        fn locus_and_cradle_lines_carry_the_330_sheet_figures() {
+        fn locus_and_cradle_lines_carry_their_measured_figures() {
             let rows = value_rows(&allflame_valuation());
             let find = |key: &str| {
                 rows.iter()
@@ -5052,10 +5052,9 @@ mod tests {
 
             let locus = find("corruption");
             assert_eq!(locus.line.rarity_pct, Some([8.0, 12.0, 12.0]));
-            assert_eq!(locus.line.pack_size_pct, Some([1.0, 2.0, 3.0]));
-            let locus_label = drops::source_label(drops::SHEET_LOCUS_330).to_string();
+            assert_eq!(locus.line.pack_size_pct, Some([1.0, 2.0, 2.0]));
             assert_eq!(labels(locus, "rarity_pct"), ["poedb 2026-11-24"]);
-            assert_eq!(labels(locus, "pack_size_pct"), [locus_label]);
+            assert_eq!(labels(locus, "pack_size_pct"), ["poedb 2026-11-24"]);
 
             let cradle = find("throne_of_atziri");
             assert_eq!(cradle.name, "Cradle of Creation");

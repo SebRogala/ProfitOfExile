@@ -442,7 +442,7 @@
       "packSizePct": [
         1.0,
         2.0,
-        3.0
+        2.0
       ],
       "rarityPct": [
         8.0,
@@ -458,7 +458,7 @@
         {
           "figure": "pack_size_pct",
           "guessed": false,
-          "label": "3.30 sheet 2026-11-13, unconfirmed"
+          "label": "poedb 2026-11-24"
         }
       ]
     },
