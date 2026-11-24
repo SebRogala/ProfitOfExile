@@ -187,8 +187,7 @@ describe('SettingsPage Read exchange row', () => {
 		ssot.exchangeRead = null;
 	});
 
-	// keep:happy
-	it('renders the Read exchange shortcut from the SSOT right after the Read screen rows', () => {
+	it('keep:happy: renders the Read exchange shortcut from the SSOT right after the Read screen rows', () => {
 		ssot.readHotkey = { shortcut: { key: 120, shift: true, ctrl: false, alt: false }, delayMs: 0, recalibrateSeconds: 5 };
 		ssot.exchangeRead = { shortcut: { key: 2, shift: false, ctrl: false, alt: true } };
 

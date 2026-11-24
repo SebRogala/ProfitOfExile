@@ -82,17 +82,18 @@ function press(input: Press) {
 }
 
 describe('ExchangeReadSetting', () => {
-	// keep:happy — one row per capture kind ShortcutCapture hands over (mouse button, keyboard key).
+	it('keep:happy: displays the native default Read exchange binding', () => {
+		const labels = [...document.body.querySelectorAll('.setting-label')].map((el) => el.textContent?.trim());
+		expect(labels).toContain('Read exchange');
+		expect(shortcutButton().getAttribute('aria-label')).toBe('Read exchange: Alt + Right click');
+	});
+
 	it.each([
 		{ name: 'Ctrl + Mouse 4', input: { kind: 'mouse', button: 3, mods: { ctrlKey: true } } as Press,
 			shortcut: { key: 5, shift: false, ctrl: true, alt: false } },
 		{ name: 'Shift + F9', input: { kind: 'key', key: 'F9', mods: { shiftKey: true } } as Press,
 			shortcut: { key: 120, shift: true, ctrl: false, alt: false } }
-	])('shows Alt + Right click, then saves a captured $name and shows the refreshed binding', async ({ name, input, shortcut }) => {
-		const labels = [...document.body.querySelectorAll('.setting-label')].map((el) => el.textContent?.trim());
-		expect(labels).toContain('Read exchange');
-		expect(shortcutButton().getAttribute('aria-label')).toBe('Read exchange: Alt + Right click');
-
+	])('keep:happy: refreshes the native binding from captured $name', async ({ name, input, shortcut }) => {
 		startListening();
 		press(input);
 
@@ -101,19 +102,30 @@ describe('ExchangeReadSetting', () => {
 		expect(ssot.exchangeRead).toEqual({ shortcut });
 	});
 
-	// keep:critical — silent: a refused save that displayed the captured binding would
-	// tell the player a shortcut is active while native still reads on the old one.
-	it.each([
+	const refusedCaptures = [
 		{ refusal: 'Read exchange shortcut must differ from the read screen and boss loot shortcuts',
 			input: { kind: 'key', key: 'F9', mods: { shiftKey: true } } as Press },
 		{ refusal: 'Plain left or right click cannot be the read exchange shortcut',
 			input: { kind: 'mouse', button: 2, mods: {} } as Press }
-	])('shows the refusal "$refusal" and keeps the last native binding', async ({ refusal, input }) => {
+	];
+
+	// Silent: hiding a refusal would leave the player trusting an unsaved shortcut.
+	it.each(refusedCaptures)('keep:critical: displays the exact refusal "$refusal"', async ({ refusal, input }) => {
 		native.refusal = refusal;
 		startListening();
 		press(input);
 
 		await vi.waitFor(() => expect(document.body.textContent).toContain(refusal));
+	});
+
+	// Silent: displaying the captured binding would tell the player a shortcut is
+	// active while native still reads on the old one.
+	it.each(refusedCaptures)('keep:critical: preserves the native binding on refusal "$refusal"', async ({ refusal, input }) => {
+		native.refusal = refusal;
+		startListening();
+		press(input);
+
+		await vi.waitFor(() => expect(shortcutButton().disabled).toBe(false));
 		expect(native.saves).toHaveLength(1);
 		expect(shortcutButton().getAttribute('aria-label')).toBe('Read exchange: Alt + Right click');
 		expect(ssot.exchangeRead).toEqual({ shortcut: ALT_RIGHT_CLICK });
