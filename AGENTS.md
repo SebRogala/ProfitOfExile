@@ -78,8 +78,10 @@ and the documentation index before acting on them.
   BuildCompareResults in collective.go`), not a line (`collective.go:311` rots on the next edit).
   Keep the why and its evidence, including a past behaviour that explains a current constraint.
 - Limit labels, notes and empty states to data and update times.
-  Write plain tooltips as one defining sentence of at most 25 words, without HTML.
-  Write longer tooltips only in the structured form when essential content cannot fit the plain limit.
+  Write a plain tooltip as one defining sentence, optionally followed by one pointer sentence to a related column (e.g. "see Scale").
+  Keep a plain tooltip to at most 25 words and 2 sentences in total, without HTML.
+  Use the structured form only when the tooltip must distinguish two or more states, steps or symbols the column renders.
+  "It needs context", "it is important" or "it was hard to shorten" does not qualify; cut to the plain limit instead.
   Model structured tooltips on the `col-signal` header in `desktop/src/routes/(app)/components/BestPlays.svelte`.
   Use a bold title, bold group headings and blank lines between groups.
   Give each group heading a scope clause.
