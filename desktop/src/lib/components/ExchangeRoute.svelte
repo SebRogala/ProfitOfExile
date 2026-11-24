@@ -186,7 +186,8 @@
 		     names both currencies already and whose tile carries the artwork of the
 		     one being converted; the name is on its `rateTitle`. -->
 		{#if slot.name}
-			<button type="button" class="name" title={slot.name} onclick={() => copyName(slot.name, key)}>{copied?.owner === owner && copied.key === key && copied.text === slot.name ? 'Copied' : slot.name}</button>
+			{@const name = slot.name}
+			<button type="button" class="name" title={name} onclick={() => copyName(name, key)}>{copied?.owner === owner && copied.key === key && copied.text === name ? 'Copied' : name}</button>
 		{/if}
 		<!-- `rateTitle` carries what the line itself no longer claims: on a step
 		     that printed a total it is the market's own posted pair plus what
