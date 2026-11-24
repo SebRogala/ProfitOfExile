@@ -286,4 +286,24 @@ describe('exchange read in the Companion', () => {
 
 		expect(companion()).toEqual({ ...fields, amount: '1', status: null });
 	});
+
+	// keep:critical — silent: a re-press after a manual clear that the page ignores
+	// leaves the stale manual inputs, which the player then trusts as the new read.
+	it('keep:critical: a new press after Reset clears a filled read refills from the new read', async () => {
+		render();
+		await press({ pressedAtMs: localPress(21, 4), selection: EMBER_FOR_CHAOS });
+		click(buttonLabelled(document.body, 'Reset'));
+		expect(statusLine()).toBeNull();
+
+		await press({ pressedAtMs: localPress(9, 7), selection: DIVINE_ONE_LEFT });
+
+		expect(companion()).toEqual({
+			mode: 'Selling',
+			currency: 'Divine',
+			ratio: '6.12',
+			oneSide: '1 :',
+			amount: '1',
+			status: '09:07 · 1 : 6.12 · stock 3 · Divine Orb ⇄ Orb of Alchemy'
+		});
+	});
 });
