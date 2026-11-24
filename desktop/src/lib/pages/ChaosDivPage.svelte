@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import Button from '$lib/components/Button.svelte';
 	import TotalCard from '$lib/components/TotalCard.svelte';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import { parseDecimalInput } from '$lib/parse-number';
 	import { currentDivineRate } from '$lib/stores/divine-rate.svelte';
+	import { latestExchangeRead, type ExchangeReadErrorCode } from '$lib/tools/exchange-read.svelte';
 	import {
 		CHAOS_DIV_DEFAULTS,
 		calculateChaosDiv,
@@ -36,6 +37,42 @@
 	let copied = $state<{ key: string; text: string } | null>(null);
 	let copyTimer: ReturnType<typeof setTimeout> | undefined;
 	let copyGeneration = 0;
+	let readStatus = $state<string | null>(null);
+	let readWarning = $state(false);
+	const readErrors: Record<ExchangeReadErrorCode, string> = {
+		'panel-not-found': 'Exchange panel not found',
+		'ratio-unreadable': 'Ratio unreadable',
+		'names-unreadable': 'Item names unreadable',
+		'no-currency-side': 'No Chaos or Divine side',
+		'grab-failed': 'Screen grab failed',
+		'privacy-refused': 'Data & privacy notice not accepted'
+	};
+
+	$effect(() => {
+		const read = latestExchangeRead();
+		if (!read) return;
+		untrack(() => {
+			const at = new Date(read.pressedAtMs);
+			const time = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+			readWarning = 'error' in read;
+			if ('error' in read) {
+				readStatus = `${time} · ${readErrors[read.error]}`;
+				return;
+			}
+			const selected = read.selection;
+			mode = selected.mode;
+			currency = selected.currency;
+			ratio = String(selected.ratio);
+			oneSide = selected.oneSide;
+			clearCopy();
+			readStatus = `${time} · ${selected.left} : ${selected.right} · stock ${selected.stock} · ${selected.wantName} ⇄ ${selected.haveName}`;
+		});
+	});
+
+	function clearReadStatus(): void {
+		readStatus = null;
+		clearCopy();
+	}
 
 	function clearCopy(): void {
 		copyGeneration++;
@@ -47,7 +84,7 @@
 		const next = switchChaosDivMode({ mode, oneSide }, value === 'buy' ? 'buy' : 'sell');
 		mode = next.mode;
 		oneSide = next.oneSide;
-		clearCopy();
+		clearReadStatus();
 	}
 
 	async function copy(value: number | string | null, key: string): Promise<void> {
@@ -78,7 +115,7 @@
 		amount = String(CHAOS_DIV_DEFAULTS.amount);
 		ratio = String(CHAOS_DIV_DEFAULTS.ratio);
 		oneSide = CHAOS_DIV_DEFAULTS.oneSide;
-		clearCopy();
+		clearReadStatus();
 	}
 
 	onDestroy(clearCopy);
@@ -103,7 +140,7 @@
 		</div>
 		<div class="field">
 			<span class="caption">Currency</span>
-			<SegmentedButtons value={currency} title="Currency" options={[{ value: 'chaos', label: 'Chaos' }, { value: 'div', label: 'Divine' }]} onselect={(value) => { currency = value === 'div' ? 'div' : 'chaos'; clearCopy(); }} />
+			<SegmentedButtons value={currency} title="Currency" options={[{ value: 'chaos', label: 'Chaos' }, { value: 'div', label: 'Divine' }]} onselect={(value) => { currency = value === 'div' ? 'div' : 'chaos'; clearReadStatus(); }} />
 		</div>
 		<div class="field">
 			<div class="field-label">
@@ -124,13 +161,18 @@
 			<label class="caption" for="chaos-div-ratio">Ratio</label>
 			<div class="ratio-control mono">
 				{#if oneSide === 'left'}<span class="fixed-one">1 :</span>{/if}
-				<input id="chaos-div-ratio" class="ratio mono" type="text" inputmode="decimal" bind:value={ratio} oninput={clearCopy} />
+				<input id="chaos-div-ratio" class="ratio mono" type="text" inputmode="decimal" bind:value={ratio} oninput={clearReadStatus} />
 				{#if oneSide === 'right'}<span class="fixed-one">: 1</span>{/if}
-				<button type="button" class="square" aria-label="Swap which side is 1" title="Swap which side is 1" onclick={() => { oneSide = oneSide === 'left' ? 'right' : 'left'; clearCopy(); }}>
+				<button type="button" class="square" aria-label="Swap which side is 1" title="Swap which side is 1" onclick={() => { oneSide = oneSide === 'left' ? 'right' : 'left'; clearReadStatus(); }}>
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4 3 8l4 4M3 8h14m0 12 4-4-4-4M21 16H7" /></svg>
 				</button>
 			</div>
-			<div class="per-item">Per item <span class="mono">{result.perItemC}{result.perItemC === '—' ? '' : 'c'} · {result.perItemD}{result.perItemD === '—' ? '' : 'd'}</span></div>
+			<div>
+				{#if readStatus}
+					<div class="read-status" class:warning={readWarning} role="status">{readStatus}</div>
+				{/if}
+				<div class="per-item">Per item <span class="mono">{result.perItemC}{result.perItemC === '—' ? '' : 'c'} · {result.perItemD}{result.perItemD === '—' ? '' : 'd'}</span></div>
+			</div>
 		</div>
 	</section>
 
@@ -342,6 +384,15 @@
 	.per-item {
 		font-size: 0.6875rem;
 		color: var(--color-lab-text-secondary);
+	}
+
+	.read-status {
+		font-size: 0.6875rem;
+		color: var(--color-lab-text-secondary);
+	}
+
+	.read-status.warning {
+		color: var(--color-lab-yellow);
 	}
 
 	.per-item .mono {
