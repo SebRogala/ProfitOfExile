@@ -93,6 +93,8 @@ pub struct LabSettings {
     /// (`LabSettings::default`).
     #[serde(default)]
     pub show_low_confidence: bool,
+    #[serde(default)]
+    pub show_all_lens_feeders: bool,
 }
 
 impl Default for LabSettings {
@@ -107,6 +109,7 @@ impl Default for LabSettings {
             // 20-level variants a thin market is normal, so hiding flagged gems
             // by default reproduces the POE-131 ranking gap.
             show_low_confidence: true,
+            show_all_lens_feeders: false,
         }
     }
 }
