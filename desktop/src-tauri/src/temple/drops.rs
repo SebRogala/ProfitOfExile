@@ -39,9 +39,11 @@
 //!   magic pack size and Glittering Halls' rarity. Measured.
 //!
 //! - [`VERTOLKA_FEEDBACK_1120`] — Discord player feedback, 2026-11-20,
-//!   points 5–8: rarity, Factory atlas drops and map corrupt device uses.
+//!   points 5–8: Factory atlas drops and map corrupt device uses.
 //!   Unverified feedback, carried as [`Basis::Guess`]; Hall of War's existing
 //!   measured pack size is preserved.
+//! - [`POEDB_ROOMS_1124`] — room pages read 2026-11-24, confirming the
+//!   corrected rarity ladders (POE-487). Measured.
 //!
 //! # Uniques drop at tier 3 only
 //!
@@ -151,8 +153,10 @@ pub const VERTOLKA_MSG: &str = "Vertolka, 2026-09-06 message (POE-124)";
 /// (Operator ruling T28 2026-11-13 00:20).
 pub const SHEET_UNIQUES_330: &str = "Vertolka's sheet export 2026-11-13: g744679169.csv row 13 (use non-upgraded version / count 25% of value; the upgraded version only with a Cradle of Creation), rows 28-29 (Glittering Halls: Sacrificial Heart and the Tempered jewels; Museum of Artefacts: Soul Catcher), gid0.csv rows 13 and 25; equal-weight pool per the Operator ruling 2026-11-13 00:20 (the sheet author's guess)";
 
-/// Unverified player feedback; the numeric claims are guesses.
-pub const VERTOLKA_FEEDBACK_1120: &str = "Vertolka, Discord 2026-11-20, points 5–8: room rarity, Factory atlas drops, Hall of War pack size and map corrupt device uses; unverified player feedback";
+/// Unverified player feedback for Factory atlas drops and map corrupt device uses.
+pub const VERTOLKA_FEEDBACK_1120: &str = "Vertolka, Discord 2026-11-20, points 5–8: Factory atlas drops and map corrupt device uses; unverified player feedback";
+/// Room rarity confirmed against the poedb room pages (POE-487).
+pub const POEDB_ROOMS_1124: &str = "poedb.tw room pages, read 2026-11-24; Vertolka's 2026-11-24 rarity correction confirmed";
 
 /// The short label a tooltip prints for `source`: who stated the figure and
 /// the date it was read. The full citations above stay the record; these are
@@ -163,6 +167,7 @@ pub fn source_label(source: &'static str) -> &'static str {
     match source {
         VERTOLKA_FEEDBACK_1120 => "Vertolka Discord 2026-11-20",
         POEDB => "poedb 2026-09-06",
+        POEDB_ROOMS_1124 => "poedb 2026-11-24",
         SHEET_LOCUS_330 => "3.30 sheet 2026-11-13, unconfirmed",
         SHEET_CRADLE_330 | SHEET_GLITTERING_330 => "3.30 sheet 2026-11-13",
         SHEET_UNIQUES_330 => "3.30 sheet 2026-11-13, guess",
@@ -567,21 +572,21 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(8.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(16.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
@@ -596,21 +601,21 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(8.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
-                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(16.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
@@ -636,21 +641,21 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(8.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
-                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(16.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
@@ -665,21 +670,21 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(8.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
-                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(16.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
@@ -707,7 +712,7 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(8.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
                 atlas_drop_pct: Some(Estimate::guess(20.0, VERTOLKA_FEEDBACK_1120)),
@@ -715,7 +720,7 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
                 atlas_drop_pct: Some(Estimate::guess(40.0, VERTOLKA_FEEDBACK_1120)),
@@ -723,7 +728,7 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(16.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
                 atlas_drop_pct: Some(Estimate::guess(60.0, VERTOLKA_FEEDBACK_1120)),
@@ -777,21 +782,21 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(8.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(16.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
@@ -862,21 +867,21 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(8.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
-                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(16.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
@@ -896,21 +901,21 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(8.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(1.0, SHEET_LOCUS_330)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(2.0, SHEET_LOCUS_330)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(3.0, SHEET_LOCUS_330)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
@@ -955,21 +960,21 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(8.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, SHEET_UNIQUES_330)),
-                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(16.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
@@ -1008,21 +1013,21 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(6.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(8.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(1.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(12.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(12.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(2.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
             },
             TierDrops {
                 uniques_per_run: None,
-                rarity_pct: Some(Estimate::guess(18.0, VERTOLKA_FEEDBACK_1120)),
+                rarity_pct: Some(Estimate::measured(16.0, POEDB_ROOMS_1124)),
                 pack_size_pct: Some(Estimate::measured(3.0, POEDB)),
                 magic_pack_size_pct: None,
                 ..TierDrops::NONE
@@ -1430,8 +1435,7 @@ mod tests {
     }
 
     // poedb's numbers are the game's and must never be stored as a guess.
-    // Since POE-466 Crucible's rarity is Vertolka's feedback, so its pack size
-    // is the poedb percentage left on it. Fails if a poedb percentage is
+    // Crucible keeps its original poedb pack-size source. Fails if a percentage is
     // demoted to Guess.
     #[test]
     fn crucibles_percentages_are_measured_not_guessed() {
@@ -1450,7 +1454,7 @@ mod tests {
         let factory = drops_for("factory");
         assert_eq!(
             factory.tiers()[2].rarity_pct().map(Estimate::value),
-            Some(18.0)
+            Some(16.0)
         );
         assert_eq!(
             factory.tiers()[2].pack_size_pct().map(Estimate::source),
@@ -1512,9 +1516,8 @@ mod tests {
     }
 
     // POE-369, T24/T27: the 3.30 sheet gives the corruption rooms 1 % pack
-    // size per tier, not yet confirmed in game; POE-466 replaced the sheet's
-    // 4 % rarity with Vertolka's 6 % per tier (see
-    // `keep_happy::the_ten_rarity_lines_carry_vertolkas_6_12_18_rarity`).
+    // size per tier, not yet confirmed in game. Rarity is independently pinned
+    // by `keep_happy::the_ten_rarity_lines_carry_poedbs_measured_rarity`.
     // Fails if a pack-size figure, its basis or the unverified marking
     // drifts, or if the room gains a unique rate.
     #[test]
@@ -1592,8 +1595,8 @@ mod tests {
 
     // has_guess is what POE-257/260 read to mark a value as somebody's
     // estimate: the set it is true on is the eight chest lines carrying the
-    // 3.30 sheet's 0.25, the ten lines carrying Vertolka's 2026-11-20 rarity
-    // and Atlas of Worlds with his device uses (POE-466), in DROPS order.
+    // 3.30 sheet's 0.25, Factory's atlas drops and Atlas of Worlds' device
+    // uses (POE-466), in DROPS order.
     // Hall of War is out: its pack size stays poedb's measured figure. Fails
     // if a Guess is stored as Measured or if has_guess stops walking the
     // tiers.
@@ -1608,18 +1611,14 @@ mod tests {
             guessed,
             [
                 "atlas_of_worlds",
-                "chamber_of_iron",
                 "conduit_of_lightning",
                 "crucible_of_flame",
                 "defense_research_lab",
                 "factory",
                 "glittering_halls",
-                "hall_of_champions",
                 "hybridisation_chamber",
-                "corruption",
                 "museum_of_artefacts",
                 "sanctum_of_immortality",
-                "upgrade",
                 "toxic_grove",
             ]
         );
@@ -1684,32 +1683,19 @@ mod tests {
 
     // ---------------------------------------------------------- numbers --
 
-    // Every area bonus poedb prints is one figure and its multiples: T1, twice
-    // T1, three times T1, for rarity and pack size alike (6/12/18, 1/2/3,
-    // 12/24/36, 10/20/30). That
-    // shape is what makes a slipped digit visible at all — 6 for 60 reads as
-    // perfectly plausible on its own. Fails on Glittering Halls tier-3 rarity
-    // 36 -> 6, or on any tier-2 value transposed with its tier-3 neighbour.
+    // Pack size scales from tier one; rarity has its separately measured ladders.
     #[test]
-    fn every_area_bonus_is_its_tier_one_figure_times_the_tier() {
-        let bonuses: [(&str, fn(TierDrops) -> Option<Estimate>); 2] = [
-            ("rarity", TierDrops::rarity_pct),
-            ("pack size", TierDrops::pack_size_pct),
-        ];
+    fn every_pack_size_bonus_is_its_tier_one_figure_times_the_tier() {
         for row in DROPS.iter() {
             let tiers = row.tiers();
-            for (name, read) in bonuses {
-                let value = |index: usize| read(tiers[index]).map(Estimate::value);
-                let Some(t1) = value(0) else {
-                    // No tier-1 figure means the page states this bonus
-                    // nowhere on the line, not that it starts at tier 2.
-                    assert_eq!(value(1), None, "{} tier 2 {name}", row.key());
-                    assert_eq!(value(2), None, "{} tier 3 {name}", row.key());
-                    continue;
-                };
-                assert_eq!(value(1), Some(t1 * 2.0), "{} tier 2 {name}", row.key());
-                assert_eq!(value(2), Some(t1 * 3.0), "{} tier 3 {name}", row.key());
-            }
+            let value = |index: usize| tiers[index].pack_size_pct().map(Estimate::value);
+            let Some(t1) = value(0) else {
+                assert_eq!(value(1), None, "{} tier 2 pack size", row.key());
+                assert_eq!(value(2), None, "{} tier 3 pack size", row.key());
+                continue;
+            };
+            assert_eq!(value(1), Some(t1 * 2.0), "{} tier 2 pack size", row.key());
+            assert_eq!(value(2), Some(t1 * 3.0), "{} tier 3 pack size", row.key());
         }
     }
 
@@ -1748,10 +1734,8 @@ mod tests {
         source.contains("Vertolka") && source.contains("Discord") && source.contains("2026-11-20")
     }
 
-    /// The ten lines whose rarity Vertolka's 2026-11-20 feedback sets to
-    /// 6 % per tier: every line carrying rarity before POE-466 except
-    /// Glittering Halls.
-    const FEEDBACK_RARITY_LINES: [&str; 10] = [
+    /// The ten rarity lines confirmed against poedb on 2026-11-24.
+    const POEDB_RARITY_LINES: [&str; 10] = [
         "chamber_of_iron",
         "conduit_of_lightning",
         "crucible_of_flame",
@@ -1767,21 +1751,25 @@ mod tests {
     mod keep_happy {
         use super::*;
 
-        // POE-466 AC-1: the ten lines read 6/12/18 % rarity, each figure
-        // Vertolka's guess, and keep the pack size they carried (1/2/3 % from
+        // POE-487 AC-1: measured rarity keeps the pack size already carried (1/2/3 % from
         // poedb, or the 3.30 sheet on Locus).
         #[test]
-        fn the_ten_rarity_lines_carry_vertolkas_6_12_18_rarity() {
-            for key in FEEDBACK_RARITY_LINES {
+        fn the_ten_rarity_lines_carry_poedbs_measured_rarity() {
+            for key in POEDB_RARITY_LINES {
                 let tiers = drops_for(key).tiers();
                 let rarity: Vec<Option<f64>> =
                     tiers.iter().map(|t| t.rarity_pct().map(Estimate::value)).collect();
-                assert_eq!(rarity, [Some(6.0), Some(12.0), Some(18.0)], "{key} rarity");
+                let expected = if key == "corruption" {
+                    [Some(8.0), Some(12.0), Some(12.0)]
+                } else {
+                    [Some(8.0), Some(12.0), Some(16.0)]
+                };
+                assert_eq!(rarity, expected, "{key} rarity");
                 for (index, t) in tiers.iter().enumerate() {
                     let estimate = t.rarity_pct().expect("rarity is stated");
-                    assert!(estimate.is_guess(), "{key} tier {} rarity is not a guess", index + 1);
+                    assert!(!estimate.is_guess(), "{key} tier {} rarity is guessed", index + 1);
                     assert!(
-                        is_vertolka_feedback_1120(estimate.source()),
+                        estimate.source() == POEDB_ROOMS_1124,
                         "{key} tier {} rarity cites {:?}",
                         index + 1,
                         estimate.source()

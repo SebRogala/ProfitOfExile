@@ -356,7 +356,7 @@ pub struct LineView {
     /// The draft prose for a content line, or `null` for a chest line.
     #[serde(default)]
     pub content: Option<String>,
-    /// Area rarity bonus at tiers 1, 2, 3 — poedb's `4/8/12 %` ladder.
+    /// Area rarity bonus at tiers 1, 2, 3, projected from `drops::DROPS`.
     /// `null` when any tier has no stated number (a ladder is a ladder or it
     /// is nothing; `TierDrops` keeps `None` apart from zero).
     pub rarity_pct: Option<[f64; 3]>,
@@ -2921,7 +2921,7 @@ mod tests {
         let view = offer_view(0, &input, None, &valued());
         let line = view.line.expect("a resolved offer carries line facts");
 
-        assert_eq!(line.rarity_pct, Some([6.0, 12.0, 18.0]));
+        assert_eq!(line.rarity_pct, Some([8.0, 12.0, 16.0]));
     }
 
     #[test]
@@ -4886,10 +4886,10 @@ mod tests {
     }
 
     /// Locus of Corruption's tier-3 total on the committed capture, and the
-    /// board's top room: its 846 c sale delta plus 18 c rarity (18 % from
-    /// Vertolka's 2026-11-20 feedback, POE-466, at the 1 c base). POE-366
+    /// board's top room: its 846 c sale delta plus 6 c rarity (12 % from
+    /// poedb's 2026-11-24 reading at the 0.5 c base, POE-487). POE-366
     /// removed the vial term that once sat on top of it.
-    const LOCUS_T3: f64 = 864.0;
+    const LOCUS_T3: f64 = 852.0;
 
     /// The valuation the bridge tests price against: the committed Allflame
     /// capture under the Default preset, whose top tier-3 room is Locus of
@@ -4955,11 +4955,6 @@ mod tests {
             assert_eq!(wire["pickOrder"], line.rank().pick_order());
         }
     }
-
-    /// The short label Vertolka's 2026-11-20 feedback prints under (POE-466).
-    /// Pinned here and in both TypeScript fixtures; the tooltip has room for
-    /// 40 characters (`every_cited_source_has_a_short_label`).
-    const FEEDBACK_1120_LABEL: &str = "Vertolka Discord 2026-11-20";
 
     /// One upgrade offer per tier of the three lines POE-466 describes per
     /// tier, printed at the room it builds: Factory, Hall of War, Atlas of
@@ -5037,7 +5032,7 @@ mod tests {
 
         // AC-2: the Locus and Cradle rows show their figures, cited to their
         // sources: Locus's pack size and Cradle's magic packs to the 3.30
-        // sheet, Locus's rarity to Vertolka's 2026-11-20 feedback (POE-466).
+        // sheet, Locus's rarity to poedb's 2026-11-24 reading (POE-487).
         #[test]
         fn locus_and_cradle_lines_carry_the_330_sheet_figures() {
             let rows = value_rows(&allflame_valuation());
@@ -5056,10 +5051,10 @@ mod tests {
             };
 
             let locus = find("corruption");
-            assert_eq!(locus.line.rarity_pct, Some([6.0, 12.0, 18.0]));
+            assert_eq!(locus.line.rarity_pct, Some([8.0, 12.0, 12.0]));
             assert_eq!(locus.line.pack_size_pct, Some([1.0, 2.0, 3.0]));
             let locus_label = drops::source_label(drops::SHEET_LOCUS_330).to_string();
-            assert_eq!(labels(locus, "rarity_pct"), [FEEDBACK_1120_LABEL]);
+            assert_eq!(labels(locus, "rarity_pct"), ["poedb 2026-11-24"]);
             assert_eq!(labels(locus, "pack_size_pct"), [locus_label]);
 
             let cradle = find("throne_of_atziri");
@@ -5678,11 +5673,10 @@ mod tests {
     /// With the 2026-10-17 C-tier rung, Temple Nexus takes 21.15 and
     /// leaves the top five. Since POE-367 removed Crucible of Flame's 60 c
     /// temple-mod term it leaves too, and since POE-369 removed item quantity
-    /// Factory is its rarity bonus alone and leaves as well. At POE-370's 1 c
-    /// rarity base Glittering Halls' 36 % rarity is 36 c, and its POE-370 chest
-    /// pool adds 1 c (37 c), so Sanctum of
-    /// Immortality, Conduit of Lightning and Glittering Halls follow the two
-    /// sales, with Defense Research Lab sixth and Temple Nexus seventh.
+    /// Factory is its rarity bonus alone and leaves as well. POE-487's 0.5 c
+    /// rarity base gives Glittering Halls 18 c plus its 1 c chest pool.
+    /// Sanctum, Conduit and Defense Research Lab follow the two sales;
+    /// Temple Nexus is sixth and Glittering Halls seventh.
     #[test]
     fn the_live_captures_five_best_rooms_are_these_in_this_order() {
         let valued = value_read(&TempleSettings::default(), &crate::temple::market::allflame());
@@ -5701,18 +5695,18 @@ mod tests {
                 "gem",
                 "sanctum_of_immortality",
                 "conduit_of_lightning",
-                "glittering_halls",
+                "defense_research_lab",
             ],
         );
         assert_eq!(ranked[0].1, LOCUS_T3, "Locus of Corruption, its sale delta plus rarity");
         assert_eq!(ranked[1].1, 390.0, "Doryani's Institute, its sale delta");
-        assert!(close(ranked[2].1, 66.75), "Sanctum of Immortality");
-        assert!(close(ranked[3].1, 65.625), "Conduit of Lightning");
-        assert!(close(ranked[4].1, 37.0), "Glittering Halls is fifth");
-        assert_eq!(ranked[5].0, "defense_research_lab", "Defense Research Lab sixth");
-        assert!(close(ranked[5].1, 36.85), "Defense Research Lab");
-        assert_eq!(ranked[6].0, "upgrade", "and Temple Nexus seventh");
-        assert!(close(ranked[6].1, 21.15), "Temple Nexus");
+        assert!(close(ranked[2].1, 56.75), "Sanctum of Immortality");
+        assert!(close(ranked[3].1, 55.625), "Conduit of Lightning");
+        assert!(close(ranked[4].1, 26.85), "Defense Research Lab is fifth");
+        assert_eq!(ranked[5].0, "upgrade", "Temple Nexus sixth");
+        assert!(close(ranked[5].1, 21.15), "Temple Nexus");
+        assert_eq!(ranked[6].0, "glittering_halls", "Glittering Halls seventh");
+        assert!(close(ranked[6].1, 19.0), "Glittering Halls");
     }
 
     /// An offer whose printed target did not resolve publishes no value —

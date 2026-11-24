@@ -762,7 +762,7 @@ mod tests {
 
         let valued = value_table(Preset::Custom, &custom, &market);
 
-        assert_eq!(total(&valued, "corruption", 3), 864.0);
+        assert_eq!(total(&valued, "corruption", 3), 852.0);
         assert!(
             total(&valued, "corruption", 3) > total(&valued, "gem", 3),
             "the feed's own order survives a zero drops weight",
@@ -845,8 +845,8 @@ mod tests {
         let valued = value_table(Preset::Custom, &custom, &allflame());
         assert_eq!(total(&valued, "gem", 3), 50.0);
         // Its formula value on the capture: the 846 c sale delta plus its
-        // 18 % rarity (Vertolka, 2026-11-20) at the 1 c base.
-        assert_eq!(total(&valued, "corruption", 3), 864.0);
+        // 12 % measured rarity at the 0.5 c base (POE-487).
+        assert_eq!(total(&valued, "corruption", 3), 852.0);
     }
 
     #[test]
@@ -977,7 +977,7 @@ mod tests {
 
         assert_eq!(knobs, Knobs::default());
         assert_eq!(knobs.tier_fraction, 0.8);
-        assert_eq!(knobs.c_per_rarity, 1.0);
+        assert_eq!(knobs.c_per_rarity, 0.5);
         assert_eq!(knobs.c_per_rarity, crate::temple::valuation::C_PER_RARITY_BASE);
         assert_eq!(knobs.drops_weight, 1.0);
         assert_eq!(knobs.combo_premium, 0.0);

@@ -164,13 +164,10 @@ pub struct Knobs {
     pub combo_premium: f64,
 }
 
-/// The shipped chaos per point of `increased Rarity of Items found in this
-/// Area`: **a starting base to tune, not measured**. Operator ruling
-/// 2026-11-13 00:08 (POE-370, decisions T25) on Vertolka's note *"Also probably
-/// change base added value per IIR to 1%=1c? for start"*. It replaces the
-/// 0.25 c of his 2026-09-06 message and the 3.30 sheet's 0.5 c
-/// (g744679169.csv line 12, "set up 0,5c per 1% as base").
-pub const C_PER_RARITY_BASE: f64 = 1.0;
+/// The shipped chaos per point of increased Rarity: an unmeasured tuning base.
+/// Vertolka's 2026-11-24 20:02 proposal via the Operator (POE-487) supersedes
+/// the Operator's 2026-11-13 POE-370 T25 ruling.
+pub const C_PER_RARITY_BASE: f64 = 0.5;
 
 impl Default for Knobs {
     fn default() -> Knobs {
@@ -1279,92 +1276,43 @@ mod tests {
             .unwrap_or_else(|| panic!("no {kind:?} driver among {:?}", value.drivers))
     }
 
-    /// POE-370 WI-1: every line x tier total at the 1 c per rarity % base.
-    /// These literals were captured from the pre-change table with
-    /// `c_per_rarity: 1.0` before the default moved; only rarity terms may
-    /// move a total.
-    const RARITY_BASE_1C_TOTALS: [(&str, [f64; 3]); 25] = [
-        ("apex_of_ascension", [0.00875, 0.00875, 0.0109375]),
-        ("atlas_of_worlds", [0.0035, 0.0035, 0.004375]),
-        ("chamber_of_iron", [9.6, 9.6, 12.0]),
-        ("conduit_of_lightning", [47.7, 47.7, 59.625]),
-        ("corruption", [686.4, 686.4, 858.0]),
-        ("court_of_sealed_death", [0.0035, 0.0035, 0.004375]),
-        ("crucible_of_flame", [10.6, 10.6, 13.25]),
-        ("defense_research_lab", [24.68, 24.68, 30.85]),
+    /// POE-487: captured sale deltas and chest terms plus measured tier-3
+    /// rarity at 0.5 c per point. Ordinary rarity adds 8 c, Locus adds 6 c,
+    /// and Glittering Halls adds 18 c. Tiers 1-2 retain the 0.8 building fraction.
+    /// Museum's 0.25 fallback anchor and the instrumental rungs are unchanged.
+    const DEFAULT_CAPTURE_TOTALS: [(&str, [f64; 3]); 25] = [
+        ("apex_of_ascension", [0.00125, 0.00125, 0.0015625]),
+        ("atlas_of_worlds", [0.0005, 0.0005, 0.000625]),
+        ("chamber_of_iron", [6.4, 6.4, 8.0]),
+        ("conduit_of_lightning", [44.5, 44.5, 55.625]),
+        ("corruption", [681.6, 681.6, 852.0]),
+        ("court_of_sealed_death", [0.0005, 0.0005, 0.000625]),
+        ("crucible_of_flame", [7.4, 7.4, 9.25]),
+        ("defense_research_lab", [21.48, 21.48, 26.85]),
         ("explosive", [1.692, 1.692, 2.115]),
-        ("factory", [9.6, 9.6, 12.0]),
+        ("factory", [6.4, 6.4, 8.0]),
         ("gem", [312.0, 312.0, 390.0]),
-        ("glittering_halls", [28.8, 28.8, 36.0]),
-        ("hall_of_champions", [9.6, 9.6, 12.0]),
-        ("hall_of_legends", [0.0035, 0.0035, 0.004375]),
-        ("hall_of_war", [0.00875, 0.00875, 0.0109375]),
-        ("house_of_the_others", [0.0035, 0.0035, 0.004375]),
-        ("hybridisation_chamber", [11.6, 11.6, 14.5]),
-        ("museum_of_artefacts", [0.0035, 0.0035, 0.004375]),
-        ("sadists_den", [0.00875, 0.00875, 0.0109375]),
-        ("sanctum_of_immortality", [48.6, 48.6, 60.75]),
-        ("storm_of_corruption", [0.035, 0.035, 0.04375]),
-        ("throne_of_atziri", [0.00875, 0.00875, 0.0109375]),
+        ("glittering_halls", [15.2, 15.2, 19.0]),
+        ("hall_of_champions", [6.4, 6.4, 8.0]),
+        ("hall_of_legends", [0.0005, 0.0005, 0.000625]),
+        ("hall_of_war", [0.00125, 0.00125, 0.0015625]),
+        ("house_of_the_others", [0.0005, 0.0005, 0.000625]),
+        ("hybridisation_chamber", [8.4, 8.4, 10.5]),
+        ("museum_of_artefacts", [0.2, 0.2, 0.25]),
+        ("sadists_den", [0.00125, 0.00125, 0.0015625]),
+        ("sanctum_of_immortality", [45.4, 45.4, 56.75]),
+        ("storm_of_corruption", [0.005, 0.005, 0.00625]),
+        ("throne_of_atziri", [0.00125, 0.00125, 0.0015625]),
         ("toxic_grove", [1.4, 1.4, 1.75]),
         ("upgrade", [16.92, 16.92, 21.15]),
-        ("wealth_of_the_vaal", [0.0035, 0.0035, 0.004375]),
-    ];
-
-    /// POE-370 WI-2: the totals the chest model moved, over
-    /// [`RARITY_BASE_1C_TOTALS`]. Glittering Halls and Museum of Artefacts now
-    /// sum their chest pools; Museum's 0.25 becomes the fallback anchor (V7),
-    /// so every scaled fallback rung moves by 0.25 / 1.75 = 1/7. Every line not
-    /// listed keeps its WI-1 total.
-    const CHEST_UNIQUES_330_TOTALS: [(&str, [f64; 3]); 12] = [
-        // 36 rarity + 0.0625 x (5 + 7 + 1 + 3); tiers 1-2 are 0.8 of tier 3.
-        ("glittering_halls", [29.6, 29.6, 37.0]),
-        // 0.25 x Soul Catcher at 1 c.
-        ("museum_of_artefacts", [0.2, 0.2, 0.25]),
-        // D rung, 5/800 x 0.25.
-        ("apex_of_ascension", [0.00125, 0.00125, 0.0015625]),
-        ("hall_of_war", [0.00125, 0.00125, 0.0015625]),
-        ("sadists_den", [0.00125, 0.00125, 0.0015625]),
-        ("throne_of_atziri", [0.00125, 0.00125, 0.0015625]),
-        // E rung, 2/800 x 0.25.
-        ("atlas_of_worlds", [0.0005, 0.0005, 0.000625]),
-        ("court_of_sealed_death", [0.0005, 0.0005, 0.000625]),
-        ("hall_of_legends", [0.0005, 0.0005, 0.000625]),
-        ("house_of_the_others", [0.0005, 0.0005, 0.000625]),
         ("wealth_of_the_vaal", [0.0005, 0.0005, 0.000625]),
-        // C rung.
-        ("storm_of_corruption", [0.005, 0.005, 0.00625]),
-    ];
-
-    /// POE-466: the totals Vertolka's 2026-11-20 rarity moved, over the two
-    /// tables above. Nine of the ten lines whose rarity went from 4/8/12 to
-    /// 6/12/18 % sum their tier-3 rarity, so each tier-3 total gains 6 x the
-    /// 1 c base and tiers 1-2 gain 0.8 of that. The tenth, the upgrade line,
-    /// is instrumental and priced at its letter, so it keeps 21.15. The
-    /// fallback anchor (Museum's 0.25, no rarity) and the instrumental cap
-    /// (Doryani's 390, no rarity) do not move, so no rung moves.
-    const VERTOLKA_RARITY_1120_TOTALS: [(&str, [f64; 3]); 9] = [
-        ("chamber_of_iron", [14.4, 14.4, 18.0]),
-        ("conduit_of_lightning", [52.5, 52.5, 65.625]),
-        ("corruption", [691.2, 691.2, 864.0]),
-        ("crucible_of_flame", [15.4, 15.4, 19.25]),
-        ("defense_research_lab", [29.48, 29.48, 36.85]),
-        ("factory", [14.4, 14.4, 18.0]),
-        ("hall_of_champions", [14.4, 14.4, 18.0]),
-        ("hybridisation_chamber", [16.4, 16.4, 20.5]),
-        ("sanctum_of_immortality", [53.4, 53.4, 66.75]),
     ];
 
     #[test]
     fn the_capture_values_every_room_tier_at_these_totals() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
-        assert_eq!(valued.lines().count(), RARITY_BASE_1C_TOTALS.len());
-        for (key, wi1) in RARITY_BASE_1C_TOTALS {
-            let expected = VERTOLKA_RARITY_1120_TOTALS
-                .iter()
-                .chain(CHEST_UNIQUES_330_TOTALS.iter())
-                .find(|(k, _)| *k == key)
-                .map_or(wi1, |(_, moved)| *moved);
+        assert_eq!(valued.lines().count(), DEFAULT_CAPTURE_TOTALS.len());
+        for (key, expected) in DEFAULT_CAPTURE_TOTALS {
             for (index, want) in expected.iter().enumerate() {
                 let got = value_of(&valued, key, index as u8 + 1).total;
                 assert!(close(got, *want), "{key} tier {}: {got} != {want}", index + 1);
@@ -1429,7 +1377,7 @@ mod tests {
     }
 
     // POE-370 (A4, H4): the upgraded value is shown, never summed. Sanctum's
-    // tier-3 total stays 66.75 (POE-466's 18 % rarity) while its driver's
+    // tier-3 total stays 56.75 (POE-487's 16 % rarity at 0.5 c) while its driver's
     // upgraded chaos is 106.75.
     // Fails if `upgraded.chaos` is added into `drops` or the total.
     #[test]
@@ -1458,7 +1406,7 @@ mod tests {
             }
         }
         let sanctum = value_of(&valued, "sanctum_of_immortality", 3);
-        assert!(close(sanctum.total, 66.75), "total was {}", sanctum.total);
+        assert!(close(sanctum.total, 56.75), "total was {}", sanctum.total);
         let unique = driver(&sanctum, DriverKind::UniqueDrop);
         assert_eq!(unique.upgraded.as_ref().and_then(|u| u.chaos), Some(106.75));
     }
@@ -1488,8 +1436,8 @@ mod tests {
     #[test]
     fn a_tier_three_room_sums_its_sale_its_drops_and_its_bonus() {
         // Sanctum of Immortality tier 3 on the 2026-09-06 capture: at the floor
-        // (no sale), 0.25 x Mask of the Spirit Drinker at 195 c and +18%
-        // rarity (Vertolka, 2026-11-20) at the 1 c base.
+        // (no sale), 0.25 x Mask of the Spirit Drinker at 195 c and 16%
+        // measured rarity at the 0.5 c base (POE-487).
         let value = value_of(
             &Valued::compute(&allflame(), &Knobs::default()),
             "sanctum_of_immortality",
@@ -1498,8 +1446,8 @@ mod tests {
 
         assert_eq!(value.sale, 0.0);
         assert!(close(value.drops, 48.75), "drops was {}", value.drops);
-        assert!(close(value.bonus, 18.0), "bonus was {}", value.bonus);
-        assert!(close(value.total, 66.75), "total was {}", value.total);
+        assert!(close(value.bonus, 8.0), "bonus was {}", value.bonus);
+        assert!(close(value.total, 56.75), "total was {}", value.total);
     }
 
     #[test]
@@ -1554,9 +1502,8 @@ mod tests {
 
         assert_eq!(value.sale, 846.0);
         assert_eq!(driver(&value, DriverKind::Sale).unit_price, Some(856.0));
-        // The sale plus its 18 % rarity (Vertolka, 2026-11-20) at the 1 c
-        // base (POE-370, POE-466).
-        assert_eq!(value.total, 864.0);
+        // The sale plus its 12 % measured rarity at the 0.5 c base (POE-487).
+        assert_eq!(value.total, 852.0);
     }
 
     #[test]
@@ -1591,12 +1538,12 @@ mod tests {
         let fraction = driver(&t1, DriverKind::TierFraction);
         assert_eq!(fraction.name, "Locus of Corruption");
         assert_eq!(fraction.count, Some(0.8));
-        // Its tier-3 total: the 846 sale + 18 rarity.
+        // Its tier-3 total: the 846 sale + 6 rarity.
         assert_eq!(
             fraction.unit_price,
             Some(value_of(&valued, "corruption", 3).total)
         );
-        assert_eq!(fraction.unit_price, Some(864.0));
+        assert_eq!(fraction.unit_price, Some(852.0));
         // A chest line's tier-1 unique driver carries tier 3's 0.25 count
         // unscaled: only the aggregate is scaled by the fraction.
         let conduit_t1 = value_of(&valued, "conduit_of_lightning", 1);
@@ -1692,7 +1639,7 @@ mod tests {
         let valued = Valued::compute(&allflame(), &knobs);
 
         assert_eq!(value_of(&valued, "corruption", 1).total, 0.0);
-        assert_eq!(value_of(&valued, "corruption", 3).total, 864.0);
+        assert_eq!(value_of(&valued, "corruption", 3).total, 852.0);
     }
 
     #[test]
@@ -1715,14 +1662,14 @@ mod tests {
         assert!(close(priced.drops, 1.25), "drops was {}", priced.drops);
         assert_eq!(rushed.drops, 0.0);
         // And what is left is still the market's ranking: Crucible keeps its
-        // 18 c rarity bonus (18 % x 1.0): summing something bypasses its
+        // 8 c rarity bonus (16 % x 0.5): summing something bypasses its
         // A-tier fallback.
-        assert!(close(rushed.total, 18.0), "total was {}", rushed.total);
+        assert!(close(rushed.total, 8.0), "total was {}", rushed.total);
         assert_eq!(value_of(&valued, "gem", 3).total, 390.0, "Doryani's sale");
         assert_eq!(
             value_of(&valued, "corruption", 3).total,
-            864.0,
-            "Locus's sale plus its 18 c rarity"
+            852.0,
+            "Locus's sale plus its 6 c rarity"
         );
         assert!(rushed.total < value_of(&valued, "gem", 3).total);
     }
@@ -1766,8 +1713,8 @@ mod tests {
     #[test]
     fn a_bonus_only_room_is_worth_its_bonus_not_its_letter() {
         // Factory tier 3 sells at the floor and drops nothing anybody has
-        // quantified, but Vertolka puts +18 % rarity on it (2026-11-20). At
-        // the default rate that is 18 c, and the room is worth that
+        // quantified; poedb states 16 % rarity (2026-11-24). At
+        // the default rate that is 8 c, and the room is worth that
         // rather than the 100 c its B1 rung would have stood in for: a term that
         // was summed always beats the ladder.
         let value = value_of(
@@ -1776,8 +1723,8 @@ mod tests {
             3,
         );
 
-        assert!(close(value.total, 18.0), "total was {}", value.total);
-        assert!(close(value.bonus, 18.0), "18 x 1.0");
+        assert!(close(value.total, 8.0), "total was {}", value.total);
+        assert!(close(value.bonus, 8.0), "16 x 0.5");
         assert_ne!(
             value.total,
             rank_of("factory").fallback_chaos_scaled(846.0),
@@ -1943,7 +1890,7 @@ mod tests {
     /// A bonus term is not a market, and does not stand in for one.
     ///
     /// Crucible of Flame's poedb rarity bonus owes the feed nothing,
-    /// so on a COLD read it is the only number the room could sum — and 18 c of
+    /// so on a COLD read it is the only number the room could sum — and 8 c of
     /// it would rank Crucible below rooms whose letters say it outranks them.
     /// Fails if the cold path starts summing terms again.
     #[test]
@@ -1973,8 +1920,8 @@ mod tests {
                 DriverKind::RarityBonus
             )
             .chaos,
-            Some(18.0),
-            "18 % rarity x 1 c",
+            Some(8.0),
+            "16 % rarity x 0.5 c",
         );
     }
 
@@ -1998,10 +1945,10 @@ mod tests {
         let sadists = value_of(&valued, "sadists_den", 3);
         let war = value_of(&valued, "hall_of_war", 3);
 
-        // 20.5 at POE-370's 1 c rarity base and POE-466's 18 % rarity (14.5
+        // 10.5 at POE-487's 0.5 c rarity base and 16 % rarity (14.5
         // at 12 %; 5.5 at 0.25 c after POE-369 removed its quantity term).
         assert!(
-            close(measured.total, 20.5),
+            close(measured.total, 10.5),
             "{}",
             measured.total
         );
@@ -2024,10 +1971,10 @@ mod tests {
     /// Glittering Halls ranks above Factory now that 3.30 removed item quantity.
     ///
     /// With the vial gone (POE-366, decisions T6) it is its 36 % rarity bonus
-    /// (the 3.30 sheet's 12 % per tier, POE-369), 36 x 1.0 = 36 c at the
-    /// POE-370 base, plus its chest pool, 0.0625 x (5 + 7 + 1 + 3) = 1.0
+    /// (the 3.30 sheet's 12 % per tier, POE-369), 36 x 0.5 = 18 c at the
+    /// POE-487 base, plus its chest pool, 0.0625 x (5 + 7 + 1 + 3) = 1.0
     /// (POE-370 WI-2). Factory's 66 % quantity was what put it ahead; with
-    /// quantity gone (POE-369) Factory is its 18 % rarity (POE-466), 18 c.
+    /// quantity gone (POE-369) Factory is its 16 % rarity at 0.5 c (POE-487), 8 c.
     #[test]
     fn glittering_halls_ranks_above_factory_without_item_quantity() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
@@ -2035,8 +1982,8 @@ mod tests {
         let halls = value_of(&valued, "glittering_halls", 3);
         let factory = value_of(&valued, "factory", 3);
 
-        assert!(close(halls.total, 37.0), "{}", halls.total);
-        assert!(close(factory.total, 18.0), "{}", factory.total);
+        assert!(close(halls.total, 19.0), "{}", halls.total);
+        assert!(close(factory.total, 8.0), "{}", factory.total);
         assert!(halls.total > factory.total, "above Factory");
     }
 
@@ -2564,7 +2511,7 @@ mod tests {
         assert_eq!(value_of(&cold, "corruption", 3).total, 800.0);
         assert_eq!(value_of(&cold, "gem", 3).total, 800.0);
         let live = Valued::compute(&allflame(), &Knobs::default());
-        assert_eq!(value_of(&live, "corruption", 3).total, 864.0);
+        assert_eq!(value_of(&live, "corruption", 3).total, 852.0);
         assert_eq!(value_of(&live, "gem", 3).total, 390.0);
     }
 
@@ -2668,11 +2615,11 @@ mod tests {
         use super::*;
 
         // POE-466 AC-1: a tier-3 rarity room other than Glittering Halls
-        // carries 18 % rarity into its value, at whatever rate the player
+        // carries 16 % rarity into its value, at whatever rate the player
         // configured. Chamber of Iron sits at the floor and drops nothing, so
         // the bonus is its whole total.
         #[test]
-        fn a_tier_three_chamber_of_iron_counts_18_rarity_at_the_configured_rate() {
+        fn a_tier_three_chamber_of_iron_counts_16_rarity_at_the_configured_rate() {
             let knobs = Knobs {
                 c_per_rarity: 0.5,
                 ..Knobs::default()
@@ -2680,14 +2627,14 @@ mod tests {
             let value = value_of(&Valued::compute(&allflame(), &knobs), "chamber_of_iron", 3);
 
             let bonus = driver(&value, DriverKind::RarityBonus);
-            assert_eq!(bonus.count, Some(18.0));
+            assert_eq!(bonus.count, Some(16.0));
             assert_eq!(bonus.unit_price, Some(0.5));
-            assert_eq!(bonus.chaos, Some(9.0));
-            assert!(close(value.total, 9.0), "total was {}", value.total);
+            assert_eq!(bonus.chaos, Some(8.0));
+            assert!(close(value.total, 8.0), "total was {}", value.total);
         }
 
         // POE-466 AC-2: Factory's atlas drops have no price, so its value is
-        // its sale and its 18 % rarity and nothing else, at every tier.
+        // its sale and its 16 % rarity and nothing else, at every tier.
         #[test]
         fn factory_is_worth_its_rarity_alone_with_no_atlas_drop_term() {
             let valued = Valued::compute(&allflame(), &Knobs::default());
@@ -2695,11 +2642,11 @@ mod tests {
 
             let kinds: Vec<DriverKind> = t3.drivers.iter().map(|d| d.kind).collect();
             assert_eq!(kinds, [DriverKind::Sale, DriverKind::RarityBonus]);
-            assert!(close(t3.total, 18.0), "tier 3 total was {}", t3.total);
-            assert!(close(t3.bonus, 18.0), "tier 3 bonus was {}", t3.bonus);
+            assert!(close(t3.total, 8.0), "tier 3 total was {}", t3.total);
+            assert!(close(t3.bonus, 8.0), "tier 3 bonus was {}", t3.bonus);
             for n in [1, 2] {
                 let lower = value_of(&valued, "factory", n);
-                assert!(close(lower.total, 14.4), "tier {n} total was {}", lower.total);
+                assert!(close(lower.total, 6.4), "tier {n} total was {}", lower.total);
             }
         }
 
@@ -2709,7 +2656,7 @@ mod tests {
         // without one it is the base item with its upgraded alternative
         // shown beside it. Sanctum of Immortality tier 3 is the AC's room:
         // 427 x 0.25 = 106.75 with a Cradle and 195 x 0.25 = 48.75 without,
-        // each beside its unchanged 18 c rarity.
+        // each beside its unchanged 8 c rarity.
         #[test]
         fn a_chest_counts_the_unique_its_cradle_context_drops() {
             let market = allflame();
@@ -2746,9 +2693,9 @@ mod tests {
                     }
                 }
                 let sanctum = value_of(&valued, "sanctum_of_immortality", 3);
-                let (drops, total) = if cradle { (106.75, 124.75) } else { (48.75, 66.75) };
+                let (drops, total) = if cradle { (106.75, 114.75) } else { (48.75, 56.75) };
                 assert!(close(sanctum.drops, drops), "cradle={cradle}: drops {}", sanctum.drops);
-                assert!(close(sanctum.bonus, 18.0), "cradle={cradle}: bonus {}", sanctum.bonus);
+                assert!(close(sanctum.bonus, 8.0), "cradle={cradle}: bonus {}", sanctum.bonus);
                 assert!(close(sanctum.total, total), "cradle={cradle}: total {}", sanctum.total);
             }
         }
@@ -2844,13 +2791,13 @@ mod tests {
         // whose upgraded item has no quote, valued at the BASE item's price
         // instead, shows and ranks a number for an item the temple does not
         // drop. The term stays listed under the upgraded name, unpriced and
-        // contributing nothing: Sanctum keeps its 18 c rarity and reads
+        // contributing nothing: Sanctum keeps its 8 c rarity and reads
         // Partial; Museum, which has no other term, takes its grade.
         #[test]
         fn an_unquoted_upgrade_leaves_a_cradle_chest_term_unpriced() {
             // (row, removed upgraded item, line, Some(partial total) or None for the grade)
             let rows: [(&str, &str, &str, Option<f64>); 2] = [
-                ("rarity remains", "Mask of the Stitched Demon", "sanctum_of_immortality", Some(18.0)),
+                ("rarity remains", "Mask of the Stitched Demon", "sanctum_of_immortality", Some(8.0)),
                 ("nothing remains", "Soul Ripper", "museum_of_artefacts", None),
             ];
             for (row, removed, key, partial) in rows {
@@ -2899,7 +2846,7 @@ mod tests {
                 Valued::compute_in(&market, &Knobs::default(), &RoomOverrides::new(), cradle)
             };
             let (without, with) = (at(false), at(true));
-            for (key, t3) in [("corruption", 864.0), ("gem", 390.0)] {
+            for (key, t3) in [("corruption", 852.0), ("gem", 390.0)] {
                 assert!(close(value_of(&without, key, 3).total, t3), "{key} precondition");
                 for n in 1..=3 {
                     assert_eq!(
@@ -2918,8 +2865,8 @@ mod tests {
         // rarity rate, or the grade ladder — and says so.
         //
         // One room: Doryani's Institute's 390 c sale is its whole value.
-        // Locus of Corruption left at POE-369: its rarity (Vertolka's guess
-        // since POE-466) is priced through the guessed chaos-per-rarity rate.
+        // Locus of Corruption left at POE-369: its measured rarity is still
+        // priced through the guessed chaos-per-rarity rate.
         let valued = Valued::compute(&allflame(), &Knobs::default());
 
         let measured: Vec<&str> = valued
