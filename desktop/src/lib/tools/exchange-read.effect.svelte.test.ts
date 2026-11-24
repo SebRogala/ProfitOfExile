@@ -2,7 +2,6 @@
  * The exchange-read store (POE-477) keeps the latest native press result for
  * pages that mount after the press, through the real `listen` callback.
  */
-import { flushSync } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExchangeReadEvent } from './exchange-read.svelte';
 
@@ -33,12 +32,26 @@ const SELECTION = {
 	haveName: 'Orb of Alteration'
 } as const;
 
+/** The effect API of the Svelte client runtime the store was loaded with. */
+interface ClientRuntime {
+	effect_root(fn: () => void): () => void;
+	user_effect(fn: () => void): void;
+}
+
 const cleanups: (() => void)[] = [];
 let store: typeof import('./exchange-read.svelte');
+let client: ClientRuntime;
+let flushSync: typeof import('svelte').flushSync;
 
+// A reset gives each case a fresh store (null latest, a new listener) but also a
+// fresh Svelte runtime, so the subscriber and flushSync are taken from that same
+// reloaded runtime: this file's own `$effect` would never see the store's writes.
 beforeEach(async () => {
 	vi.resetModules();
 	mocks.handlers = {};
+	({ flushSync } = await import('svelte'));
+	// @ts-expect-error Svelte's internal client entry has no declaration file.
+	client = (await import('svelte/internal/client')) as ClientRuntime;
 	store = await import('./exchange-read.svelte');
 	cleanups.push(store.startExchangeReadStore());
 });
@@ -58,8 +71,8 @@ async function press(payload: unknown) {
 function subscribe(): (ExchangeReadEvent | null)[] {
 	const seen: (ExchangeReadEvent | null)[] = [];
 	cleanups.push(
-		$effect.root(() => {
-			$effect(() => {
+		client.effect_root(() => {
+			client.user_effect(() => {
 				seen.push(store.latestExchangeRead());
 			});
 		})
