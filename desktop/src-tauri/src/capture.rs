@@ -175,14 +175,33 @@ fn client_in_capture(game_client: Option<[i32; 4]>, origin: (i32, i32), size: (u
 
 /// The Recalibrate log line naming the raw game client read, the captured
 /// monitor's origin and size, and the client the measurement actually used.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn recalibrate_client_diagnostic(
-    _raw: Option<[i32; 4]>,
-    _origin: (i32, i32),
-    _size: (u32, u32),
-    _client: [i32; 4],
+    raw: Option<[i32; 4]>,
+    origin: (i32, i32),
+    size: (u32, u32),
+    client: [i32; 4],
 ) -> String {
-    String::new()
+    let selected = client_in_capture(raw, origin, size);
+    let why = match raw {
+        None => "no client read",
+        Some([x, y, w, h]) => {
+            let translated = [
+                i64::from(x) - i64::from(origin.0),
+                i64::from(y) - i64::from(origin.1),
+                i64::from(w),
+                i64::from(h),
+            ];
+            if w > 0 && h > 0 && selected.map(i64::from) == translated {
+                "client inside the capture"
+            } else {
+                "client outside the capture"
+            }
+        }
+    };
+    format!(
+        "Recalibrate: game client {raw:?} (desktop px), monitor origin {origin:?} size {}x{} -> client used {client:?} ({why})",
+        size.0, size.1
+    )
 }
 
 #[cfg(windows)]
@@ -253,6 +272,19 @@ mod platform {
     /// `[x, y, w, h]`, as [`remember_game_client`] last read it. Read and
     /// written only in this module.
     static GAME_CLIENT: Mutex<Option<[i32; 4]>> = Mutex::new(None);
+
+    pub(crate) fn raw_game_client() -> Option<[i32; 4]> {
+        *GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub(crate) fn refresh_game_client(app: &AppHandle) {
+        use windows::core::w;
+        use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+
+        if let Ok(hwnd) = unsafe { FindWindowW(w!("POEWindowClass"), None) } {
+            remember_game_client(app, hwnd);
+        }
+    }
 
     static CLIENT_READ_FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
     static CLIENT_READ_TIMED: AtomicBool = AtomicBool::new(false);
@@ -538,6 +570,12 @@ mod platform {
     use super::Capture;
     use tauri::AppHandle;
 
+    pub(crate) fn raw_game_client() -> Option<[i32; 4]> {
+        None
+    }
+
+    pub(crate) fn refresh_game_client(_app: &AppHandle) {}
+
     /// No capture off Windows, exactly as before POE-237 — the whole OCR half
     /// of the app is Windows-only and every caller already treats this `Err`
     /// as the normal answer on a dev machine.
@@ -548,6 +586,8 @@ mod platform {
 
 #[cfg(windows)]
 pub use platform::*;
+
+pub(crate) use platform::{raw_game_client, refresh_game_client};
 
 /// Set by the first refused grab; nothing re-arms it, so a session that never
 /// accepts logs the refusal once, not once per tick.

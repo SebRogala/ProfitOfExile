@@ -13,6 +13,7 @@
 //! publish, debug and release builds alike. The poll is the backstop the note
 //! above describes, not the path a read travels on. The stale-data observation
 //! behind that note was about JS-to-JS cross-window events, not Rust emits.
+//! size-gate: intrinsic — cross-window screen lifecycle and publication remain in their existing owner; this change adds only the Recalibrate call sites
 //!
 //! Chunk 1 built the core types + the poll-target command. Chunk 3 adds the
 //! league resolution service: startup, write 409, Mercure hints, Refresh and
@@ -1413,6 +1414,7 @@ pub fn geometry_recalibrate(app: AppHandle) {
     // re-arms come before the write: what this publishes must land on an empty
     // slot, and `persist_forgetting_screen_scale` is what empties the FILE the
     // `persist_settings` below then rewrites.
+    crate::capture::refresh_game_client(&app);
     let grab = match crate::capture::capture_screen(&app) {
         Ok(grab) => grab,
         Err(e) => {
@@ -1428,6 +1430,7 @@ pub fn geometry_recalibrate(app: AppHandle) {
             return;
         }
     };
+    let raw_client = crate::capture::raw_game_client();
     let measured = screen_from_capture(&grab);
     // The record is READ, not discarded, and that is load-bearing here in a way
     // it is not on a detect tick. The window between the clear above and this
@@ -1464,6 +1467,15 @@ pub fn geometry_recalibrate(app: AppHandle) {
             "Recalibrate: measured {}x{} on monitor {} — ui scale {:.3} derived from the \
              screen height; merc and temple refine it from the game's art when they next run",
             measured.width, measured.height, measured.monitor_id, measured.ui_scale
+        ),
+    );
+    crate::app_log(
+        &app,
+        crate::capture::recalibrate_client_diagnostic(
+            raw_client,
+            grab.origin,
+            (grab.image.width(), grab.image.height()),
+            grab.client,
         ),
     );
 }
