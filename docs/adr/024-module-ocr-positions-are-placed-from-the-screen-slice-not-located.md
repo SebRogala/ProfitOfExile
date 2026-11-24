@@ -430,3 +430,10 @@ was found on: a slice dropped or replaced since the frame was taken, or a
 Recalibrate since the calibration started, banks nothing. The merc rule is
 unchanged. When the calibration sweep may run is
 [ADR-035](035-a-read-key-press-sweeps-only-after-every-banked-probe-missed-once-per-screen-setup.md).
+
+## Amendment: POE-411 — proposed Manual OCR geometry exception (2026-11-24)
+
+[ADR-036](036-manual-ocr-regions-replace-placement-while-manual-is-on.md) is
+Proposed and owns the proposed Manual-only exception to this ADR's placement
+contract. It awaits Operator acceptance; this pointer does not change the
+accepted contract or claim delivery.
