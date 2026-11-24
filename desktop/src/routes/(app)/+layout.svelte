@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../../app.css';
+	import { onDestroy } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { emitTo, listen } from '@tauri-apps/api/event';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -12,6 +13,7 @@
 	import { startMercureStore } from '$lib/stores/mercure.svelte';
 	import { initNoticeGate, whenNoticeAccepted } from '$lib/privacy/gate.svelte';
 	import { initNumberFormatStore } from '$lib/stores/number-format.svelte';
+	import { startExchangeReadStore } from '$lib/tools/exchange-read.svelte';
 	import { startRunRecorder } from '$lib/run-recorder';
 	import { nav, viewToPath, type View } from '$lib/stores/navigation.svelte';
 	import {
@@ -266,6 +268,7 @@
 	// Initialize event listeners — runs on module load (client-side only due to ssr:false)
 	// No cleanup needed — desktop app layout never unmounts.
 	initStatusStore().catch(e => console.error('[layout] initStatusStore failed:', e));
+	onDestroy(startExchangeReadStore());
 
 	// Start the cross-window SSOT poll. The main window may lean on the eager
 	// ssot-changed nudge, but polling get_ssot is consistent with the overlays
