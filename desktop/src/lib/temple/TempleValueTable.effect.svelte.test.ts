@@ -147,7 +147,7 @@ describe('TempleValueTable room tooltip', () => {
 		const locusTip = hover(target, 'Locus of Corruption').textContent ?? '';
 		expect(locusTip).toContain('Rarity 8/12/12 %');
 		expect(locusTip).toContain('Pack size 1/2/2 %');
-		expect(locusTip).toContain('Rarity: poedb 2026-11-24');
+		expect(locusTip).toContain('Rarity, pack size: poedb 2026-11-24');
 		expect(locusTip).not.toContain('Rarity est.');
 
 		const factoryTip = hover(target, 'Factory').textContent ?? '';
