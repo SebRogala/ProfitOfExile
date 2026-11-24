@@ -45,6 +45,8 @@
  * is still in config mode.
  */
 
+import type { OverlayNoticeProps } from '../OverlayNotice.svelte';
+
 /** What a `set_overlay_config_mode` call answered. */
 export type ConfigExitOutcome = { ok: true } | { ok: false; error: unknown };
 
@@ -54,8 +56,8 @@ export interface ConfigExitDecision {
 	 *  draft rectangles the user arranged all remain. `false` is the only value
 	 *  that authorises clearing the draft and emitting `widget-config-end`. */
 	keepConfigMode: boolean;
-	/** What the bar says. Empty exactly when the exit landed. */
-	error: string;
+	/** What the bar says. Null exactly when the exit landed. */
+	error: OverlayNoticeProps | null;
 }
 
 /**
@@ -74,12 +76,17 @@ export function configExitDecision(
 	exit: ConfigExitOutcome,
 	reassert: ConfigExitOutcome | null
 ): ConfigExitDecision {
-	if (exit.ok) return { keepConfigMode: false, error: '' };
+	if (exit.ok) return { keepConfigMode: false, error: null };
 	const reason = String(exit.error);
 	if (reassert?.ok) {
 		return {
 			keepConfigMode: true,
-			error: `Could not hand the window back to the game — nothing was closed. Press Save or Cancel again. (${reason})`
+			error: {
+				kind: 'error',
+				header: 'Could not close configuration',
+				body: 'Press Save or Cancel again.',
+				reason
+			}
 		};
 	}
 	// No re-assert, or one that failed too. The hook is free to make this window
@@ -88,6 +95,11 @@ export function configExitDecision(
 	// pressable.
 	return {
 		keepConfigMode: true,
-		error: `Could not hand the window back to the game, and could not reopen configuration either. If these buttons stop responding, press Configure in Settings again. (${reason})`
+		error: {
+			kind: 'error',
+			header: 'Could not close or reopen configuration',
+			body: 'If Save and Cancel stop responding, press Configure in Settings.',
+			reason
+		}
 	};
 }

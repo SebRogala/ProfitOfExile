@@ -64,6 +64,7 @@
 		type WidgetRect
 	} from './widget-geometry';
 	import { configExitDecision, type ConfigExitOutcome } from './widget-config-exit';
+	import OverlayNotice, { type OverlayNoticeProps } from '../OverlayNotice.svelte';
 	import { configBarAnchor } from './widget-config-bar';
 	import { useHotRects } from './use-hot-rects';
 	import { cssHotPoint } from '../hot-rects';
@@ -353,9 +354,9 @@
 	/** Which widgets the user actually RESIZED in this config session. Only
 	 *  these get a size persisted — see `sizeToPersist`. */
 	let resizedThisSession = new Set<string>();
-	/** What the Save/Cancel bar says when a save did not fully land. Empty is
+	/** What the Save/Cancel bar says when a save did not fully land. Null is
 	 *  the ordinary state; anything else keeps config mode open. */
-	let saveError = $state('');
+	let saveError = $state<OverlayNoticeProps | null>(null);
 	/** The rendered container per widget, so entering config mode can seed a
 	 *  content-sized widget's FRAME from what it actually measures. Its
 	 *  POSITION never comes from here — see `seedRect`. */
@@ -405,7 +406,7 @@
 			draft = seeded;
 			resizedThisSession = new Set();
 			cursors = {};
-			saveError = '';
+			saveError = null;
 			configMode = true;
 		} finally {
 			entering = false;
@@ -477,7 +478,7 @@
 			configMode = false;
 			draft = {};
 			resizedThisSession = new Set();
-			saveError = '';
+			saveError = null;
 			try {
 				await getCurrentWebviewWindow().emit('widget-config-end', { module });
 			} catch (e) {
@@ -497,7 +498,11 @@
 			// would be gone with it. The scale factor usually resolves within a
 			// frame or two, so Save is a retry.
 			log('scale factor unresolved — refusing to save placements that would be wrong');
-			saveError = 'The window has not reported its scale yet — nothing saved. Try again.';
+			saveError = {
+				kind: 'error',
+				header: 'Not saved',
+				body: 'No window scale yet. Press Save again.'
+			};
 			return;
 		}
 		saving = true;
@@ -540,7 +545,11 @@
 		if (failed.length > 0) {
 			// Config mode stays open with the draft intact: the frames are still
 			// where the user put them, so Save is a retry rather than a redo.
-			saveError = `Could not save ${failed.join(', ')} — the placement is unchanged. Try again.`;
+			saveError = {
+				kind: 'error',
+				header: `Could not save ${failed.join(', ')}`,
+				body: 'Placement unchanged. Press Save again.'
+			};
 			return;
 		}
 		await exitConfig();
@@ -820,16 +829,16 @@
 				<!-- The bar is the ONLY report a failed save gets: an overlay window
 				     has no devtools and no status line, and a Save that silently
 				     dropped a widget reads as one the user never moved. -->
-				<span class="config-hint" class:failed={saveError !== ''}>
-					{#if saveError !== ''}
-						{saveError}
+				<div class="config-hint" class:failed={saveError !== null}>
+					{#if saveError}
+						<OverlayNotice {...saveError} />
 					{:else if seededFromRegistry}
 						Drag a panel to move it · drag its edges to resize — one of these is at its
 						shipped default and the game will place it once a board is read
 					{:else}
 						Drag a panel to move it · drag its edges to resize
 					{/if}
-				</span>
+				</div>
 			</div>
 			<button class="config-btn save" disabled={saving} onpointerup={saveConfig}>
 				{saving ? 'Saving…' : 'Save'}
@@ -977,8 +986,16 @@
 	}
 
 	.config-hint.failed {
-		font-weight: 700;
-		color: var(--color-lab-red);
+		max-width: none;
+	}
+
+	.config-hint.failed :global(.notice) {
+		max-width: 46ch;
+		min-height: 0;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		font-size: 14px;
 	}
 
 	/* 32 px tall and 14 px of type. The pointer is mid-drag when the user reaches
