@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { fetchSignalHistory, type GemPlay, type RankingsSort, type SignalTransition } from '$lib/api';
+	import { fetchSignalHistory, getApiBase, type GemPlay, type RankingsSort, type SignalTransition } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
-	import { formatPrice } from '$lib/price.svelte';
+	import { formatPrice, formatPriceParts } from '$lib/price.svelte';
 	import { ssot } from '$lib/stores/ssot.svelte';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
@@ -9,6 +9,10 @@
 	import GemIcon from './GemIcon.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
+
+	import BuyButton from '$lib/components/BuyButton.svelte';
+	import ItemIcon from '$lib/components/ItemIcon.svelte';
+	import { CHAOS_ID, DIVINE_ID, currencyIconPath, iconSrc } from '$lib/exchange/view';
 
 	const SORT_OPTIONS = [
 		{ value: 'price', label: 'Price' },
@@ -75,6 +79,16 @@
 		}
 	}
 </script>
+
+{#snippet currency(value: number, size: number = 18)}
+	{@const parts = formatPriceParts(value)}
+	<span class="amt" class:big={size === 20}>
+		{parts.amount}
+		{#if parts.unit}
+			<ItemIcon src={iconSrc(getApiBase(), currencyIconPath(parts.unit === 'd' ? DIVINE_ID : CHAOS_ID))} alt={parts.unit === 'd' ? 'Divine Orb' : 'Chaos Orb'} {size} />
+		{/if}
+	</span>
+{/snippet}
 
 <div class="plays-header">
 	<h3 class="plays-title">{title}</h3>
@@ -159,68 +173,77 @@
 				<tr class="expanded-row">
 					<td colspan={showVariantColumn ? 10 : 9} class="expanded-cell">
 						<div class="expanded-content">
-							<span class="expanded-meta">
-								Base: {gem.confidence === 'NO_BASE' ? 'not listed' : formatPrice(gem.basePrice)} | Trans: {formatPrice(gem.transPrice)} |
-								Liq: {gem.liquidityTier} |
-								Color: <span class="color-{gem.color.toLowerCase()}">{gem.color}</span> |
-								Sellability: {gem.sellabilityLabel} ({gem.sellability})
-								{#if gem.name.includes(' of ')}
-									{@const url = baseGemTradeUrl(gem.name, gem.variant, ssot.league)}
-									{#if url}
-										| <Tooltip text="Buy {baseGemName(gem.name)} ({gem.variant})"><a class="buy-base-link" href={url} target="_blank">Buy Base</a></Tooltip>
-									{:else}
-										| <Tooltip text="League not detected — trade link unavailable"><span class="buy-base-disabled" aria-disabled="true">Buy Base</span></Tooltip>
-									{/if}
-								{/if}
-							</span>
-							{#if gem.gcpRecipeCost > 0}
-								<div class="gcp-recipe">
-									<span class="gcp-label">GCP recipe:</span>
-									<span class="gcp-detail">{formatPrice(gem.gcpRecipeBase)} base + {formatPrice(gem.gcpRecipeCost - gem.gcpRecipeBase)} GCPs = <b>{formatPrice(gem.gcpRecipeCost)}</b></span>
-									{#if gem.gcpRecipeSaves >= 0}
-										<span class="gcp-saves">(saves {formatPrice(gem.gcpRecipeSaves)})</span>
-									{:else}
-										<span class="gcp-more-expensive">(costs {formatPrice(Math.abs(gem.gcpRecipeSaves))} more)</span>
-									{/if}
-									{#if gem.name.includes(' of ')}
-										{@const url = baseGemTradeUrl(gem.name, '20/0', ssot.league)}
-										{#if url}
-											<a class="buy-base-link gcp-buy" href={url} target="_blank">Buy 20/0</a>
-										{:else}
-											<span class="gcp-buy buy-base-disabled" aria-disabled="true" title="League not detected">Buy 20/0</span>
+							<div class="detail-grid">
+								<section class="detail-card">
+									<div class="eyebrow"><span class="step">1</span> Buy</div>
+									<div class="fact" class:two={!gem.name.includes(' of ')}>
+										<span class="fact-label">Base <span class="var">{gem.variant}</span></span>
+										{#if gem.confidence === 'NO_BASE'}<span class="amt muted">not listed</span>{:else}{@render currency(gem.basePrice, 18)}{/if}
+										{#if gem.name.includes(' of ')}
+											{@const url = baseGemTradeUrl(gem.name, gem.variant, ssot.league)}
+											<span class="btn-cell"><Tooltip text={url ? `Buy ${baseGemName(gem.name)} (${gem.variant})` : 'League not detected'}><BuyButton label="BUY BASE" href={url} colour="blue" width="auto" /></Tooltip></span>
 										{/if}
+									</div>
+									{#if gem.gcpRecipeCost > 0}
+										<div class="sub">
+											<div class="fact" class:two={!gem.name.includes(' of ')}>
+												<span class="fact-label gcp-label">GCP recipe</span>
+												{@render currency(gem.gcpRecipeCost, 18)}
+												{#if gem.name.includes(' of ')}
+													{@const url = baseGemTradeUrl(gem.name, '20/0', ssot.league)}
+													<span class="btn-cell"><Tooltip text={url ? `Buy ${baseGemName(gem.name)} (20/0)` : 'League not detected'}><BuyButton label="BUY 20/0" href={url} colour="blue" width="auto" /></Tooltip></span>
+												{/if}
+											</div>
+											<div class="gcp-sum">
+												<span class="term">20/0 base {@render currency(gem.gcpRecipeBase, 18)}</span>
+												<span class="term">+ <ItemIcon src={iconSrc(getApiBase(), currencyIconPath('Metadata/Items/Currency/CurrencyGemQuality'))} alt="Gemcutter's Prism" size={18} /> GCPs {@render currency(gem.gcpRecipeCost - gem.gcpRecipeBase, 18)}</span>
+												<span class="delta" class:delta-good={gem.gcpRecipeSaves >= 0} class:delta-bad={gem.gcpRecipeSaves < 0}>
+													{gem.gcpRecipeSaves >= 0 ? 'saves' : 'costs'} {@render currency(Math.abs(gem.gcpRecipeSaves), 16)}{#if gem.gcpRecipeSaves < 0} more{/if}
+												</span>
+											</div>
+										</div>
 									{/if}
+								</section>
+								<section class="detail-card">
+									<div class="eyebrow"><span class="step">2</span> Sell</div>
+									<div class="fact two">
+										<span class="fact-label">Transfigured <span class="var">{gem.variant}</span></span>
+										{@render currency(gem.transPrice, 20)}
+									</div>
+									{#if gem.sellUrgency}
+										<span class="urgency urgency-{gem.sellUrgency.toLowerCase().replace('_', '-')}">{gem.sellUrgency.replace('_', ' ')}</span>
+										<div class="reason">{gem.sellReason}</div>
+									{/if}
+									{#if gem.tierAction}
+										<div class="tier-line"><span class="tier-label">Tier</span><span class="tier-badge tier-{gem.priceTier.toLowerCase()}" class:low-conf={gem.lowConfidence}>{gem.priceTier}</span><span>{gem.tierAction}</span></div>
+									{/if}
+								</section>
+								<section class="detail-card">
+									<div class="eyebrow">Market</div>
+									<div class="fact two"><span class="fact-label">Liquidity</span><span class="val">{gem.liquidityTier}</span></div>
+									<div class="fact two"><span class="fact-label">Color</span><span class="val color-{gem.color.toLowerCase()}"><span class="color-dot"></span>{gem.color}</span></div>
+									<div class="fact two"><span class="fact-label">Sellability</span><span class="val sell-{gem.sellabilityLabel.toLowerCase().replace(' ', '-')}">{gem.sellabilityLabel} · {gem.sellability}</span></div>
+								</section>
+							</div>
+							<section class="history">
+								<div class="eyebrow">Signal history
+									{#if historyLoading}<span class="hist-none">Loading…</span>
+									{:else if historyError}<span class="hist-none">History unavailable</span>
+									{:else if expandedHistory.length === 0}<span class="hist-none">No signal changes</span>{/if}
 								</div>
-							{/if}
-							{#if gem.sellUrgency}
-								<div class="expanded-urgency urgency-{gem.sellUrgency.toLowerCase().replace('_', '-')}">
-									{gem.sellUrgency.replace('_', ' ')}: {gem.sellReason}
-								</div>
-							{/if}
-							{#if gem.tierAction}
-								<div class="expanded-tier">{gem.priceTier}: {gem.tierAction}</div>
-							{/if}
-							<div class="expanded-history">
-								History:
-								{#if historyLoading}
-									<span class="hist-loading">Loading history...</span>
-								{:else if expandedHistory.length > 0}
-									{#each expandedHistory as h}
-										<div class="hist-line">
+								{#if !historyLoading && !historyError && expandedHistory.length > 0}
+									<div class="hist-grid">
+										{#each expandedHistory as h}
 											<span class="hist-time">{h.time}</span>
 											<SignalBadge signal={h.from} />
-											<span class="hist-arrow">&rarr;</span>
+											<span class="hist-arrow">→</span>
 											<SignalBadge signal={h.to} />
 											<span class="hist-reason">{h.reason}</span>
-											<span class="hist-listings">{h.listings} listings</span>
-										</div>
-									{/each}
-								{:else if historyError}
-									<span class="hist-none">History unavailable</span>
-								{:else}
-									<span class="hist-none">No signal changes recorded</span>
+											<span class="hist-listings"><b>{h.listings}</b> listings</span>
+										{/each}
+									</div>
 								{/if}
-							</div>
+							</section>
 						</div>
 					</td>
 				</tr>
@@ -264,6 +287,7 @@
 		gap: 6px;
 	}
 	.table-scroll {
+		container-type: inline-size;
 		max-height: 590px;
 		overflow-y: auto;
 		scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
@@ -396,22 +420,56 @@
 	.expanded-cell {
 		padding: 14px 18px !important;
 	}
+
 	.expanded-content {
+		position: sticky;
+		left: 18px;
+		width: calc(100cqi - 36px);
 		font-size: 0.875rem;
-	}
-	.expanded-meta {
 		color: var(--color-lab-text-secondary);
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
 	}
-	.expanded-history {
-		margin-top: 8px;
-		color: var(--color-lab-text-secondary);
-	}
-	.hist-line { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
-	.hist-time { color: var(--color-lab-text); font-weight: 600; min-width: 42px; font-size: 0.8125rem; }
-	.hist-arrow { color: var(--color-lab-text-secondary); font-size: 1.125rem; }
-	.hist-reason { color: var(--color-lab-text-secondary); font-size: 0.8125rem; }
-	.hist-listings { margin-left: auto; color: var(--color-lab-text-secondary); font-size: 0.8125rem; }
-	.hist-loading, .hist-none { color: var(--color-lab-text-secondary); font-size: 0.8125rem; }
+	.detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+	.detail-card { background: var(--color-lab-surface); border: 1px solid var(--color-lab-border); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+	.eyebrow { font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-lab-text-secondary); display: flex; align-items: center; gap: 6px; }
+	.step { color: var(--color-lab-text); background: var(--color-lab-border); width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.625rem; }
+	.fact { display: grid; grid-template-columns: minmax(0, 1fr) auto 76px; align-items: center; column-gap: 8px; min-height: 26px; }
+	.fact.two { grid-template-columns: minmax(0, 1fr) auto; }
+	.btn-cell { justify-self: end; }
+	.fact-label { min-width: 0; }
+	.var { color: var(--color-lab-text-secondary); font-size: 0.75rem; margin-left: 4px; }
+	.amt { display: inline-flex; align-items: center; gap: 3px; color: var(--color-lab-text); font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+	.amt.big { font-size: 1rem; font-weight: 700; }
+	.amt.muted { color: var(--color-lab-text-secondary); }
+	.sub { border-top: 1px dashed var(--color-lab-border); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+	.gcp-label { color: #fbbf24; font-weight: 600; font-size: 0.8125rem; white-space: nowrap; }
+	.gcp-sum { display: flex; align-items: center; column-gap: 8px; row-gap: 4px; flex-wrap: wrap; font-size: 0.8125rem; }
+	.term { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+	.delta { font-size: 0.75rem; font-weight: 700; padding: 1px 6px; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+	.delta .amt { color: inherit; font-weight: inherit; }
+	.delta-good { color: var(--color-lab-green); background: rgba(34, 197, 94, 0.1); }
+	.delta-bad { color: var(--color-lab-red); background: rgba(239, 68, 68, 0.1); }
+	.urgency { align-self: flex-start; display: inline-flex; padding: 3px 10px; font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.02em; white-space: nowrap; }
+	.urgency-sell-now { color: var(--color-lab-red); background: rgba(239, 68, 68, 0.12); }
+	.urgency-undercut { color: #fb923c; background: rgba(251, 146, 60, 0.12); }
+	.urgency-hold { color: var(--color-lab-green); background: rgba(34, 197, 94, 0.12); }
+	.urgency-wait { color: var(--color-lab-text-secondary); background: rgba(156, 163, 175, 0.08); }
+	.reason { color: var(--color-lab-text); font-size: 0.8125rem; line-height: 1.4; }
+	.tier-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 0.8125rem; }
+	.tier-label { font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+	.val { font-weight: 600; white-space: nowrap; }
+	.val:not([class*='color-']):not([class*='sell-']) { color: var(--color-lab-text); }
+	.color-dot { width: 10px; height: 10px; display: inline-block; border-radius: 50%; margin-right: 6px; background: currentColor; }
+	.history { background: var(--color-lab-surface); border: 1px solid var(--color-lab-border); padding: 10px 14px; }
+	.hist-grid { display: grid; grid-template-columns: 52px auto 18px auto 1fr auto; column-gap: 10px; row-gap: 6px; align-items: center; margin-top: 8px; }
+	.hist-time { color: var(--color-lab-text); font-weight: 600; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+	.hist-arrow { font-size: 1.125rem; text-align: center; }
+	.hist-reason { font-size: 0.8125rem; }
+	.hist-listings { font-size: 0.8125rem; text-align: right; white-space: nowrap; }
+	.hist-listings b { color: var(--color-lab-text); font-weight: 600; }
+	.hist-none { font-size: 0.8125rem; margin-left: 8px; font-weight: 400; text-transform: none; letter-spacing: 0; font-style: italic; }
 	/* Tier badge */
 	.col-tier { width: 80px; }
 	.tier-badge {
@@ -453,66 +511,8 @@
 	.sell-slow { color: #fb923c; }
 	.sell-unlikely { color: var(--color-lab-red); }
 
-	/* Expanded urgency */
-	.expanded-urgency {
-		margin-top: 6px;
-		font-size: 0.8125rem;
-		font-weight: 600;
-	}
-	.urgency-sell-now { color: var(--color-lab-red); }
-	.urgency-undercut { color: #fb923c; }
-	.urgency-hold { color: var(--color-lab-green); }
-	.urgency-wait { color: var(--color-lab-text-secondary); }
-	.expanded-tier {
-		margin-top: 4px;
-		font-size: 0.8125rem;
-		color: var(--color-lab-text-secondary);
-		font-style: italic;
-	}
-
 	.color-red { color: var(--color-lab-red); }
 	.color-green { color: var(--color-lab-green); }
 	.color-blue { color: var(--color-lab-blue); }
 
-	.buy-base-link {
-		color: var(--color-lab-blue, #3b82f6);
-		text-decoration: none;
-		font-weight: 600;
-	}
-	.buy-base-link:hover {
-		color: var(--color-lab-text);
-		text-decoration: underline;
-	}
-	.buy-base-disabled {
-		color: var(--color-lab-text-secondary);
-		opacity: 0.5;
-		cursor: not-allowed;
-		font-weight: 600;
-	}
-	.gcp-recipe {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		font-size: 0.8125rem;
-		margin-top: 4px;
-		color: var(--color-lab-text-secondary);
-	}
-	.gcp-label {
-		color: #fbbf24;
-		font-weight: 600;
-	}
-	.gcp-saves {
-		color: var(--color-lab-green);
-		font-weight: 600;
-	}
-	.gcp-more-expensive {
-		color: var(--color-lab-red);
-		font-weight: 600;
-	}
-	.gcp-buy {
-		color: #fbbf24 !important;
-		font-size: 0.75rem;
-		padding: 1px 8px;
-		border: 1px solid rgba(251, 191, 36, 0.4);
-	}
 </style>
