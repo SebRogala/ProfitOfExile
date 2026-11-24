@@ -66,21 +66,28 @@ impl ExchangePending {
             return Err(RatioUnreadable);
         }
         let mut row = self.read_crop(frame, [290, 342, 197, 26]).map_err(|_| RatioUnreadable)?;
-        row.sort_by_key(|word| word.x);
-        let split = row.windows(2).enumerate()
-            .max_by_key(|(_, pair)| i64::from(pair[1].x) - i64::from(pair[0].x) - i64::from(pair[0].w))
-            .map(|(index, _)| index + 1).ok_or(RatioUnreadable)?;
-        let (ratio, stock) = row.split_at(split);
-        let ratio = ratio.iter().map(|word| word.text.as_str()).collect::<Vec<_>>().join(" ");
-        let stock = stock.iter().map(|word| word.text.as_str()).collect::<Vec<_>>().join(" ");
+        row.sort_by_key(|line| (line.x, line.y));
+        let row = row.iter().map(|line| line.text.as_str()).collect::<Vec<_>>().join(" ");
+        let (ratio, stock) = ratio_and_stock(&row);
         let mut want = self.read_crop(frame, [65, 111, 190, 28]).map_err(|_| NamesUnreadable)?;
         let mut have = self.read_crop(frame, [565, 103, 160, 46]).map_err(|_| NamesUnreadable)?;
         want.sort_by_key(|line| (line.y, line.x));
         have.sort_by_key(|line| (line.y, line.x));
         let want: Vec<_> = want.iter().map(|line| line.text.as_str()).collect();
         let have: Vec<_> = have.iter().map(|line| line.text.as_str()).collect();
-        parse_top_row(&ratio, &stock, &want, &have)
+        parse_top_row(ratio, stock, &want, &have)
     }
+}
+
+/// Splits the top row's text, its OCR lines joined left to right, after the
+/// ratio's `a : b`: OCR answers lines, not words, and may return the ratio and
+/// the stock as one line or as two. The remainder is the stock.
+fn ratio_and_stock(row: &str) -> (&str, &str) {
+    let Some(colon) = row.find(':') else { return (row, "") };
+    let after = &row[colon + 1..];
+    let start = after.len() - after.trim_start().len();
+    let end = after[start..].find(char::is_whitespace).map_or(after.len(), |i| start + i);
+    row.split_at(colon + 1 + end)
 }
 
 impl<C> crate::read_hotkey::PendingRead<C> for ExchangePending {
@@ -169,14 +176,21 @@ mod tests {
         OcrLineBox { text: text.into(), x: 40 + 3 * crop_x, y: 40 + 3 * crop_y, w: 3 * crop_w, h: 3 * 14 }
     }
 
-    /// The top-row crop as OCR answers it: the stock column first and split
-    /// into its words, the ratio at the row's left, so only their positions
-    /// say which is which.
-    fn row_lines(ratio: &str, stock: &str) -> Vec<OcrLineBox> {
-        let mut lines: Vec<OcrLineBox> =
-            stock.split_whitespace().enumerate().map(|(i, word)| line(word, 158 + 12 * i as i32, 6, 10)).collect();
-        lines.push(line(ratio, 4, 6, 60));
-        lines
+    /// How OCR grouped the top row: the measured ratio and stock as two lines,
+    /// or both as one line.
+    #[derive(Debug, Clone, Copy)]
+    enum RowShape {
+        TwoLines,
+        OneLine,
+    }
+
+    /// The top-row crop as `recognize_lines` answers it, one box per line. Two
+    /// lines come back stock first, so only their positions say which is which.
+    fn row_lines(ratio: &str, stock: &str, shape: RowShape) -> Vec<OcrLineBox> {
+        match shape {
+            RowShape::TwoLines => vec![line(stock, 158, 6, 34), line(ratio, 4, 6, 60)],
+            RowShape::OneLine => vec![line(&format!("{ratio} {stock}"), 4, 6, 188)],
+        }
     }
 
     fn name_lines(lines: &[String]) -> Vec<OcrLineBox> {
@@ -184,11 +198,15 @@ mod tests {
     }
 
     /// The OCR answers for a press over `row`, the next row a valid different one.
-    fn answers(header: Result<Vec<OcrLineBox>, String>, row: &Row) -> HashMap<&'static str, Result<Vec<OcrLineBox>, String>> {
+    fn answers(
+        header: Result<Vec<OcrLineBox>, String>,
+        row: &Row,
+        shape: RowShape,
+    ) -> HashMap<&'static str, Result<Vec<OcrLineBox>, String>> {
         HashMap::from([
             ("header", header),
-            ("top-row", Ok(row_lines(&row.ratio, &row.stock))),
-            ("next-row", Ok(row_lines("160 : 1", "4"))),
+            ("top-row", Ok(row_lines(&row.ratio, &row.stock, shape))),
+            ("next-row", Ok(row_lines("160 : 1", "4", shape))),
             ("want", Ok(name_lines(&row.want))),
             ("have", Ok(name_lines(&row.have))),
         ])
@@ -261,11 +279,12 @@ mod tests {
             let cases = [("ember-for-chaos", ember_for_chaos(1)), ("ember-for-chaos-split-stock", ember_for_chaos(8125))];
             let mismatches: Vec<String> = cases
                 .into_iter()
-                .filter_map(|(id, expected)| {
-                    let read = press(answers(header_found(), &fixture_row(id)));
+                .flat_map(|case| [RowShape::TwoLines, RowShape::OneLine].map(|shape| (case.clone(), shape)))
+                .filter_map(|((id, expected), shape)| {
+                    let read = press(answers(header_found(), &fixture_row(id), shape));
                     let want = (DispatchOutcome::Selected(ReaderId::Exchange), Some(Ok(expected)));
                     let got = (read.outcome, read.result);
-                    (got != want).then(|| format!("{id}: expected {want:?}, got {got:?} after OCR of {:?}", read.ocr_calls))
+                    (got != want).then(|| format!("{id} {shape:?}: expected {want:?}, got {got:?} after OCR of {:?}", read.ocr_calls))
                 })
                 .collect();
             assert!(mismatches.is_empty(), "{mismatches:#?}");
@@ -282,7 +301,7 @@ mod tests {
         fn a_frame_without_the_competing_trades_header_selects_nothing_and_reads_no_row() {
             let row = fixture_row("ember-for-chaos");
             for header in [Ok(Vec::new()), Ok(vec![line("Allflame Ember of the Ethereal", 10, 2, 160)])] {
-                let read = press(answers(header.clone(), &row));
+                let read = press(answers(header.clone(), &row, RowShape::TwoLines));
 
                 assert_eq!(
                     (read.outcome, read.result, read.ocr_calls),
@@ -296,13 +315,16 @@ mod tests {
         // through to row 2 fills a competing order that is not the one to match.
         #[test]
         fn a_prefixed_top_row_is_ratio_unreadable_without_reading_the_next_row() {
-            let read = press(answers(header_found(), &fixture_row("outbid-prefixed-top-row")));
+            for shape in [RowShape::TwoLines, RowShape::OneLine] {
+                let read = press(answers(header_found(), &fixture_row("outbid-prefixed-top-row"), shape));
 
-            assert_eq!(
-                (read.outcome, read.result),
-                (DispatchOutcome::Selected(ReaderId::Exchange), Some(Err(ExchangeReadError::RatioUnreadable))),
-            );
-            assert!(!read.ocr_calls.contains(&"next-row"), "OCR read the next row: {:?}", read.ocr_calls);
+                assert_eq!(
+                    (read.outcome, read.result),
+                    (DispatchOutcome::Selected(ReaderId::Exchange), Some(Err(ExchangeReadError::RatioUnreadable))),
+                    "{shape:?}",
+                );
+                assert!(!read.ocr_calls.contains(&"next-row"), "{shape:?}: OCR read the next row: {:?}", read.ocr_calls);
+            }
         }
 
         // keep:critical — silent: a probe OCR error escaping as a failed dispatch
@@ -310,7 +332,11 @@ mod tests {
         // when the panel was there and its text was unreadable.
         #[test]
         fn a_header_ocr_failure_is_an_unreadable_ratio_not_a_failed_dispatch() {
-            let read = press(answers(Err("OCR recognize failed: engine busy".into()), &fixture_row("ember-for-chaos")));
+            let read = press(answers(
+                Err("OCR recognize failed: engine busy".into()),
+                &fixture_row("ember-for-chaos"),
+                RowShape::TwoLines,
+            ));
 
             assert_eq!(
                 (read.outcome, read.result),
