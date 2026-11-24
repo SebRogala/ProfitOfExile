@@ -992,7 +992,8 @@ func pageKeys(page PlaysPage) []string {
 // (expected) order, and neither keeps a hop, so neither shows the convert
 // column. "sort fastest" orders by the scale hours, null last, ties in served
 // order: the 1-hour plays, then Apocalypse Window at ceil(138/1) = 138, then
-// expected-roi-1e-18 at 1e17, then every null.
+// the Journey Tattoo hop at ceil(400000/1000) = 400, then expected-roi-1e-18 at
+// 1e17, then every null.
 var lotParityCases = map[string]struct {
 	matched     int
 	showConvert bool
@@ -1037,14 +1038,14 @@ var lotParityCases = map[string]struct {
 			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
 			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
 			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
-			"synthetic:expected-roi-1e-18",
 			"1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
+			"day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
+			"synthetic:expected-roi-1e-18",
 			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
 			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
 			"1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
 			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
 			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyDivineVessel",
-			"day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
 			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
 			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
 			"day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",

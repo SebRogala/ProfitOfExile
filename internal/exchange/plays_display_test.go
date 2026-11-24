@@ -190,10 +190,10 @@ var lotParityRunCosts = []lotParityRunCost{
 	// sell 130*99/(1*100) = 1287/10
 	// convert 1*199/(200*200) = 199/40000
 	// proceeds per item 1287/10, through conversion 256113/400000 -> N=400000
-	// N above 10000: run cost +Inf
-	// positive expectedRoi 20.220826086956503 over no executable lot: every scale number is null.
-	{"1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare", math.Inf(1), nullScale()},
-	{"day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare", math.Inf(1), nullScale()},
+	// lot cost ceil(400000*338/625) = 640*338 = 216320 div x 200 = 43264000c
+	// expectedRoi 20.220826086956503: ceil(100/E)=5 flips, lots=max(1,ceil(5/400000))=1, scale flips=400000, hours=ceil(400000/depth 1000)=400.
+	{"1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare", 43264000, &PlayScale{Flips: 400000, Gain: 20.220826086956503 * 400000, Investment: 43264000, Hours: 400}},
+	{"day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare", 43264000, &PlayScale{Flips: 400000, Gain: 20.220826086956503 * 400000, Investment: 43264000, Hours: 400}},
 	// buy 10*11/(1*10) = 11
 	// sell 1*9/(10*10) = 9/100
 	// convert 200*199/(1*200) = 199
@@ -212,10 +212,10 @@ var lotParityRunCosts = []lotParityRunCost{
 	// buy 1*201/(200*200) = 201/40000
 	// sell 1*199/(200*200) = 199/40000
 	// proceeds per item 199/40000 -> N=40000
-	// N above 10000: run cost +Inf
+	// lot cost ceil(40000*201/40000) = 201 div x 200 = 40200c
 	// expectedRoi -0.009891304347826037 is not positive finite: one lot, no scale.
-	{"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues", math.Inf(1), nil},
-	{"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues", math.Inf(1), nil},
+	{"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues", 40200, nil},
+	{"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues", 40200, nil},
 	// buy 10*11/(1*10) = 11
 	// sell 12*9/(1*10) = 54/5
 	// proceeds per item 54/5 -> N=5
@@ -227,10 +227,10 @@ var lotParityRunCosts = []lotParityRunCost{
 	// sell 12*9/(1*10) = 54/5
 	// convert 1*199/(200*200) = 199/40000
 	// proceeds per item 54/5, through conversion 5373/100000 -> N=100000
-	// N above 10000: run cost +Inf
+	// lot cost ceil(100000*11/200) = 5500 div x 200 = 1100000c
 	// expectedRoi -0.21739130434782625 is not positive finite: one lot, no scale.
-	{"1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare", math.Inf(1), nil},
-	{"day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare", math.Inf(1), nil},
+	{"1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare", 1100000, nil},
+	{"day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare", 1100000, nil},
 	// buy 200*201/(1*200) = 201
 	// sell 260*199/(1*200) = 2587/10
 	// proceeds per item 2587/10 -> N=10
@@ -630,18 +630,6 @@ func TestKeepCritical_LotRunCostBoundaries(t *testing.T) {
 			// A full tick sells at 1*(1-1)/1 = 0: there are no proceeds to make whole.
 			name: "a sell worth nothing has no executable lot",
 			play: lotPlay(ModeDirect, 1, -1, 10, buy(ChaosID, 1, 35, 1), sell(ChaosID, 1, 1, 1)),
-			run:  inf,
-		},
-		{
-			// Sell 1/10000 chaos an item → exactly 10000 items, entry 10000 x 1.
-			name: "a lot of exactly 10000 items executes",
-			play: lotPlay(ModeDirect, 1, 0, 10, buy(ChaosID, 1, 1, 0), sell(ChaosID, 1, 10000, 0)),
-			run:  10000,
-		},
-		{
-			// Sell 1/10007 chaos an item → 10007 items, above the 10000 guard.
-			name: "a lot above 10000 items has no executable lot",
-			play: lotPlay(ModeDirect, 1, 0, 10, buy(ChaosID, 1, 1, 0), sell(ChaosID, 1, 10007, 0)),
 			run:  inf,
 		},
 		{
