@@ -31,6 +31,7 @@ const snapshotKeys: Record<keyof SsotSnapshot, true> = {
 	normalVariant: true,
 	dedicationVariant: true,
 	dedicationPool: true,
+	showAllLensFeeders: true,
 	modules: true,
 	bossLoot: true,
 	mercenary: true,

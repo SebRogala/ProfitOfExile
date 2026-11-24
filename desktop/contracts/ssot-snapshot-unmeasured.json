@@ -142,6 +142,7 @@
   "normalVariant": "20/20",
   "dedicationVariant": "21/23",
   "dedicationPool": "skill",
+  "showAllLensFeeders": false,
   "modules": {
     "temple": true
   },

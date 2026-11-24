@@ -547,6 +547,126 @@ describe('module flags', () => {
 });
 
 /**
+ * The "Facetor's Lens: all feeders" display choice (POE-474) is owned by Rust's
+ * LabSettings and bridged like the market fields: applied from each snapshot,
+ * written through its own command, guarded against stale polls. Same re-import
+ * harness as the blocks above, so the write counter and guards start empty.
+ */
+describe('the all-feeders Lens setting', () => {
+	let mod: typeof import('./ssot.svelte');
+	let invokeMock: ReturnType<typeof vi.mocked<typeof import('@tauri-apps/api/core').invoke>>;
+
+	const league = { name: 'Mirage' };
+
+	function callsOf(command: string): unknown[] {
+		return invokeMock.mock.calls.filter((c) => c[0] === command).map((c) => c[1]);
+	}
+
+	/** The setter, reached by name so a missing export fails as an assertion. */
+	function setShowAllLensFeeders(show: boolean): Promise<unknown> {
+		const setter = (mod as unknown as Record<string, unknown>).setShowAllLensFeeders;
+		expect(setter, 'ssot.svelte exports setShowAllLensFeeders').toBeTypeOf('function');
+		return (setter as (show: boolean) => Promise<unknown>)(show);
+	}
+
+	beforeEach(async () => {
+		vi.resetModules();
+		vi.clearAllMocks();
+		const core = await import('@tauri-apps/api/core');
+		invokeMock = vi.mocked(core.invoke);
+		invokeMock.mockImplementation(async (command: string) =>
+			command === 'get_ssot' ? { league } : undefined,
+		);
+		mod = await import('./ssot.svelte');
+	});
+
+	// keep:happy — AC-4: the native choice reaches every window's live value.
+	it('shows the native choice from each snapshot and keeps it when a snapshot omits it', () => {
+		const seen = [mod.ssot.showAllLensFeeders];
+		mod.applySnapshot({ league, showAllLensFeeders: true });
+		seen.push(mod.ssot.showAllLensFeeders);
+		mod.applySnapshot({ league });
+		seen.push(mod.ssot.showAllLensFeeders);
+		mod.applySnapshot({ league, showAllLensFeeders: false });
+		seen.push(mod.ssot.showAllLensFeeders);
+		expect(seen).toEqual([false, true, true, false]);
+	});
+
+	// keep:happy — AC-4: the Settings toggle persists through the native command.
+	it('shows a set choice at once and writes it through set_show_all_lens_feeders', async () => {
+		mod.applySnapshot({ league, showAllLensFeeders: false });
+		await setShowAllLensFeeders(true);
+		expect(mod.ssot.showAllLensFeeders).toBe(true);
+		expect(callsOf('set_show_all_lens_feeders')).toEqual([{ show: true }]);
+	});
+
+	/** Switch the choice on over a native `false`, with a poll still carrying `false`. */
+	async function pollDuringOutstandingWrite(): Promise<boolean> {
+		let releaseWrite: () => void = () => {};
+		invokeMock.mockImplementation((command: string) => {
+			if (command === 'set_show_all_lens_feeders') {
+				return new Promise<void>((resolve) => {
+					releaseWrite = () => resolve();
+				});
+			}
+			return Promise.resolve(undefined);
+		});
+		mod.applySnapshot({ league, showAllLensFeeders: false });
+		const write = setShowAllLensFeeders(true);
+		mod.applySnapshot({ league, showAllLensFeeders: false });
+		const shown = mod.ssot.showAllLensFeeders;
+		releaseWrite();
+		await write;
+		return shown;
+	}
+
+	async function pollDispatchedBeforeWriteArrivingAfterIt(): Promise<boolean> {
+		let deliverSnapshot: (snap: unknown) => void = () => {};
+		invokeMock.mockImplementation((command: string) => {
+			if (command === 'get_ssot') {
+				return new Promise((resolve) => {
+					deliverSnapshot = resolve;
+				});
+			}
+			return Promise.resolve(undefined);
+		});
+		mod.applySnapshot({ league, showAllLensFeeders: false });
+		const poll = mod.fetchSsot('poll');
+		await setShowAllLensFeeders(true);
+		deliverSnapshot({ league, showAllLensFeeders: false });
+		await poll;
+		return mod.ssot.showAllLensFeeders;
+	}
+
+	async function rejectedWrite(): Promise<boolean> {
+		invokeMock.mockRejectedValue(new Error('command failed'));
+		mod.applySnapshot({ league, showAllLensFeeders: false });
+		await setShowAllLensFeeders(true);
+		return mod.ssot.showAllLensFeeders;
+	}
+
+	async function pollAfterRejectedWrite(): Promise<boolean> {
+		invokeMock.mockRejectedValue(new Error('command failed'));
+		mod.applySnapshot({ league, showAllLensFeeders: false });
+		await setShowAllLensFeeders(true);
+		mod.applySnapshot({ league, showAllLensFeeders: false });
+		return mod.ssot.showAllLensFeeders;
+	}
+
+	// keep:critical — a stale poll that reverts the choice silently drops the
+	// all-feeders view the player turned on, and the UI trusts the reverted
+	// value; a rejected write left pinned would show a choice Rust never saved.
+	it.each([
+		['a poll landing while the write is outstanding', pollDuringOutstandingWrite, true],
+		['a poll dispatched before the write and arriving after it', pollDispatchedBeforeWriteArrivingAfterIt, true],
+		['a rejected write before any poll', rejectedWrite, true],
+		['the next poll after a rejected write', pollAfterRejectedWrite, false]
+	] as const)('shows the right choice after %s', async (_scenario, run, expected) => {
+		expect(await run()).toBe(expected);
+	});
+});
+
+/**
  * The mercenary slice (POE-165) is Rust-owned and read-only in the webview, so
  * it has no write path and no guard record — what there IS to get wrong is the
  * apply: taking the slice whole, and leaving the last known one alone when a

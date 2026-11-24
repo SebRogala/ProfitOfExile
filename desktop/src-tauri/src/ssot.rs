@@ -3334,6 +3334,25 @@ mod tests {
             assert_eq!(placements.temple, None);
             assert_eq!(placements.merc, None);
         }
+
+        /// Silent consequence of a missing or stale projection: every window
+        /// would trust the webview's initial `false` and show one Lens feeder
+        /// after the player turned "all feeders" on, with nothing to say so.
+        #[test]
+        fn the_snapshot_publishes_the_owned_all_lens_feeders_choice() {
+            for owned in [false, true] {
+                let state = crate::settings::tests::test_app_state();
+                state.lab_settings.lock().unwrap().show_all_lens_feeders = owned;
+
+                let wire = serde_json::to_value(build_snapshot(&state)).unwrap();
+
+                assert_eq!(
+                    wire.get("showAllLensFeeders"),
+                    Some(&serde_json::Value::Bool(owned)),
+                    "owner value {owned}",
+                );
+            }
+        }
     }
 
     mod keep_regression {
