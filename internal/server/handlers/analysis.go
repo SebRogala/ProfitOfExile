@@ -285,6 +285,10 @@ func DoubleCorruptAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.
 // The top-level lens object carries the Facetor's Lens craft quotes and EV from
 // tradeCache, independent of the variant filter; tradeCache may be nil.
 func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.TradeCache, scope league.Scope) http.HandlerFunc {
+	var feeders exceptionalSupportPricer
+	if repo != nil {
+		feeders = lab.NewExceptionalSupportCache(repo.LensExceptionalFeeders, cache)
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := resolve.NormalizeVariant(r.URL.Query().Get("variant"))
 
@@ -302,6 +306,12 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 			return
 		}
 		safeResults, premiumResults, jackpotResults := modes.Safe, modes.Premium, modes.Jackpot
+		lens, err := lensCraft(r.Context(), tradeCache, feeders, scope, time.Now())
+		if err != nil {
+			slog.Error("font analysis: lens query failed", "error", err)
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
+		}
 
 		type row struct {
 			Time          string               `json:"time"`
@@ -400,49 +410,11 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 			"bestColorSafe":    bestColor(safeResults),
 			"bestColorPremium": bestColor(premiumResults),
 			"bestColorJackpot": bestColor(jackpotResults),
-			"lens":             lensCraft(tradeCache, scope, time.Now()),
+			"lens":             lens,
 		}); err != nil {
 			slog.Error("font analysis: encode response", "error", err)
 		}
 	}
-}
-
-// lensCraftResponse is the Facetor's Lens craft: the lens (outcome) and support
-// (feeder) quotes and their signed EV, null unless both are usable. The feeder
-// carries the trade search that buys it, present even without a price.
-type lensCraftResponse struct {
-	Outcome trade.Quote `json:"outcome"`
-	Feeder  lensFeeder  `json:"feeder"`
-	EV      *float64    `json:"ev"`
-}
-
-type lensFeeder struct {
-	trade.Quote
-	TradeURL string `json:"tradeUrl"`
-}
-
-func lensCraft(tradeCache *trade.TradeCache, scope league.Scope, now time.Time) lensCraftResponse {
-	var resp lensCraftResponse
-	for _, t := range trade.FixedTargets() {
-		if t.Role == trade.FixedTargetRoleFeeder {
-			resp.Feeder.TradeURL = t.TradeURL(scope.ID())
-		}
-	}
-	if tradeCache == nil {
-		return resp
-	}
-	cache := tradeCache.For(scope)
-	for _, t := range trade.FixedTargets() {
-		result, _ := cache.Get(t.Key())
-		switch t.Role {
-		case trade.FixedTargetRoleOutcome:
-			resp.Outcome = trade.UsableQuote(result, now)
-		case trade.FixedTargetRoleFeeder:
-			resp.Feeder.Quote = trade.UsableQuote(result, now)
-		}
-	}
-	resp.EV = lab.LensCraftEV(resp.Outcome.Chaos, resp.Feeder.Chaos)
-	return resp
 }
 
 // bestColor returns the color with the highest EV among the given font results.
