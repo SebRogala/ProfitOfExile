@@ -49,12 +49,93 @@ pub enum ExchangeReadError {
 /// `want_lines` and `have_lines` are the OCR lines of the I want and I have
 /// name boxes, top to bottom.
 pub fn parse_top_row(
-    _ratio: &str,
-    _stock: &str,
-    _want_lines: &[&str],
-    _have_lines: &[&str],
+    ratio: &str,
+    stock: &str,
+    want_lines: &[&str],
+    have_lines: &[&str],
 ) -> Result<ExchangeSelection, ExchangeReadError> {
-    Err(ExchangeReadError::RatioUnreadable)
+    let (left, right) = ratio
+        .split_once(':')
+        .and_then(|(left, right)| Some((positive_decimal(left)?, positive_decimal(right)?)))
+        .ok_or(ExchangeReadError::RatioUnreadable)?;
+    let (ratio, one_side) = if right == 1.0 {
+        (left, OneSide::Right)
+    } else if left == 1.0 {
+        (right, OneSide::Left)
+    } else {
+        return Err(ExchangeReadError::RatioUnreadable);
+    };
+    let stock = grouped_digits(stock)
+        .and_then(|digits| digits.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .ok_or(ExchangeReadError::RatioUnreadable)?;
+    let want_name = joined_name(want_lines).ok_or(ExchangeReadError::NamesUnreadable)?;
+    let have_name = joined_name(have_lines).ok_or(ExchangeReadError::NamesUnreadable)?;
+    let (mode, currency) = if let Some(currency) = currency(&have_name) {
+        (Mode::Buy, currency)
+    } else if let Some(currency) = currency(&want_name) {
+        (Mode::Sell, currency)
+    } else {
+        return Err(ExchangeReadError::NoCurrencySide);
+    };
+    Ok(ExchangeSelection {
+        mode,
+        currency,
+        ratio,
+        one_side,
+        left,
+        right,
+        stock,
+        want_name,
+        have_name,
+    })
+}
+
+fn grouped_digits(text: &str) -> Option<String> {
+    if text.contains(['\n', '\r']) {
+        return None;
+    }
+    let groups: Vec<&str> = text.split_whitespace().collect();
+    let first = *groups.first()?;
+    if !groups.iter().all(|group| group.bytes().all(|byte| byte.is_ascii_digit()))
+        || (groups.len() > 1
+            && (first.len() > 3 || groups[1..].iter().any(|group| group.len() != 3)))
+    {
+        return None;
+    }
+    Some(groups.concat())
+}
+
+fn positive_decimal(text: &str) -> Option<f64> {
+    let text = text.trim_matches(|c: char| c.is_whitespace() && c != '\n' && c != '\r');
+    let normalized = if let Some((integer, fraction)) = text.split_once('.') {
+        if fraction.is_empty() || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        // A space before the decimal point is not a thousands separator.
+        if integer.ends_with(char::is_whitespace) {
+            return None;
+        }
+        format!("{}.{}", grouped_digits(integer)?, fraction)
+    } else {
+        grouped_digits(text)?
+    };
+    normalized.parse::<f64>().ok().filter(|value| value.is_finite() && *value > 0.0)
+}
+
+fn joined_name(lines: &[&str]) -> Option<String> {
+    let name = lines.iter().flat_map(|line| line.split_whitespace()).collect::<Vec<_>>().join(" ");
+    (name.chars().any(char::is_alphabetic)
+        && !name.chars().any(|c| c.is_control() || c == '\u{fffd}'))
+    .then_some(name)
+}
+
+fn currency(name: &str) -> Option<Currency> {
+    match name {
+        "Chaos Orb" => Some(Currency::Chaos),
+        "Divine Orb" => Some(Currency::Div),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
