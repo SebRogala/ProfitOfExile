@@ -309,8 +309,6 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 		lens, err := lensCraft(r.Context(), tradeCache, feeders, scope, time.Now())
 		if err != nil {
 			slog.Error("font analysis: lens query failed", "error", err)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
 		}
 
 		type row struct {

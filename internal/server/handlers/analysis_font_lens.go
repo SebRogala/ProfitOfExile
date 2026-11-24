@@ -36,11 +36,11 @@ type lensFeederChoice struct {
 
 func lensCraft(ctx context.Context, tradeCache *trade.TradeCache, feeders exceptionalSupportPricer, scope league.Scope, now time.Time) (lensCraftResponse, error) {
 	var snap lab.ExceptionalSupportSnapshot
+	var loadErr error
 	if feeders != nil {
-		var err error
-		snap, err = feeders.ExceptionalSupportPrices(ctx, scope)
-		if err != nil {
-			return lensCraftResponse{}, err
+		snap, loadErr = feeders.ExceptionalSupportPrices(ctx, scope)
+		if loadErr != nil {
+			snap = lab.ExceptionalSupportSnapshot{}
 		}
 	}
 	var resp lensCraftResponse
@@ -62,6 +62,10 @@ func lensCraft(ctx context.Context, tradeCache *trade.TradeCache, feeders except
 		Source: "trade", Name: "Exceptional Support Gem lv 3+",
 		Chaos: resp.Feeder.Chaos, FetchedAt: resp.Feeder.FetchedAt, TradeURL: resp.Feeder.TradeURL,
 	}}
+	// A failed snapshot leaves the combined comparison unpriced; legacy trade quotes remain available.
+	if loadErr != nil {
+		resp.Feeders[0].Chaos = nil
+	}
 	var asOf *time.Time
 	if !snap.AsOf.IsZero() {
 		at := snap.AsOf.UTC()
@@ -86,7 +90,7 @@ func lensCraft(ctx context.Context, tradeCache *trade.TradeCache, feeders except
 	if resp.Cheapest != nil {
 		resp.EVCheapest = lab.LensCraftEV(resp.Outcome.Chaos, resp.Feeders[*resp.Cheapest].Chaos)
 	}
-	return resp, nil
+	return resp, loadErr
 }
 
 func lensExceptionalTradeURL(name string, scope league.Scope) (string, error) {
