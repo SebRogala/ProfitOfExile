@@ -55,7 +55,7 @@ type PlayMoney struct {
 	ExpectedRoi DisplayNumber `json:"expectedRoi"`
 }
 
-// PlayScale is a play scaled to ScaleTargetChaos: the Scale column.
+// PlayScale is a play scaled to ScaleTargetChaos in executionRun's whole lots.
 type PlayScale struct {
 	// Flips and Hours stay floats: neither formula is bounded (a tiny positive
 	// expectation or depth gives 1e20 or ±Inf), and a non-finite count is null.
@@ -74,18 +74,17 @@ type PlaySortKeys struct {
 	FastestHours DisplayNumber `json:"fastestHours"`
 }
 
-// PlayDisplay is the display object of one served play: the whole output of the
-// desktop helpers displayScale, moneyColumns, printsExpectedRoi,
-// worthwhileScale, runInvestment and the sortPlays keys (view.ts), ported one
-// for one so the server can filter, sort and page on them (ADR-030).
+// PlayDisplay is the display object of one served play. Its run cost and scale
+// use executionRun so server budget filters and displayed costs agree (ADR-030).
 type PlayDisplay struct {
-	Units           int64         `json:"units"`
-	Basis           DisplayBasis  `json:"basis"`
-	Money           PlayMoney     `json:"money"`
-	ExpectedPrinted bool          `json:"expectedPrinted"`
-	Scale           *PlayScale    `json:"scale"`
-	RunInvestment   DisplayNumber `json:"runInvestment"`
-	SortKeys        PlaySortKeys  `json:"sortKeys"`
+	Units           int64        `json:"units"`
+	Basis           DisplayBasis `json:"basis"`
+	Money           PlayMoney    `json:"money"`
+	ExpectedPrinted bool         `json:"expectedPrinted"`
+	Scale           *PlayScale   `json:"scale"`
+	// RunInvestment is the executable run cost, including one lot without a scale.
+	RunInvestment DisplayNumber `json:"runInvestment"`
+	SortKeys      PlaySortKeys  `json:"sortKeys"`
 }
 
 // Decorate returns a copy of play with its Display filled.
@@ -109,7 +108,7 @@ func Decorate(play Play) Play {
 		Money:           money,
 		ExpectedPrinted: printed,
 		Scale:           scale,
-		RunInvestment:   finite(play.Investment),
+		RunInvestment:   finite(rawRunInvestment(play)),
 		SortKeys: PlaySortKeys{
 			Expected:     DisplayNumber(math.NaN()),
 			Roi:          money.Roi,
@@ -127,17 +126,17 @@ func Decorate(play Play) Play {
 	return play
 }
 
-// worthwhileScale ports view.ts worthwhileScale: nil when the expectation is
-// not a positive finite number.
+// worthwhileScale displays executionRun's quantities when expectation is
+// positive and finite; otherwise the play has no worthwhile scale.
 func worthwhileScale(play Play) *PlayScale {
 	if math.IsNaN(play.ExpectedRoi) || math.IsInf(play.ExpectedRoi, 0) || play.ExpectedRoi <= 0 {
 		return nil
 	}
-	flips := math.Ceil(ScaleTargetChaos / play.ExpectedRoi)
+	flips, investment := executionRun(play)
 	scale := &PlayScale{
 		Flips:      finite(flips),
 		Gain:       finite(play.ExpectedRoi * flips),
-		Investment: finite(play.Investment * flips),
+		Investment: finite(investment),
 		Hours:      DisplayNumber(math.NaN()),
 	}
 	if !math.IsNaN(play.Depth) && !math.IsInf(play.Depth, 0) && play.Depth > 0 {

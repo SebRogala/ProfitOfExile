@@ -374,14 +374,11 @@ func playRow(leagueID, horizon string, rank int, play Play) ([]any, error) {
 	}, nil
 }
 
-// rawRunInvestment is runInvestment with ±Inf kept: the display sends it as
-// null, but the desktop's run-cost bound compares the unbounded value, so an
-// Infinity run cost exceeds every ceiling (parity case "run cost bounds").
+// rawRunInvestment keeps executionRun's infinite cost for SQL budget bounds;
+// the display normalizes that same cost to JSON null.
 func rawRunInvestment(play Play) float64 {
-	if math.IsNaN(play.ExpectedRoi) || math.IsInf(play.ExpectedRoi, 0) || play.ExpectedRoi <= 0 {
-		return play.Investment
-	}
-	return play.Investment * math.Ceil(ScaleTargetChaos/play.ExpectedRoi)
+	_, investment := executionRun(play)
+	return investment
 }
 
 // jsonSafePlay zeroes the play's non-finite top-level numbers so it encodes:

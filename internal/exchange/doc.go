@@ -188,6 +188,16 @@
 //     is the chaos one exchanged unit returns. Roi == Investment * RoiPct by
 //     construction — both sides priced at the same entry, not two independent
 //     measurements.
+//   - Display.RunInvestment and the stored run_investment use executionRun in
+//     lot.go, the current run-cost formula owner. Exact feed pairs and tick
+//     denominators determine the smallest lot with whole sell proceeds at each
+//     cumulative conversion. Buy cost rounds up once per lot in entry-quote
+//     units and uses Investment's scored-hour chaos valuation. Scaling takes
+//     whole lots, at least one; a nonpositive or nonfinite ExpectedRoi uses one
+//     lot without a display scale. Unformable execution costs positive infinity
+//     in SQL and JSON null in display. There is no lot-size cap: only the
+//     player's requested run-cost bounds exclude an unaffordable run. Raw
+//     Investment, ROI, simulation and ranking remain per-unit measurements.
 //   - Turnover is the chaos per hour flowing through the play's THINNEST leg: the
 //     minimum over legs of the hour's quote-side volume times that quote's chaos
 //     rate. It is the liquidity reading, and unit volume is not one.
