@@ -2,7 +2,7 @@ import { createDismissal, createDismissalHost } from '$lib/overlay/widgets/widge
 import { widgetsFor } from '$lib/overlay/widgets/widget-registry';
 import { PROMPT_WINDOW_LABEL } from '$lib/overlay/manager';
 import type { DismissSnapshot, ReadHotkeySettings, ReadPromptSnapshot } from '$lib/stores/ssot.svelte';
-import { readPromptText } from './view';
+import { readPromptNotice } from './view';
 
 type HostPorts = Pick<Parameters<typeof createDismissalHost>[0], 'listen' | 'invoke' | 'frame'>;
 
@@ -28,9 +28,9 @@ export function createReadPromptPresentation({ source, listen, invoke, frame }: 
 		listen, invoke, frame
 	});
 	return {
-		get text() {
+		get notice() {
 			const current = source();
-			return current.readPrompt.noMatch && dismissal.hidden ? null : readPromptText(current);
+			return current.readPrompt.noMatch && dismissal.hidden ? null : readPromptNotice(current);
 		}
 	};
 }

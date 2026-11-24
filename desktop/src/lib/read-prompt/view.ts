@@ -1,11 +1,12 @@
 /**
- * The text of the global "press <key> to read" prompt (POE-388).
+ * The notice for the global "press <key> to read" prompt (POE-388).
  *
  * Rust owns the detected/no-match presentation (`read_prompt.rs`, `ssot.readPrompt`);
  * this file words it, with the key the player actually bound
  * (`ssot.readHotkey`). Display only: nothing here can start a read.
  */
 import { shortcutLabel } from '$lib/boss-loot/native-adapters';
+import type { OverlayNoticeProps } from '$lib/overlay/OverlayNotice.svelte';
 import type { ReadHotkeySettings, ReadPromptMechanic, ReadPromptSnapshot } from '$lib/stores/ssot.svelte';
 
 /** The word the prompt uses for each mechanic. */
@@ -14,15 +15,6 @@ export const MECHANIC_WORDS: Record<ReadPromptMechanic, string> = {
 	incursion: 'Incursion',
 	mercenary: 'Mercenary'
 };
-
-export const NO_MATCH_TEXT = 'Nothing detected. If a mechanic is open, check Settings → OCR Regions → Preview, and press Recalibrate if a region is off.';
-
-export const RECALIBRATING_TEXT = 'No mechanics found - running a recalibration sweep now.';
-
-/** The no-match result while it offers recalibration to the next press (POE-459). */
-export function recalibrateOfferText(key: string, seconds: number): string {
-	return `No mechanics detected - press ${key} within ${seconds} s to recalibrate`;
-}
 
 /** 1-based numbers of the Divine Font gem slots the last read left uncertain. */
 export function uncertainGemSlots(readPrompt: ReadPromptSnapshot): number[] {
@@ -33,31 +25,36 @@ function gemList(slots: number[]): string {
 	return slots.length === 1 ? `Gem ${slots[0]}` : `Gems ${slots.slice(0, -1).join(', ')} and ${slots[slots.length - 1]}`;
 }
 
-/** Whether the text is guidance that wraps rather than a one-line prompt. */
-export function readPromptWraps(readPrompt: ReadPromptSnapshot): boolean {
-	return readPrompt.recalibrating || readPrompt.noMatch || uncertainGemSlots(readPrompt).length > 0;
-}
-
 /**
  * Recalibration sweep status, the no-match result (its recalibration offer, or
  * guidance once a confirming press also found nothing), uncertain gem slots,
  * detected mechanic/key, or null while none is present (the offer and the last
  * two wait for the bound read key).
  */
-export function readPromptText(source: {
+export function readPromptNotice(source: {
 	readPrompt: ReadPromptSnapshot;
 	readHotkey: ReadHotkeySettings | null;
-}): string | null {
-	if (source.readPrompt.recalibrating) return RECALIBRATING_TEXT;
-	if (source.readPrompt.noMatch && !source.readPrompt.recalibrateOffer) return NO_MATCH_TEXT;
+}): OverlayNoticeProps | null {
+	if (source.readPrompt.recalibrating) return {
+		kind: 'info', header: 'No mechanics detected', body: 'Running a recalibration sweep…', progress: true
+	};
+	if (source.readPrompt.noMatch && !source.readPrompt.recalibrateOffer) return {
+		kind: 'warning', header: 'Nothing detected after recalibrating', body: 'Check Settings → OCR Regions → Preview'
+	};
 	if (source.readHotkey === null) return null;
 	const key = shortcutLabel(source.readHotkey.shortcut);
-	if (source.readPrompt.noMatch) return recalibrateOfferText(key, source.readHotkey.recalibrateSeconds);
+	if (source.readPrompt.noMatch) return {
+		kind: 'warning', header: 'No mechanics detected',
+		body: `Press ${key} within ${source.readHotkey.recalibrateSeconds} s to recalibrate`, keys: key
+	};
 	const slots = uncertainGemSlots(source.readPrompt);
 	if (slots.length) {
-		return `${gemList(slots)} unclear - wait for the Font to finish revealing, then press ${key} again, or hover the gem and press ${key}`;
+		return {
+			kind: 'warning', header: `${gemList(slots)} unclear`,
+			body: `Press ${key} after the Font reveals, or while hovering the gem`, keys: key
+		};
 	}
 	const mechanic = source.readPrompt.mechanic;
 	if (mechanic === null) return null;
-	return `Detected ${MECHANIC_WORDS[mechanic]} - press ${key} to read`;
+	return { kind: 'info', header: `${MECHANIC_WORDS[mechanic]} detected`, body: `Press ${key} to read`, keys: key };
 }

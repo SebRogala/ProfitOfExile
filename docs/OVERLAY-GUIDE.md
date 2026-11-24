@@ -70,14 +70,14 @@ logs must keep the user aware of what the data is used for.
   selected work. Screen matches and read completion never update log recency.
   Each probe compares only its banked region, and a miss moves to the next
   reader. A press whose probes all miss offers recalibration instead of
-  sweeping: the read prompt shows “No mechanics detected - press <key> within
-  N s to recalibrate” (`ReadHotkeySettings.recalibrate_seconds`, default 5;
+  sweeping: the read prompt shows “No mechanics detected” above “Press <key>
+  within N s to recalibrate” (`ReadHotkeySettings.recalibrate_seconds`, default 5;
   Rust clears it when the window ends, with no sweep and no grab). Only a press
   inside that window whose own probes also miss may let a reader with an
   uncalibrated region run its recalibration sweep, on that press's one frame,
   once per screen setup ([ADR-035](adr/035-a-read-key-press-sweeps-only-after-every-banked-probe-missed-once-per-screen-setup.md)
-  and its POE-459 amendment); meanwhile the read prompt shows “No mechanics found - running a
-  recalibration sweep now.” `app.log` gets one
+  and its POE-459 amendment); meanwhile the read prompt shows “No mechanics detected”
+  above “Running a recalibration sweep…” with a spinner. `app.log` gets one
   `Read key: <reader> probe — no match` line per miss, a
   `Read key: no mechanics found — running a recalibration sweep now` line when
   the sweep starts, and one
@@ -87,13 +87,13 @@ logs must keep the user aware of what the data is used for.
   refused the grab), which writes none.
   `read_hotkey::dispatch_press` is the home of this order and these lines.
 - **No match.** A successfully captured frame that matches no reader publishes
-  exactly: “Nothing detected. If a mechanic is open, check Settings → OCR
-  Regions → Preview, and press Recalibrate if a region is off.” It follows the
-  global dismissal timeout/key; the next completed result replaces it. Each
+  “Nothing detected after recalibrating” above “Check Settings → OCR Regions →
+  Preview”. Rust ends the no-match recalibration window; the global dismiss key
+  can hide it sooner. The next completed result replaces it. Each
   result has a fresh presentation identity, so unchanged polls cannot restore
   dismissed content. Superseded completions cannot overwrite newer results or
-  Client.txt arms. Ordinary detected text remains
-  `Detected Mercenary - press <key> to read`, outside timeout/key dismissal.
+  Client.txt arms. Ordinary detected notices show “Mercenary detected” above
+  “Press <key> to read”, with their existing native presentation expiry.
 - **No automatic capture.** No capture is triggered by Client.txt events,
   timers, loops, retries, cursor hover or panel polling. A fixed delay between
   the press and the grab is allowed; polling until a panel appears is not.
@@ -296,7 +296,7 @@ The read prompt (`prompt`, POE-388) is the one APP-LEVEL widget window
 ([ADR-021](adr/021-a-module-draws-one-window-on-the-game-monitor-and-widgets-inside-it.md)
 amendment): no module flag governs it, so its `createModuleWindows` row is
 always granted and enabled, and its route draws the single `prompt.read`
-widget through `createReadPromptPresentation`: detected text while
+widget through `createReadPromptPresentation`: a compact header/body notice while
 `ssot.readPrompt.mechanic` is set, or the no-match result described in
 [Screen reading](#screen-reading-ggg-policy). Divine Font (POE-438) and
 Incursion (POE-460) arms are kept for read-key routing but not presented, so
@@ -1716,8 +1716,8 @@ touching the named path.
 - **The read prompt, per mechanic** (POE-388): with the game focused, trigger
   each mechanic once — Alva's start line (or entering the temple), an Izaro kill
   or a Divine Font opening, and a mercenary Inspect line. Mercenary must
-  show one line at the TOP CENTRE (or wherever it was dragged), exactly
-  `Detected Mercenary - press <key> to read`, with `<key>` the bound read key.
+  show a compact notice at the TOP CENTRE (or wherever it was dragged), with
+  “Mercenary detected” above “Press <key> to read” and the bound key as chips.
   Incursion and Divine Font arms must show no prompt
   ([Overlay types](#overlay-types)), yet pressing the read key at the Temple
   sheet or Font must still read it. Rebind the read key and

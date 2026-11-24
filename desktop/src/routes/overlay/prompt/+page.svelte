@@ -7,7 +7,6 @@
 	 */
 	import ReadPrompt from '$lib/read-prompt/ReadPrompt.svelte';
 	import { createReadPromptPresentation } from '$lib/read-prompt/presentation.svelte';
-	import { readPromptWraps } from '$lib/read-prompt/view';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import WidgetHost from '$lib/overlay/widgets/WidgetHost.svelte';
@@ -18,13 +17,13 @@
 		source: () => ssot, listen, invoke,
 		frame: () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
 	});
-	const text = $derived(presentation.text);
+	const notice = $derived(presentation.notice);
 </script>
 
 <WidgetHost module={PROMPT_WINDOW_LABEL}>
 	{#snippet content(spec, configMode)}
-		{#if spec.id === 'prompt.read' && text}
-			<ReadPrompt {text} noMatch={readPromptWraps(ssot.readPrompt)} />
+		{#if spec.id === 'prompt.read' && notice}
+			<ReadPrompt {notice} />
 		{:else if configMode}
 			<p class="placeholder">{spec.label}</p>
 		{/if}

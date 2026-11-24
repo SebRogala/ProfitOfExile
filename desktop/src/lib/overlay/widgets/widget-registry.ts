@@ -305,11 +305,11 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		id: 'prompt.read',
 		module: 'prompt',
 		label: 'Read prompt',
-		// Top-centre on a 1920-wide host (830 = 960 − 260/2), the rectangle the
-		// temple waiting notice shipped at. One line of text, so not resizable.
+		// Centre the widest approved notice on a 1920-wide host. The notice
+		// owns its content size, so resizing would only crop its header/body.
 		// The `prompt` window is excluded from the grab (ADR-023), so this
 		// position needs no clearance from any module's read regions.
-		defaults: { x: 830, y: 16, w: 260, h: 40 },
+		defaults: { x: 780, y: 16, w: 360, h: 62 },
 		resizable: false
 	}
 ];
