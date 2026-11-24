@@ -345,14 +345,12 @@
 	}
 	.col-signal {
 		width: 180px;
-		white-space: nowrap;
 	}
 	.col-signal :global(.signal-badge + .signal-badge) {
 		margin-left: 4px;
 	}
 	.col-signals {
 		width: 180px;
-		white-space: nowrap;
 	}
 	.col-signals :global(.signal-badge + .signal-badge) {
 		margin-left: 6px;
