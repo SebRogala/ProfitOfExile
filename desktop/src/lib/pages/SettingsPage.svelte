@@ -8,6 +8,7 @@
 	import { ssot, fetchSsot, setBossLootSettings, setShowAllLensFeeders } from '$lib/stores/ssot.svelte';
 	import { nav } from '$lib/stores/navigation.svelte';
 	import ReadHotkeySetting from '$lib/components/ReadHotkeySetting.svelte';
+	import ExchangeReadSetting from '$lib/components/ExchangeReadSetting.svelte';
 	import OverlayDismissSetting from '$lib/components/OverlayDismissSetting.svelte';
 	import { untrack } from 'svelte';
 	import { ocrRectsKey, screenGeometryView } from '$lib/geometry/view';
@@ -898,6 +899,7 @@
 				{/if}
 			</div>
 			<ReadHotkeySetting />
+			<ExchangeReadSetting />
 			<OverlayDismissSetting />
 
 		</section>
