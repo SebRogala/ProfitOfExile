@@ -26,7 +26,12 @@ const DESKTOP: Client = { name: 'desktop', path: './BestPlays.svelte', source: d
 const WEB_PATH = '../../../../../frontend/src/routes/lab/components/BestPlays.svelte';
 const WEB: Client = { name: 'web', path: WEB_PATH, source: webSources[WEB_PATH] };
 
-const MULTI_BADGE_CELLS = ['.col-signal', '.col-signals'];
+// `.col-signals` holds the widest single badge (PRICE_MANIPULATION, ~188 px
+// rendered) plus 24 px of cell padding under border-box sizing.
+const MULTI_BADGE_CELLS = [
+	{ selector: '.col-signal', width: '180px' },
+	{ selector: '.col-signals', width: '224px' }
+];
 
 function styleOf(client: Client): string {
 	if (client.source === undefined) throw new Error(`${client.name} BestPlays.svelte not found at ${client.path}`);
@@ -43,11 +48,13 @@ function ruleBodies(css: string, selector: string): string[] {
 }
 
 function guardMultiBadgeCells(client: Client) {
-	it.each(MULTI_BADGE_CELLS)(`${client.name} %s wraps its badges inside its 180px column`, (selector) => {
+	it.each(MULTI_BADGE_CELLS)(`${client.name} $selector wraps its badges inside its $width column`, ({ selector, width }) => {
 		const bodies = ruleBodies(styleOf(client), selector);
 		expect(bodies, `${client.name} ${selector}: expected exactly one rule with this exact selector`).toHaveLength(1);
 		const [body] = bodies;
-		expect(body, `${client.name} ${selector}: column width changed`).toMatch(/(?:^|[;\s])width\s*:\s*180px\s*;/);
+		expect(body, `${client.name} ${selector}: column width must be ${width}`).toMatch(
+			new RegExp(`(?:^|[;\\s])width\\s*:\\s*${width}\\s*;`)
+		);
 		expect(body, `${client.name} ${selector}: cell-level nowrap pushes the second badge into the next column`).not.toMatch(
 			/white-space\s*:\s*nowrap/
 		);
