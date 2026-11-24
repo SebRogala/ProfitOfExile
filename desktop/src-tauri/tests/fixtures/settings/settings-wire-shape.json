@@ -68,6 +68,7 @@
   "dedication_variant": "21/20",
   "normal_variant": "1/0",
   "show_low_confidence": false,
+  "show_all_lens_feeders": false,
   "ui_prefs": {},
   "modules": {},
   "temple_profile": {

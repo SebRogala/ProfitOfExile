@@ -4389,6 +4389,52 @@ pub(crate) mod tests {
         show_low_confidence_survives_a_restart: show_low_confidence = false;
     }
 
+    mod keep_happy {
+        use super::*;
+
+        /// The `show_all_lens_feeders` value the next save writes after a
+        /// settings file holding `file` is loaded, applied and restarted.
+        fn lens_feeders_choice_written_after_restart(name: &str, file: &str) -> Option<serde_json::Value> {
+            let dir = fresh_test_dir(name);
+            let path = dir.join(SETTINGS_FILENAME);
+            fs::write(&path, file).unwrap();
+            let loaded = load_from(&path).expect("settings file parses");
+            let state = test_app_state();
+            assert!(apply_to_state(&loaded, &state).is_empty());
+            let restarted = restarted_from(&state);
+            save_to(&path, &from_state(&restarted)).unwrap();
+            let written: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            let _ = fs::remove_dir_all(&dir);
+            written.get("show_all_lens_feeders").cloned()
+        }
+
+        #[test]
+        fn the_all_lens_feeders_choice_written_after_a_restart_is_the_loaded_one() {
+            let fresh = serde_json::to_string(&Settings::default()).unwrap();
+            let rows: [(&str, &str, bool); 4] = [
+                ("lens_feeders_absent", r#"{"server_url":"https://fixture.invalid"}"#, false),
+                ("lens_feeders_fresh", fresh.as_str(), false),
+                (
+                    "lens_feeders_false",
+                    r#"{"server_url":"https://fixture.invalid","show_all_lens_feeders":false}"#,
+                    false,
+                ),
+                (
+                    "lens_feeders_true",
+                    r#"{"server_url":"https://fixture.invalid","show_all_lens_feeders":true}"#,
+                    true,
+                ),
+            ];
+            for (name, file, expected) in rows {
+                assert_eq!(
+                    lens_feeders_choice_written_after_restart(name, file),
+                    Some(serde_json::Value::Bool(expected)),
+                    "row {name}",
+                );
+            }
+        }
+    }
+
 
     fn base_for_saved(saved: &str) -> String {
         let state = test_app_state();
