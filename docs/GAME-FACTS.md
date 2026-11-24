@@ -157,18 +157,23 @@ prose blurb and Recipe block agreeing on every row).
   pre-3.30 30 c Crucible of Flame glove guess went with them. The rooms' own
   area modifiers and descriptions stay (`LineDrops::content`, drops.rs).
 
-### Temple room bonuses per tier (current model, 2026-11-23)
+### Temple room bonuses per tier (current model, 2026-11-24)
 
 The numeric home is `desktop/src-tauri/src/temple/drops.rs` (`DROPS` and its
 source constants). Absent bonuses are `None`, distinct from zero. Item
 quantity was removed in 3.30.0 (POE-369; sheet g744679169.csv row 8).
 
-POE-466 adopts Vertolka's Discord feedback of 2026-11-20, points 5–8, for
-rarity on every previously rarity-bearing line except Glittering Halls,
-Factory's atlas-drop bonus and Atlas of Worlds' map corrupt device uses.
-These are **unverified player feedback**, stored as guesses under
-`VERTOLKA_FEEDBACK_1120`, not independently measured game facts. Hall of War's
-existing measured pack-size data is confirmed by the feedback and retained.
+POE-487 replaces POE-466's rarity feedback for the ten room lines other than
+Glittering Halls with the confirmed poedb room-page reading of 2026-11-24.
+Their rarity percentages are **measured**, citing `POEDB_ROOMS_1124` in
+`drops.rs::DROPS`; that table owns the tier figures, including Locus of
+Corruption's distinct ladder.
+
+Factory's atlas-drop bonus and Atlas of Worlds' map corrupt device uses
+remain **unverified player feedback**, adopted by POE-466 from Vertolka's
+2026-11-20 points 5–8 and stored as guesses under `VERTOLKA_FEEDBACK_1120`.
+Hall of War's existing measured pack-size data is confirmed by that feedback
+and retained.
 The existing description slot derives its bonus text from the offered tier;
 the value table describes tier 3.
 
@@ -438,20 +443,25 @@ Recorded so the status is explicit, not so they can be built on.
     `SHEET_UNIQUES_330`; Operator ruling 2026-11-13 00:20, a guess).
   - Equal-weight pool over the room's base uniques (the sheet author's guess,
     same ruling). Glittering Halls counts 0.25 × the mean of its four.
-  - Rarity default 1 c per 1 % (`C_PER_RARITY_BASE`), a starting base to tune
-    (Operator ruling 2026-11-13 00:08 on Vertolka's note "Also probably change
-    base added value per IIR to 1%=1c? for start"). It supersedes the sheet's
-    0.5 c (g744679169.csv row 12) and Vertolka's 2026-09-06 proposal "1% quant
-    = 0,5c, 1% rarity = 0,25c".
+  - Rarity default 0.5 c per point of increased Rarity
+    (`desktop/src-tauri/src/temple/valuation.rs::C_PER_RARITY_BASE`), an
+    **unmeasured starting base to tune**. POE-487 adopts Vertolka's
+    2026-11-24 proposal via the Operator, superseding the Operator's
+    2026-11-13 POE-370 T25 ruling. Saved Custom tables retain their stored
+    `c_per_rarity` (POE-370 Q7); only the default changes.
   - Cradle bracket: the upgraded unique from the same chest, only with a Cradle
     of Creation, shown as 25 % of the upgraded price (g744679169.csv row 13;
     the cell prints the contribution).
-  - Room rarity, Factory atlas drops and map corrupt device uses: unverified
-    Discord feedback, adopted by POE-466; see the current room-bonus section
-    and `drops.rs::VERTOLKA_FEEDBACK_1120` for provenance and tier values.
+  - Factory atlas drops and map corrupt device uses: unverified Discord
+    feedback, adopted by POE-466; see the current room-bonus section and
+    `drops.rs::VERTOLKA_FEEDBACK_1120` for provenance and tier values.
+    Room rarity percentages are now measured under
+    `drops.rs::POEDB_ROOMS_1124`; their chaos conversion remains the
+    unmeasured rarity-rate policy above.
   - Superseded history: the 2026-11-13 reading used 4 % rarity per tier and
-    left the extra 1–2 % redirected from quantity unadopted. POE-466 replaces
-    that reading with the later feedback's rarity; it adds no quantity term.
+    left the extra 1–2 % redirected from quantity unadopted. POE-466 replaced
+    that reading with the later feedback's rarity, itself superseded by
+    POE-487's confirmed poedb reading; neither adds a quantity term.
     The old uncertain Factory rarity and Atlas device-use sheet rows
     (gid0.csv rows 11–12 and 23) no longer govern those fields.
   - Sheet "?" row still not adopted: Sadist Den "Atziri is possesed?" /
