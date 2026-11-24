@@ -1,3 +1,10 @@
+<script module lang="ts">
+	let copied = $state<{ owner: symbol; key: string; text: string } | null>(null);
+	let copyTimer: ReturnType<typeof setTimeout> | undefined;
+	let copyGeneration = 0;
+	let copyOwner: symbol | null = null;
+</script>
+
 <script lang="ts">
 	/**
 	 * One Currency Exchange play as the row's route cell: five fixed-width slots
@@ -55,6 +62,8 @@
 	 * collapsed on its own would put its Get under the next row's sell, which is
 	 * the one thing the fixed geometry exists to prevent.
 	 */
+	import { onDestroy } from 'svelte';
+	import { invoke } from '@tauri-apps/api/core';
 	import type { CurrencyExchangePlay } from '$lib/api';
 	import {
 		iconSrc,
@@ -98,6 +107,34 @@
 	const dense = $derived(density === 'dense');
 	/** 24px inside a 30px tile when comfortable; a bare 20px glyph when dense. */
 	const iconSize = $derived(dense ? 20 : 24);
+	const owner = Symbol();
+
+	async function copyName(text: string, key: string): Promise<void> {
+		const generation = ++copyGeneration;
+		copyOwner = owner;
+		try {
+			await navigator.clipboard.writeText(text);
+			if (generation !== copyGeneration) return;
+			clearTimeout(copyTimer);
+			copied = { owner, key, text };
+			copyTimer = setTimeout(() => { copied = null; }, 1200);
+		} catch (error) {
+			console.warn('[exchange-route] clipboard write failed:', error);
+			invoke('app_log_from_frontend', { msg: `[exchange-route] clipboard write failed: ${String(error)}` })
+				.catch((logError) => console.warn('[exchange-route] app log unreachable:', logError));
+		}
+	}
+
+	onDestroy(() => {
+		if (copyOwner === owner) {
+			copyGeneration++;
+			copyOwner = null;
+		}
+		if (copied?.owner === owner) {
+			clearTimeout(copyTimer);
+			copied = null;
+		}
+	});
 </script>
 
 {#snippet arrow(muted: boolean)}
@@ -142,14 +179,14 @@
      `depletedSide` is the opposite case and is read off `slot` like `suspect`:
      it is a fact about THIS step's own book, so every step carries its own,
      the convert step included. -->
-{#snippet step(slot: RouteStep, lowLiquidity: boolean = false)}
+{#snippet step(slot: RouteStep, key: string, lowLiquidity: boolean = false)}
 	{@render tile(slot.icon, slot.suspect, slot.depletedSide, lowLiquidity)}
 	<span class="lines" class:marked={slot.noOffers}>
 		<!-- A step with no name is the convert step showing a total, whose line
 		     names both currencies already and whose tile carries the artwork of the
 		     one being converted; the name is on its `rateTitle`. -->
 		{#if slot.name}
-			<span class="name" title={slot.name}>{slot.name}</span>
+			<button type="button" class="name" title={slot.name} onclick={() => copyName(slot.name, key)}>{copied?.owner === owner && copied.key === key && copied.text === slot.name ? 'Copied' : slot.name}</button>
 		{/if}
 		<!-- `rateTitle` carries what the line itself no longer claims: on a step
 		     that printed a total it is the market's own posted pair plus what
@@ -197,11 +234,11 @@
 
 		{@render arrow(false)}
 
-		<span class="slot slot-buy">{@render step(route.buy, !!play.lowLiquidity)}</span>
+		<span class="slot slot-buy">{@render step(route.buy, 'buy', !!play.lowLiquidity)}</span>
 
 		{@render arrow(false)}
 
-		<span class="slot slot-sell">{@render step(route.sell, !!play.lowLiquidity)}</span>
+		<span class="slot slot-sell">{@render step(route.sell, 'sell', !!play.lowLiquidity)}</span>
 
 		<!-- The slot is here for the rows that USE it. When no play in the rendered
 		     set converts, the page collapses the column for all of them and the
@@ -211,7 +248,7 @@
 
 			<span class="slot slot-convert">
 				{#if route.convert}
-					{@render step(route.convert)}
+					{@render step(route.convert, 'convert')}
 				{:else}
 					<!-- The step a direct play does not take, held open so the Get slot
 					     never moves under the sell column of the row above. -->
@@ -512,6 +549,16 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.name {
+		font: inherit;
+		line-height: inherit;
+		text-align: left;
+		border: 0;
+		background: none;
+		padding: 0;
+		cursor: pointer;
 	}
 
 	.name,
