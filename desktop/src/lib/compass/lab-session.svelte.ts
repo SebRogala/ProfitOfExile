@@ -6,7 +6,6 @@ import {
 	handleNavEvent,
 	loadLayout,
 	setStrategy,
-	type LabLayout,
 	type NavEvent,
 	type NavState,
 	type RouteStrategy
@@ -77,9 +76,10 @@ const productionPorts: LabSessionPorts = {
  * compass, map and timer widgets. Starts on the first acquire, stops on the
  * last release. Each widget keeps its own view state and reacts through hooks.
  *
- * Two counters fence stale async results (decision FE-M1 D3): `lifetime`
+ * Counters fence stale async results (decision FE-M1 D3): `lifetime`
  * (bumped by stop) fences listener handlers; `generation` (bumped by stop and
- * by a layout reset) fences the init chain, layout results and poll results.
+ * by a layout reset or explicit selection) fences init, layout and poll results.
+ * `layoutRequest` also fences overlapping reloads of the same selection.
  * Loader retries are not cancelled, only their results ignored.
  */
 export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
@@ -96,6 +96,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 	let refcount = 0;
 	let lifetime = 0;
 	let generation = 0;
+	let layoutRequest = 0;
 	let interval: ReturnType<typeof setInterval> | null = null;
 	let registrations: Promise<Unlisten>[] = [];
 	let pollErrorLogged = false;
@@ -105,14 +106,31 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 	}
 
 	async function fetchLayoutFromServer(preferred?: string): Promise<void> {
+		if (preferred) {
+			lockedDifficulty = preferred;
+			generation++;
+		}
 		const g = generation;
-		if (preferred) lockedDifficulty = preferred;
-		const layout: LabLayout | null = await ports.fetchLayout({
+		const request = ++layoutRequest;
+		const selected = lockedDifficulty;
+		const layout = await ports.fetchLayout({
 			preferredDifficulty: preferred,
 			lockedDifficulty,
 			log
 		});
-		if (!layout || g !== generation) return;
+		if (!layout || g !== generation || request !== layoutRequest) return;
+		if ('missing' in layout) {
+			if (!selected) return;
+			navState = {
+				...createNavState(),
+				strategy: navState.strategy,
+				inLab: navState.inLab,
+				finished: navState.finished
+			};
+			layoutLoaded = false;
+			history = [];
+			return;
+		}
 		navState = loadLayout(navState, layout);
 		if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
 		layoutLoaded = true;
@@ -155,7 +173,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 		if (g !== generation) return;
 		if (initial) {
 			settings = initial;
-			if (initial.difficulty) lockedDifficulty = initial.difficulty;
+			if (initial.difficulty && !lockedDifficulty) lockedDifficulty = initial.difficulty;
 			if (initial.strategy) navState = setStrategy(navState, initial.strategy);
 			for (const hooks of [...subscribers]) hooks.onSettings?.(initial);
 		}
@@ -185,11 +203,16 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 			(next) => {
 				if (g !== generation) return;
 				pollErrorLogged = false;
+				const previousDifficulty = settings?.difficulty;
+				const hadSettings = settings !== null;
 				settings = next;
 				if (next?.strategy && next.strategy !== navState.strategy) {
 					navState = setStrategy(navState, next.strategy);
 				}
-				if (next?.difficulty && !lockedDifficulty) lockedDifficulty = next.difficulty;
+				if (next?.difficulty && next.difficulty !== previousDifficulty) {
+					if (hadSettings) void fetchLayoutFromServer(next.difficulty);
+					else if (!lockedDifficulty) lockedDifficulty = next.difficulty;
+				}
 				for (const hooks of [...subscribers]) hooks.onSettings?.(next);
 			},
 			(e) => {

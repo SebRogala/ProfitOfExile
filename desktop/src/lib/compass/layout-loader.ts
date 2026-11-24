@@ -69,10 +69,8 @@ async function waitForServerUrl(log: (msg: string) => void): Promise<string | nu
  * Shared by the compass, path-strip and timer overlays, which each had their
  * own copy of this and so needed the same bug fixed three times.
  *
- * Returns null for every failure — no server URL, no layout published for any
- * candidate difficulty, a throwing IPC or fetch. Each is logged through the
- * caller's `log`; callers keep their previous state on null rather than
- * clearing it.
+ * Returns `{ missing }` only when every candidate answers 404. Transport and
+ * server failures return null so callers can retain their previous layout.
  */
 export async function fetchLabLayout(opts: {
 	/** Difficulty named by the event that triggered this fetch, if any. */
@@ -80,7 +78,7 @@ export async function fetchLabLayout(opts: {
 	/** Difficulty this window has already settled on, if any. */
 	lockedDifficulty?: string | null;
 	log: (msg: string) => void;
-}): Promise<LabLayout | null> {
+}): Promise<LabLayout | { missing: string[] } | null> {
 	const { preferredDifficulty, lockedDifficulty, log } = opts;
 	const diff = preferredDifficulty ?? lockedDifficulty;
 	const diffs = diff ? [diff] : DEFAULT_DIFFICULTY_ORDER;
@@ -90,9 +88,13 @@ export async function fetchLabLayout(opts: {
 		for (const d of diffs) {
 			const r = await fetch(`${serverUrl}/api/lab/layout/${d}`);
 			if (r.ok) return (await r.json()) as LabLayout;
+			if (r.status !== 404) {
+				log(`layout fetch failed for ${d}: ${r.status}`);
+				return null;
+			}
 		}
 		log(`no layout found for: ${diffs.join(', ')}`);
-		return null;
+		return { missing: [...diffs] };
 	} catch (e) {
 		log(`fetchLayout error: ${e}`);
 		return null;

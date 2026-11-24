@@ -34,6 +34,7 @@ interface RoomLogEntry {
 let navState: NavState = createNavState();
 let lockedDifficulty: string | null = null;
 let pendingLayoutReset = false;
+let layoutGeneration = 0;
 
 let roomLog: RoomLogEntry[] = [];
 let roomCounter = 0;
@@ -71,13 +72,26 @@ function applyLayoutReset() {
 }
 
 async function fetchLayoutFromServer(preferredDiff?: string) {
+	const generation = ++layoutGeneration;
 	if (preferredDiff) lockedDifficulty = preferredDiff;
+	const selected = lockedDifficulty;
 	const layout = await fetchLabLayout({
 		preferredDifficulty: preferredDiff,
 		lockedDifficulty,
 		log: (msg) => logToApp(`[recorder] ${msg}`),
 	});
-	if (!layout) return;
+	if (!layout || generation !== layoutGeneration) return;
+	if ('missing' in layout) {
+		if (selected) {
+			navState = {
+				...createNavState(),
+				strategy: navState.strategy,
+				inLab: navState.inLab,
+				finished: navState.finished
+			};
+		}
+		return;
+	}
 	navState = loadLayout(navState, layout);
 	if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
 	logToApp(`[recorder] layout loaded: ${layout.difficulty} (${layout.rooms.length} rooms)`);
@@ -90,6 +104,8 @@ async function submitRun() {
 	const snapshotRooms = [...roomLog];
 	const snapshotKillTime = killSeconds;
 	const snapshotStartedAt = runStartTimestamp;
+	const snapshotDifficulty = lockedDifficulty;
+	const snapshotNav = navState;
 	if (snapshotKillTime <= 0 || snapshotRooms.length === 0) return;
 	try {
 		const serverUrl = getServerUrl();
@@ -98,14 +114,14 @@ async function submitRun() {
 
 		const settings = await invoke<any>('get_compass_settings').catch(() => null);
 		const visitedRoomNames = new Set(snapshotRooms.map(r => r.room_name.toLowerCase()));
-		const hasGoldenDoor = navState.lockedDoors.length > 0 ||
-			Array.from(navState.roomById.values())
+		const hasGoldenDoor = snapshotNav.lockedDoors.length > 0 ||
+			Array.from(snapshotNav.roomById.values())
 				.filter(r => visitedRoomNames.has(r.name.toLowerCase()))
 				.some(r => r.contents.some(c => c.toLowerCase().includes('golden-door')));
 
 		const body = {
-			difficulty: settings?.difficulty ?? lockedDifficulty ?? 'Uber',
-			strategy: settings?.strategy ?? navState.strategy,
+			difficulty: snapshotDifficulty ?? settings?.difficulty,
+			strategy: settings?.strategy ?? snapshotNav.strategy,
 			elapsed_seconds: totalElapsed,
 			kill_seconds: snapshotKillTime,
 			room_count: snapshotRooms.length,
@@ -184,18 +200,23 @@ export function startRunRecorder(): void {
 	started = true;
 
 	(async () => {
+		const generation = layoutGeneration;
 		const settings = await invoke<any>('get_compass_settings').catch((e: any) => {
 			logToApp(`[recorder] init settings failed: ${e}`);
 			return null;
 		});
-		if (settings?.difficulty) lockedDifficulty = settings.difficulty;
-		if (settings?.strategy) navState = setStrategy(navState, settings.strategy);
-		await fetchLayoutFromServer();
+		if (generation === layoutGeneration) {
+			if (settings?.difficulty && !lockedDifficulty) lockedDifficulty = settings.difficulty;
+			if (settings?.strategy) navState = setStrategy(navState, settings.strategy);
+			await fetchLayoutFromServer();
+		}
+		const catchupGeneration = layoutGeneration;
 		// Catch up to current lab state (app may start mid-run)
 		const catchup = await invoke<any>('get_lab_catchup').catch((e: any) => {
 			logToApp(`[recorder] catchup failed: ${e}`);
 			return null;
 		});
+		if (catchupGeneration !== layoutGeneration) return;
 		if (catchup?.events?.length) {
 			logToApp(`[recorder] replaying ${catchup.events.length} catchup events`);
 			for (const event of catchup.events) {

@@ -27,6 +27,7 @@
 	let loading = $state(false);
 	let error = $state('');
 	let fileInput = $state<HTMLInputElement | null>(null);
+	let layoutRequest = 0;
 
 	const difficultyOptions = [
 		{ value: 'Uber', label: 'Uber Lab' },
@@ -132,26 +133,31 @@
 	});
 
 	async function fetchLayout(url: string, diff: string) {
+		const request = ++layoutRequest;
 		loading = true;
 		error = '';
 		try {
 			const res = await fetch(`${url}/api/lab/layout/${diff}`);
+			if (request !== layoutRequest) return;
 			if (!res.ok) {
 				if (res.status === 404) {
 					navState = createNavState();
+					invoke('emit_lab_nav', { eventJson: { type: 'LayoutChanged', difficulty: diff } }).catch(() => {});
 					return;
 				}
 				throw new Error(`Server returned ${res.status}`);
 			}
 			const layout: LabLayout = await res.json();
+			if (request !== layoutRequest) return;
 			navState = loadLayout(navState, layout);
 			// Notify overlays that layout changed
-			invoke('emit_lab_nav', { eventJson: { type: 'LayoutChanged', difficulty: layout.difficulty } }).catch(() => {});
+			invoke('emit_lab_nav', { eventJson: { type: 'LayoutChanged', difficulty: diff } }).catch(() => {});
 		} catch (e: any) {
+			if (request !== layoutRequest) return;
 			error = e?.message || 'Failed to fetch layout';
 			navState = createNavState();
 		} finally {
-			loading = false;
+			if (request === layoutRequest) loading = false;
 		}
 	}
 
