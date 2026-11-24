@@ -67,7 +67,7 @@ describe('scaled undercut and outbid orders', () => {
 		{ ratio: '139.67 : 1', iWant: 419, iHave: 3, leftOver: 1 },
 		{ ratio: '139.50 : 1', iWant: 558, iHave: 4, leftOver: 0 },
 		{ ratio: '139 : 1', iWant: 556, iHave: 4, leftOver: 0 }
-	])('keep:happy: selling four items at 140 : 1 lists $ratio as $iWant for $iHave with $leftOver left over', ({ ratio, ...expected }) => {
+	])('keep:happy: selling four items at 140 : 1 lists $ratio as $iWant for $iHave with the remainder left over', ({ ratio, ...expected }) => {
 		expect(rowAt(selling, ratio)).toEqual(expected);
 	});
 	it('keep:happy: buying four items at 1 : 140 scales the 1 : 140.50 outbid to all four items', () => {
