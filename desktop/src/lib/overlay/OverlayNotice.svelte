@@ -23,7 +23,7 @@
 		{/if}
 		<span class="header" data-part="header">{header}</span>
 	</div>
-	<div class="body" data-part="body">{#each bodyParts as part, index}{#if index > 0 && keys}{#each keys.split(' + ') as key, keyIndex}{#if keyIndex > 0} + {/if}<kbd>{key}</kbd>{/each}{/if}{part}{/each}</div>
+	<div class="body" data-part="body">{#each bodyParts as part, index}{#if index > 0 && keys}{#each keys.split(' + ') as key, keyIndex}{#if keyIndex > 0}{' + '}{/if}<kbd>{key}</kbd>{/each}{/if}{part}{/each}</div>
 	{#if reason}<div class="reason">{reason}</div>{/if}
 </div>
 
