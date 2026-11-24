@@ -957,3 +957,74 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod keep_regression {
+    use super::{publish_lab_detection_with, record_lab_detection};
+    use serde_json::{json, Value};
+
+    enum Step {
+        Area(u32, &'static str),
+        Reset,
+    }
+    use Step::{Area, Reset};
+
+    const UBER_ROOM: &str = "EndGame_Labyrinth_RT_straight_bottleneck";
+    const MERCILESS_ROOM: &str = "3_Labyrinth_boss_1";
+    const CRUEL_ROOM: &str = "2_Labyrinth_boss_1";
+    const NORMAL_ROOM: &str = "1_Labyrinth_boss_1";
+    const AIRLOCK: &str = "Labyrinth_Airlock";
+
+    fn layout(difficulty: &str) -> Value {
+        json!({"type": "LayoutChanged", "difficulty": difficulty})
+    }
+
+    // keep:regression POE-488 AC-3 — a lab room seen in Client.txt never told
+    // the frontend its layout difficulty, so the compass stayed on the saved
+    // (often Uber) layout in a Cruel or Merciless run.
+    #[test]
+    fn a_lab_room_publishes_its_layout_difficulty_once_per_change() {
+        let cases: Vec<(&str, Vec<Step>, Vec<Value>)> = vec![
+            ("Eternal room at 75", vec![Area(75, UBER_ROOM)], vec![layout("Uber")]),
+            ("offering room at 83", vec![Area(83, UBER_ROOM)], vec![layout("Uber")]),
+            ("Merciless room", vec![Area(68, MERCILESS_ROOM)], vec![layout("Merciless")]),
+            ("Cruel room", vec![Area(55, CRUEL_ROOM)], vec![layout("Cruel")]),
+            ("Normal room", vec![Area(33, NORMAL_ROOM)], vec![layout("Normal")]),
+            ("Airlock alone", vec![Area(33, AIRLOCK)], vec![]),
+            ("Airlock then Cruel room", vec![Area(33, AIRLOCK), Area(55, CRUEL_ROOM)], vec![layout("Cruel")]),
+            ("75 then 83 room", vec![Area(75, UBER_ROOM), Area(83, UBER_ROOM)], vec![layout("Uber")]),
+            (
+                "repeated Merciless rooms",
+                vec![Area(68, MERCILESS_ROOM), Area(68, MERCILESS_ROOM), Area(68, MERCILESS_ROOM)],
+                vec![layout("Merciless")],
+            ),
+            (
+                "reset then a new run",
+                vec![Area(55, CRUEL_ROOM), Reset, Area(55, CRUEL_ROOM)],
+                vec![layout("Cruel"), layout("Cruel")],
+            ),
+        ];
+
+        for (name, steps, expected) in cases {
+            let state = crate::settings::tests::test_app_state();
+            let mut logs: Vec<String> = Vec::new();
+            let mut events: Vec<Value> = Vec::new();
+            for step in steps {
+                match step {
+                    Area(level, area) => {
+                        let update = record_lab_detection(&state, |d| d.observe_area(level, area));
+                        publish_lab_detection_with(
+                            update,
+                            |msg| logs.push(msg),
+                            || panic!("{name}: unexpected lab mode change under the default Normal mode"),
+                            |payload| events.push(payload),
+                        );
+                    }
+                    // The Plaza-entered reset in lab::watch::on_client_line.
+                    Reset => state.lab_scan.detection.lock().unwrap_or_else(|e| e.into_inner()).reset(),
+                }
+            }
+            assert_eq!(events, expected, "{name}: lab-nav payloads (logs: {logs:?})");
+        }
+    }
+}
