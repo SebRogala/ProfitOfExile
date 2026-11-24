@@ -3,7 +3,7 @@
  * `render()` runs no `$effect`, so the component stays in its first state —
  * the Font fetch pending — and what is asserted is that markup.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
 
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: async () => '0.0.0-test' }));
@@ -61,5 +61,44 @@ describe('FontEVCompare support-row BUY, with no server support search', () => {
 		const buy = supportBuy(null);
 		expect(buy).toMatch(/^<span[^>]*aria-disabled="true"/);
 		expect(buy).toContain('title="League not detected — trade link unavailable"');
+	});
+});
+
+/** Each Costs row's name and sub, in display order, out of the card's markup. */
+function costRows(card: string): { name: string; sub: string | null }[] {
+	const costs = card.slice(card.search(/class="rc-group[^"]*">Costs</));
+	return costs
+		.split(/class="rc-row[\s"]/)
+		.slice(1)
+		.map((row) => ({
+			name: row.match(/class="rc-name[^"]*"><span[^>]*>([^<]*)<\/span>/)?.[1] ?? '',
+			sub: row.match(/<small[^>]*>([^<]*)<\/small>/)?.[1] ?? null
+		}));
+}
+
+describe('FontEVCompare Lens feeder rows while the Font response is pending', () => {
+	afterEach(() => {
+		ssot.showAllLensFeeders = false;
+	});
+
+	// keep:happy
+	it.each([
+		{ showAll: false, rows: [{ name: 'Exceptional Support Gem lv 3+', sub: 'cheapest of 4' }] },
+		{
+			showAll: true,
+			rows: [
+				{ name: 'Exceptional Support Gem lv 3+', sub: 'trade' },
+				{ name: 'Enhance Support lv 3', sub: 'poe.ninja' },
+				{ name: 'Enlighten Support lv 3', sub: 'poe.ninja' },
+				{ name: 'Empower Support lv 3', sub: 'poe.ninja' }
+			]
+		}
+	])('lists the pending feeder rows for the all-feeders setting $showAll, each pricing…', ({ showAll, rows }) => {
+		ssot.showAllLensFeeders = showAll;
+		const card = lensCard(render(FontEVCompare, { props: { labMode: 'normal' } }).body);
+
+		expect(costRows(card)).toEqual(rows);
+		// The lens, every feeder row and the EV.
+		expect(card.match(/pricing…/g)).toHaveLength(rows.length + 2);
 	});
 });

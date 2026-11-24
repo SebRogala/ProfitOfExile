@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
 import type { SettingsUpdateOffer } from '$lib/updater/settings-update.svelte';
 import { store } from '$lib/stores/status.svelte';
+import { ssot } from '$lib/stores/ssot.svelte';
 
 type CapturedController = {
 	status: string;
@@ -132,5 +133,50 @@ describe('SettingsPage About section', () => {
 		expect(renderSettingsPage()).toContain(
 			"This product isn't affiliated with or endorsed by Grinding Gear Games in any way."
 		);
+	});
+});
+
+const LENS_FEEDERS_LABEL = "Facetor's Lens: all feeders";
+
+/** The markup of Settings › Display, from its heading to the end of its section. */
+function displaySection(markup: string): string {
+	const start = markup.search(/<h2[^>]*>Display<\/h2>/);
+	expect(start, 'Settings has no Display section').toBeGreaterThan(-1);
+	return markup.slice(start, markup.indexOf('</section>', start));
+}
+
+/** A row label as the player reads it: entities decoded, curly apostrophes folded to ASCII. */
+function labelText(raw: string): string {
+	return raw.replaceAll('&#39;', "'").replaceAll('&apos;', "'").replaceAll('&amp;', '&').replaceAll('’', "'").trim();
+}
+
+/** The switch markup in the Display row labelled `label`. */
+function displaySwitch(markup: string, label: string): string {
+	const rows = displaySection(markup).split(/class="setting-row[\s"]/).slice(1);
+	const row = rows.find((r) => labelText(r.match(/class="setting-label[^"]*">([^<]*)</)?.[1] ?? '') === label);
+	expect(row, `Display has no "${label}" row`).toBeDefined();
+	const toggle = row!.match(/<button[^>]*role="switch"[^>]*>/)?.[0];
+	expect(toggle, `the "${label}" row has no switch`).toBeDefined();
+	return toggle!;
+}
+
+describe('SettingsPage Display all-feeders toggle', () => {
+	afterEach(() => {
+		ssot.showAllLensFeeders = false;
+	});
+
+	// keep:happy
+	it('lists the all-feeders toggle right after Number format, with no note of its own', () => {
+		const display = displaySection(renderSettingsPage());
+		const labels = [...display.matchAll(/class="setting-label[^"]*">([^<]*)</g)].map((m) => labelText(m[1]));
+		expect(labels).toEqual(['Number format', LENS_FEEDERS_LABEL, 'Render without GPU']);
+		expect(display.match(/class="setting-note/g)).toHaveLength(1);
+	});
+
+	// keep:happy
+	it.each([false, true])('shows the stored all-feeders choice %s on the switch', (show) => {
+		ssot.showAllLensFeeders = show;
+
+		expect(displaySwitch(renderSettingsPage(), LENS_FEEDERS_LABEL)).toContain(`aria-checked="${show}"`);
 	});
 });
