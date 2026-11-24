@@ -120,9 +120,18 @@ export interface LensQuote {
 
 /** The Facetor's Lens 60% craft: lens (outcome), support (feeder) and the server's signed EV. */
 export interface FontLensCraft {
-	outcome: LensQuote;
+	outcome: LensQuote & { tradeUrl?: string | null };
 	feeder: LensQuote & { tradeUrl: string | null };
 	ev: number | null;
+	feeders?: {
+		source: 'trade' | 'poe.ninja';
+		name: string;
+		chaos: number | null;
+		fetchedAt: string | null;
+		tradeUrl: string | null;
+	}[];
+	cheapest?: number | null;
+	evCheapest?: number | null;
 }
 
 function mapLensQuote(q: any): LensQuote {
@@ -137,9 +146,23 @@ function mapLensQuote(q: any): LensQuote {
 export function mapFontLensCraft(lens: any): FontLensCraft | null {
 	if (lens == null) return null;
 	return {
-		outcome: mapLensQuote(lens.outcome),
+		outcome: {
+			...mapLensQuote(lens.outcome),
+			...(lens.outcome?.tradeUrl !== undefined ? { tradeUrl: lens.outcome.tradeUrl } : {}),
+		},
 		feeder: { ...mapLensQuote(lens.feeder), tradeUrl: lens.feeder?.tradeUrl || null },
 		ev: typeof lens.ev === 'number' ? lens.ev : null,
+		...(Array.isArray(lens.feeders) ? {
+			feeders: lens.feeders.map((feeder: any) => ({
+				source: feeder.source,
+				name: feeder.name,
+				chaos: typeof feeder.chaos === 'number' ? feeder.chaos : null,
+				fetchedAt: feeder.fetchedAt ?? null,
+				tradeUrl: feeder.tradeUrl ?? null,
+			})),
+			cheapest: typeof lens.cheapest === 'number' ? lens.cheapest : null,
+			evCheapest: typeof lens.evCheapest === 'number' ? lens.evCheapest : null,
+		} : {}),
 	};
 }
 
