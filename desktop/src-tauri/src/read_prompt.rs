@@ -288,11 +288,13 @@ fn module_on(state: &crate::AppState, mechanic: Mechanic) -> bool {
 }
 
 /// Applies `change`; an arm of a mechanic whose module is off shows nothing.
+#[cfg(test)]
 pub fn apply_in(state: &crate::AppState, change: Change) -> bool {
     apply_paused_in(state, change, &mut || {})
 }
 /// [`apply_in`] with `pause` run between the unlocked module check and the
 /// prompt edit, where a concurrent module toggle can land.
+#[cfg(test)]
 fn apply_paused_in(state: &crate::AppState, change: Change, pause: &mut dyn FnMut()) -> bool {
     apply_captured_in(state, change, pause).0
 }
