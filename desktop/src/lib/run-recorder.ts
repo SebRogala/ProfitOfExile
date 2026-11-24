@@ -47,8 +47,8 @@ function logToApp(msg: string) {
 	invoke('app_log_from_frontend', { msg }).catch((e) => console.warn('[recorder] logToApp IPC failed:', msg, e));
 }
 
-function elapsedSeconds(): number {
-	return runStartTimestamp === null ? 0 : Math.floor((Date.now() - runStartTimestamp) / 1000);
+function elapsedSeconds(timestamp = Date.now()): number {
+	return runStartTimestamp === null ? 0 : Math.floor((timestamp - runStartTimestamp) / 1000);
 }
 
 function resetRun() {
@@ -99,8 +99,8 @@ async function fetchLayoutFromServer(preferredDiff?: string) {
 
 // Called on LabExited with the run complete. Kill time was snapshotted on
 // LabFinished; total elapsed runs from the first room to lab exit.
-async function submitRun() {
-	const totalElapsed = elapsedSeconds();
+async function submitRun(timestamp = Date.now()) {
+	const totalElapsed = elapsedSeconds(timestamp);
 	const snapshotRooms = [...roomLog];
 	const snapshotKillTime = killSeconds;
 	const snapshotStartedAt = runStartTimestamp;
@@ -152,7 +152,7 @@ async function submitRun() {
 	}
 }
 
-function onNavEvent(event: any) {
+function onNavEvent(event: any, timestamp = Date.now()) {
 	if (event.type === 'LayoutChanged') {
 		fetchLayoutFromServer(event.difficulty);
 		return;
@@ -169,20 +169,20 @@ function onNavEvent(event: any) {
 			break;
 		case 'RoomChanged':
 			if (navState.inLab && runStartTimestamp === null) {
-				runStartTimestamp = Date.now();
+				runStartTimestamp = timestamp;
 			}
 			roomCounter++;
 			roomLog = [...roomLog, {
 				room_name: event.name,
-				entered_at: new Date().toISOString(),
+				entered_at: new Date(timestamp).toISOString(),
 				room_number: roomCounter,
 			}];
 			break;
 		case 'LabFinished':
-			killSeconds = elapsedSeconds();
+			killSeconds = elapsedSeconds(timestamp);
 			break;
 		case 'LabExited':
-			submitRun();
+			submitRun(timestamp);
 			resetRun();
 			if (pendingLayoutReset) {
 				applyLayoutReset();
@@ -198,6 +198,7 @@ function onNavEvent(event: any) {
 export function startRunRecorder(): void {
 	if (started) return;
 	started = true;
+	let liveEvents: { event: NavEvent; timestamp: number }[] | null = [];
 
 	(async () => {
 		const generation = layoutGeneration;
@@ -210,23 +211,45 @@ export function startRunRecorder(): void {
 			if (settings?.strategy) navState = setStrategy(navState, settings.strategy);
 			await fetchLayoutFromServer();
 		}
-		const catchupGeneration = layoutGeneration;
 		// Catch up to current lab state (app may start mid-run)
 		const catchup = await invoke<any>('get_lab_catchup').catch((e: any) => {
 			logToApp(`[recorder] catchup failed: ${e}`);
 			return null;
 		});
-		if (catchupGeneration !== layoutGeneration) return;
-		if (catchup?.events?.length) {
-			logToApp(`[recorder] replaying ${catchup.events.length} catchup events`);
-			for (const event of catchup.events) {
-				onNavEvent(event);
+		const events: NavEvent[] = catchup?.events ?? [];
+		const buffered = liveEvents!;
+		liveEvents = null;
+		// Client.txt replay can include events already delivered by the listener.
+		// Recover the prefix before the longest matching live sequence, then use
+		// arrival timestamps for the live suffix so delayed IPC cannot zero a run.
+		let prefixLength = events.length;
+		let overlap = 0;
+		for (let i = 0; i < events.length; i++) {
+			let matched = 0;
+			while (i + matched < events.length && matched < buffered.length) {
+				const replay = events[i + matched];
+				const live = buffered[matched].event;
+				if (replay.type !== live.type ||
+					(replay.type === 'RoomChanged' && live.type === 'RoomChanged' && replay.name !== live.name)) break;
+				matched++;
+			}
+			if (matched > overlap) {
+				overlap = matched;
+				prefixLength = i;
 			}
 		}
+		if (events.length) logToApp(`[recorder] replaying ${prefixLength} catchup events`);
+		const recoveredAt = buffered[0]?.timestamp ?? Date.now();
+		for (const event of events.slice(0, prefixLength)) onNavEvent(event, recoveredAt);
+		for (const { event, timestamp } of buffered) onNavEvent(event, timestamp);
 	})();
 
 	listen<NavEvent>('lab-nav', (event) => {
-		onNavEvent(event.payload);
+		if (liveEvents && !['LayoutChanged', 'StrategyChanged'].includes(event.payload.type)) {
+			liveEvents.push({ event: event.payload, timestamp: Date.now() });
+		} else {
+			onNavEvent(event.payload);
+		}
 	});
 	listen<any>('lab-layout-updated', (event) => {
 		if (event.payload?.action === 'reset') {

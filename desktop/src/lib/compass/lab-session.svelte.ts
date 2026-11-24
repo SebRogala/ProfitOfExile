@@ -78,8 +78,10 @@ const productionPorts: LabSessionPorts = {
  *
  * Counters fence stale async results (decision FE-M1 D3): `lifetime`
  * (bumped by stop) fences listener handlers; `generation` (bumped by stop and
- * by a layout reset or explicit selection) fences init, layout and poll results.
- * `layoutRequest` also fences overlapping reloads of the same selection.
+ * by a layout reset or explicit selection) fences settings and layout results.
+ * `catchupLifecycle` fences recovery only on stop/reset, so a selection cannot
+ * discard the plaza and room history. `layoutRequest` orders layout reloads;
+ * settings request counters order accepted settings snapshots independently.
  * Loader retries are not cancelled, only their results ignored.
  */
 export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
@@ -96,7 +98,11 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 	let refcount = 0;
 	let lifetime = 0;
 	let generation = 0;
+	let catchupLifecycle = 0;
 	let layoutRequest = 0;
+	let settingsRequest = 0;
+	let acceptedSettingsRequest = 0;
+	let layoutCompletion: Promise<void> = Promise.resolve();
 	let interval: ReturnType<typeof setInterval> | null = null;
 	let registrations: Promise<Unlisten>[] = [];
 	let pollErrorLogged = false;
@@ -105,7 +111,12 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 		ports.log(`[lab-session] ${msg}`);
 	}
 
-	async function fetchLayoutFromServer(preferred?: string): Promise<void> {
+	function fetchLayoutFromServer(preferred?: string): Promise<void> {
+		layoutCompletion = loadSelectedLayout(preferred);
+		return layoutCompletion;
+	}
+
+	async function loadSelectedLayout(preferred?: string): Promise<void> {
 		if (preferred) {
 			lockedDifficulty = preferred;
 			generation++;
@@ -159,6 +170,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 		pendingLayoutReset = false;
 		history = [];
 		generation++;
+		catchupLifecycle++;
 		for (const hooks of [...subscribers]) hooks.onReset?.();
 		log('layout reset applied (midnight UTC)');
 		void init();
@@ -166,42 +178,57 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 
 	async function init(): Promise<void> {
 		const g = generation;
+		const lifecycle = catchupLifecycle;
+		const request = ++settingsRequest;
 		const initial = await ports.invoke<CompassSettings>('get_compass_settings').catch((e) => {
 			log(`init settings failed: ${e}`);
 			return null;
 		});
-		if (g !== generation) return;
-		if (initial) {
+		if (lifecycle !== catchupLifecycle) return;
+		if (initial && g === generation && request > acceptedSettingsRequest) {
+			acceptedSettingsRequest = request;
 			settings = initial;
 			if (initial.difficulty && !lockedDifficulty) lockedDifficulty = initial.difficulty;
 			if (initial.strategy) navState = setStrategy(navState, initial.strategy);
 			for (const hooks of [...subscribers]) hooks.onSettings?.(initial);
 		}
-		await fetchLayoutFromServer();
-		if (g !== generation) return;
+		if (g === generation) void fetchLayoutFromServer();
+		await waitForSelectedLayout(lifecycle);
+		if (lifecycle !== catchupLifecycle) return;
 		const catchup = await ports
 			.invoke<{ events?: LabNavMessage[] }>('get_lab_catchup')
 			.catch((e) => {
 				log(`catchup failed: ${e}`);
 				return null;
 			});
-		if (g !== generation) return;
+		await waitForSelectedLayout(lifecycle);
+		if (lifecycle !== catchupLifecycle) return;
 		const events = catchup?.events ?? [];
 		if (!events.length) return;
 		log(`replaying ${events.length} catchup events`);
 		for (const event of events) {
 			// A replayed LabExited may apply a deferred reset; the rest of this
 			// batch then belongs to the old layout.
-			if (g !== generation) return;
+			if (lifecycle !== catchupLifecycle) return;
 			applyEvent(event);
 		}
 	}
 
+	async function waitForSelectedLayout(lifecycle: number): Promise<void> {
+		let completion: Promise<void>;
+		do {
+			completion = layoutCompletion;
+			await completion;
+		} while (lifecycle === catchupLifecycle && completion !== layoutCompletion);
+	}
+
 	function poll(): void {
 		const g = generation;
+		const request = ++settingsRequest;
 		ports.invoke<CompassSettings>('get_compass_settings').then(
 			(next) => {
-				if (g !== generation) return;
+				if (g !== generation || request < acceptedSettingsRequest) return;
+				acceptedSettingsRequest = request;
 				pollErrorLogged = false;
 				const previousDifficulty = settings?.difficulty;
 				const hadSettings = settings !== null;
@@ -216,7 +243,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 				for (const hooks of [...subscribers]) hooks.onSettings?.(next);
 			},
 			(e) => {
-				if (g !== generation) return;
+				if (g !== generation || request < acceptedSettingsRequest) return;
 				if (pollErrorLogged) return;
 				pollErrorLogged = true;
 				log(`settings poll failed: ${e}`);
@@ -259,6 +286,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 		interval = null;
 		lifetime++;
 		generation++;
+		catchupLifecycle++;
 		for (const registration of registrations) {
 			registration.then((unlisten) => unlisten()).catch(() => {});
 		}
