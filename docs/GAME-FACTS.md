@@ -178,7 +178,8 @@ The existing description slot derives its bonus text from the offered tier;
 the value table describes tier 3.
 
 Pack-size sources remain the poedb room pages (2026-09-06), except Locus of
-Corruption's `SHEET_LOCUS_330`. Glittering Halls retains
+Corruption, which cites `POEDB_ROOMS_1124`, the 2026-11-24 poedb reading.
+Glittering Halls retains
 `SHEET_GLITTERING_330`; Cradle of Creation retains `SHEET_CRADLE_330`, whose
 per-tier interpretation the Operator confirmed on 2026-11-13 00:20.
 
