@@ -885,7 +885,8 @@ describe('fetchFontEV lens', () => {
 
 	const TRADE_URL = 'https://www.pathofexile.com/trade/search/Mirage?q=%7B%7D';
 
-	it('maps the server lens object with both quotes, the EV and the feeder trade search', async () => {
+	// keep:regression
+	it('maps an older server lens object (no feeders key) to its quotes, EV and feeder trade search', async () => {
 		const resp = await fetchWith({
 			safe: [],
 			lens: {
@@ -899,6 +900,73 @@ describe('fetchFontEV lens', () => {
 			feeder: { chaos: 95, listings: 2, fetchedAt: '2026-11-02T11:40:00Z', lowConfidence: true, tradeUrl: TRADE_URL },
 			ev: 317,
 		});
+		// Absent stays absent: an empty or unpriced list would hide the legacy trade/ev branch.
+		expect(resp.lens?.feeders).toBeUndefined();
+		expect(resp.lens?.outcome.tradeUrl ?? null).toBeNull();
+	});
+
+	const LENS_URL = 'https://www.pathofexile.com/trade/search/Mirage?q=lens';
+	const ENHANCE_URL = 'https://www.pathofexile.com/trade/search/Mirage?q=enhance';
+	const ENLIGHTEN_URL = 'https://www.pathofexile.com/trade/search/Mirage?q=enlighten';
+	const EMPOWER_URL = 'https://www.pathofexile.com/trade/search/Mirage?q=empower';
+	const TRADE_AT = '2026-11-02T11:40:00Z';
+	const NINJA_AT = '2026-11-02T10:00:00Z';
+
+	// keep:happy
+	it.each([
+		{
+			name: 'Empower cheapest with a negative EV',
+			outcomeChaos: 5,
+			feeders: [
+				{ source: 'trade', name: 'Exceptional Support Gem lv 3+', chaos: 30, fetchedAt: TRADE_AT, tradeUrl: TRADE_URL },
+				{ source: 'poe.ninja', name: 'Enhance Support', chaos: 12, fetchedAt: NINJA_AT, tradeUrl: ENHANCE_URL },
+				{ source: 'poe.ninja', name: 'Enlighten Support', chaos: 20, fetchedAt: NINJA_AT, tradeUrl: ENLIGHTEN_URL },
+				{ source: 'poe.ninja', name: 'Empower Support', chaos: 7, fetchedAt: NINJA_AT, tradeUrl: EMPOWER_URL },
+			],
+			cheapest: 3,
+			evCheapest: -2,
+		},
+		{
+			name: 'the trade feeder cheapest with a zero EV',
+			outcomeChaos: 95,
+			feeders: [
+				{ source: 'trade', name: 'Exceptional Support Gem lv 3+', chaos: 95, fetchedAt: TRADE_AT, tradeUrl: TRADE_URL },
+				{ source: 'poe.ninja', name: 'Enhance Support', chaos: 120, fetchedAt: NINJA_AT, tradeUrl: ENHANCE_URL },
+				{ source: 'poe.ninja', name: 'Enlighten Support', chaos: null, fetchedAt: NINJA_AT, tradeUrl: ENLIGHTEN_URL },
+				{ source: 'poe.ninja', name: 'Empower Support', chaos: 140, fetchedAt: NINJA_AT, tradeUrl: EMPOWER_URL },
+			],
+			cheapest: 0,
+			evCheapest: 0,
+		},
+		{
+			name: 'all four feeders unpriced',
+			outcomeChaos: null,
+			feeders: [
+				{ source: 'trade', name: 'Exceptional Support Gem lv 3+', chaos: null, fetchedAt: null, tradeUrl: TRADE_URL },
+				{ source: 'poe.ninja', name: 'Enhance Support', chaos: null, fetchedAt: null, tradeUrl: ENHANCE_URL },
+				{ source: 'poe.ninja', name: 'Enlighten Support', chaos: null, fetchedAt: null, tradeUrl: ENLIGHTEN_URL },
+				{ source: 'poe.ninja', name: 'Empower Support', chaos: null, fetchedAt: null, tradeUrl: EMPOWER_URL },
+			],
+			cheapest: null,
+			evCheapest: null,
+		},
+	])('maps the four feeders, cheapest, cheapest EV and Lens search for $name', async ({ outcomeChaos, feeders, cheapest, evCheapest }) => {
+		const resp = await fetchWith({
+			lens: {
+				outcome: { chaos: outcomeChaos, listings: 3, fetchedAt: '2026-11-02T11:42:00Z', lowConfidence: false, tradeUrl: LENS_URL },
+				feeder: { chaos: feeders[0].chaos, listings: 2, fetchedAt: feeders[0].fetchedAt, lowConfidence: false, tradeUrl: TRADE_URL },
+				ev: null,
+				feeders,
+				cheapest,
+				evCheapest,
+			},
+		});
+		expect({
+			feeders: resp.lens?.feeders,
+			cheapest: resp.lens?.cheapest,
+			evCheapest: resp.lens?.evCheapest,
+			lensUrl: resp.lens?.outcome.tradeUrl,
+		}).toEqual({ feeders, cheapest, evCheapest, lensUrl: LENS_URL });
 	});
 
 	it('keeps null prices and a null EV as null, not 0', async () => {
