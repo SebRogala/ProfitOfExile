@@ -335,6 +335,7 @@ export interface SsotSnapshot {
 	dedicationVariant?: string;
 	/** Dedication pool, canon spelling: "skill" | "transfigured". */
 	dedicationPool?: string;
+	showAllLensFeeders?: boolean;
 	/** Per-module enabled flags, keyed by registry id (Rust owns the keys). */
 	modules?: Record<string, boolean>;
 	bossLoot?: BossLootSlice;
@@ -402,6 +403,7 @@ export const ssot = $state({
 	dedicationVariant: '21/23',
 	/** Dedication pool in canon spelling ("skill" | "transfigured"). */
 	dedicationPool: 'skill',
+	showAllLensFeeders: false,
 	/** Per-module enabled flags, keyed by the Rust registry id. Empty means
 	 *  not-yet-polled, and an absent key means "unknown" — every surface supplies
 	 *  its own fallback (`?? false`) rather than trusting a default here, because
@@ -450,7 +452,7 @@ type MarketField = 'normalVariant' | 'dedicationVariant' | 'dedicationPool';
  * collide with a market field name, letting one slice's write suppress the
  * other's poll.
  */
-type GuardKey = MarketField | `module:${string}`;
+type GuardKey = MarketField | 'showAllLensFeeders' | `module:${string}`;
 
 /** Guard key for one module's enabled flag. */
 function moduleKey(id: string): GuardKey {
@@ -764,6 +766,9 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	applyMarketField('normalVariant', snap.normalVariant, dispatchedAtSeq);
 	applyMarketField('dedicationVariant', snap.dedicationVariant, dispatchedAtSeq);
 	applyMarketField('dedicationPool', snap.dedicationPool, dispatchedAtSeq);
+	if (typeof snap.showAllLensFeeders === 'boolean' && !isGuarded('showAllLensFeeders', dispatchedAtSeq)) {
+		ssot.showAllLensFeeders = snap.showAllLensFeeders;
+	}
 	applyModules(snap.modules, dispatchedAtSeq);
 	if (snap.bossLoot !== undefined) ssot.bossLoot = snap.bossLoot;
 	if (snap.readHotkey !== undefined) ssot.readHotkey = snap.readHotkey;
@@ -882,6 +887,17 @@ async function writeField(field: MarketField, value: string): Promise<void> {
 export function setNormalVariant(variant: string): Promise<void> {
 	return writeField('normalVariant', variant);
 }
+
+export async function setShowAllLensFeeders(show: boolean): Promise<void> {
+	beginWrite(['showAllLensFeeders']);
+	ssot.showAllLensFeeders = show;
+	try {
+		await invoke('set_show_all_lens_feeders', { show });
+	} catch (e) {
+		console.warn('[ssot] set_show_all_lens_feeders failed:', e);
+	} finally {
+		endWrite(['showAllLensFeeders']);
+	}
 
 /** Set the dedication-mode farming market on its own.
  *

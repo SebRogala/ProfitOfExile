@@ -457,6 +457,14 @@ pub(crate) fn set_normal_variant(variant: String, app: AppHandle) {
 }
 
 #[tauri::command]
+pub(crate) fn set_show_all_lens_feeders(show: bool, app: AppHandle) {
+    let state = app.state::<AppState>();
+    state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).show_all_lens_feeders = show;
+    persist_settings(&app);
+    crate::ssot::emit_ssot(&app);
+}
+
+#[tauri::command]
 pub(crate) fn get_show_low_confidence(app: AppHandle) -> bool {
     let state = app.state::<AppState>();
     let value = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).show_low_confidence;

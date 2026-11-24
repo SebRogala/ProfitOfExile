@@ -1,3 +1,4 @@
+// size-gate: intrinsic — native command registration stays in the existing application entrypoint
 mod capture;
 mod clock;
 mod client_txt_discovery;
@@ -1406,6 +1407,7 @@ pub fn run() {
             lab::commands::set_dedication_variant,
             lab::commands::get_normal_variant,
             lab::commands::set_normal_variant,
+            lab::commands::set_show_all_lens_feeders,
             lab::commands::get_show_low_confidence,
             lab::commands::set_show_low_confidence,
             settings::commands::get_ui_prefs,

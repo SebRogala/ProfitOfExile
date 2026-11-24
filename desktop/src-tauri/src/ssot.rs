@@ -13,7 +13,7 @@
 //! publish, debug and release builds alike. The poll is the backstop the note
 //! above describes, not the path a read travels on. The stale-data observation
 //! behind that note was about JS-to-JS cross-window events, not Rust emits.
-//! size-gate: intrinsic — cross-window screen lifecycle and publication remain in their existing owner; this change adds only the Recalibrate call sites
+//! size-gate: intrinsic — cross-window screen lifecycle and publication remain in their existing owner; additive LabSettings projection stays in the existing snapshot composer
 //!
 //! Chunk 1 built the core types + the poll-target command. Chunk 3 adds the
 //! league resolution service: startup, write 409, Mercure hints, Refresh and
@@ -458,6 +458,7 @@ pub struct AppSsotSnapshot {
     /// owner — not stored in `AppState.ssot`. `Default` is the empty string,
     /// which the webview must reject as "unknown".
     pub dedication_pool: String,
+    pub show_all_lens_feeders: bool,
     /// Per-module enabled flags, projected unchanged from the owner map
     /// `AppState.modules_enabled` (see src/modules.rs). **Intent, not
     /// liveness**: a module that panicked still reports enabled. `Default` is
@@ -591,6 +592,7 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     base.boss_loot = crate::loot_capture::snapshot(state);
     let (normal_variant, dedication_variant, dedication_pool) = {
         let lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner());
+        base.show_all_lens_feeders = lab.show_all_lens_feeders;
         (lab.normal_variant.clone(), lab.dedication_variant.clone(), lab.dedication_pool.clone())
     };
     // Lone acquisition of `modules_enabled` — `module_handles` is not held here
