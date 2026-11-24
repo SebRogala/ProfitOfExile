@@ -1,4 +1,5 @@
 /** The latest Read exchange press (POE-477), kept for the app's lifetime. */
+import { listen } from '@tauri-apps/api/event';
 import type { ChaosDivCurrency, ChaosDivMode, ChaosDivOneSide } from './chaos-div';
 
 /** The Tauri event every exchange press emits once (`read_hotkey.rs`). */
@@ -30,7 +31,10 @@ export type ExchangeReadEvent =
 
 /** Registers the app's one `exchange-read` listener; returns its cleanup. */
 export function startExchangeReadStore(): () => void {
-	return () => {};
+	const unlisten = listen<ExchangeReadEvent>(EXCHANGE_READ_EVENT, () => {});
+	return () => {
+		void unlisten.then((stop) => stop());
+	};
 }
 
 /** The latest press result, or null before the first press. Reactive. */
