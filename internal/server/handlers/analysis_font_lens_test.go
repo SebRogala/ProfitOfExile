@@ -1,12 +1,16 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -248,19 +252,24 @@ func TestFontAnalysis_SupportTradeURLSearchesTheScopeLeagueWithANullPrice(t *tes
 	}
 }
 
-func TestFontAnalysis_LensOutcomeCarriesNoTradeURL(t *testing.T) {
-	w := serveWithoutRepository(t, FontAnalysis(nil, warmEmptyCorpora(t), nil, corpusScope), "/api/analysis/font")
+// keep:happy AC-5: the Lens Gives row buys from the registry's stored
+// experience search in the scope league, served even without a lens price.
+func TestKeepHappyFontAnalysis_LensOutcomeTradeURLSearchesStoredExperienceUnpriced(t *testing.T) {
+	lens := serveLensChoices(t, nil)
 
-	var body struct {
-		Lens struct {
-			Outcome map[string]json.RawMessage `json:"outcome"`
-		} `json:"lens"`
+	if lens.Outcome.Chaos != nil {
+		t.Fatalf("outcome chaos = %v, want null", *lens.Outcome.Chaos)
 	}
-	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
+	q := decodeTradeSearch(t, lens.Outcome.TradeURL)
+	if got := q.query["type"]; got != "Facetor's Lens" {
+		t.Errorf("outcome search type = %v, want Facetor's Lens", got)
 	}
-	if _, ok := body.Lens.Outcome["tradeUrl"]; ok {
-		t.Errorf("outcome = %v, want no tradeUrl", body.Lens.Outcome)
+	if got := jsonPath(q.query, "filters", "misc_filters", "filters", "stored_experience", "min"); got != float64(999627000) {
+		t.Errorf("outcome stored_experience min = %v, want 999627000", got)
+	}
+	outcome, _ := trade.LookupFixedTarget(trade.FixedTargetLens60Outcome, trade.FixedTargetVariantFont)
+	if lens.Outcome.TradeURL != outcome.TradeURL(corpusScope.ID()) {
+		t.Errorf("outcome tradeUrl = %q, want the registry lens search", lens.Outcome.TradeURL)
 	}
 }
 
@@ -324,7 +333,8 @@ func TestFontAnalysis_MixedChaosAndDivineLensWithoutARateHasNoPrice(t *testing.T
 
 // The Font body served from a warm corpus, pinned whole: per-mode rows
 // narrowed to the variant in profit order and cut at the limit, best colors,
-// and the all-null lens of a nil trade cache.
+// and the all-null lens of a nil trade cache and nil repository, carrying
+// every search with four unpriced feeders.
 func TestKeepHappyFontAnalysis_WarmBodyIsPinned(t *testing.T) {
 	at := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
 	c := lab.NewCache(corpusScope)
@@ -341,9 +351,7 @@ func TestKeepHappyFontAnalysis_WarmBodyIsPinned(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	lens, _ := json.Marshal(lensCraft(nil, corpusScope, time.Now()))
-	var wantLens any
-	_ = json.Unmarshal(lens, &wantLens)
+	wantLens := unpricedLensBody(t, got)
 	var want map[string]any
 	if err := json.Unmarshal([]byte(`{
 		"safe": [{"time":"2026-11-19T12:00:00Z","color":"BLUE","variant":"20/20","pool":7,"pricedGems":7,"winners":1,"pWin":0.25,"avgWin":0,"avgWinRaw":0,"ev":9,"evRaw":0,"inputCost":1,"profit":8,"fontsToHit":4,"thinPoolGems":0,"liquidityRisk":"HIGH"}],
@@ -355,5 +363,404 @@ func TestKeepHappyFontAnalysis_WarmBodyIsPinned(t *testing.T) {
 	want["lens"] = wantLens
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("body = %v\nwant %v", got, want)
+	}
+}
+
+// --- POE-474: four Lens feeders, the cheapest EV and their trade searches ---
+
+// lensCraftWithFeeders is the seam the Lens craft is built through: it reads
+// the level-3 exceptional feeder snapshot from feeders (FontAnalysis passes
+// its retained lab.ExceptionalSupportCache, or a zero snapshot without a
+// repository) and returns the lens object the handler encodes.
+type lensCraftWithFeeders = func(context.Context, *trade.TradeCache, exceptionalSupportPricer, league.Scope, time.Time) (lensCraftResponse, error)
+
+func lensCraftSeam(t *testing.T) lensCraftWithFeeders {
+	t.Helper()
+	craft, ok := any(lensCraft).(lensCraftWithFeeders)
+	if !ok {
+		var want lensCraftWithFeeders
+		t.Fatalf("lensCraft is %T, want %T: the Lens craft does not read the level-3 exceptional feeders", lensCraft, want)
+	}
+	return craft
+}
+
+type lensChoiceWire struct {
+	Source    string     `json:"source"`
+	Name      string     `json:"name"`
+	Chaos     *float64   `json:"chaos"`
+	FetchedAt *time.Time `json:"fetchedAt"`
+	TradeURL  string     `json:"tradeUrl"`
+}
+
+type lensChoicesWire struct {
+	raw     map[string]json.RawMessage
+	Outcome struct {
+		Chaos    *float64 `json:"chaos"`
+		TradeURL string   `json:"tradeUrl"`
+	} `json:"outcome"`
+	Feeder     lensFeederWire   `json:"feeder"`
+	EV         *float64         `json:"ev"`
+	Feeders    []lensChoiceWire `json:"feeders"`
+	Cheapest   *int             `json:"cheapest"`
+	EVCheapest *float64         `json:"evCheapest"`
+}
+
+func decodeLensChoices(t *testing.T, body []byte) lensChoicesWire {
+	t.Helper()
+	var lens lensChoicesWire
+	if err := json.Unmarshal(body, &lens); err != nil {
+		t.Fatalf("decode lens: %v", err)
+	}
+	if err := json.Unmarshal(body, &lens.raw); err != nil {
+		t.Fatalf("decode lens fields: %v", err)
+	}
+	return lens
+}
+
+// serveLensChoices serves the Font analysis with a nil repository, so the
+// exceptional feeders carry no price.
+func serveLensChoices(t *testing.T, tc *trade.TradeCache) lensChoicesWire {
+	t.Helper()
+	w := serveWithoutRepository(t, FontAnalysis(nil, warmEmptyCorpora(t), tc, corpusScope), "/api/analysis/font")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Lens json.RawMessage `json:"lens"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return decodeLensChoices(t, body.Lens)
+}
+
+// craftLensChoices builds the lens object through the seam and decodes the
+// JSON the handler would write.
+func craftLensChoices(t *testing.T, tc *trade.TradeCache, feeders exceptionalSupportPricer) (lensChoicesWire, error) {
+	t.Helper()
+	resp, err := lensCraftSeam(t)(context.Background(), tc, feeders, corpusScope, time.Now())
+	if err != nil {
+		return lensChoicesWire{}, err
+	}
+	body, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("encode lens: %v", err)
+	}
+	return decodeLensChoices(t, body), nil
+}
+
+// assertRawField pins a field's exact JSON, so null is told apart from absent.
+func assertRawField(t *testing.T, lens lensChoicesWire, key, want string) {
+	t.Helper()
+	got, ok := lens.raw[key]
+	if !ok {
+		t.Errorf("lens has no %q field, want %s", key, want)
+		return
+	}
+	if string(got) != want {
+		t.Errorf("lens %s = %s, want %s", key, got, want)
+	}
+}
+
+var lensFeederAsOf = time.Date(2026, 11, 24, 15, 30, 0, 0, time.UTC)
+
+// lensFeederSnapshot is WI-1's level-3 snapshot: Enhance 12, Enlighten 20,
+// Empower 7; a negative price leaves that gem out.
+func lensFeederSnapshot(enhance, enlighten, empower float64) lab.ExceptionalSupportSnapshot {
+	chaos := map[string]float64{}
+	for name, p := range map[string]float64{"Enhance Support": enhance, "Enlighten Support": enlighten, "Empower Support": empower} {
+		if p >= 0 {
+			chaos[name] = p
+		}
+	}
+	return lab.ExceptionalSupportSnapshot{AsOf: lensFeederAsOf, Chaos: chaos}
+}
+
+var lensFeederOrder = [4]struct{ source, name string }{
+	{"trade", "Exceptional Support Gem lv 3+"},
+	{"poe.ninja", "Enhance Support"},
+	{"poe.ninja", "Enlighten Support"},
+	{"poe.ninja", "Empower Support"},
+}
+
+func chaosText(p *float64) string {
+	if p == nil {
+		return "null"
+	}
+	return fmt.Sprint(*p)
+}
+
+// keep:critical silent: a wrong cheapest index or EV is a plausible Lens EV
+// the Lens card shows and the player buys on.
+func TestKeepCriticalFontAnalysis_LensCheapestFeederPricesTheEV(t *testing.T) {
+	cases := []struct {
+		name           string
+		lens, support  []float64
+		snap           lab.ExceptionalSupportSnapshot
+		wantChaos      [4]string
+		wantCheapest   string
+		wantEVCheapest string
+	}{
+		{"an Empower below the trade feeder is cheapest", []float64{400, 412, 450}, []float64{29, 30, 31}, lensFeederSnapshot(12, 20, 7),
+			[4]string{"30", "12", "20", "7"}, "3", "405"},
+		{"a trade feeder below every exceptional gem is cheapest", []float64{400, 412, 450}, []float64{4, 5, 6}, lensFeederSnapshot(12, 20, 7),
+			[4]string{"5", "12", "20", "7"}, "0", "407"},
+		{"a tie goes to the first feeder in fixed order", []float64{400, 412, 450}, []float64{6, 7, 8}, lensFeederSnapshot(12, 20, 7),
+			[4]string{"7", "12", "20", "7"}, "0", "405"},
+		{"no priced feeder has no cheapest", []float64{400, 412, 450}, nil, lab.ExceptionalSupportSnapshot{},
+			[4]string{"null", "null", "null", "null"}, "null", "null"},
+		{"an unpriced lens keeps the cheapest without an EV", nil, []float64{29, 30, 31}, lensFeederSnapshot(12, 20, 7),
+			[4]string{"30", "12", "20", "7"}, "3", "null"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lens, err := craftLensChoices(t, pricedLensCache(t, tc.lens, tc.support), &fakeExceptionalPricer{snap: tc.snap})
+			if err != nil {
+				t.Fatalf("lens craft: %v", err)
+			}
+
+			assertRawField(t, lens, "cheapest", tc.wantCheapest)
+			assertRawField(t, lens, "evCheapest", tc.wantEVCheapest)
+			if len(lens.Feeders) != 4 {
+				t.Fatalf("feeders = %+v, want 4 entries", lens.Feeders)
+			}
+			for i, f := range lens.Feeders {
+				if f.Source != lensFeederOrder[i].source || f.Name != lensFeederOrder[i].name || chaosText(f.Chaos) != tc.wantChaos[i] {
+					t.Errorf("feeders[%d] = %s %q %s, want %s %q %s", i, f.Source, f.Name, chaosText(f.Chaos),
+						lensFeederOrder[i].source, lensFeederOrder[i].name, tc.wantChaos[i])
+				}
+				if f.TradeURL == "" {
+					t.Errorf("feeders[%d] tradeUrl is empty, want its search", i)
+				}
+				if i > 0 && f.Chaos != nil && (f.FetchedAt == nil || !f.FetchedAt.Equal(lensFeederAsOf)) {
+					t.Errorf("feeders[%d] fetchedAt = %v, want the snapshot time %v", i, f.FetchedAt, lensFeederAsOf)
+				}
+			}
+			if lens.Feeders[0].Chaos != nil && (lens.Feeders[0].FetchedAt == nil || lens.Feeder.FetchedAt == nil || !lens.Feeders[0].FetchedAt.Equal(*lens.Feeder.FetchedAt)) {
+				t.Errorf("trade feeder fetchedAt = %v, want the trade quote's %v", lens.Feeders[0].FetchedAt, lens.Feeder.FetchedAt)
+			}
+			if lens.Outcome.TradeURL == "" {
+				t.Error("outcome tradeUrl is empty, want the lens search")
+			}
+		})
+	}
+}
+
+type tradeSearch struct {
+	path  string
+	query map[string]any
+	sort  map[string]any
+}
+
+func decodeTradeSearch(t *testing.T, raw string) tradeSearch {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host != "www.pathofexile.com" {
+		t.Fatalf("tradeUrl = %q, want a pathofexile.com trade search", raw)
+	}
+	var body struct {
+		Query map[string]any `json:"query"`
+		Sort  map[string]any `json:"sort"`
+	}
+	if err := json.Unmarshal([]byte(u.Query().Get("q")), &body); err != nil {
+		t.Fatalf("tradeUrl %q: decode q: %v", raw, err)
+	}
+	return tradeSearch{path: u.Path, query: body.Query, sort: body.Sort}
+}
+
+// jsonPath walks nested JSON objects; nil when any step is missing.
+func jsonPath(v any, keys ...string) any {
+	for _, k := range keys {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil
+		}
+		v = m[k]
+	}
+	return v
+}
+
+func containsKey(v any, key string) bool {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, child := range x {
+			if k == key || containsKey(child, key) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range x {
+			if containsKey(child, key) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// keep:critical irreversible: a wrong filter opens a search that buys the
+// wrong gem, level, corruption or league with real currency.
+func TestKeepCriticalFontAnalysis_ExceptionalFeederSearchesBuyTheLevel3GemInTheScopeLeague(t *testing.T) {
+	lens := serveLensChoices(t, nil)
+	if len(lens.Feeders) != 4 {
+		t.Fatalf("feeders = %+v, want 4 entries", lens.Feeders)
+	}
+	for i, name := range lab.ExceptionalSupportNames {
+		t.Run(name, func(t *testing.T) {
+			q := decodeTradeSearch(t, lens.Feeders[i+1].TradeURL)
+
+			if q.path != "/trade/search/"+corpusScope.ID() {
+				t.Errorf("path = %q, want the %s search", q.path, corpusScope.ID())
+			}
+			if q.query["type"] != name {
+				t.Errorf("type = %v, want %q", q.query["type"], name)
+			}
+			level := jsonPath(q.query, "filters", "misc_filters", "filters", "gem_level")
+			if jsonPath(level, "min") != float64(3) || jsonPath(level, "max") != float64(3) {
+				t.Errorf("gem_level = %v, want min 3 max 3", level)
+			}
+			if containsKey(q.query, "corrupted") {
+				t.Errorf("query = %v, want no corrupted filter (any corruption)", q.query)
+			}
+			if got := jsonPath(q.query, "status", "option"); got != "securable" {
+				t.Errorf("status = %v, want securable", got)
+			}
+			if got := jsonPath(q.query, "filters", "trade_filters", "filters", "sale_type", "option"); got != "priced" {
+				t.Errorf("sale_type = %v, want priced", got)
+			}
+			if q.sort["price"] != "asc" {
+				t.Errorf("sort = %v, want price asc", q.sort)
+			}
+		})
+	}
+}
+
+// keep:regression: an older desktop reads feeder and ev, so they stay the
+// trade quote and its EV even when an exceptional gem is cheaper.
+func TestKeepRegressionFontAnalysis_LegacyFeederAndEVStayOnTheTradeQuote(t *testing.T) {
+	lens, err := craftLensChoices(t, pricedLensCache(t, []float64{400, 412, 450}, []float64{90, 95, 99}), &fakeExceptionalPricer{snap: lensFeederSnapshot(12, 20, 7)})
+	if err != nil {
+		t.Fatalf("lens craft: %v", err)
+	}
+
+	if lens.Feeder.Chaos == nil || *lens.Feeder.Chaos != 95 {
+		t.Errorf("feeder chaos = %s, want the trade quote 95", chaosText(lens.Feeder.Chaos))
+	}
+	if lens.EV == nil || *lens.EV != 317 {
+		t.Errorf("ev = %s, want lens - trade feeder = 317", chaosText(lens.EV))
+	}
+	support, _ := trade.LookupFixedTarget(trade.FixedTargetLens60Feeder, trade.FixedTargetVariantFont)
+	if lens.Feeder.TradeURL != support.TradeURL(corpusScope.ID()) {
+		t.Errorf("feeder tradeUrl = %q, want the registry support search", lens.Feeder.TradeURL)
+	}
+	if len(lens.Feeders) == 0 || lens.Feeders[0].TradeURL != support.TradeURL(corpusScope.ID()) {
+		t.Errorf("feeders = %+v, want the trade feeder first with the registry support search", lens.Feeders)
+	}
+}
+
+// lensFeederSource serves the snapshot it holds and counts its reads.
+type lensFeederSource struct {
+	mu    sync.Mutex
+	snap  lab.ExceptionalSupportSnapshot
+	reads int
+}
+
+func (s *lensFeederSource) read(context.Context, league.Scope) (lab.ExceptionalSupportSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reads++
+	return s.snap, nil
+}
+
+func (s *lensFeederSource) set(snap lab.ExceptionalSupportSnapshot) {
+	s.mu.Lock()
+	s.snap = snap
+	s.mu.Unlock()
+}
+
+func (s *lensFeederSource) readCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads
+}
+
+func TestKeepHappyFontAnalysis_RetainedLensFeederSnapshotFollowsTheGemGeneration(t *testing.T) {
+	// retained polls once through a retained cache at Empower 7, then swaps
+	// the source to Enhance 6.
+	retained := func(t *testing.T) (*lab.Cache, *lab.ExceptionalSupportCache, *lensFeederSource) {
+		src := &lensFeederSource{snap: lensFeederSnapshot(12, 20, 7)}
+		labCache := lab.NewCache(corpusScope)
+		feeders := lab.NewExceptionalSupportCache(src.read, labCache)
+		if _, err := craftLensChoices(t, pricedLensCache(t, []float64{400, 412, 450}, []float64{29, 30, 31}), feeders); err != nil {
+			t.Fatalf("first poll: %v", err)
+		}
+		src.set(lensFeederSnapshot(6, 20, 7))
+		return labCache, feeders, src
+	}
+	poll := func(t *testing.T, feeders *lab.ExceptionalSupportCache) lensChoicesWire {
+		lens, err := craftLensChoices(t, pricedLensCache(t, []float64{400, 412, 450}, []float64{29, 30, 31}), feeders)
+		if err != nil {
+			t.Fatalf("poll: %v", err)
+		}
+		return lens
+	}
+
+	t.Run("a repeat poll serves the retained snapshot's cheapest", func(t *testing.T) {
+		_, feeders, src := retained(t)
+
+		lens := poll(t, feeders)
+		assertRawField(t, lens, "cheapest", "3")
+		if n := src.readCount(); n != 1 {
+			t.Errorf("snapshot reads = %d, want 1", n)
+		}
+	})
+
+	t.Run("an accepted gem snapshot serves the new cheapest", func(t *testing.T) {
+		labCache, feeders, _ := retained(t)
+		labCache.Rankings().Publish(lab.RankingInputGemSnapshots)
+
+		lens := poll(t, feeders)
+		assertRawField(t, lens, "cheapest", "1")
+		assertRawField(t, lens, "evCheapest", "406")
+	})
+
+	t.Run("a failed snapshot read fails the lens craft", func(t *testing.T) {
+		failing := lab.NewExceptionalSupportCache(func(context.Context, league.Scope) (lab.ExceptionalSupportSnapshot, error) {
+			return lab.ExceptionalSupportSnapshot{}, errors.New("gem_snapshots unavailable")
+		}, lab.NewCache(corpusScope))
+
+		if _, err := craftLensChoices(t, pricedLensCache(t, []float64{400, 412, 450}, []float64{29, 30, 31}), failing); err == nil {
+			t.Error("lens craft error = nil, want the snapshot read failure")
+		}
+	})
+}
+
+// unpricedLensBody is the lens object of a nil trade cache and nil
+// repository: registry searches for the lens and the trade feeder, four
+// unpriced feeders and no cheapest. The exceptional searches are copied from
+// got; their filters are pinned by the search test.
+func unpricedLensBody(t *testing.T, got map[string]any) any {
+	t.Helper()
+	outcome, _ := trade.LookupFixedTarget(trade.FixedTargetLens60Outcome, trade.FixedTargetVariantFont)
+	support, _ := trade.LookupFixedTarget(trade.FixedTargetLens60Feeder, trade.FixedTargetVariantFont)
+	quote := func(tradeURL string) map[string]any {
+		return map[string]any{"chaos": nil, "listings": float64(0), "fetchedAt": nil, "lowConfidence": false, "tradeUrl": tradeURL}
+	}
+	feeders := []any{map[string]any{"source": "trade", "name": "Exceptional Support Gem lv 3+", "chaos": nil, "fetchedAt": nil, "tradeUrl": support.TradeURL(corpusScope.ID())}}
+	for i, name := range lab.ExceptionalSupportNames {
+		served, _ := jsonPath(got, "lens", "feeders").([]any)
+		search := ""
+		if i+1 < len(served) {
+			search, _ = jsonPath(served[i+1], "tradeUrl").(string)
+		}
+		feeders = append(feeders, map[string]any{"source": "poe.ninja", "name": name, "chaos": nil, "fetchedAt": nil, "tradeUrl": search})
+	}
+	return map[string]any{
+		"outcome":    quote(outcome.TradeURL(corpusScope.ID())),
+		"feeder":     quote(support.TradeURL(corpusScope.ID())),
+		"ev":         nil,
+		"feeders":    feeders,
+		"cheapest":   nil,
+		"evCheapest": nil,
 	}
 }
