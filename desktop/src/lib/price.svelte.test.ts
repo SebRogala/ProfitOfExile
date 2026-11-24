@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import * as price from './price.svelte';
 import { setDivineRate, formatPrice, formatPriceSigned, DIVINE_DISPLAY_FLOOR } from './price.svelte';
 
 const RATE = 200;
@@ -99,5 +100,27 @@ describe('formatPriceSigned', () => {
 		// -1200 is 6 divines below zero: the floor test must not compare -1200
 		// against +1000 and conclude it is a small number.
 		expect(formatPriceSigned(-1200)).toBe('−6.0d');
+	});
+});
+
+type PriceParts = { amount: string; unit?: 'c' | 'd' };
+
+// Read through the namespace so a missing export fails this table on an
+// assertion while the rest of the formatter suite still loads.
+const formatPriceParts = (price as unknown as { formatPriceParts?: (chaos: number) => PriceParts })
+	.formatPriceParts;
+
+describe('formatPriceParts', () => {
+	it.each<{ label: string; rate: number; chaos: number; expected: PriceParts }>([
+		{ label: 'a small amount in chaos', rate: RATE, chaos: 110, expected: { amount: '110', unit: 'c' } },
+		{ label: 'an amount past the floor in divines', rate: RATE, chaos: 1020, expected: { amount: '5.1', unit: 'd' } },
+		{ label: 'a large amount in chaos when the rate is unknown', rate: 0, chaos: 4385, expected: { amount: '4385', unit: 'c' } },
+		{ label: 'an unknown amount as a dash with no unit', rate: RATE, chaos: NaN, expected: { amount: '\u2014' } },
+	])('keep:happy splits $label, agreeing with formatPrice', ({ rate, chaos, expected }) => {
+		setDivineRate(rate);
+		expect(formatPriceParts, 'formatPriceParts is exported from price.svelte').toBeTypeOf('function');
+		const parts = formatPriceParts!(chaos);
+		expect(parts).toStrictEqual(expected);
+		expect(parts.amount + (parts.unit ?? '')).toBe(formatPrice(chaos));
 	});
 });
