@@ -1633,3 +1633,342 @@ func TestCorpus_marketRescuedPastTheRankingWindow_isStillServed(t *testing.T) {
 		t.Errorf("WindowPriced = false, want the mark that earns the row its exemption")
 	}
 }
+
+// POE-489 lot-size feasibility. The game's Currency Exchange trades whole
+// quantities, so a play's run cost is what its smallest EXECUTABLE lot costs:
+// every sell and conversion leg must return whole proceeds at its undercut
+// price, while the entry buy rounds its whole-lot cost up once. The fixtures
+// below are the observed shapes; every expected number is worked from their
+// integer pairs in the test that asserts it.
+const (
+	// fiendID stands in for The Fiend card of the Operator's 24.11 report.
+	fiendID = "Metadata/Items/DivinationCards/DivinationCardTheFiend"
+	// dreadID stands in for the Dread essence sibling ("CurrencyEssenceDread1…"
+	// in the report). The lane database held no observed rows for it (POE-489
+	// gap), so its feed is the analogous shape: a thin chaos buy with no offers
+	// standing, a divine sell, and too few simulated entries for coverage.
+	dreadID = "Metadata/Items/Currency/CurrencyEssenceDread1"
+	// wholeLotHopID is a triangle whose every leg is whole for one item.
+	wholeLotHopID = "Metadata/Items/Currency/CurrencyWholeLotHop"
+	// lotDirectID is a chaos flip whose undercut prices are fractional per item.
+	lotDirectID = "Metadata/Items/Currency/CurrencyLotDirect"
+)
+
+// lotNewest is the newest feed hour of the Fiend observation: 20:00 UTC on
+// 2026-11-24, three hours after the 17:00 hour that printed the 157 low.
+var lotNewest = time.Date(2026, 11, 24, 20, 0, 0, 0, time.UTC)
+
+// lotAnchorSpec is the divine/chaos market of the report at 176 chaos a divine:
+// one 176:1 print all hour, so the conversion leg sells a divine for
+// 176*(1-1/176) = 175 chaos.
+func lotAnchorSpec() rowSpec {
+	return rowSpec{
+		itemA:        chaosID,
+		itemB:        divineID,
+		volume:       [2]int64{1760000, 10000},
+		lowestStock:  [2]int64{50000, 3000},
+		highestStock: [2]int64{100000, 5000},
+		lowestRatio:  [2]int64{176, 1},
+		highestRatio: [2]int64{176, 1},
+	}
+}
+
+// fiendChaosSpec is the chaos/Fiend market of the report, `back` hours before
+// lotNewest. At 17:00 (back 3) it printed a 157:1 low and a 1112:1 high over
+// two cards; every later hour printed one card at 1114:1. No card stood on
+// offer in any hour, so the chaos buy carries no offers.
+func fiendChaosSpec(back int) rowSpec {
+	spec := rowSpec{
+		itemA:        chaosID,
+		itemB:        fiendID,
+		volume:       [2]int64{1114, 1},
+		lowestStock:  [2]int64{5000, 0},
+		highestStock: [2]int64{8000, 0},
+		lowestRatio:  [2]int64{1114, 1},
+		highestRatio: [2]int64{1114, 1},
+	}
+	if back == 3 {
+		spec.volume = [2]int64{157 + 1112, 2}
+		spec.lowestRatio = [2]int64{157, 1}
+		spec.highestRatio = [2]int64{1112, 1}
+	}
+	return spec
+}
+
+// fiendDivineSpec is the divine/Fiend market of the report: 92 cards an hour
+// between a 24:1 low and a 27:1 high.
+func fiendDivineSpec() rowSpec {
+	return rowSpec{
+		itemA:        divineID,
+		itemB:        fiendID,
+		volume:       [2]int64{2346, 92},
+		lowestStock:  [2]int64{300, 40},
+		highestStock: [2]int64{600, 80},
+		lowestRatio:  [2]int64{24, 1},
+		highestRatio: [2]int64{27, 1},
+	}
+}
+
+// fiendLotMarkets is the four observed hours of the two Fiend markets, without
+// the divine/chaos anchor.
+func fiendLotMarkets(newest time.Time) []StoredRow {
+	var rows []StoredRow
+	for back := 3; back >= 0; back-- {
+		hour := newest.Add(-time.Duration(back) * time.Hour)
+		rows = append(rows,
+			StoredRow{Hour: hour, Row: fiendChaosSpec(back).row()},
+			StoredRow{Hour: hour, Row: fiendDivineSpec().row()})
+	}
+	return rows
+}
+
+// dreadChaosSpec is the analogous chaos/Dread market: in its oldest hour four
+// essences between a 4:1 low and a 9:1 high, then one essence an hour at 9:1,
+// with no essence on offer in any hour.
+func dreadChaosSpec(back int) rowSpec {
+	spec := rowSpec{
+		itemA:        chaosID,
+		itemB:        dreadID,
+		volume:       [2]int64{9, 1},
+		lowestStock:  [2]int64{5000, 0},
+		highestStock: [2]int64{8000, 0},
+		lowestRatio:  [2]int64{9, 1},
+		highestRatio: [2]int64{9, 1},
+	}
+	if back == 3 {
+		spec.volume = [2]int64{26, 4}
+		spec.lowestRatio = [2]int64{4, 1}
+	}
+	return spec
+}
+
+// dreadDivineSpec is the analogous divine/Dread market: seven essences change
+// hands for 32 divine at the hour's cheapest and 33 at its dearest, so the
+// market's step is 1/32.
+func dreadDivineSpec() rowSpec {
+	return rowSpec{
+		itemA:        divineID,
+		itemB:        dreadID,
+		volume:       [2]int64{3200, 700},
+		lowestStock:  [2]int64{300, 40},
+		highestStock: [2]int64{600, 80},
+		lowestRatio:  [2]int64{32, 7},
+		highestRatio: [2]int64{33, 7},
+	}
+}
+
+// dreadLotHours is how many hours the Dread analog's divine market publishes;
+// its chaos market publishes only the newest four, so the recipe has three
+// simulated entries against seven entry hours and comes back LowCoverage.
+const dreadLotHours = 8
+
+// dreadLotMarkets is the Dread analog's two markets, without the anchor.
+func dreadLotMarkets(newest time.Time) []StoredRow {
+	var rows []StoredRow
+	for back := dreadLotHours - 1; back >= 0; back-- {
+		hour := newest.Add(-time.Duration(back) * time.Hour)
+		rows = append(rows, StoredRow{Hour: hour, Row: dreadDivineSpec().row()})
+		if back <= 3 {
+			rows = append(rows, StoredRow{Hour: hour, Row: dreadChaosSpec(back).row()})
+		}
+	}
+	return rows
+}
+
+// lotAnchorRows is the divine/chaos anchor in each of the `hours` hours up to
+// newest.
+func lotAnchorRows(newest time.Time, hours int) []StoredRow {
+	var rows []StoredRow
+	for back := hours - 1; back >= 0; back-- {
+		rows = append(rows, StoredRow{Hour: newest.Add(-time.Duration(back) * time.Hour), Row: lotAnchorSpec().row()})
+	}
+	return rows
+}
+
+func fiendLotRows(newest time.Time) []StoredRow {
+	return append(lotAnchorRows(newest, 4), fiendLotMarkets(newest)...)
+}
+
+func dreadLotRows(newest time.Time) []StoredRow {
+	return append(lotAnchorRows(newest, dreadLotHours), dreadLotMarkets(newest)...)
+}
+
+var (
+	fiendHopKey = oneHopKey(fiendID, chaosID, divineID)
+	dreadHopKey = oneHopKey(dreadID, chaosID, divineID)
+)
+
+// wantLegPairs fails unless the play's legs are, in order, the action, feed
+// pair and tick step 1/n each expectation was worked from.
+func wantLegPairs(t *testing.T, play Play, want ...[4]int64) {
+	t.Helper()
+	if len(play.Legs) != len(want) {
+		t.Fatalf("%s: %d legs, want %d", play.Key, len(play.Legs), len(want))
+	}
+	for i, w := range want {
+		leg := play.Legs[i]
+		action := "buy"
+		if w[0] != 0 {
+			action = "sell"
+		}
+		if leg.Action != action || leg.PriceQuoteQty != w[1] || leg.PriceItemQty != w[2] || leg.Tick != 1/float64(w[3]) {
+			t.Fatalf("%s leg %d = %s %d:%d tick %v, want %s %d:%d tick 1/%d",
+				play.Key, i, leg.Action, leg.PriceQuoteQty, leg.PriceItemQty, leg.Tick, action, w[1], w[2], w[3])
+		}
+	}
+}
+
+// legBuy and legSell spell a wantLegPairs row.
+func legBuy(quote, item, n int64) [4]int64  { return [4]int64{0, quote, item, n} }
+func legSell(quote, item, n int64) [4]int64 { return [4]int64{1, quote, item, n} }
+
+// wantLotRunCost asserts the single run cost the budget filter and the display
+// both read: the stored raw value, the row's RunInvestment and the scale's
+// investment, with the scale counting exactly one lot of lotItems.
+func wantLotRunCost(t *testing.T, play Play, lotItems, runCost float64) {
+	t.Helper()
+	if raw := rawRunInvestment(play); raw != runCost {
+		t.Errorf("%s: stored run cost = %v, want %v", play.Key, raw, runCost)
+	}
+	d := Decorate(play).Display
+	if float64(d.RunInvestment) != runCost {
+		t.Errorf("%s: display runInvestment = %v, want %v", play.Key, d.RunInvestment, runCost)
+	}
+	if d.Scale == nil {
+		t.Fatalf("%s: scale = null, want one lot of %v", play.Key, lotItems)
+	}
+	if float64(d.Scale.Flips) != lotItems || float64(d.Scale.Investment) != runCost {
+		t.Errorf("%s: scale flips %v investment %v, want one lot of %v for %v", play.Key, d.Scale.Flips, d.Scale.Investment, lotItems, runCost)
+	}
+}
+
+// keep:regression — the Operator's 24.11 Fiend 1-hop.
+func TestKeepRegression_FiendLotRunCost(t *testing.T) {
+	result := BestPlays(corpusLeague, fiendLotRows(lotNewest), corpusConfig(t, HorizonRecent))
+
+	play := playByKey(t, result, fiendHopKey)
+	// Buy at the window's 157:1 low on the newest hour's 1/1114 step, sell at
+	// 27:1 on divine's 1/24 step, convert at 176:1 on the anchor's 1/176 step.
+	wantLegPairs(t, play, legBuy(157, 1, 1114), legSell(27, 1, 24), legSell(176, 1, 176))
+	if !play.NoOffers {
+		t.Errorf("NoOffers = false, want the report's empty card side")
+	}
+	// Sell: 27*(24-1)/24 = 207/8 divine a card, whole only for 8 cards.
+	// Convert: 207/8 * 176*(176-1)/176 = 207*175/8 = 36225/8 chaos, still 8.
+	// Entry: ceil(8 * 157*(1114+1)/1114) = ceil(1400440/1114) = ceil(1257.13) = 1258 chaos.
+	const lotCards, lotCost = 8, 1258
+	// One lot covers the 100-chaos scale target when 8 cards return >= 100.
+	if play.ExpectedRoi < 100.0/lotCards {
+		t.Fatalf("ExpectedRoi = %v, want at least 100/8 so the run is one lot", play.ExpectedRoi)
+	}
+	wantLotRunCost(t, play, lotCards, lotCost)
+}
+
+// keep:regression — the Dread essence sibling, on the analogous feed.
+func TestKeepRegression_DreadLotRunCost(t *testing.T) {
+	result := BestPlays(corpusLeague, dreadLotRows(lotNewest), corpusConfig(t, HorizonRecent))
+
+	play := playByKey(t, result, dreadHopKey)
+	// Buy at the window's 4:1 low on the newest hour's 1/9 step, sell at 33:7 on
+	// the divine market's 1/32 step, convert at 176:1 on 1/176.
+	wantLegPairs(t, play, legBuy(4, 1, 9), legSell(33, 7, 32), legSell(176, 1, 176))
+	if !play.NoOffers || !play.LowCoverage {
+		t.Errorf("NoOffers %v LowCoverage %v, want the reported sibling's two marks", play.NoOffers, play.LowCoverage)
+	}
+	// Sell: 33*(32-1)/(7*32) = 1023/224 divine an essence, whole only for 224.
+	// Convert: 1023/224 * 175 = 25575/32 chaos, so 224 still suffices.
+	// Entry: ceil(224 * 4*(9+1)/9) = ceil(8960/9) = ceil(995.56) = 996 chaos.
+	const lotItems, lotCost = 224, 996
+	if play.ExpectedRoi < 100.0/lotItems {
+		t.Fatalf("ExpectedRoi = %v, want at least 100/224 so the run is one lot", play.ExpectedRoi)
+	}
+	wantLotRunCost(t, play, lotItems, lotCost)
+}
+
+// wholeLotHopRows is fourteen identical hours of a triangle whose legs are all
+// whole for one item: buy at 750:1 on its 1/750 step for 751 chaos, sell at 6:1
+// divine on a 1/3 step for 6*2/3 = 4 divine, convert at 200:1 on 1/200 for 199
+// chaos a divine.
+func wholeLotHopRows() []StoredRow {
+	var rows []StoredRow
+	for back := 13; back >= 0; back-- {
+		hour := lotNewest.Add(-time.Duration(back) * time.Hour)
+		rows = append(rows,
+			StoredRow{Hour: hour, Row: rowSpec{
+				itemA: chaosID, itemB: wholeLotHopID,
+				volume: [2]int64{750500, 1000}, lowestStock: [2]int64{2000, 200}, highestStock: [2]int64{5000, 500},
+				lowestRatio: [2]int64{750, 1}, highestRatio: [2]int64{751, 1},
+			}.row()},
+			StoredRow{Hour: hour, Row: rowSpec{
+				itemA: divineID, itemB: wholeLotHopID,
+				volume: [2]int64{4500, 1000}, lowestStock: [2]int64{300, 200}, highestStock: [2]int64{600, 500},
+				lowestRatio: [2]int64{3, 1}, highestRatio: [2]int64{6, 1},
+			}.row()},
+			StoredRow{Hour: hour, Row: divineChaosAnchor().row()})
+	}
+	return rows
+}
+
+// keep:happy — AC-3: a lot of one item at a whole entry cost changes nothing.
+func TestKeepHappy_WholeLotHopUnchanged(t *testing.T) {
+	result := BestPlays(corpusLeague, wholeLotHopRows(), corpusConfig(t, HorizonRecent))
+
+	play := playByKey(t, result, oneHopKey(wholeLotHopID, chaosID, divineID))
+	wantLegPairs(t, play, legBuy(750, 1, 750), legSell(6, 1, 3), legSell(200, 1, 200))
+	// RoiPct: 4 * 199 / 751 - 1 = 45/751.
+	wantClose(t, "RoiPct", play.RoiPct, 45.0/751)
+	// ExpectedRoi: twelve entries sell the posted 4 divine at the 200-chaos VWAP,
+	// 800 - 751 = 49; the last fire-sells at (4.5 + 4)/2 divine, 850 - 751 = 99;
+	// (12*49 + 99) / 13 = 687/13.
+	wantClose(t, "ExpectedRoi", play.ExpectedRoi, 687.0/13)
+	// Flips: ceil(100 / (687/13)) = ceil(1.89) = 2, each a whole one-item lot,
+	// so the run cost stays Investment x 2.
+	run := play.Investment * 2
+	wantClose(t, "Investment", play.Investment, 751)
+	if raw := rawRunInvestment(play); raw != run {
+		t.Errorf("stored run cost = %v, want Investment x 2 = %v", raw, run)
+	}
+	d := Decorate(play).Display
+	if d.Scale == nil || float64(d.Scale.Flips) != 2 || float64(d.Scale.Investment) != run || float64(d.RunInvestment) != run {
+		t.Errorf("scale %s runInvestment %v, want 2 flips for %v", jsonOf(d.Scale), d.RunInvestment, run)
+	}
+}
+
+// lotDirectRows is seven hours of a chaos flip between a 96:1 low and a 130:1
+// high, then a newest hour that printed one item at 120:1: thin, so the window
+// prices it at 96/130 on the newest hour's 1/120 step.
+func lotDirectRows() []StoredRow {
+	var rows []StoredRow
+	for back := 7; back >= 0; back-- {
+		spec := rowSpec{
+			itemA: chaosID, itemB: lotDirectID,
+			volume: [2]int64{113000, 1000}, lowestStock: [2]int64{2000, 200}, highestStock: [2]int64{5000, 500},
+			lowestRatio: [2]int64{96, 1}, highestRatio: [2]int64{130, 1},
+		}
+		if back == 0 {
+			spec.volume = [2]int64{120, 1}
+			spec.lowestRatio = [2]int64{120, 1}
+			spec.highestRatio = [2]int64{120, 1}
+		}
+		rows = append(rows, StoredRow{Hour: lotNewest.Add(-time.Duration(back) * time.Hour), Row: spec.row()})
+	}
+	return rows
+}
+
+// keep:critical — AC-4. Silent: a direct run cost understated to one item's
+// price is a plausible number the budget filter trusts, and it admits a run the
+// player cannot afford to execute.
+func TestKeepCritical_DirectLotRunCost(t *testing.T) {
+	result := BestPlays(corpusLeague, lotDirectRows(), corpusConfig(t, HorizonRecent))
+
+	play := playByKey(t, result, directKey(chaosID, lotDirectID))
+	wantLegPairs(t, play, legBuy(96, 1, 120), legSell(130, 1, 120))
+	// Sell: 130*(120-1)/120 = 1547/12 chaos an item, whole only for 12.
+	// Entry: ceil(12 * 96*(120+1)/120) = ceil(5808/5) = ceil(1161.6) = 1162 chaos
+	// (not 12 x ceil(96.8) = 1164, nor Investment x 12 = 1161.6).
+	const lotItems, lotCost = 12, 1162
+	if play.ExpectedRoi < 100.0/lotItems {
+		t.Fatalf("ExpectedRoi = %v, want at least 100/12 so the run is one lot", play.ExpectedRoi)
+	}
+	wantLotRunCost(t, play, lotItems, lotCost)
+}

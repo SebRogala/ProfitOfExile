@@ -981,13 +981,109 @@ func pageKeys(page PlaysPage) []string {
 	return keys
 }
 
+// lotParityCases is the current server answer of the parity cases the POE-489
+// lot rule changes; the fixture keeps the historical client-chain answer. Each
+// run cost and scale is the one lotParityRunCosts states (plays_display_test.go).
+//
+// "run cost bounds in chaos" keeps [100.5, 402] chaos: only the Spreadless 170
+// one-item lots at 171; the chaos Breach Thread flip now costs 55 and every
+// other play more than 402 or +Inf. "run cost bound in divine" keeps at most
+// 2.01 x 200 = 402 chaos: those 55 and 171 plays. Both keep the no-filters
+// (expected) order, and neither keeps a hop, so neither shows the convert
+// column. "sort fastest" orders by the scale hours, null last, ties in served
+// order: the 1-hour plays, then Apocalypse Window at ceil(138/1) = 138, then
+// expected-roi-1e-18 at 1e17, then every null.
+var lotParityCases = map[string]struct {
+	matched     int
+	showConvert bool
+	keys        []string
+}{
+	"run cost bounds in chaos": {
+		matched: 2, showConvert: false,
+		keys: []string{
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
+		},
+	},
+	"run cost bound in divine": {
+		matched: 4, showConvert: false,
+		keys: []string{
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
+		},
+	},
+	"sort fastest": {
+		matched: 42, showConvert: true,
+		keys: []string{
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypse",
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaidd",
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Tattoos/JourneyTattooTwoSided",
+			"direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
+			"1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+			"direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyYoungRecipe",
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyCleanFlip",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypse",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaidd",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Tattoos/JourneyTattooTwoSided",
+			"day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Tattoos/JourneyTattoo",
+			"day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+			"day:direct:Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Threads/BreachThread",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyYoungRecipe",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Maps/MapMawrBlaiddJunkNewest",
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow",
+			"synthetic:expected-roi-1e-18",
+			"1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
+			"1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
+			"direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyDivineVessel",
+			"day:1-hop:Metadata/Items/Tattoos/JourneyTattoo|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyModValues",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Threads/BreachThread",
+			"day:1-hop:Metadata/Items/Threads/BreachThread|Metadata/Items/Currency/CurrencyModValues|Metadata/Items/Currency/CurrencyRerollRare",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencySpreadless170",
+			"day:direct:Metadata/Items/Currency/CurrencyRerollRare|Metadata/Items/Currency/CurrencyDivineVessel",
+			"synthetic:no-quantity-pair",
+			"synthetic:expected-roi-zero",
+			"synthetic:expected-roi-negative",
+			"synthetic:expected-roi-nan",
+			"synthetic:depth-zero",
+			"synthetic:depth-negative",
+			"synthetic:expected-roi-tiny",
+			"synthetic:depth-tiny",
+			"synthetic:sim-entries-zero",
+		},
+	},
+}
+
+// currentParityCase is tc as the server must answer it now: the historical case
+// with its matched count, convert flag and keys replaced where lotParityCases
+// lists it. Every listed case serves all of its matched plays on one page.
+func currentParityCase(tc parityCase) parityCase {
+	o, ok := lotParityCases[tc.Name]
+	if !ok {
+		return tc
+	}
+	tc.Matched, tc.ShowConvert = o.matched, o.showConvert
+	tc.OrderedKeys, tc.PageKeys = o.keys, o.keys
+	return tc
+}
+
 func TestPlaysPage_MatchesTheClientChainOnEveryParityCase(t *testing.T) {
 	pool := integrationPool(t)
 	repo := newPlaysRepository(t, pool)
 	storeParity(t, repo)
 	ctx := context.Background()
 
-	for _, tc := range loadParityCases(t) {
+	for _, historical := range loadParityCases(t) {
+		tc := currentParityCase(historical)
 		t.Run(tc.Name, func(t *testing.T) {
 			page, err := repo.PlaysPage(ctx, integrationScope, parityQuery(t, tc.Params, ""))
 			if err != nil {
@@ -1076,7 +1172,7 @@ func TestPlaysPage_ServesTheDisplayOfEveryPlay(t *testing.T) {
 	f := storeParity(t, repo)
 	want := map[string]PlayDisplay{}
 	for _, p := range f.Plays {
-		want[p.Play.Key] = p.Display
+		want[p.Play.Key] = currentParityDisplay(p.Play.Key, p.Display)
 	}
 
 	page, err := repo.PlaysPage(context.Background(), integrationScope, parityQuery(t, nil, "all"))
@@ -1262,4 +1358,122 @@ func TestPlaysPage_NoOffersOnlyKeepsServedOrder(t *testing.T) {
 	if filtered.Total != unfiltered.Total {
 		t.Errorf("Total = %d, want the unfiltered %d (served after mode)", filtered.Total, unfiltered.Total)
 	}
+}
+
+// keep:regression — AC-1 and AC-2 at the player's max-run-cost filter: the
+// Fiend 1-hop and the Dread analog, persisted from the engine's own answer over
+// their stored hours, are hidden by an 800-chaos ceiling and served at a
+// ceiling of exactly their lot cost.
+func TestKeepRegression_LotRunCostBudget(t *testing.T) {
+	pool := integrationPool(t)
+	// Registered first so its cleanup (market rows, cursor, league) runs after
+	// the plays cleanup (FK order).
+	scope := registerSecondLeague(t, pool, "LotRunCostLeague")
+	repo := newPlaysRepository(t, pool, scope)
+	ctx := context.Background()
+
+	newest := baseHour.Add(dreadLotHours * time.Hour)
+	feed := append(lotAnchorRows(newest, dreadLotHours), fiendLotMarkets(newest)...)
+	feed = append(feed, dreadLotMarkets(newest)...)
+	byHour := map[time.Time][]Row{}
+	for _, stored := range feed {
+		row := stored.Row
+		row.League = scope.ID()
+		byHour[stored.Hour] = append(byHour[stored.Hour], row)
+	}
+	oldest := newest.Add(-(dreadLotHours - 1) * time.Hour)
+	for hour := oldest; !hour.After(newest); hour = hour.Add(time.Hour) {
+		if _, err := repo.InsertHour(ctx, scope, hour, byHour[hour], hour.Add(time.Hour).Unix()); err != nil {
+			t.Fatalf("InsertHour %s: %v", hour, err)
+		}
+	}
+	stored, err := repo.LoadRows(ctx, scope, oldest, newest.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("LoadRows: %v", err)
+	}
+	result := BestPlays(scope.ID(), stored, corpusConfig(t, HorizonRecent))
+	result.Horizon = string(HorizonRecent)
+	if err := repo.ReplacePlays(ctx, scope, []Result{result}); err != nil {
+		t.Fatalf("ReplacePlays: %v", err)
+	}
+
+	page := func(t *testing.T, investMax *float64) PlaysPage {
+		t.Helper()
+		got, err := repo.PlaysPage(ctx, scope, PlaysPageQuery{
+			Mode: "all", Horizon: HorizonRecent, Page: 1, PageSize: PageSizeAll,
+			Sort: SortExpected, Unit: UnitChaos, InvestMax: investMax,
+		})
+		if err != nil {
+			t.Fatalf("PlaysPage investMax %v: %v", investMax, err)
+		}
+		// Count stability: the filter narrows Matched, never what was served.
+		if got.Total != len(result.Plays) || got.Matched != len(got.Plays) {
+			t.Errorf("investMax %v: total %d matched %d served %d, want total %d and every match served",
+				investMax, got.Total, got.Matched, len(got.Plays), len(result.Plays))
+		}
+		return got
+	}
+	unfiltered := page(t, nil)
+	served := pageKeys(unfiltered)
+	ceiling := func(c float64) *float64 { return &c }
+
+	// The control: Fiend's chaos flip sells whole (1114*1113/1114 = 1113) for one
+	// card at ceil(157*1115/1114) = 158 chaos, so an 800 ceiling keeps it and an
+	// empty page cannot pass for an exclusion.
+	control := directKey(chaosID, fiendID)
+	at800 := page(t, ceiling(800))
+	if indexOf(pageKeys(at800), control) < 0 {
+		t.Fatalf("control %s missing at 800 chaos: %q", control, pageKeys(at800))
+	}
+	if !isSubsequence(pageKeys(at800), served) {
+		t.Errorf("800-chaos page %q is not the served order %q narrowed", pageKeys(at800), served)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		key     string
+		lotCost float64
+	}{
+		// ceil(8 * 157*1115/1114) = 1258 chaos (TestKeepRegression_FiendLotRunCost).
+		{"fiend", fiendHopKey, 1258},
+		// ceil(224 * 4*10/9) = 996 chaos (TestKeepRegression_DreadLotRunCost).
+		{"dread", dreadHopKey, 996},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if indexOf(served, tc.key) < 0 {
+				t.Fatalf("%s not served: %q", tc.key, served)
+			}
+			var stored float64
+			if err := pool.QueryRow(ctx,
+				`SELECT run_investment FROM currency_exchange_plays WHERE league = $1 AND horizon = $2 AND play_key = $3`,
+				scope.ID(), string(HorizonRecent), tc.key).Scan(&stored); err != nil {
+				t.Fatalf("read run_investment: %v", err)
+			}
+			if stored != tc.lotCost {
+				t.Errorf("stored run_investment = %v, want the lot cost %v", stored, tc.lotCost)
+			}
+			if i := indexOf(pageKeys(at800), tc.key); i >= 0 {
+				t.Errorf("served at an 800-chaos ceiling with run cost %v, want hidden", at800.Plays[i].Display.RunInvestment)
+			}
+			atCost := page(t, ceiling(tc.lotCost))
+			i := indexOf(pageKeys(atCost), tc.key)
+			if i < 0 {
+				t.Fatalf("hidden at a ceiling of its own lot cost %v: %q", tc.lotCost, pageKeys(atCost))
+			}
+			if got := atCost.Plays[i].Display.RunInvestment; float64(got) != tc.lotCost {
+				t.Errorf("display runInvestment = %v, want the stored %v", got, tc.lotCost)
+			}
+		})
+	}
+}
+
+// isSubsequence reports whether sub appears in all in the same relative order.
+func isSubsequence(sub, all []string) bool {
+	j := 0
+	for _, k := range all {
+		if j < len(sub) && sub[j] == k {
+			j++
+		}
+	}
+	return j == len(sub)
 }
