@@ -3324,6 +3324,22 @@ mod tests {
         }
     }
 
+    mod keep_regression {
+        use super::*;
+
+        /// POE-472 reported geometry: a 2560x1080 client on a 2560x1440
+        /// monitor. Pre-passing characterization of the Font placements a
+        /// Recalibrate publishes from that measurement.
+        #[test]
+        fn an_ultrawide_client_on_a_1440p_monitor_places_the_font_and_its_slots() {
+            let screen = screen_from_geometry(2560, 1440, 1, (0, 0), [0, 0, 2560, 1080], 0);
+            let lab = placements(&screen).lab;
+            assert!((screen.ui_scale - 0.900).abs() < UI_SCALE_EPS, "ui_scale {}", screen.ui_scale);
+            assert_eq!(lab.font, [618, 220, 666, 681]);
+            assert_eq!(lab.gem_slots, [[826, 373, 48, 48], [925, 373, 48, 48], [1024, 373, 48, 48]]);
+        }
+    }
+
     macro_rules! snapshot_echoes {
         ($($name:ident: $field:ident = $value:expr;)*) => {$(
             #[test]

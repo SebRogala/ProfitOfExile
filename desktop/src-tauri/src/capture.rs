@@ -173,6 +173,18 @@ fn client_in_capture(game_client: Option<[i32; 4]>, origin: (i32, i32), size: (u
     }
 }
 
+/// The Recalibrate log line naming the raw game client read, the captured
+/// monitor's origin and size, and the client the measurement actually used.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn recalibrate_client_diagnostic(
+    _raw: Option<[i32; 4]>,
+    _origin: (i32, i32),
+    _size: (u32, u32),
+    _client: [i32; 4],
+) -> String {
+    String::new()
+}
+
 #[cfg(windows)]
 mod platform {
     use super::{client_in_capture, AffinityLedger, Capture, GameMonitor, GrabTiming};
@@ -729,19 +741,58 @@ mod tests {
     use image::{DynamicImage, ImageBuffer, Luma};
 
     mod keep_happy {
-        use super::super::client_in_capture;
+        use super::super::{client_in_capture, recalibrate_client_diagnostic};
 
         #[test]
         fn a_windowed_client_is_carried_capture_relative() {
             let client = client_in_capture(Some([2080, 90, 1600, 900]), (1920, 0), (1920, 1080));
             assert_eq!(client, [160, 90, 1600, 900]);
         }
+
+        #[test]
+        fn recalibrate_diagnostic_reports_an_inside_client_as_used() {
+            let line = recalibrate_client_diagnostic(
+                Some([0, 0, 2560, 1080]),
+                (0, 0),
+                (2560, 1440),
+                [0, 0, 2560, 1080],
+            );
+            assert_eq!(
+                line,
+                "Recalibrate: game client Some([0, 0, 2560, 1080]) (desktop px), monitor origin (0, 0) size 2560x1440 -> client used [0, 0, 2560, 1080] (client inside the capture)"
+            );
+        }
     }
 
     mod keep_critical {
-        use super::super::client_in_capture;
+        use super::super::{client_in_capture, recalibrate_client_diagnostic};
 
         const WHOLE: [i32; 4] = [0, 0, 1920, 1080];
+
+        const RECAL_ORIGIN: (i32, i32) = (0, 0);
+        const RECAL_SIZE: (u32, u32) = (2560, 1440);
+
+        /// Silent consequence if this broke: reporting the whole-capture
+        /// fallback as a valid client hides the oversized raw input that the
+        /// Recalibrate diagnosis trusts.
+        #[test]
+        fn recalibrate_diagnostic_flags_an_oversized_client_as_outside_the_capture() {
+            let raw = Some([0, 0, 2560, 1500]);
+            let client = client_in_capture(raw, RECAL_ORIGIN, RECAL_SIZE);
+            let line = recalibrate_client_diagnostic(raw, RECAL_ORIGIN, RECAL_SIZE, client);
+            assert!(line.contains("client used [0, 0, 2560, 1440]"), "line: {line:?}");
+            assert!(line.contains("(client outside the capture)"), "line: {line:?}");
+        }
+
+        /// Silent consequence if this broke: conflating a missing client read
+        /// with an out-of-bounds one gives a plausible but wrong diagnosis.
+        #[test]
+        fn recalibrate_diagnostic_flags_a_missing_client_as_no_client_read() {
+            let client = client_in_capture(None, RECAL_ORIGIN, RECAL_SIZE);
+            let line = recalibrate_client_diagnostic(None, RECAL_ORIGIN, RECAL_SIZE, client);
+            assert!(line.contains("client used [0, 0, 2560, 1440]"), "line: {line:?}");
+            assert!(line.contains("(no client read)"), "line: {line:?}");
+        }
 
         /// Silent consequence if this broke: a client rect running past the
         /// image would crop OCR from the wrong pixels and return a plausible
