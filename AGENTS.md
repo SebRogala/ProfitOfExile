@@ -77,8 +77,15 @@ and the documentation index before acting on them.
 - When a code comment cross-references another function or file, name the symbol (`mirrors
   BuildCompareResults in collective.go`), not a line (`collective.go:311` rots on the next edit).
   Keep the why and its evidence, including a past behaviour that explains a current constraint.
-- User-visible text (labels, tooltips, notes, empty states) shows data and when it was updated,
-  nothing else: no explanatory sentences. A tooltip is at most 3 short lines; a Room valuation tooltip may hold three compact labelled sections (Effect, Drops, Source) that wrap.
+- Limit labels, notes and empty states to data and update times.
+  Write plain tooltips as one defining sentence of at most 25 words, without HTML.
+  Write longer tooltips only in the structured form when essential content cannot fit the plain limit.
+  Model structured tooltips on the `col-signal` header in `desktop/src/routes/(app)/components/BestPlays.svelte`.
+  Use a bold title, bold group headings and blank lines between groups.
+  Give each group heading a scope clause.
+  Put each state on one line: state name — gloss of at most eight words.
+  Reuse each state's existing colour; leave names uncoloured where no state colour exists.
+  Allow Room valuation tooltips three compact labelled sections (Effect, Drops, Source) that may wrap.
 
 ## Modeling rules
 
