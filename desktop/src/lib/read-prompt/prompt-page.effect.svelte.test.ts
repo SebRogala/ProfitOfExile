@@ -59,40 +59,45 @@ describe('read prompt page', () => {
 	it('draws no prompt when no mechanic is presented', () => {
 		ssot.readPrompt = { mechanic: null, noMatch: false, recalibrating: false, seq: 1 };
 		const target = render();
-		expect(target.querySelector('.prompt')).toBeNull();
+		expect(target.querySelector('[data-kind]')).toBeNull();
 	});
 
 	it('removes the detected text when a mercenary arm presentation expires', () => {
 		ssot.readPrompt = { mechanic: 'mercenary', noMatch: false, recalibrating: false, seq: 2 };
 		const target = render();
-		const prompts = target.querySelectorAll('.prompt');
-		expect(prompts).toHaveLength(1);
-		expect(prompts[0].textContent).toBe('Detected Mercenary - press Ctrl + A to read');
+		const notices = target.querySelectorAll('[data-kind]');
+		expect(notices).toHaveLength(1);
+		expect(notices[0].getAttribute('data-kind')).toBe('info');
+		expect(notices[0].querySelector('[data-part="header"]')?.textContent).toBe('Mercenary detected');
+		expect(notices[0].querySelector('[data-part="body"]')?.textContent).toBe('Press Ctrl + A to read');
 
 		ssot.readPrompt = { mechanic: null, noMatch: false, recalibrating: false, seq: 2 };
 		flushSync();
 
-		expect(target.querySelectorAll('.prompt')).toHaveLength(0);
-		expect(target.textContent).not.toContain('Detected Mercenary');
+		expect(target.querySelectorAll('[data-kind]')).toHaveLength(0);
+		expect(target.textContent).not.toContain('Mercenary detected');
 	});
 
-	it('draws the recalibration sweep status in the wrapping prompt', () => {
+	it('draws the recalibration sweep status with a progress spinner', () => {
 		ssot.readPrompt = { mechanic: null, noMatch: false, recalibrating: true, seq: 3 };
 		const target = render();
-		const prompts = target.querySelectorAll('.prompt');
-		expect(prompts).toHaveLength(1);
-		expect(prompts[0].textContent).toBe('No mechanics found - running a recalibration sweep now.');
-		expect(prompts[0].classList.contains('no-match')).toBe(true);
+		const notices = target.querySelectorAll('[data-kind]');
+		expect(notices).toHaveLength(1);
+		expect(notices[0].getAttribute('data-kind')).toBe('info');
+		expect(notices[0].querySelector('[data-part="header"]')?.textContent).toBe('No mechanics detected');
+		expect(notices[0].querySelector('[data-part="body"]')?.textContent).toBe('Running a recalibration sweep…');
+		expect(notices[0].querySelector('.spinner')).not.toBeNull();
 	});
 
-	it('asks for another press on the uncertain gem slot in the wrapping prompt', () => {
+	it('asks for another press on the uncertain gem slot', () => {
 		ssot.readPrompt = { mechanic: null, noMatch: false, recalibrating: false, seq: 4, gemUncertain: [false, false, true] };
 		const target = render();
-		const prompts = target.querySelectorAll('.prompt');
-		expect(prompts).toHaveLength(1);
-		expect(prompts[0].textContent).toBe(
-			'Gem 3 unclear - wait for the Font to finish revealing, then press Ctrl + A again, or hover the gem and press Ctrl + A'
-		);
-		expect(prompts[0].classList.contains('no-match')).toBe(true);
+		const notices = target.querySelectorAll('[data-kind]');
+		expect(notices).toHaveLength(1);
+		expect(notices[0].getAttribute('data-kind')).toBe('warning');
+		expect(notices[0].querySelector('[data-part="header"]')?.textContent).toBe('Gem 3 unclear');
+		const body = notices[0].querySelector('[data-part="body"]');
+		expect(body?.textContent).toBe('Press Ctrl + A after the Font reveals, or while hovering the gem');
+		expect(Array.from(body?.querySelectorAll('kbd') ?? [], (key) => key.textContent)).toEqual(['Ctrl', 'A']);
 	});
 });

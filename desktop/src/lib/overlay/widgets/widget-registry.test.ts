@@ -154,15 +154,15 @@ describe('the lab module', () => {
 });
 
 describe('the read prompt module', () => {
-	// One line of fixed text in its own app-level window (POE-388): resizing it
-	// would only crop its sentence, and the user places it.
+	// A content-sized header/body notice in its own app-level window (POE-388,
+	// POE-483): resizing it would only crop its text, and the user places it.
 	it('declares the read prompt as a placeable, content-sized widget under its window label', () => {
 		expect(widgetsFor(PROMPT_WINDOW_LABEL)).toEqual([
 			expect.objectContaining({
 				id: 'prompt.read',
 				module: 'prompt',
 				label: 'Read prompt',
-				defaults: { x: 830, y: 16, w: 260, h: 40 },
+				defaults: { x: 780, y: 16, w: 360, h: 62 },
 				resizable: false
 			})
 		]);

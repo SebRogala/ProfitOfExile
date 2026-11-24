@@ -4,7 +4,7 @@ import ts from 'typescript';
 import source from './presentation.svelte.ts?raw';
 import dismissalSource from '$lib/overlay/widgets/widget-dismissal.svelte.ts?raw';
 import { widgetsFor } from '$lib/overlay/widgets/widget-registry';
-import { readPromptText } from './view';
+import { readPromptNotice } from './view';
 import type { DismissSnapshot, PendingDismiss, ReadPromptSnapshot } from '$lib/stores/ssot.svelte';
 // @ts-expect-error Svelte's source entry has no declaration file.
 import { flushSync, tick, untrack } from '../../../node_modules/svelte/src/index-client.js';
@@ -22,12 +22,12 @@ function compile(raw: string, filename: string) {
 const { createDismissal, createDismissalHost } = new Function('$', 'tick', 'untrack',
 	compile(dismissalSource, 'widget-dismissal.svelte.js') + '\nreturn { createDismissal, createDismissalHost };'
 )(client, tick, untrack) as typeof import('$lib/overlay/widgets/widget-dismissal.svelte');
-const { createReadPromptPresentation } = new Function('$', 'createDismissal', 'createDismissalHost', 'widgetsFor', 'PROMPT_WINDOW_LABEL', 'readPromptText',
+const { createReadPromptPresentation } = new Function('$', 'createDismissal', 'createDismissalHost', 'widgetsFor', 'PROMPT_WINDOW_LABEL', 'readPromptNotice',
 	compile(source, 'presentation.svelte.js') + '\nreturn { createReadPromptPresentation };'
-)(client, createDismissal, createDismissalHost, widgetsFor, 'prompt', readPromptText) as typeof import('./presentation.svelte');
+)(client, createDismissal, createDismissalHost, widgetsFor, 'prompt', readPromptNotice) as typeof import('./presentation.svelte');
 
-const MESSAGE = 'Nothing detected. If a mechanic is open, check Settings → OCR Regions → Preview, and press Recalibrate if a region is off.';
-const DETECTED = 'Detected Incursion - press Ctrl + A to read';
+const MESSAGE = { kind: 'warning', header: 'Nothing detected after recalibrating', body: 'Check Settings → OCR Regions → Preview' };
+const DETECTED = { kind: 'info', header: 'Incursion detected', body: 'Press Ctrl + A to read', keys: 'Ctrl + A' };
 const esc = { key: 27, shift: false, ctrl: false, alt: false };
 const f = { ...esc, key: 70 };
 const cleanups: (() => void)[] = [];
@@ -62,55 +62,55 @@ function setup(loaded = true) {
 describe('read prompt presentation', () => {
 	it('leaves the no-match lifetime to Rust: no view timer hides it', () => {
 		const h = setup();
-		vi.advanceTimersByTime(60000); expect(h.presentation.text).toBe(MESSAGE);
+		vi.advanceTimersByTime(60000); expect(h.presentation.notice).toEqual(MESSAGE);
 		expect(vi.getTimerCount()).toBe(0);
 	});
 	it('hides for the matching key', async () => {
 		const h = setup(); await settle(); h.deliver(1); await settle();
-		expect(h.presentation.text).toBeNull();
+		expect(h.presentation.notice).toBeNull();
 	});
 	it('keeps visible for another key', async () => {
 		const h = setup(); await settle(); h.deliver(1, f); await settle();
-		expect(h.presentation.text).toBe(MESSAGE);
+		expect(h.presentation.notice).toEqual(MESSAGE);
 	});
 	it('follows a changed global dismissal key', async () => {
 		const h = setup(); h.input.overlayDismiss!.shortcut = f; await settle();
-		h.deliver(1); await settle(); expect(h.presentation.text).toBe(MESSAGE);
-		h.deliver(2, f); await settle(); expect(h.presentation.text).toBeNull();
+		h.deliver(1); await settle(); expect(h.presentation.notice).toEqual(MESSAGE);
+		h.deliver(2, f); await settle(); expect(h.presentation.notice).toBeNull();
 	});
 	it('keeps the same sequence hidden across polls after key dismissal', async () => {
 		const h = setup(); await settle();
 		h.deliver(1); await settle();
 		flushSync(); h.input.readPrompt = { mechanic: null, noMatch: true, recalibrating: false, seq: 1 };
 		h.input.overlayDismiss = { ...h.input.overlayDismiss! }; flushSync();
-		expect(h.presentation.text).toBeNull(); expect(vi.getTimerCount()).toBe(0);
+		expect(h.presentation.notice).toBeNull(); expect(vi.getTimerCount()).toBe(0);
 	});
 	it('shows a fresh no-match sequence after a key dismissal', async () => {
 		const h = setup(); await settle(); h.deliver(1); await settle();
 		h.input.readPrompt = { mechanic: null, noMatch: true, recalibrating: false, seq: 2 }; flushSync();
-		expect(h.presentation.text).toBe(MESSAGE);
+		expect(h.presentation.notice).toEqual(MESSAGE);
 	});
 	it('a selected result replaces the no-match', () => {
 		const h = setup();
 		h.input.readPrompt = { mechanic: null, noMatch: false, recalibrating: false, seq: 2 }; flushSync();
-		expect(h.presentation.text).toBeNull(); expect(vi.getTimerCount()).toBe(0);
+		expect(h.presentation.notice).toBeNull(); expect(vi.getTimerCount()).toBe(0);
 	});
 	it('keeps detected text outside the no-match key', async () => {
 		const h = setup(); await settle(); h.deliver(1); await settle();
 		h.input.readPrompt = { mechanic: 'incursion', noMatch: false, recalibrating: false, seq: 2 }; await settle();
 		h.deliver(2); await settle(); vi.advanceTimersByTime(60000);
-		expect(h.presentation.text).toBe(DETECTED); expect(vi.getTimerCount()).toBe(0);
+		expect(h.presentation.notice).toEqual(DETECTED); expect(vi.getTimerCount()).toBe(0);
 	});
 	it('catches up a queued key once global settings arrive', async () => {
 		const h = setup(false); await settle(); h.deliver(1); await settle();
-		expect(h.presentation.text).toBe(MESSAGE);
+		expect(h.presentation.notice).toEqual(MESSAGE);
 		h.input.overlayDismiss = { timeoutSeconds: 10, shortcut: esc, overlays: {}, pending: [] };
-		await settle(); expect(h.presentation.text).toBeNull();
+		await settle(); expect(h.presentation.notice).toBeNull();
 	});
 	it('applies SSOT-only dismissal without registering or acknowledging a capture host', async () => {
 		const h = setup(); await settle();
 		h.input.overlayDismiss!.pending = [{ gen: 1, shortcut: esc }]; await settle();
-		expect(h.presentation.text).toBeNull(); expect(h.invoke).not.toHaveBeenCalled();
+		expect(h.presentation.notice).toBeNull(); expect(h.invoke).not.toHaveBeenCalled();
 	});
 	it('disposal removes the listener', async () => {
 		const h = setup(); await settle();
