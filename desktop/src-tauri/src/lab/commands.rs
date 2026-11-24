@@ -388,15 +388,35 @@ pub(crate) fn record_lab_detection(
 }
 
 pub(crate) fn publish_lab_detection(app: &AppHandle, update: LabDetectionUpdate) {
+    publish_lab_detection_with(
+        update,
+        |line| app_log(app, line),
+        || {
+            emit_lab_mode_change(app);
+            super::gem_vocab::spawn_gem_vocab_preload(app);
+        },
+        |payload| {
+            if let Err(e) = app.emit("lab-nav", payload) {
+                log::warn!("emit lab-nav failed: {}", e);
+            }
+        },
+    );
+}
+
+fn publish_lab_detection_with(
+    update: LabDetectionUpdate,
+    mut log: impl FnMut(String),
+    mut mode_change: impl FnMut(),
+    _emit_nav: impl FnMut(serde_json::Value),
+) {
     if update.changed_type {
         if let Some(kind) = update.detected {
-            app_log(app, format!("Lab type auto-detected: {}", kind));
+            log(format!("Lab type auto-detected: {}", kind));
         }
     }
     if let Some((old, mode)) = update.mode_change {
-        app_log(app, format!("Lab mode auto-switch: {} -> {} (detected {})", old, mode, update.detected.unwrap_or("Unknown")));
-        emit_lab_mode_change(app);
-        super::gem_vocab::spawn_gem_vocab_preload(app);
+        log(format!("Lab mode auto-switch: {} -> {} (detected {})", old, mode, update.detected.unwrap_or("Unknown")));
+        mode_change();
     }
 }
 
