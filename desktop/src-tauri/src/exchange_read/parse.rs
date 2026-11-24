@@ -245,4 +245,27 @@ mod tests {
             assert!(mismatches.is_empty(), "{mismatches:#?}");
         }
     }
+
+    mod keep_regression {
+        use super::*;
+
+        // keep:regression — the Operator's Windows smoke showed "Ratio unreadable" because OCR read "1 : 104" as "1, : 104"
+        #[test]
+        fn a_ratio_side_read_with_a_trailing_comma_parses_as_that_number() {
+            assert_eq!(
+                parse_fixture_row("ratio-trailing-comma-one-on-left"),
+                Ok(ExchangeSelection {
+                    mode: Mode::Buy,
+                    currency: Currency::Chaos,
+                    ratio: 104.0,
+                    one_side: OneSide::Left,
+                    left: 1.0,
+                    right: 104.0,
+                    stock: 104,
+                    want_name: "Apocalypse".into(),
+                    have_name: "Chaos Orb".into(),
+                })
+            );
+        }
+    }
 }

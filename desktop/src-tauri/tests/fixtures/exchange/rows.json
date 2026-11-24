@@ -78,6 +78,12 @@
       "stock": "1",
       "want": ["Exalted Orb"],
       "have": ["Allflame Ember of", "the Ethereal"]
+    },
+    "ratio-trailing-comma-one-on-left": {
+      "ratio": "1, : 104",
+      "stock": "104",
+      "want": ["Apocalypse"],
+      "have": ["Chaos Orb"]
     }
   }
 }
