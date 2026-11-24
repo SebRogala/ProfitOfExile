@@ -189,12 +189,28 @@ export function calculateChaosDiv(input: ChaosDivInput): ChaosDivResult {
 		}
 		const nearest = [...buckets.entries()].sort(([, a], [, b]) => sell ? b.price - a.price : a.price - b.price).slice(0, 6);
 		for (const [ratio, bucket] of nearest) {
+			let currencyCount = bucket.currency;
+			let itemsCount = bucket.items;
+			if (!budgetMode) {
+				let divisor = bucket.currency;
+				let remainder = bucket.items;
+				while (remainder !== 0) {
+					[divisor, remainder] = [remainder, divisor % remainder];
+				}
+				const currencyUnit = bucket.currency / divisor;
+				const itemUnit = bucket.items / divisor;
+				const multiples = Math.floor(itemCount / itemUnit);
+				if (multiples > 0) {
+					currencyCount = multiples * currencyUnit;
+					itemsCount = multiples * itemUnit;
+				}
+			}
 			rows.push({
 				ratio,
 				delta: `${sell ? '−' : '+'}${(Math.abs(1 - bucket.price / price) * 100).toFixed(1)}%`,
-				iWant: sell ? bucket.currency : bucket.items,
-				iHave: sell ? bucket.items : bucket.currency,
-				leftOver: itemCount - bucket.items,
+				iWant: sell ? currencyCount : itemsCount,
+				iHave: sell ? itemsCount : currencyCount,
+				leftOver: itemCount - itemsCount,
 				...(budgetMode ? { budgetLeft: amount - bucket.currency } : {})
 			});
 		}
