@@ -43,7 +43,9 @@ describe('FontEVCompare support-row BUY, with no server support search', () => {
 		ssot.league = league;
 		try {
 			const card = lensCard(render(FontEVCompare, { props: { labMode: 'normal' } }).body);
-			const m = card.match(/<(a|span)[^>]*class="buy-btn buy-blue[^"]*"[^>]*>BUY<\/\1>/);
+			// By element and label, not class: the markup lives in the shared BuyButton,
+			// whose colour and shape FontEVCompare.effect.svelte.test.ts pins.
+			const m = card.match(/<(a|span)\b[^>]*>BUY<\/\1>/);
 			expect(m, 'support BUY is not rendered').not.toBeNull();
 			return m![0];
 		} finally {

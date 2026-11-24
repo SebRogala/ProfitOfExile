@@ -48,6 +48,8 @@ vi.mock('$lib/updater/settings-update.svelte', async () => {
 	};
 });
 
+import { buyBaseUrl, cheapestCorruptedTradeUrl, exceptionalSupportTradeUrl } from '$lib/trade-utils';
+
 const LEAGUE = 'Probe League';
 const LENS_URL = 'https://www.pathofexile.com/trade/search/Probe%20League?q=lens-stored-experience';
 const TRADE_SERVER_URL = 'https://www.pathofexile.com/trade/search/Probe%20League?q=server-trade-feeder';
@@ -166,6 +168,11 @@ function card(): HTMLElement {
 	return el;
 }
 
+/** The BUY controls inside `root`, in display order: links, and disabled controls announced as such. */
+function buyIn(root: Element): HTMLElement[] {
+	return [...root.querySelectorAll<HTMLElement>('a[href], [aria-disabled="true"]')];
+}
+
 interface ShownRow {
 	name: string;
 	sub: string | null;
@@ -184,7 +191,7 @@ function rowsUnder(group: 'Gives' | 'Costs'): ShownRow[] {
 				name: el.querySelector('.rc-name > span')?.textContent?.trim() ?? '',
 				sub: el.querySelector('.rc-name > small')?.textContent?.trim() ?? null,
 				price: el.querySelector('.rc-num, .rc-nil')?.textContent?.trim() ?? '',
-				buy: el.querySelector<HTMLElement>('.buy-btn')
+				buy: buyIn(el)[0] ?? null
 			});
 		}
 	}
@@ -452,4 +459,118 @@ describe('FontEVCompare Lens card against an older server', () => {
 
 		expect([off, on, shown()]).toEqual([legacy, legacy, legacy]);
 	});
+});
+
+// Loaded lazily through a glob: until the shared component exists the expected
+// markup reads as missing and the comparison fails, instead of the file failing
+// to resolve. Lazy, so each case loads it against that case's fresh `svelte`.
+const buyButtonModules = import.meta.glob<{ default: import('svelte').Component<Record<string, unknown>> }>(
+	'../../../lib/components/BuyButton.svelte'
+);
+
+/** The markup BuyButton renders for `props`, mounted on its own. */
+async function buyButtonHTML(props: Record<string, unknown>): Promise<string> {
+	const load = buyButtonModules['../../../lib/components/BuyButton.svelte'];
+	if (!load) return 'desktop/src/lib/components/BuyButton.svelte does not exist';
+	const { default: BuyButton } = await load();
+	const target = document.createElement('div');
+	const component = mount(BuyButton, { target, props });
+	flushSync();
+	const html = target.firstElementChild?.outerHTML ?? '';
+	unmount(component);
+	return html;
+}
+
+const LEAGUE_MISSING = 'League not detected — trade link unavailable';
+const COLOURS = ['RED', 'GREEN', 'BLUE'] as const;
+
+interface ExpectedBuy {
+	label: string;
+	href: string | null;
+	colour: 'red' | 'green' | 'blue';
+	tooltip: string;
+}
+
+/** A link with its Tooltip when the helper built a search, else the disabled control with the league-missing title. */
+function buy(label: string, href: string | null, colour: ExpectedBuy['colour'], tooltip: string): ExpectedBuy {
+	return href ? { label, href, colour, tooltip } : { label, href: null, colour, tooltip: LEAGUE_MISSING };
+}
+
+const baseBuys = (league: string | null) =>
+	['20/0', '20/20'].flatMap((variant) =>
+		COLOURS.map((c) => buy(c, buyBaseUrl(variant, c, league), c.toLowerCase() as ExpectedBuy['colour'], `Buy cheapest ${c} base gem (${variant})`))
+	);
+
+const inputBuys = (league: string | null) =>
+	['21/20', '21/23'].flatMap((variant) =>
+		[false, true].flatMap((transfigured) =>
+			COLOURS.map((c) =>
+				buy(
+					c,
+					cheapestCorruptedTradeUrl(c, transfigured, league, variant),
+					c.toLowerCase() as ExpectedBuy['colour'],
+					`Buy cheapest corrupted ${variant} ${c} ${transfigured ? 'transfigured ' : ''}gems`
+				)
+			)
+		)
+	);
+
+const lensBuys = (league: string | null) => [
+	buy('BUY', LENS_URL, 'blue', "Buy Facetor's Lens · stored experience ≥ 999,627,000"),
+	buy('BUY', exceptionalSupportTradeUrl(league), 'blue', 'Buy the cheapest Exceptional Support Gem lv 3+'),
+	buy('BUY', ENHANCE_URL, 'blue', 'Buy Enhance Support lv 3 · any corruption'),
+	buy('BUY', ENLIGHTEN_URL, 'blue', 'Buy Enlighten Support lv 3 · any corruption'),
+	buy('BUY', EMPOWER_URL, 'blue', 'Buy Empower Support lv 3 · any corruption')
+];
+
+/** The BUY controls of the Font or Dedication table's Buy column, row by row. */
+function tableBuys(): HTMLElement[] {
+	const header = [...document.querySelectorAll('th')].find((th) => ['Buy Bases', 'Buy Input'].includes(th.textContent?.trim() ?? ''));
+	if (!header) throw new Error('the EV table with its Buy column did not render');
+	return [...header.closest('table')!.querySelectorAll('tbody tr')].flatMap((tr) => (tr.lastElementChild ? buyIn(tr.lastElementChild) : []));
+}
+
+async function mountDedication(): Promise<void> {
+	const target = document.body.appendChild(document.createElement('div'));
+	mounted.push(mount(FontEVCompare, { target, props: { labMode: 'dedication' } }));
+	await vi.waitFor(() => {
+		flushSync();
+		tableBuys();
+	});
+}
+
+describe('FontEVCompare BUY controls through the shared BuyButton', () => {
+	// A wrong destination is silent: the player opens a plausible trade search
+	// for the wrong colour, variant or feeder and buys the wrong input.
+	it.each([
+		{ name: 'Font with the league detected', labMode: 'normal', league: LEAGUE },
+		{ name: 'Font with no league', labMode: 'normal', league: null },
+		{ name: 'Dedication with the league detected', labMode: 'dedication', league: LEAGUE },
+		{ name: 'Dedication with no league', labMode: 'dedication', league: null }
+	] as const)(
+		'keep:critical: $name, every BUY is the BuyButton for its trade-helper href with its unchanged tooltip',
+		async ({ labMode, league }) => {
+			ssotStore.applySnapshot({ league: { name: league }, showAllLensFeeders: true });
+			serveLens(SCENARIO_1());
+			if (labMode === 'normal') await mountCard();
+			else await mountDedication();
+
+			const controls = labMode === 'normal' ? [...tableBuys(), lensBuy(), ...costBuys()] : tableBuys();
+			const actual = controls.map((el) => {
+				if (!el) return null;
+				const shown = { label: el.textContent?.trim() ?? '', href: el.getAttribute('href'), html: el.outerHTML };
+				return { ...shown, tooltip: tooltipOf(el) };
+			});
+			const wanted = labMode === 'normal' ? [...baseBuys(league), ...lensBuys(league)] : inputBuys(league);
+			const expected = [];
+			for (const { label, href, colour, tooltip } of wanted) {
+				const props = href
+					? { label, href, colour, width: 'fixed' }
+					: { label, href: null, colour, width: 'fixed', title: LEAGUE_MISSING };
+				expected.push({ label, href, html: await buyButtonHTML(props), tooltip });
+			}
+
+			expect(actual).toEqual(expected);
+		}
+	);
 });
