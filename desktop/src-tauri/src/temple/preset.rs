@@ -1550,7 +1550,7 @@ mod tests {
 
             let stored: TempleCustomSettings = serde_json::from_str(r#"{"cPerRarity": 2.5}"#)
                 .expect("a stored cPerRarity deserialises");
-            assert_eq!(stored.knobs().c_per_rarity, 2.5);
+            assert_eq!(stored.salvaged().0.knobs().c_per_rarity, 2.5);
         }
     }
 }
