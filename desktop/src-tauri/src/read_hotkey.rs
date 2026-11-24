@@ -171,7 +171,7 @@ pub fn polled_keys(read: &Shortcut, dismiss: &[Shortcut]) -> std::collections::B
 
 /// A reader identity used for first-match ordering and dispatch results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReaderId { Temple, Font, Gem, Mercenary }
+pub enum ReaderId { Temple, Font, Gem, Mercenary, Exchange }
 
 impl ReaderId {
     fn mechanic(self) -> crate::read_prompt::Mechanic {
@@ -180,6 +180,7 @@ impl ReaderId {
             Self::Temple => Mechanic::Incursion,
             Self::Font | Self::Gem => Mechanic::DivineFont,
             Self::Mercenary => Mechanic::Mercenary,
+            Self::Exchange => todo!("POE-477 WI-2: the exchange reader has no read-prompt mechanic"),
         }
     }
 }

@@ -1680,6 +1680,7 @@ const referenceScreen: ScreenSlice = {
 const referencePlacements: Placements = {
 	temple: { entranceOrigin: [960, 792] },
 	merc: { panel: [698, 615, 555, 477] },
+	exchange: { panel: [267, 128, 861, 944] },
 	lab: {
 		gem: [33, 50, 611, 83],
 		font: [511, 300, 589, 389],

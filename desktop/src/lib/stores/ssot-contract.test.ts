@@ -144,6 +144,7 @@ const anchorsKeys: Record<keyof Anchors, true> = {
 const placementsKeys: Record<keyof Placements, true> = {
 	temple: true,
 	merc: true,
+	exchange: true,
 	lab: true
 };
 

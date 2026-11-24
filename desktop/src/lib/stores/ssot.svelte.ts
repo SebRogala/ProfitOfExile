@@ -113,9 +113,15 @@ export interface LabPlacements {
 	];
 }
 
+/** The Faustus Currency Exchange panel window (POE-477). */
+export interface ExchangePlacements {
+	panel: [number, number, number, number];
+}
+
 export interface Placements {
 	temple: TemplePlacements | null;
 	merc: MercPlacements | null;
+	exchange: ExchangePlacements | null;
 	lab: LabPlacements;
 }
 

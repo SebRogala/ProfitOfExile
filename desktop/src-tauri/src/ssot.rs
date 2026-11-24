@@ -301,11 +301,19 @@ pub struct LabPlacements {
     pub gem_slots: [[i32; 4]; 3],
 }
 
+/// The Faustus Currency Exchange panel window (POE-477), client-relative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExchangePlacements {
+    pub panel: [i32; 4],
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Placements {
     pub temple: Option<TemplePlacements>,
     pub merc: Option<MercPlacements>,
+    pub exchange: Option<ExchangePlacements>,
     pub lab: LabPlacements,
 }
 
@@ -366,6 +374,7 @@ pub fn placements_for(screen: Option<&ScreenSlice>) -> Placements {
         return Placements {
             temple: None,
             merc: None,
+            exchange: None,
             lab: lab_placements(ASSUMED_1080P_CLIENT, crate::ASSUMED_UI_SCALE),
         };
     };
@@ -404,6 +413,7 @@ pub fn placements_for(screen: Option<&ScreenSlice>) -> Placements {
         merc: Some(MercPlacements {
             panel: [merc_origin[0], merc_origin[1], merc_seed[2], merc_seed[3]],
         }),
+        exchange: None,
         lab,
     }
 }
@@ -2073,6 +2083,7 @@ mod tests {
 
         assert_eq!(placements.temple, None);
         assert_eq!(placements.merc, None);
+        assert_eq!(placements.exchange, None);
         assert_eq!(placements.lab.gem, [0, 0, 1920, 40]);
         // The font rule at 1080p: round(740 · 0.9) = 666 wide, centred in the
         // 1262 px left of the inventory → x = (1262 − 666) / 2 = 298; the top at
@@ -2565,6 +2576,8 @@ mod tests {
         assert_eq!(json["screen"]["anchors"], serde_json::Value::Null);
         assert_eq!(json["placements"]["temple"]["entranceOrigin"], serde_json::json!([960, 792]));
         assert_eq!(json["placements"]["merc"]["panel"], serde_json::json!([698, 615, 555, 477]));
+        // The 1080p seed (240, 115, 775, 850) in reference px: / 0.9, at scale 1.0.
+        assert_eq!(json["placements"]["exchange"]["panel"], serde_json::json!([267, 128, 861, 944]));
         assert_eq!(json["placements"]["lab"]["gem"], serde_json::json!([0, 0, 1920, 44]));
         assert_eq!(json["placements"]["lab"]["font"], serde_json::json!([224, 244, 740, 757]));
     }
@@ -3172,6 +3185,43 @@ mod tests {
 
     fn shifted(rect: [i32; 4], dx: i32, dy: i32) -> [i32; 4] {
         [rect[0] + dx, rect[1] + dy, rect[2], rect[3]]
+    }
+
+    /// The Faustus exchange panel (POE-477): measured at 1920x1080 fullscreen as
+    /// (240, 115)-(1015, 965), i.e. x/y/w/h [240, 115, 775, 850], anchored to the
+    /// client's left edge and top.
+    mod exchange_panel {
+        use super::*;
+
+        fn client_1080p(client: [i32; 4]) -> ScreenSlice {
+            ScreenSlice { width: 1920, height: 1080, ui_scale: 0.9, client, ..reference_screen() }
+        }
+
+        mod keep_happy {
+            use super::*;
+
+            // keep:happy
+            #[test]
+            fn a_fullscreen_1080p_client_places_the_exchange_panel_on_the_measured_seed() {
+                let placements = placements(&client_1080p([0, 0, 1920, 1080]));
+
+                assert_eq!(placements.exchange, Some(ExchangePlacements { panel: [240, 115, 775, 850] }));
+            }
+        }
+
+        mod keep_critical {
+            use super::*;
+
+            // keep:critical — silent: a panel placed from the capture's corner
+            // instead of the windowed client's crops the reader's header, row and
+            // name boxes off the wrong pixels, and a misread fills a wrong trade.
+            #[test]
+            fn a_windowed_client_moves_the_exchange_panel_by_its_left_top_origin() {
+                let placements = placements(&client_1080p([120, 40, 1600, 900]));
+
+                assert_eq!(placements.exchange, Some(ExchangePlacements { panel: [360, 155, 775, 850] }));
+            }
+        }
     }
 
     mod keep_happy {

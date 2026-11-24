@@ -21,6 +21,7 @@ const NOW = new Date(1_700_000_000_000 + 2 * 60 * 60 * 1000);
 const placements: Placements = {
 	temple: { entranceOrigin: [960, 713] },
 	merc: { panel: [698, 615, 555, 477] },
+	exchange: { panel: [240, 115, 775, 850] },
 	lab: {
 		gem: [30, 45, 550, 75],
 		font: [460, 270, 530, 350],

@@ -729,6 +729,18 @@ pub fn preprocess_for_ocr_fast(img: &image::DynamicImage) -> image::DynamicImage
     preprocess_with(img, image::imageops::FilterType::Triangle)
 }
 
+/// The exchange-row preparation (POE-477): luma, contrast stretch, Lanczos3
+/// 3x, inverted to dark text on white, framed by a 40 px white pad, clamped to
+/// the OCR engine's size limit.
+pub fn preprocess_for_ocr_rows(img: &image::DynamicImage) -> image::DynamicImage {
+    preprocess_for_ocr_rows_within(img, crate::ocr::max_image_dimension())
+}
+
+/// [`preprocess_for_ocr_rows`] under an explicit engine limit, padding included.
+pub fn preprocess_for_ocr_rows_within(img: &image::DynamicImage, _limit: Option<u32>) -> image::DynamicImage {
+    img.clone()
+}
+
 fn preprocess_with(
     img: &image::DynamicImage,
     filter: image::imageops::FilterType,
@@ -856,6 +868,90 @@ mod tests {
         fn a_client_left_of_the_captured_monitor_falls_back_to_the_whole_capture() {
             let client = client_in_capture(Some([100, 90, 1600, 900]), (1920, 0), (1920, 1080));
             assert_eq!(client, WHOLE);
+        }
+
+        /// Exchange row prep (POE-477). Silent consequence if any of these broke:
+        /// the measured inverted 3x padded prep is what made the top row and its
+        /// stock readable; the shared 2x prep read only `1` off the same row, so a
+        /// drifted prep hands OCR an image it misreads into a plausible wrong ratio.
+        mod row_prep {
+            use super::super::super::preprocess_for_ocr_rows_within;
+            use image::{imageops::FilterType, DynamicImage, GrayImage, ImageBuffer, Luma};
+
+            const PAD: u32 = 40;
+
+            /// Light text (120) on the dark panel field (40): a centred block, so
+            /// the crop has both a glyph interior and a background far from it.
+            fn light_text_on_dark(w: u32, h: u32) -> DynamicImage {
+                DynamicImage::ImageLuma8(ImageBuffer::from_fn(w, h, |x, y| {
+                    let inside = x >= w / 4 && x < 3 * w / 4 && y >= h / 4 && y < 3 * h / 4;
+                    Luma([if inside { 120 } else { 40 }])
+                }))
+            }
+
+            // keep:critical
+            #[test]
+            fn row_prep_is_the_3x_crop_framed_by_a_40_px_white_border() {
+                let out = preprocess_for_ocr_rows_within(&light_text_on_dark(30, 10), None).to_luma8();
+
+                assert_eq!(out.dimensions(), (30 * 3 + 2 * PAD, 10 * 3 + 2 * PAD));
+                let dark_border: Vec<(u32, u32, u8)> = out
+                    .enumerate_pixels()
+                    .filter(|(x, y, _)| *x < PAD || *y < PAD || *x >= PAD + 90 || *y >= PAD + 30)
+                    .filter(|(_, _, p)| p.0[0] != 255)
+                    .map(|(x, y, p)| (x, y, p.0[0]))
+                    .take(5)
+                    .collect();
+                assert!(dark_border.is_empty(), "border pixels that are not white: {dark_border:?}");
+            }
+
+            // keep:critical
+            #[test]
+            fn row_prep_turns_light_text_on_dark_into_a_dark_lanczos_3x_glyph_on_white() {
+                let (w, h) = (30, 10);
+                // The measured order: stretch 40..120 to 0..255, Lanczos3 to 3x, invert.
+                let source = light_text_on_dark(w, h).to_luma8();
+                let stretched: GrayImage = ImageBuffer::from_fn(w, h, |x, y| {
+                    Luma([(u32::from(source.get_pixel(x, y).0[0] - 40) * 255 / 80) as u8])
+                });
+                let mut expected = image::imageops::resize(&stretched, w * 3, h * 3, FilterType::Lanczos3);
+                for p in expected.pixels_mut() {
+                    p.0[0] = 255 - p.0[0];
+                }
+
+                let out = preprocess_for_ocr_rows_within(&light_text_on_dark(w, h), None).to_luma8();
+
+                assert_eq!(out.dimensions(), (w * 3 + 2 * PAD, h * 3 + 2 * PAD));
+                let off: Vec<(u32, u32, u8, u8)> = expected
+                    .enumerate_pixels()
+                    .map(|(x, y, e)| (x, y, e.0[0], out.get_pixel(x + PAD, y + PAD).0[0]))
+                    .filter(|(_, _, e, got)| e.abs_diff(*got) > 1)
+                    .take(5)
+                    .collect();
+                assert!(off.is_empty(), "interior (x, y, expected, got) off by more than 1: {off:?}");
+            }
+
+            // keep:critical
+            #[test]
+            fn row_prep_fits_its_padded_longer_side_within_the_ocr_limit() {
+                let cases = [
+                    // 3x + 80 = 12080 > 10000: the inner 3x clamps to 9920 / 4000 = 2.48,
+                    // so 30 rows become 74 and the padded width lands on the limit.
+                    (4000, 30, Some(10_000), (10_000, 74 + 2 * PAD)),
+                    // 3x + 80 = 9998 fits: the full 3x stays.
+                    (3306, 30, Some(10_000), (9_998, 90 + 2 * PAD)),
+                    // No known limit: the full 3x.
+                    (4000, 30, None, (12_080, 90 + 2 * PAD)),
+                ];
+                let mismatches: Vec<String> = cases
+                    .iter()
+                    .filter_map(|&(w, h, limit, want)| {
+                        let got = preprocess_for_ocr_rows_within(&light_text_on_dark(w, h), limit).to_luma8().dimensions();
+                        (got != want).then(|| format!("{w}x{h} under {limit:?}: expected {want:?}, got {got:?}"))
+                    })
+                    .collect();
+                assert!(mismatches.is_empty(), "{mismatches:#?}");
+            }
         }
     }
 
