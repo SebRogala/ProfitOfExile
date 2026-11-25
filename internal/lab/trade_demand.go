@@ -12,8 +12,7 @@ import (
 	"profitofexile/internal/price/tier"
 )
 
-// BuildTradeDemand retains actual eligible snapshot markets except named FLOOR
-// tiers. Untiered markets remain eligible, including those without usable prices.
+// BuildTradeDemand applies the demand-eligibility rule in docs/TRADE-LIFECYCLE.md.
 func BuildTradeDemand(scope league.Scope, snapshotTime time.Time, gems []GemPrice) []book.Demand {
 	variants := FontTradeVariants()
 	rows := make(map[resolve.Key]GemPrice)
@@ -72,7 +71,8 @@ func BuildTradeDemand(scope league.Scope, snapshotTime time.Time, gems []GemPric
 	classification := ComputeGemClassification(classificationGems)
 	demand := make([]book.Demand, 0, len(rows))
 	for key, g := range rows {
-		if classification.Gems[GemClassificationKey{Name: g.Name, Variant: g.Variant}].Tier == tier.Floor {
+		classified := classification.Gems[GemClassificationKey{Name: g.Name, Variant: g.Variant}]
+		if classified.Tier == tier.Floor && !classified.LowConfidence {
 			continue
 		}
 		probability := probabilities[key]
