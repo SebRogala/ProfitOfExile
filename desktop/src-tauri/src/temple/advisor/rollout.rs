@@ -804,14 +804,14 @@ mod tests {
         // not end the temple. Under Consolidation option 2 an upgrade lifts the
         // T1 Hybridisation Chamber line on D1 one tier per visit, so it needs a
         // visit in each of two maps to reach T3; every other drop slot is
-        // already T3. Not the Cradle line: a Cradle kill lands T3 on the first
-        // visit and would never need the second map.
+        // already T3. The line is a priced room, not a target: the Rush keeps
+        // its Cradle target, and a Cradle kill lands T3 on the first visit and
+        // would never need the second map.
         #[test]
         fn a_map_whose_drop_pool_runs_out_hands_the_budget_to_the_next_map() {
             let hybridisation = Line::named("hybridisation_chamber");
             let mut profile = rush();
-            profile.room_values.insert(hybridisation.clone(), [0.0, 0.0, 9.0]);
-            profile.mode_rule = ModeRule::LinesConnected(vec![hybridisation]);
+            profile.room_values.insert(hybridisation, [0.0, 0.0, 9.0]);
             let valuation = Valuation::for_profile(&profile);
             let config = TempleConfig {
                 consolidation: Some(Consolidation::ResidentCarry),
