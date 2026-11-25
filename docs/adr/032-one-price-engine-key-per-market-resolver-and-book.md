@@ -8,6 +8,8 @@ uid: 2975e9d8-38b2-463e-85bf-a9a95531f6b4
 
 Accepted 2026-11-13 (POE-307; epic POE-295). Last verified 2026-11-13.
 
+Amended 2026-11-25 (POE-403), provisional: re-checked at the next league start under POE-498
+
 Supersedes [ADR-027](027-trade-is-the-primary-gem-price-poe-ninja-is-the-fallback.md)
 Decision 1 (one shared loader) and Decision 3 (trade usable for 24 h), and the
 freshness weights of [ADR-007](007-v3-hybrid-analysis-unified-pipeline-with-trade-enriched-features.md),
@@ -67,16 +69,10 @@ is comparable and is the only market identity. `GemKey` strips a trailing
   `Policy.ThinSample`;
 - `disagreement` flags a trade price whose max/min ratio to ninja exceeds
   k = 3×, or 2× when the ninja sample is thin (POE-310 decision 2026-10-25);
-- `stale-evidence` flags trade older than `Policy.MaxRevisitAge` (0 = off
-  until POE-309 sets it); the trade price still stands;
+- `stale-evidence` flags trade older than `Policy.MaxRevisitAge`, set to
+  `GemTradeMaxRevisitAge` (6 h, POE-309) in `internal/lab/price_policy.go`;
+  the trade price still stands;
 - the price is the observed price, never scaled by age or confidence (L9).
-
-ADR-027 Decision 4 carries forward as amended by POE-295 L4: a
-never-checked gem is priced from poe.ninja, keeps its confidence flags
-(`never-checked`, and `thin-sample` when thin), and stays eligible for TOP
-detection, tier boundaries and Font EV, so a league wipe does not empty them.
-This is the rule for the consumer switch (POE-310); today's analyzers still
-follow ADR-027 Decision 4 unchanged.
 
 Observations carry native amounts only (`Money{Amount, Currency}`), never a
 converted chaos value (L13). Divine converts at the `Rate` passed at resolve
@@ -86,6 +82,58 @@ positive rate, and any other currency, is not convertible.
 `internal/trade/testdata/trade-price-vectors.json` is the one median
 definition: Go trade, the resolver and Rust `signals.rs` all test against it,
 including the even-count rounding to two decimals.
+
+### Evidence gate
+
+Accepted provisional amendment, 2026-11-25 (POE-403; Desk
+poe310-chain-1120). This subsection is the normative evidence-gate home.
+The rules below describe accepted behavior awaiting implementation in
+POE-404 and POE-405, not current analyzer behavior. The planned grade
+package is `internal/price/evidence`, with values in caller policy
+`lab.GemEvidencePolicy()`. The resolver/book consumer switch remains in
+POE-310. Trade-demand eligibility lives in
+[Trade and Market Data Lifecycles](../TRADE-LIFECYCLE.md), to be amended
+by the sibling code work.
+
+Grade each market key on the source that priced it:
+
+- **SOLID** — trade requires at least 3 convertible in-market listings
+  and at least 2 sellers. Use lookup-level `unique_accounts` provisionally;
+  re-check the seller basis at league start (Desk poe403-seller-basis-1125).
+  Ninja requires `sample_count > 5` and at least 3 listings. An unknown
+  sample fails the floor. `resolve.isThin` reads an unknown sample as not
+  thin on purpose; the gate reads it as not SOLID (POE-404 plan
+  Coordinator item 1a).
+- **THIN** — priced but not SOLID.
+- **NONE** — no price.
+
+Adopt the sold-through hold (Desk poe403-smite-hold-1125): a ninja key
+that failed the floor stays SOLID when it was SOLID by the floor (never
+by a hold) within 24 h, and its price is within 2x of that observation.
+The hold covers every ninja-priced key and reads `gem_snapshots` over
+`[asOf-24h, asOf]` (POE-404 plan Coordinator item 1b). Holds do not chain.
+The prod-to-local backfill test is a POE-404 pre-landing gate, outside
+this amendment's documentation work.
+
+A non-SOLID key is gated out of tier boundaries, TOP detection and Font
+EV, including Dedication and Double-corrupt (Desk poe403-gate-scope-1125).
+The key retains its row, price and flag and counts in the Font pool.
+
+Coverage is SOLID pool gems at any price divided by the colour's full
+pool. Unpriced and THIN gems count as uncovered. The provisional coverage
+floor share is 0.25 (Desk poe403-font-coverage-1125). An under-covered cell
+serves no EV and is never BEST. Missing EV remains missing, never zero,
+in server and client BEST computations. This withholds a value under
+[ADR-018](018-flags-mark-they-never-order.md)'s missing-key arithmetic
+rather than ordering by a flag. POE-405 must close the client zero
+fallback, server partial colour sums and any displayed-EV/coverage-flag
+mismatch. Reopen the owner decision if POE-405 cannot satisfy that
+condition.
+
+In the Covens BLUE 20/20 example from 2026-11-14 (POE-403), 527c/1 listing,
+170c/2 listings and 35c/1 listing, all samples <= 5 per the ticket, are
+THIN. There are 0 of 88 SOLID, so the accepted coverage cell is
+`0 of 88 priced`, with no EV and no BEST, replacing 51.5c.
 
 ### Adapters own their stores
 
@@ -155,6 +203,8 @@ The listing count N = 3, the thin sample count ≤ 5 and k = 3× / 2× are
 fixed values the owner locked. They are accepted exceptions to the AGENTS.md rule
 "Absolute cutoffs on price or listing count are suspect" and live in caller-owned policy, not in
 the resolver.
+
+The evidence floors and the Font coverage share in § Evidence gate are owner-locked on the same terms.
 
 ## Consequences
 
