@@ -764,3 +764,47 @@ func unpricedLensBody(t *testing.T, got map[string]any) any {
 		"evCheapest": nil,
 	}
 }
+
+// keep:happy — ruled acceptance: a warm BLUE 20/20 row serves its
+// low-confidence gems with name, chaos and listings.
+func TestKeepHappy_FontAnalysisServesLowConfidenceGems(t *testing.T) {
+	at := time.Date(2026, 11, 16, 20, 0, 0, 0, time.UTC)
+	lowConf := []lab.LowConfidenceGemInfo{
+		{Name: "Blue Thin A", Chaos: 527, Listings: 1},
+		{Name: "Blue Thin B", Chaos: 170, Listings: 2},
+		{Name: "Blue Thin C", Chaos: 35, Listings: 1},
+	}
+	c := lab.NewCache(corpusScope)
+	c.For(corpusScope).SetFont(lab.FontAnalysis{
+		Safe: []lab.FontResult{{Time: at, Color: "BLUE", Variant: "20/20", Pool: 11, PricedGems: 11, LiquidityRisk: "HIGH", LowConfidenceGems: lowConf}},
+	})
+
+	w := serveWithoutRepository(t, FontAnalysis(nil, c, nil, corpusScope), "/api/analysis/font?variant=20/20")
+
+	var body struct {
+		Safe []struct {
+			Color             string `json:"color"`
+			Variant           string `json:"variant"`
+			LowConfidenceGems []struct {
+				Name     string  `json:"name"`
+				Chaos    float64 `json:"chaos"`
+				Listings int     `json:"listings"`
+			} `json:"lowConfidenceGems"`
+		} `json:"safe"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Safe) != 1 || body.Safe[0].Color != "BLUE" || body.Safe[0].Variant != "20/20" {
+		t.Fatalf("safe rows = %+v, want the one BLUE 20/20 row", body.Safe)
+	}
+	got := body.Safe[0].LowConfidenceGems
+	if len(got) != len(lowConf) {
+		t.Fatalf("lowConfidenceGems = %+v, want %+v", got, lowConf)
+	}
+	for i, want := range lowConf {
+		if got[i].Name != want.Name || got[i].Chaos != want.Chaos || got[i].Listings != want.Listings {
+			t.Errorf("lowConfidenceGems[%d] = %+v, want %+v", i, got[i], want)
+		}
+	}
+}
