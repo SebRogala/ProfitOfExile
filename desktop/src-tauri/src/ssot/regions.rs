@@ -863,11 +863,28 @@ mod tests {
             LabFontClippedTo([i32; 4]),
             TempleUnread,
             Unread(RegionKey),
+            Read(RegionKey),
+        }
+
+        /// The serialized `region_states` of a set where only `key` is set
+        /// (`state`) and the other four regions are null.
+        fn states_with(key: &str, state: &str) -> serde_json::Value {
+            let mut states = serde_json::json!({
+                "lab_gem": "unset",
+                "lab_font": "unset",
+                "lab_gem_slots": "unset",
+                "temple_panel": "unset",
+                "merc_panel": "unset",
+            });
+            states[key] = serde_json::json!(state);
+            states
         }
 
         /// Silent consequence: a crop past the image edge, or a scale derived
         /// from a strip clipped at the edge, reads the wrong pixels on every
-        /// press with nothing on screen to say so.
+        /// press with nothing on screen to say so. The read state is what the
+        /// Settings rows label: a region labelled read but skipped, or skipped
+        /// but labelled read, misleads the player just as silently.
         #[test]
         fn a_set_saved_on_3440x1440_clips_free_crops_and_skips_scale_bearing_rects_on_a_2560x1440_capture() {
             let slice = whole_capture_2560x1440();
@@ -876,21 +893,51 @@ mod tests {
                     "Font crossing x = 2560 is cut at the edge",
                     ManualRegions { lab_font: Some([1820, 293, 888, 908]), ..unset_on(SET_ON_3440) },
                     Expect::LabFontClippedTo([1820, 293, 740, 908]),
+                    states_with("lab_font", "clipped"),
                 ),
                 (
                     "a temple panel wholly past x = 2560 is not read",
                     ManualRegions { temple_panel: Some([2600, 300, 544, 454]), ..unset_on(SET_ON_3440) },
                     Expect::TempleUnread,
+                    states_with("temple_panel", "past-edge"),
                 ),
                 (
                     "a slot strip crossing x = 2560 is not read",
                     ManualRegions { lab_gem_slots: Some([2400, 497, 328, 64]), ..unset_on(SET_ON_3440) },
                     Expect::Unread(RegionKey::LabGemSlots),
+                    states_with("lab_gem_slots", "past-edge"),
+                ),
+                (
+                    "a Font wholly past x = 2560 is past the edge, not clipped",
+                    ManualRegions { lab_font: Some([2600, 293, 888, 908]), ..unset_on(SET_ON_3440) },
+                    Expect::Unread(RegionKey::LabFont),
+                    states_with("lab_font", "past-edge"),
+                ),
+                (
+                    "a contained slot strip whose derived slots end at y = 1453 is past the edge",
+                    ManualRegions { lab_gem_slots: Some([100, 1400, 273, 30]), ..unset_on(SET_ON_3440) },
+                    Expect::Unread(RegionKey::LabGemSlots),
+                    states_with("lab_gem_slots", "past-edge"),
+                ),
+                (
+                    "a merc panel inside the capture is read",
+                    ManualRegions { merc_panel: Some([1406, 738, 666, 572]), ..unset_on(SET_ON_3440) },
+                    Expect::Read(RegionKey::MercPanel),
+                    states_with("merc_panel", "read"),
                 ),
             ];
 
-            for (case, regions, expect) in cases {
+            for (case, regions, expect, states) in cases {
                 let resolved = resolve(Some(&slice), &manual(regions), Some((2560, 1440)));
+                assert_eq!(serde_json::to_value(&resolved.region_states).unwrap(), states, "{case}: region states");
+                let unread: std::collections::BTreeSet<String> = resolved.unread.iter()
+                    .map(|key| serde_json::to_value(key).unwrap().as_str().unwrap().to_string())
+                    .collect();
+                let past_edge_or_unset: std::collections::BTreeSet<String> = states.as_object().unwrap().iter()
+                    .filter(|(_, state)| *state == "past-edge" || *state == "unset")
+                    .map(|(key, _)| key.clone())
+                    .collect();
+                assert_eq!(unread, past_edge_or_unset, "{case}: unread is exactly the past-edge and unset regions");
                 match expect {
                     Expect::LabFontClippedTo(rect) => {
                         assert_eq!(resolved.placements.lab.font, rect, "{case}");
@@ -899,6 +946,9 @@ mod tests {
                     Expect::TempleUnread => assert_eq!(resolved.temple, None, "{case}"),
                     Expect::Unread(key) => {
                         assert!(resolved.unread.contains(&key), "{case}: unread {:?}", resolved.unread)
+                    }
+                    Expect::Read(key) => {
+                        assert!(!resolved.unread.contains(&key), "{case}: unread {:?}", resolved.unread)
                     }
                 }
             }

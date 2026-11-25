@@ -174,7 +174,12 @@ describe('OCR preview request seam', () => {
 	it('tears down the live preview before the next fetch and window creation', async () => {
 		const harness = makeHarness(true);
 		const firstRow = row('lab.gem', [10, 20, 300, 400]);
-		const secondRow = row('lab.font', [30, 40, 500, 600]);
+		// The native Manual row's wire shape (lib.rs OcrRectView.region_states).
+		const secondRow: OcrRectView = {
+			...row('lab.font', [30, 40, 500, 600]),
+			source: 'manual',
+			regionStates: { lab_font: 'clipped', lab_gem_slots: 'past-edge' }
+		};
 		const fetchRects = vi.fn()
 			.mockImplementationOnce(async () => {
 				harness.events.push('fetch:first');

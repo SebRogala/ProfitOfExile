@@ -2108,6 +2108,10 @@ mod tests {
         assert_eq!(font_view.rect, Some([298, 220, 666, 681]));
         assert_eq!(gem_view.source, "seed");
         assert_eq!(font_view.source, "seed");
+        let wire = serde_json::to_value(&rects).unwrap();
+        for row in wire.as_array().unwrap() {
+            assert!(row.get("regionStates").is_none(), "Auto row omits regionStates: {row}");
+        }
     }
 
     #[test]
@@ -2166,6 +2170,21 @@ mod tests {
                     None,
                 ),
                 "rows at scale 1.2"
+            );
+            let wire = serde_json::to_value(&rects).unwrap();
+            let states: Vec<(String, serde_json::Value)> = wire.as_array().unwrap().iter()
+                .map(|row| (row["key"].as_str().unwrap().to_string(), row["regionStates"].clone()))
+                .collect();
+            assert_eq!(
+                states,
+                vec![
+                    ("lab.gem".to_string(), serde_json::json!({ "lab_gem": "unset" })),
+                    ("lab.font".to_string(), serde_json::json!({ "lab_font": "unset", "lab_gem_slots": "unset" })),
+                    ("temple.panel".to_string(), serde_json::json!({ "temple_panel": "unset" })),
+                    ("temple.remaining".to_string(), serde_json::json!({ "temple_panel": "unset" })),
+                    ("merc.panel".to_string(), serde_json::json!({ "merc_panel": "read" })),
+                ],
+                "each Manual row carries its region's resolver state"
             );
         }
     }
