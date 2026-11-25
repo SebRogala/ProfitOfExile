@@ -56,11 +56,33 @@ fn probe_font_frame(frame: &Capture, region: [i32; 4],
     Ok((panel.font_active && !panel.options.is_empty()).then_some(FontRecognition { lines, panel }))
 }
 
+/// Run a reader's probe on a screen slot that matches `frame` (POE-495): a
+/// stale slot is dropped here and an empty one seeded by the probe's
+/// [`seed_empty_screen`], so placements follow this capture's client rather
+/// than the assumed 1080p one. Emits the SSOT when the probe seeded the slot.
+pub(super) fn probe_on_reconciled_screen<R>(app: &AppHandle, frame: &Capture, probe: impl FnOnce(&AppState) -> R) -> R {
+    crate::ssot::drop_if_mismatched(app, (frame.image.width(), frame.image.height()), frame.origin, frame.client);
+    let state = app.state::<AppState>();
+    let unmeasured = state.screen.lock().unwrap_or_else(|e| e.into_inner()).is_none();
+    let found = probe(&state);
+    let seeded = unmeasured && state.screen.lock().unwrap_or_else(|e| e.into_inner()).is_some();
+    if seeded { crate::ssot::emit_ssot(app); }
+    found
+}
+
+/// Seed an empty screen slot from the reader's own capture; a measured slot
+/// is left to its owner.
+pub(super) fn seed_empty_screen(state: &AppState, frame: &Capture) {
+    let mut slot = state.screen.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.is_none() { crate::ssot::record_screen(&mut slot, crate::ssot::screen_from_capture(frame)); }
+}
+
 impl PendingFontRead {
     fn probe_in(&mut self, frame: &Capture, state: &AppState,
         recognize: impl FnOnce(&image::DynamicImage) -> Result<Vec<String>, String>) -> Result<bool, String> {
         if armed_token(&state.lab_scan) != Some(self.token)
             || !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return Ok(false); }
+        seed_empty_screen(state, frame);
         let resolved = crate::ssot::regions::current(state, Some((frame.image.width(), frame.image.height())));
         if resolved.unread.contains(&crate::ssot::regions::RegionKey::LabFont) { return Ok(false); }
         self.recognition = probe_font_frame(frame, resolved.placements.lab.font, recognize)?;
@@ -70,7 +92,7 @@ impl PendingFontRead {
 
 impl PendingRead<AppHandle> for PendingFontRead {
     fn probe(&mut self, frame: &Arc<Capture>, app: &AppHandle) -> Result<bool, String> {
-        self.probe_in(frame, &app.state::<AppState>(), crate::ocr::recognize_text)
+        probe_on_reconciled_screen(app, frame, |state| self.probe_in(frame, state, crate::ocr::recognize_text))
     }
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, app: &AppHandle) {
         if frame.is_err() { return; }

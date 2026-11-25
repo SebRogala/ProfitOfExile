@@ -56,6 +56,7 @@ struct PendingGemRead {
 impl PendingGemRead {
     fn probe_in(&mut self, frame: &Capture, state: &AppState) -> bool {
         if !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return false; }
+        super::font_reader::seed_empty_screen(state, frame);
         let resolved = crate::ssot::regions::current(state, Some((frame.image.width(), frame.image.height())));
         if resolved.unread.contains(&crate::ssot::regions::RegionKey::LabGemSlots) { return false; }
         let lab = resolved.placements.lab;
@@ -70,7 +71,7 @@ impl PendingGemRead {
 
 impl PendingRead<AppHandle> for PendingGemRead {
     fn probe(&mut self, frame: &Arc<Capture>, app: &AppHandle) -> Result<bool, String> {
-        Ok(self.probe_in(frame, &app.state::<AppState>()))
+        Ok(super::font_reader::probe_on_reconciled_screen(app, frame, |state| self.probe_in(frame, state)))
     }
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, app: &AppHandle) {
         let Ok(frame) = frame else { return; };
