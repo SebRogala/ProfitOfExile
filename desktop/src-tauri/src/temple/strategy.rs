@@ -36,20 +36,6 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Chance that killing a non-resident architect grants a *double* tier.
-///
-/// Resource Reallocation (40%) plus Incursion Upgrade Chance (10%). Both are
-/// **assumed taken and are deliberately not configurable** — Sebastian:
-/// *"without those, don't even run the farming strategy"*.
-///
-/// Two limits are part of the constant's meaning:
-///
-/// - it applies to **`upgrade` only, never to `change`** — both nodes read
-///   "killing non-resident Architects", and non-resident is the upgrade side,
-///   while Contested Development powers `change` with a flat +1 and no roll;
-/// - it never produces **0 → 2**. A tier-0 room has no line to upgrade.
-pub const DOUBLE_TIER_CHANCE: f64 = 0.50;
-
 // --------------------------------------------------------------- room line --
 
 /// Canonical key of the corruption line (Corruption Chamber → Catalyst of

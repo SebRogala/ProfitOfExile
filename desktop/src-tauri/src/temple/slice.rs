@@ -1,5 +1,5 @@
 //! The `temple` SSOT slice and the pure projection that fills it (POE-171).
-//! size-gate: intrinsic — One public Temple projection owns its private serializers; this change only passes tier context to its existing line projection.
+//! size-gate: intrinsic — One public Temple projection owns its private serializers; POE-415 threads config through existing offer resolution without adding projection logic.
 //!
 //! Everything in this file is a **wire type plus the pure function that builds
 //! it**: a [`reader::TempleLayout`], the per-plate [`panel::RoomReading`]s, the
@@ -301,11 +301,10 @@ pub struct OfferView {
     pub kind: String,
     /// What the panel printed. Kept because it is what the player sees.
     pub printed_target: String,
-    /// What the kill actually builds — `None` when the printed name did not
-    /// resolve. **Not** the printed name (POE-169: Contested Development turns
-    /// `change` into `currentTier + 1` of the named line).
+    /// What the kill builds through [`super::facts::landing_tier`], or
+    /// `None` when the read cannot resolve it.
     pub display_name: Option<String>,
-    /// The tier the kill guarantees. An `upgrade` also rolls one more at 50%.
+    /// The tier resolved by [`super::facts::landing_tier`].
     pub built_tier: Option<u8>,
     /// Vertolka's tier and rank for the LINE this kill builds into, e.g.
     /// `"A1"` or `"C1"` (2026-10-17 matrix). The ranking is the tier-3
@@ -994,8 +993,8 @@ pub struct ReadResult<'a> {
     /// which is what CLEARS the field on the slice.
     pub read_notice: Option<String>,
     pub advice: Option<&'a Advice>,
-    /// The config flags this read was ranked under — echoed onto the slice, not
-    /// used by the projection. Carried here rather than read from state because
+    /// The config this read was ranked under, also used to resolve its offers.
+    /// Carried here rather than read from state because
     /// `project` is pure and the whole slice is written in one replace: a field
     /// the projection does not set is a field every read would blank.
     pub config: TempleConfig,
@@ -1129,7 +1128,7 @@ fn layout_view(read: &ReadResult<'_>) -> LayoutView {
 fn is_cradle(identity: Option<RoomIdentity>) -> bool {
     matches!(
         identity,
-        Some(RoomIdentity::Room { line, tier: Tier::T3 }) if line.key() == "throne_of_atziri"
+        Some(RoomIdentity::Room { line, tier: Tier::T3 }) if line.key() == rooms::CRADLE_LINE_KEY
     )
 }
 
@@ -1189,11 +1188,9 @@ fn diamond_view(layout: &TempleLayout, current: Slot) -> DiamondView {
 ///
 /// # `None` is not tier 0
 ///
-/// A filler, the Entrance and the Apex are all genuinely tier 0, and an offer
-/// taken there really does build tier 1. `None` is the different fact that
-/// *neither source named the room*, and [`rooms::resolve_offer_for`] refuses to
-/// do Contested Development's arithmetic against it rather than printing a room
-/// the kill will not build.
+/// A filler, the Entrance and the Apex are genuinely tier 0. `None` means
+/// neither source named the room. [`super::facts::landing_tier`] determines
+/// whether an unread tier prevents resolving the offer.
 pub fn current_identity(
     current: Option<Slot>,
     identities: &[Option<RoomIdentity>; 13],
@@ -1320,8 +1317,9 @@ fn offer_view(
     offer: &ArchitectOffer,
     current_tier: Option<Tier>,
     valuation: &Valued,
+    config: &TempleConfig,
 ) -> OfferView {
-    let resolved = match rooms::resolve_offer_for(&offer.printed_target, offer.kind, current_tier) {
+    let resolved = match rooms::resolve_offer_for(&offer.printed_target, offer.kind, current_tier, config.played_consolidation()) {
         rooms::OfferResolution::Built(resolved) => Some(resolved),
         // Both failures publish the printed target with no resolved room: the
         // page has the architect's own wording and nothing invented on top of
@@ -1454,7 +1452,7 @@ fn panel_view(read: &ReadResult<'_>) -> PanelView {
             .architects
             .iter()
             .enumerate()
-            .map(|(index, offer)| offer_view(index, offer, tier, read.valuation))
+            .map(|(index, offer)| offer_view(index, offer, tier, read.valuation, &read.config))
             .collect(),
         incursions_remaining: read.panel.incursions_remaining,
     }
@@ -2001,8 +1999,7 @@ mod tests {
         }
     }
 
-    /// Option 2 (`ResidentCarry`): the one option whose `change` reads the
-    /// current tier, landing it at `min(3, current + 1)`.
+    /// Option 2 (`ResidentCarry`); landing uses `facts::landing_tier`.
     fn option_two() -> TempleConfig {
         played(Some(crate::temple::strategy::Consolidation::ResidentCarry))
     }
@@ -2957,7 +2954,7 @@ mod tests {
     #[test]
     fn a_resolved_offer_carries_the_line_bonus_ladders() {
         let input = offer("Quipolatl", "Chamber of Iron", OfferKind::Upgrade);
-        let view = offer_view(0, &input, None, &valued());
+        let view = offer_view(0, &input, None, &valued(), &TempleConfig::default());
         let line = view.line.expect("a resolved offer carries line facts");
 
         assert_eq!(line.rarity_pct, Some([8.0, 12.0, 16.0]));
@@ -2966,7 +2963,7 @@ mod tests {
     #[test]
     fn a_line_with_no_stated_bonus_publishes_none() {
         let input = offer("Quipolatl", "Museum of Artefacts", OfferKind::Upgrade);
-        let view = offer_view(0, &input, None, &valued());
+        let view = offer_view(0, &input, None, &valued(), &TempleConfig::default());
         let line = view.line.expect("a resolved offer carries line facts");
 
         assert_eq!(line.rarity_pct, None);
@@ -2980,7 +2977,7 @@ mod tests {
     #[test]
     fn a_line_view_carries_no_temple_mod_or_quantity_facts() {
         let input = offer("Puhuarte", "Crucible of Flame", OfferKind::Upgrade);
-        let view = offer_view(0, &input, None, &valued());
+        let view = offer_view(0, &input, None, &valued(), &TempleConfig::default());
         let line = view.line.expect("a resolved offer carries line facts");
 
         let json = serde_json::to_value(&line).expect("line view serialises");
@@ -3010,7 +3007,7 @@ mod tests {
     #[test]
     fn a_content_line_publishes_its_kind_and_the_rooms_own_prose() {
         let input = offer("Quipolatl", "Cradle of Creation", OfferKind::Upgrade);
-        let view = offer_view(0, &input, None, &valued());
+        let view = offer_view(0, &input, None, &valued(), &TempleConfig::default());
         let line = view.line.expect("a resolved offer carries line facts");
 
         assert_eq!(line.kind, LineKind::Content);
@@ -3023,7 +3020,7 @@ mod tests {
     #[test]
     fn a_chest_line_publishes_no_content_prose() {
         let input = offer("Puhuarte", "Crucible of Flame", OfferKind::Upgrade);
-        let view = offer_view(0, &input, None, &valued());
+        let view = offer_view(0, &input, None, &valued(), &TempleConfig::default());
         let line = view.line.expect("a resolved offer carries line facts");
 
         assert_eq!(line.kind, LineKind::Chest);
@@ -3033,7 +3030,7 @@ mod tests {
     #[test]
     fn an_unresolved_offer_publishes_no_line_facts() {
         let input = offer("Quipolatl", "Qwertz Chamber", OfferKind::Upgrade);
-        let view = offer_view(0, &input, None, &valued());
+        let view = offer_view(0, &input, None, &valued(), &TempleConfig::default());
 
         assert_eq!(view.line, None);
     }
@@ -3229,12 +3226,9 @@ mod tests {
         assert_eq!(choice.display_name, "Doryani's Institute");
     }
 
-    /// The same unreadable current room, but an `upgrade`: that kind prints
-    /// tier `current + 1` of the room's OWN line, so the printed name IS the
-    /// built room and the current tier is not needed at all.
-    ///
-    /// Fails if the upgrade is refused alongside the change — the whole point
-    /// of splitting the two kinds is that only one of them needs the tier.
+    /// An unread current room with an upgrade under option 1: resolution
+    /// uses `facts::current_tier_from_upgrade_print` and `facts::landing_tier`.
+    /// Fails if a readable upgrade is refused for want of the current plate.
     #[test]
     fn an_upgrade_offer_resolves_from_its_own_printed_name_with_no_current_room() {
         let (layout, rooms, panel) = screenshot_board(
@@ -3267,17 +3261,9 @@ mod tests {
     /// The same `upgrade`, but with the title RESOLVABLE: standing in Office of
     /// Cartography II with C2 unread, *"upgrade to Atlas of Worlds"*.
     ///
-    /// This is the other side of `resolve_offer_for`. The case above takes the
-    /// `current_tier == None` branch, where an upgrade answers from its own
-    /// printed name; here the title supplies tier 2, so the function DELEGATES
-    /// to `resolve_offer` and the answer comes from `min(3, current + 1)` of the
-    /// printed room's line instead. Both branches must land on Atlas of Worlds
-    /// III — an upgrade prints tier `current + 1` of the room's own line, so the
-    /// two roads lead to the same room by construction, and an implementation
-    /// where they disagree is one that got the arithmetic or the line wrong.
-    ///
-    /// Fails if the delegation branch refuses an upgrade for want of a tier it
-    /// has, or advances the wrong line.
+    /// Option 1 with a readable title uses `facts::landing_tier`, just as an
+    /// unread title does after `facts::current_tier_from_upgrade_print`.
+    /// Both reads must resolve the offered line consistently.
     #[test]
     fn an_upgrade_offer_with_a_readable_title_resolves_through_the_current_tier() {
         let (layout, rooms, panel) = screenshot_board(
@@ -4986,7 +4972,7 @@ mod tests {
     /// upgrade builds its printed tier, so each printed name exercises its own
     /// tier's description.
     fn offered_description(target: &str) -> (Option<u8>, Option<String>) {
-        let view = offer_view(0, &offer("Quipolatl", target, OfferKind::Upgrade), None, &valued());
+        let view = offer_view(0, &offer("Quipolatl", target, OfferKind::Upgrade), None, &valued(), &played(Some(crate::temple::strategy::Consolidation::ResidentCarry)));
         (view.built_tier, view.line.and_then(|line| line.content))
     }
 
@@ -5085,7 +5071,7 @@ mod tests {
                     .expect("every row is one of the 25 lines");
                 let top = line.name(Tier::T3).expect("every line has a tier-3 room");
                 let t3_offer =
-                    offer_view(0, &offer("Quipolatl", top, OfferKind::Upgrade), None, &valued());
+                    offer_view(0, &offer("Quipolatl", top, OfferKind::Upgrade), None, &valued(), &TempleConfig::default());
                 assert_eq!(t3_offer.built_tier, Some(3), "{} precondition", row.key);
                 assert_eq!(Some(&row.line), t3_offer.line.as_ref(), "{}", row.key);
                 assert!(
@@ -5254,6 +5240,7 @@ mod tests {
                             &offer("Quipolatl", target, OfferKind::Upgrade),
                             None,
                             &valued(),
+                            &played(Some(crate::temple::strategy::Consolidation::ResidentCarry)),
                         ))
                         .expect("an offer view serialises")
                     })

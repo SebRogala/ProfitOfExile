@@ -241,9 +241,8 @@ pub struct BoardState {
     ///
     /// Separate from `rooms[position].1` because that field cannot tell "tier-0
     /// filler" from "never read": both are `(None, Tier::T0)`. The distinction
-    /// is the whole of POE-229 — a filler really does take an offer to tier 1,
-    /// an unread room does not, and Contested Development's arithmetic has no
-    /// answer for the second.
+    /// matters to [`crate::temple::facts::landing_tier`], which distinguishes
+    /// an unread current tier from a known filler (POE-229).
     pub current_tier: Option<Tier>,
     /// `(title, plate)` display names when the side-panel title and the current
     /// plate both read and named different rooms. The plate is the one this

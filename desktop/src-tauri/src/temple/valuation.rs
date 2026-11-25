@@ -19,10 +19,8 @@
 //!
 //! Tiers 1 and 2 are [`Knobs::tier_fraction`] (80 % by default) of their line's
 //! tier-3 total, drivers included — epic lock L2. That is deliberately not
-//! "their own rarity bonus": what a tier-1 room is worth at *building* time is
-//! the line being present at all, because the 50 % double-tier node and the
-//! Timelines scarab act on the line, not on the tier (the scarab is inactive in
-//! 3.30, POE-377; the double-tier node alone still does).
+//! "their own rarity bonus": this values line presence during building.
+//! Kill landing rules live in [`super::facts::landing_tier`].
 //!
 //! # Unpriced terms say so rather than reading zero
 //!
@@ -145,8 +143,8 @@ use crate::AppState;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Knobs {
     /// What a tier-1 or tier-2 room is worth as a fraction of its line's tier-3
-    /// total. Epic lock L2's 80 %: line presence is what the double-tier node
-    /// and the Timelines scarab (inactive in 3.30, POE-377) act on. Clamped to `0.0..=1.0` — a tier-1 room
+    /// total. Epic lock L2's 80 % values line presence during building; landing
+    /// uses [`super::facts::landing_tier`]. Clamped to `0.0..=1.0` — a tier-1 room
     /// worth more than its own tier-3 would invert the upgrade advice — and a
     /// non-finite or negative value falls back to this default rather than to
     /// zero (see [`tier_fraction`]).

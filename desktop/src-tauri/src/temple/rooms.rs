@@ -26,9 +26,8 @@
 //!
 //! # The tier-1-name gotcha
 //!
-//! With Contested Development taken (POE-167 assumes it), the room the panel
-//! *names* is not the room that gets built. [`resolve_offer`] is the only
-//! function that should ever produce user-facing text for an architect offer.
+//! The printed room can differ from the built room. Offer resolvers call
+//! [`facts::landing_tier`] before selecting the user-facing room name.
 
 // POE-171 is that caller: `temple::run` and `temple::slice` reach this module
 // on every read, so the file-level `#![allow(dead_code)]` is gone. What is
@@ -37,7 +36,8 @@
 
 use strsim::jaro_winkler;
 
-use super::strategy::{Line, Tier};
+use super::facts;
+use super::strategy::{Consolidation, Line, Tier};
 
 // ----------------------------------------------------------------- ranking --
 
@@ -161,18 +161,6 @@ impl RoomLine {
         }
     }
 
-    fn built_name(self, tier: Tier) -> Option<&'static str> {
-        // In 3.30 every Queen-line tier builds Cradle of Creation; `name`
-        // retains legacy tier names for parsing old panels.
-        self.name(tier).map(|name| {
-            if self.key == "throne_of_atziri" {
-                self.tiers[2]
-            } else {
-                name
-            }
-        })
-    }
-
     /// Ranking of the line's tier-3 room, paired with that name on offers so
     /// it is not mistaken for the built room's tier.
     pub fn rank(self) -> RoomRank {
@@ -195,6 +183,8 @@ impl RoomLine {
 pub const ENTRANCE_NAME: &str = "Entrance";
 /// The Apex plate's name. Never a drop room, never an architect target.
 pub const APEX_NAME: &str = "Apex of Atzoatl";
+/// Persisted identity of the Cradle line; legacy names remain in `LINES`.
+pub const CRADLE_LINE_KEY: &str = "throne_of_atziri";
 
 /// The ten tier-0 fillers. They carry no line, upgrade to nothing, and an
 /// upgrade-room's random pick landing on one is simply wasted.
@@ -430,7 +420,7 @@ pub const LINES: [RoomLine; 25] = [
         },
     },
     RoomLine {
-        key: "throne_of_atziri",
+key: CRADLE_LINE_KEY,
         tiers: ["Royal Meeting Room", "Hall of Lords", "Cradle of Creation"],
         rank: RoomRank {
             tier: RankingTier::D,
@@ -855,11 +845,9 @@ pub fn parse_numeral(text: &str) -> Option<Tier> {
 /// Which architect an offer belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OfferKind {
-    /// Kill the **resident** architect. Base game: swaps to exactly the named
-    /// room. With Contested Development: `currentTier + 1` of the named
-    /// room's LINE — see [`resolve_offer`].
+    /// Kill the **resident** architect; landing uses [`facts::landing_tier`].
     Change,
-    /// Kill the **non-resident** architect: same line, `currentTier + 1`.
+    /// Kill the **non-resident** architect; landing uses [`facts::landing_tier`].
     Upgrade,
 }
 
@@ -874,47 +862,20 @@ pub struct ResolvedOffer {
     pub display_name: &'static str,
 }
 
-/// Resolve an architect's printed target into the room that will be built.
-///
-/// # Why the printed name is not the answer
-///
-/// Confirmed in the wild (TEMPLE-CORE-RULES §6d): the panel offered *"Kill to
-/// change to **Sacrificial Chamber**"* on a **tier-2** room and built **Apex of
-/// Ascension III**. Contested Development — which POE-167's
-/// [`super::strategy::DOUBLE_TIER_CHANCE`] documents as assumed taken — turns
-/// `change` into "`currentTier + 1` of the named line". Echoing the game's
-/// wording is therefore a correctness bug, not a cosmetic one.
-///
-/// # One formula for both kinds
-///
-/// `upgrade` prints tier `current + 1` of the room's own line, so
-/// `min(3, current + 1)` of the printed name's line is already the right
-/// answer; `change` needs the same arithmetic for a different reason. Both
-/// kinds go through here, which is why [`OfferKind`] is not a parameter.
-///
-/// # What this deliberately does NOT model
-///
-/// The 50% double-tier roll on `upgrade`
-/// ([`super::strategy::DOUBLE_TIER_CHANCE`]) is POE-170's: it is a
-/// *distribution*, and this function returns the deterministic floor that both
-/// kinds guarantee. A caller showing an upgrade offer must add "or tier 3 at
-/// 50%" itself.
-///
-/// # Boundaries
-///
-/// - A printed name that resolves to the Entrance, the Apex or a filler has no
-///   line, so this returns `None`. The game does not offer them.
-/// - `current_tier` 3 caps at 3. Tier-3 rooms leave the drop pool and cannot be
-///   stood in, so this is a boundary rather than a reachable case.
-/// - `current_tier` 0 yields tier 1: Contested Development's flat +1 still
-///   applies, and `0 → 2` never happens.
-pub fn resolve_offer(printed_target: &str, current_tier: Tier) -> Option<ResolvedOffer> {
+/// Resolve an architect's printed target through [`facts::landing_tier`].
+/// A line-less name cannot identify a built room.
+pub fn resolve_offer(
+    printed_target: &str,
+    kind: OfferKind,
+    current_tier: Tier,
+    option: Consolidation,
+) -> Option<ResolvedOffer> {
     let line = match_room_name(printed_target).identity()?.line()?;
-    let built = Tier::new((current_tier.get() + 1).min(Tier::MAX_VALUE))?;
+    let built = facts::landing_tier(option, Some(current_tier), kind, Some(line.key()))?;
     Some(ResolvedOffer {
         line,
         built_tier: built,
-        display_name: line.built_name(built)?,
+        display_name: line.name(built)?,
     })
 }
 
@@ -935,30 +896,16 @@ pub enum OfferResolution {
     UnknownCurrentTier,
 }
 
-/// [`resolve_offer`] for a read that may not know the current tier.
+/// Resolve a panel offer through [`facts::landing_tier`].
 ///
-/// # Why the kind matters here and nowhere else
-///
-/// With a known `current_tier` both kinds are the same `min(3, current + 1)`
-/// arithmetic and this delegates verbatim — [`OfferKind`] changes nothing.
-///
-/// Without one the two kinds part company, because only one of them prints the
-/// answer:
-///
-/// - [`OfferKind::Upgrade`] prints tier `current + 1` of the room's OWN line,
-///   so the printed name IS the built room. Its own tier is the built tier and
-///   the current tier is not needed at all. This is POE-229: standing in
-///   **Office of Cartography** with the plate unread, *"upgrade to Atlas of
-///   Worlds"* builds Atlas of Worlds III, not the tier-1 Surveyor's Study that
-///   `current_tier = 0` produced.
-/// - [`OfferKind::Change`] names a DIFFERENT line, so the built tier is a fact
-///   about the room the player is standing in and nothing in the printed text
-///   carries it. There is no answer to give, and assuming tier 1 prints a room
-///   the kill will not build.
+/// When the current room is unread, upgrades recover its tier through
+/// [`facts::current_tier_from_upgrade_print`]. Changes leave it unread;
+/// the selected rule determines whether it is needed.
 pub fn resolve_offer_for(
     printed_target: &str,
     kind: OfferKind,
     current_tier: Option<Tier>,
+    option: Consolidation,
 ) -> OfferResolution {
     let Some(identity) = match_room_name(printed_target).identity() else {
         return OfferResolution::UnknownName;
@@ -966,25 +913,26 @@ pub fn resolve_offer_for(
     let Some(line) = identity.line() else {
         return OfferResolution::UnknownName;
     };
-    if let Some(current_tier) = current_tier {
-        return match resolve_offer(printed_target, current_tier) {
-            Some(resolved) => OfferResolution::Built(resolved),
+    if let Some(current) = current_tier {
+        return match resolve_offer(printed_target, kind, current, option) {
+            Some(built) => OfferResolution::Built(built),
             None => OfferResolution::UnknownName,
         };
     }
-    match kind {
-        OfferKind::Change => OfferResolution::UnknownCurrentTier,
-        OfferKind::Upgrade => {
-            let built = identity.tier();
-            match line.built_name(built) {
-                Some(display_name) => OfferResolution::Built(ResolvedOffer {
-                    line,
-                    built_tier: built,
-                    display_name,
-                }),
-                None => OfferResolution::UnknownName,
-            }
-        }
+    let current = current_tier.or_else(|| {
+        (kind == OfferKind::Upgrade)
+            .then(|| facts::current_tier_from_upgrade_print(identity.tier()))
+    });
+    let Some(built) = facts::landing_tier(option, current, kind, Some(line.key())) else {
+        return OfferResolution::UnknownCurrentTier;
+    };
+    match line.name(built) {
+        Some(display_name) => OfferResolution::Built(ResolvedOffer {
+            line,
+            built_tier: built,
+            display_name,
+        }),
+        None => OfferResolution::UnknownName,
     }
 }
 
@@ -1325,7 +1273,7 @@ mod tests {
     // another line. An upgrade under Consolidation option 1: min(3, 2 + 2).
     #[test]
     fn an_offer_naming_grand_reactor_on_a_tier_2_room_builds_conduit_of_lightning() {
-        let got = resolve_offer("Grand Reactor", tier(2)).expect("a real offer");
+        let got = resolve_offer("Grand Reactor", OfferKind::Upgrade, tier(2), Consolidation::NonResidentExtraTier).expect("a real offer");
         assert_eq!(got.line.key(), "conduit_of_lightning");
         assert_eq!(got.built_tier, Tier::T3);
         assert_eq!(got.display_name, "Conduit of Lightning");
@@ -1335,7 +1283,7 @@ mod tests {
     // option 1: min(3, 1 + 2) builds the line's tier-3 Crucible of Flame.
     #[test]
     fn an_offer_naming_royal_forge_on_a_tier_1_room_builds_crucible_of_flame() {
-        let got = resolve_offer("Royal Forge", tier(1)).expect("a real offer");
+        let got = resolve_offer("Royal Forge", OfferKind::Upgrade, tier(1), Consolidation::NonResidentExtraTier).expect("a real offer");
         assert_eq!(got.line.key(), "crucible_of_flame");
         assert_eq!(got.built_tier, Tier::T3);
         assert_eq!(got.display_name, "Crucible of Flame");
@@ -1413,7 +1361,7 @@ mod tests {
     // (`ResidentCarry`), the one option whose change reads the current tier.
     #[test]
     fn sacrificial_chamber_offered_on_a_tier_2_room_builds_apex_of_ascension_iii() {
-        let got = resolve_offer("Sacrificial Chamber", tier(2)).expect("a real offer");
+        let got = resolve_offer("Sacrificial Chamber", OfferKind::Change, tier(2), Consolidation::ResidentCarry).expect("a real offer");
         assert_eq!(got.display_name, "Apex of Ascension");
         assert_eq!(got.built_tier, Tier::T3);
         assert_eq!(got.line.key(), "apex_of_ascension");
@@ -1429,7 +1377,7 @@ mod tests {
     // under Consolidation option 2 (`ResidentCarry`).
     #[test]
     fn shrine_of_empowerment_offered_on_a_tier_1_room_builds_sanctum_of_unity_ii() {
-        let got = resolve_offer("Shrine of Empowerment", tier(1)).expect("a real offer");
+        let got = resolve_offer("Shrine of Empowerment", OfferKind::Change, tier(1), Consolidation::ResidentCarry).expect("a real offer");
         assert_eq!(got.display_name, "Sanctum of Unity");
         assert_eq!(got.built_tier, Tier::T2);
         assert_eq!(got.line.mechanical_line(), Line::Upgrade);
@@ -1440,7 +1388,7 @@ mod tests {
     // An upgrade under Consolidation option 1: min(3, 3 + 2).
     #[test]
     fn an_offer_on_a_tier_3_room_caps_at_tier_3() {
-        let got = resolve_offer("Corruption Chamber", tier(3)).expect("a real offer");
+        let got = resolve_offer("Corruption Chamber", OfferKind::Upgrade, tier(3), Consolidation::NonResidentExtraTier).expect("a real offer");
         assert_eq!(got.built_tier, Tier::T3);
         assert_eq!(got.display_name, "Locus of Corruption");
     }
@@ -1450,7 +1398,7 @@ mod tests {
     // under Consolidation option 1, whose +2 the tier-0 row overrides.
     #[test]
     fn an_offer_on_a_tier_0_room_builds_tier_1_of_the_printed_line() {
-        let got = resolve_offer("Catalyst of Corruption", Tier::T0).expect("a real offer");
+        let got = resolve_offer("Catalyst of Corruption", OfferKind::Upgrade, Tier::T0, Consolidation::NonResidentExtraTier).expect("a real offer");
         assert_eq!(got.built_tier, Tier::T1);
         assert_eq!(
             got.display_name, "Corruption Chamber",
@@ -1463,7 +1411,7 @@ mod tests {
     // change under Consolidation option 2 (`ResidentCarry`): 1 + 1.
     #[test]
     fn a_tier_3_name_on_the_panel_still_resolves_through_its_line() {
-        let got = resolve_offer("Locus of Corruption", tier(1)).expect("a real offer");
+        let got = resolve_offer("Locus of Corruption", OfferKind::Change, tier(1), Consolidation::ResidentCarry).expect("a real offer");
         assert_eq!(got.built_tier, Tier::T2);
         assert_eq!(got.display_name, "Catalyst of Corruption");
     }
@@ -1472,17 +1420,17 @@ mod tests {
     // defaulting a missing line instead of returning None.
     #[test]
     fn an_offer_naming_a_line_less_room_resolves_to_nothing() {
-        assert_eq!(resolve_offer("Tombs", tier(1)), None);
-        assert_eq!(resolve_offer("Entrance", tier(1)), None);
-        assert_eq!(resolve_offer("Apex of Atzoatl", tier(1)), None);
-        assert_eq!(resolve_offer("Fictional Room", tier(1)), None);
+        assert_eq!(resolve_offer("Tombs", OfferKind::Change, tier(1), Consolidation::NonResidentExtraTier), None);
+        assert_eq!(resolve_offer("Entrance", OfferKind::Change, tier(1), Consolidation::NonResidentExtraTier), None);
+        assert_eq!(resolve_offer("Apex of Atzoatl", OfferKind::Change, tier(1), Consolidation::NonResidentExtraTier), None);
+        assert_eq!(resolve_offer("Fictional Room", OfferKind::Change, tier(1), Consolidation::NonResidentExtraTier), None);
     }
 
     // The panel text is OCR'd, so the offer target has to survive noise. A
     // change under Consolidation option 2 (`ResidentCarry`), as above.
     #[test]
     fn an_offer_target_read_with_noise_still_resolves() {
-        let got = resolve_offer("SacrificiaI Chamber", tier(2)).expect("a fuzzy offer");
+        let got = resolve_offer("SacrificiaI Chamber", OfferKind::Change, tier(2), Consolidation::ResidentCarry).expect("a fuzzy offer");
         assert_eq!(got.display_name, "Apex of Ascension");
     }
 
@@ -1722,6 +1670,38 @@ mod tests {
         assert_eq!(match_plate_name("Hall of Lorks", Some(Tier::T2)), Match::Unknown);
     }
 
+    mod keep_happy {
+        use super::*;
+        use crate::temple::strategy::TempleConfig;
+
+        #[test]
+        fn every_cradle_offer_builds_cradle_at_tier_three() {
+            for option in [
+                Some(Consolidation::NonResidentExtraTier),
+                Some(Consolidation::ResidentCarry),
+                Some(Consolidation::NotTaken),
+                None,
+            ] {
+                let config = TempleConfig { consolidation: option, ..TempleConfig::default() };
+                for current in [Some(Tier::T0), Some(Tier::T1), Some(Tier::T2), None] {
+                    for kind in [OfferKind::Change, OfferKind::Upgrade] {
+                        for printed in ["Cradle of Creation", "Hall of Lords"] {
+                            assert_eq!(
+                                resolve_offer_for(printed, kind, current, config.played_consolidation()),
+                                OfferResolution::Built(ResolvedOffer {
+                                    line: line_by_key(CRADLE_LINE_KEY),
+                                    built_tier: Tier::T3,
+                                    display_name: "Cradle of Creation",
+                                }),
+                                "{option:?} {current:?} {kind:?} {printed}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     mod keep_regression {
         use super::*;
 
@@ -1738,7 +1718,7 @@ mod tests {
             let throne = line_by_key("throne_of_atziri");
             let mut failures = Vec::new();
             for (current, built) in [(Tier::T1, Tier::T3), (Tier::T0, Tier::T3), (Tier::T2, Tier::T3)] {
-                let got = resolve_offer_for("Cradle of Creation", OfferKind::Change, Some(current));
+                let got = resolve_offer_for("Cradle of Creation", OfferKind::Change, Some(current), Consolidation::NonResidentExtraTier);
                 let want = OfferResolution::Built(ResolvedOffer {
                     line: throne,
                     built_tier: built,

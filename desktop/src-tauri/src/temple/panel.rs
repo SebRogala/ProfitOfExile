@@ -144,8 +144,7 @@ fn words(text: &str) -> Vec<Word<'_>> {
 ///
 /// `printed_target` is kept verbatim so a debug dump can show what the game
 /// actually said; **it is not what to show the user** — that is
-/// [`rooms::resolve_offer`]'s job, because with Contested Development the
-/// printed name is a lie about the tier.
+/// [`rooms::resolve_offer_for`]'s job, using [`super::facts::landing_tier`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArchitectOffer {
     /// Text before the first comma: `Ticaba`, `Juatalotli`, `Xipocado`.
@@ -1851,7 +1850,7 @@ mod tests {
     fn a_parsed_offer_resolves_to_the_room_that_is_actually_built() {
         let got = offer(&["Tacati, Architect of Toxins (Kill to change to Shrine of Empowerment)"]);
         assert_eq!(got.printed_target, "Shrine of Empowerment");
-        let built = super::super::rooms::resolve_offer(&got.printed_target, Tier::T1)
+        let built = super::super::rooms::resolve_offer(&got.printed_target, got.kind, Tier::T1, super::super::strategy::Consolidation::ResidentCarry)
             .expect("the upgrade line");
         assert_eq!(built.display_name, "Sanctum of Unity");
         assert_eq!(built.built_tier, Tier::T2);

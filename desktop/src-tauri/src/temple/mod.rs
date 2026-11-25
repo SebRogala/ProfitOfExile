@@ -23,6 +23,7 @@
 //!   markers on the panel's diamond, which settle the corridors POE-168 hands
 //!   back as [`reader::TempleLayout::uncertain`] ([`markers`]). Pure apart
 //!   from [`panel::SystemOcr`], the single seam that calls the engine.
+//! - [`facts`] (POE-415) — shared game rules for offer and rollout landing.
 //! - [`advisor`] (POE-170) — the board graph, the Monte-Carlo rollout and the
 //!   rule layer that ranks `(architect kill, door set)` and decides whether to
 //!   leave the map. Consumes every module above it and is pure.
@@ -154,6 +155,7 @@ pub mod anchor;
 pub mod commands;
 pub mod doors;
 pub mod drops;
+pub mod facts;
 pub mod lattice;
 pub mod market;
 pub mod markers;

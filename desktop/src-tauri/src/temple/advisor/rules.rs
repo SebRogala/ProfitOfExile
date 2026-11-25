@@ -154,9 +154,7 @@ pub struct ArchitectChoice {
     pub kind: OfferKind,
     /// The line the kill actually builds.
     pub line: Line,
-    /// The tier the kill **guarantees**. An upgrade also rolls
-    /// [`crate::temple::strategy::DOUBLE_TIER_CHANCE`] for one more; that lives
-    /// in the rollout, never in this deterministic floor.
+    /// The tier resolved by [`crate::temple::facts::landing_tier`].
     pub built_tier: Tier,
     /// The room name to show — the resolved one, never the panel's wording.
     pub display_name: &'static str,
@@ -734,7 +732,7 @@ impl WalkKey {
 /// Byte 0 is R4's carve-out **veto** — 0 when the kill would take an upgrade
 /// room's only live target out of the drop pool. It is not a tie-break: the
 /// ranking reads it above the EV ordering, because on live board 8 the rollout
-/// prefers the double-tier roll for R4's own reason and separates the two kills
+/// prefers pool removal for R4's own reason and separates the two kills
 /// past the noise band. The remaining bytes are the tie-breaks, in precedence
 /// order: advances a target line, RT, RC, then R4 or `reroll_until_favourable`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -805,6 +803,7 @@ pub fn evaluate_rules(
     keys: u8,
     profile: &StrategyProfile,
     valuation: &Valuation,
+    paired_upgrade: Option<Tier>,
 ) -> RuleVerdict {
     let mut reasons = Vec::new();
     let open = board.adjacency();
@@ -883,7 +882,7 @@ pub fn evaluate_rules(
 
     // -- the architect half -----------------------------------------------
     let architect_key =
-        architect_rules(board, position, architect, valuation, profile, &mut reasons);
+        architect_rules(board, position, architect, valuation, profile, paired_upgrade, &mut reasons);
 
     RuleVerdict {
         door: DoorKey {
@@ -1061,6 +1060,7 @@ fn architect_rules(
     architect: Option<&ArchitectChoice>,
     valuation: &Valuation,
     profile: &StrategyProfile,
+    paired_upgrade: Option<Tier>,
     reasons: &mut Vec<Reason>,
 ) -> [u8; 5] {
     // Byte 0 is the carve-out veto, so "no architect resolved" must read as
@@ -1093,12 +1093,16 @@ fn architect_rules(
         reasons.push(Reason::Rt);
     }
 
-    // RC — an adjacent, connected upgrade room supplies +1 deterministically,
-    // so `change` gets the same tier while leaving the shrine's scarce pick for
-    // something else. Tier 3 (Temple Nexus) ignores connections.
+    // RC compares the change after a shrine lift with the panel's resolved
+    // upgrade. The board may carry T0 for an unread room, so it cannot supply
+    // the reference tier. See facts::landing_tier.
     let upgrader = neighbouring_upgrader(board, position);
     if let Some(upgrader) = upgrader {
-        if architect.kind == OfferKind::Change {
+        if architect.kind == OfferKind::Change
+            && paired_upgrade.is_some_and(|upgrade| {
+                (architect.built_tier.get() + 1).min(Tier::MAX_VALUE) >= upgrade.get()
+            })
+        {
             key[3] = 1;
             reasons.push(Reason::Rc { upgrader });
         }
@@ -1107,14 +1111,6 @@ fn architect_rules(
     // R4 vs reroll_until_favourable — mutually exclusive by construction: the
     // reroll flag only speaks while no favourable line exists, which is exactly
     // when the spec hands the decision to it instead of R4.
-    //
-    // **What actually discriminates the two offers.** With Contested
-    // Development both kinds land at `currentTier + 1`, so `built_tier` is
-    // identical for both architects and cannot express R4 at all. The
-    // difference is the 50% double-tier roll, which only `upgrade` gets — so
-    // "max this room out of the pool" means *take the upgrade*, and "keep it in
-    // the pool" means *take the change*. That is also exactly the trade RC
-    // describes from the other side.
     if profile.reroll_until_favourable && !board_has_target {
         if architect.kind == OfferKind::Change {
             key[4] = 1;
@@ -1124,17 +1120,16 @@ fn architect_rules(
         // The panel budget includes this incursion: Sim::rollout_from spends
         // it before drawing again. Pool removal and its carve-out have no
         // future draw to affect at remaining <= 1 (0 also means unread).
-        // "Would this kill take the slot out of the pool?" — a guaranteed tier
-        // 3, or the `upgrade` that rolls `DOUBLE_TIER_CHANCE` for one more.
-        let leaves_pool = architect.built_tier == Tier::T3
-            || (architect.kind == OfferKind::Upgrade && board.tier(position) != Tier::T0);
+        // facts::landing_tier has already resolved whether the kill removes
+        // the slot from future draws.
+        let leaves_pool = architect.built_tier == Tier::T3;
         let carve_out = profile
             .r4_keep_upgrade_targets
             .then(|| live_upgrade_target(board, position))
             .flatten();
         match carve_out {
             // A **veto**, not a tie-break. On live board 8 the rollout prefers
-            // the double-tier roll for R4's own reason and separates the two
+            // pool removal for R4's own reason and separates the two
             // kills past the noise band, so a tie-break inside that band would
             // never fire and the advisor would recommend destroying the
             // Sanctum's only live target. A kill that builds a target line is
@@ -1284,6 +1279,7 @@ mod tests {
             keys,
             profile,
             &Valuation::for_profile(&rush()),
+            architect.map(|a| a.built_tier),
         )
     }
 
@@ -1302,6 +1298,51 @@ mod tests {
                     .collect()
             })
             .collect()
+    }
+
+    mod keep_critical {
+        use super::*;
+        use crate::temple::strategy::Consolidation;
+
+        // Silent consequence: RC ranks against an unread room's T0 stand-in
+        // and promotes a change that cannot catch the resolved upgrade.
+        #[test]
+        fn rc_compares_with_the_paired_resolved_upgrade() {
+            for (option, current, printed_upgrade, want_change, want_upgrade, want_rc) in [
+                (Consolidation::NonResidentExtraTier, None, "Armoury", Tier::T1, Tier::T3, false),
+                (Consolidation::ResidentCarry, Some(Tier::T1), "Armoury", Tier::T2, Tier::T2, true),
+            ] {
+                let mut state = board(&[(C1, "upgrade", 1)], &[(C1, D1), (D1, E1)]);
+                state.position = Some(D1);
+                state.current_tier = current;
+                if let Some(tier) = current {
+                    state.set_room(D1, Some(Line::named("chamber_of_iron")), tier);
+                }
+                let resolved = |printed, kind| match crate::temple::rooms::resolve_offer_for(
+                    printed, kind, current, option,
+                ) {
+                    crate::temple::rooms::OfferResolution::Built(built) => built,
+                    other => panic!("expected resolved offer: {other:?}"),
+                };
+                let upgrade = resolved(printed_upgrade, OfferKind::Upgrade);
+                let change = resolved("Storage Room", OfferKind::Change);
+                assert_eq!((change.built_tier, upgrade.built_tier), (want_change, want_upgrade));
+                let architect = ArchitectChoice {
+                    offer_index: 1,
+                    architect_name: "Ticaba".into(),
+                    kind: OfferKind::Change,
+                    line: change.line.mechanical_line(),
+                    built_tier: change.built_tier,
+                    display_name: change.display_name,
+                };
+                let profile = rush();
+                let valuation = Valuation::for_profile(&profile);
+                let verdict = evaluate_rules(&state, D1, Some(&architect),
+                    &BTreeSet::new(), 0, &profile, &valuation, Some(upgrade.built_tier));
+                assert_eq!(verdict.reasons.iter().any(|r| matches!(r, Reason::Rc { .. })), want_rc);
+                assert_eq!(verdict.architect.0[3], u8::from(want_rc));
+            }
+        }
     }
 
     // ------------------------------------------------------- enumeration --

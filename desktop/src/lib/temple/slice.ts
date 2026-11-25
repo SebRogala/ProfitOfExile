@@ -305,10 +305,9 @@ export interface OfferView {
 	/** What the panel printed. Kept because it is what the player sees. */
 	printedTarget: string;
 	/** What the kill actually builds — null when the printed name did not
-	 *  resolve. NOT the printed name: Contested Development turns a `change`
-	 *  into `currentTier + 1` of the named line (POE-169). */
+	 *  resolve. Landing rules: Rust temple::facts::landing_tier (POE-415). */
 	displayName: string | null;
-	/** The tier the kill guarantees. An `upgrade` also rolls one more at 50%. */
+	/** The tier resolved by Rust temple::facts::landing_tier. */
 	builtTier: number | null;
 	/** Vertolka's tier and rank for the LINE this kill builds into, as his sheet
 	 *  spells it — `"A1"`, `"C1"` (2026-10-17). It ranks the FAMILY, so a kill

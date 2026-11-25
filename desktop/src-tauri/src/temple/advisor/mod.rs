@@ -141,10 +141,8 @@ pub enum Warning {
     /// `N Incursions Remaining` was not legible, so every rollout terminates
     /// immediately and the scores are the current board's, not a forecast.
     NoBudget,
-    /// Neither the side-panel title nor the current plate named the room the
-    /// player is standing in, so a `change` offer cannot be resolved: its built
-    /// tier is `currentTier + 1` and nothing on screen carried `currentTier`
-    /// (POE-229).
+    /// Neither source named the current room, and the selected
+    /// [`crate::temple::facts::landing_tier`] rule needs its tier (POE-229).
     UnknownCurrentTier,
     /// The side-panel title and the current layout plate both read, and they
     /// named different rooms. The plate is the one used — it is positionally
@@ -299,7 +297,7 @@ pub fn advise(
         });
     }
 
-    let architects = resolve_architects(offers, board.current_tier, &mut warnings);
+    let architects = resolve_architects(offers, board.current_tier, config, &mut warnings);
     let choices: Vec<Option<ArchitectChoice>> = if architects.is_empty() {
         // "Neither target was readable" is a claim about the OCR, and it is
         // false when the targets read fine and it was the current room that did
@@ -470,6 +468,8 @@ fn score_options(
     seed: u64,
     connectable: bool,
 ) -> (Vec<Scored>, Vec<Scored>) {
+    let paired_upgrade = choices.iter().flatten()
+        .find(|a| a.kind == OfferKind::Upgrade).map(|a| a.built_tier);
     let base = Sim::from_board(board, valuation);
     let mut safe: Vec<Scored> = Vec::new();
     let mut risky: Vec<Scored> = Vec::new();
@@ -484,6 +484,7 @@ fn score_options(
                 keys,
                 profile,
                 valuation,
+                paired_upgrade,
             );
             rules::limit_r4_by_grade(&mut verdict, choices);
             let rv = rules::rv_verdict(
@@ -683,7 +684,7 @@ fn priority_architect(architect: &ArchitectChoice) -> bool {
 }
 
 fn cradle_line(line: &Line) -> bool {
-    line.key() == "throne_of_atziri"
+    line.key() == rooms::CRADLE_LINE_KEY
 }
 
 /// Whether a read values its chests in the Cradle context (POE-470 D3): a
@@ -692,9 +693,11 @@ fn cradle_line(line: &Line) -> bool {
 pub fn cradle_in_play(board: &BoardState, offers: &[ArchitectOffer]) -> bool {
     board.rooms.iter().any(|(line, tier)| {
         *tier == Tier::T3 && line.as_ref().is_some_and(cradle_line)
-    }) || resolve_architects(offers, board.current_tier, &mut Vec::new())
-        .iter()
-        .any(priority_architect)
+    }) || offers.iter().any(|offer| {
+        rooms::match_room_name(&offer.printed_target).identity()
+            .and_then(|identity| identity.line())
+            .is_some_and(|line| line.key() == rooms::CRADLE_LINE_KEY)
+    })
 }
 
 /// Rank priority kills first, then by EV; rank door sets by the rule chain.
@@ -858,25 +861,18 @@ fn rank(scored: Vec<Scored>, profile: &StrategyProfile) -> Vec<Ranked> {
     out
 }
 
-/// Resolve both architect blocks through the room vocabulary.
-///
-/// The panel's own wording is **not** the answer: with Contested Development
-/// taken, *"Kill to change to Shrine of Empowerment"* on a tier-1 room builds
-/// Sanctum of Unity II. Every offer goes through
-/// [`rooms::resolve_offer_for`], which is where that arithmetic lives.
-///
-/// `current_tier` is [`BoardState::current_tier`] — `None` when the read never
-/// named the room the player is standing in. An `upgrade` still resolves there
-/// (its printed name IS the built room); a `change` does not, and says so
-/// rather than resolving to the tier-1 room the kill will not build (POE-229).
+/// Resolve both architect blocks through [`rooms::resolve_offer_for`].
+/// It delegates landing to [`crate::temple::facts::landing_tier`], including
+/// deciding whether an unread current tier prevents resolution.
 fn resolve_architects(
     offers: &[ArchitectOffer],
     current_tier: Option<Tier>,
+    config: &TempleConfig,
     warnings: &mut Vec<Warning>,
 ) -> Vec<ArchitectChoice> {
     let mut out = Vec::new();
     for (index, offer) in offers.iter().enumerate() {
-        match rooms::resolve_offer_for(&offer.printed_target, offer.kind, current_tier) {
+        match rooms::resolve_offer_for(&offer.printed_target, offer.kind, current_tier, config.played_consolidation()) {
             rooms::OfferResolution::Built(resolved) => out.push(ArchitectChoice {
                 offer_index: index,
                 architect_name: offer.architect_name.clone(),
@@ -906,7 +902,7 @@ fn opening_for(
 ) -> Opening {
     Opening {
         slot: position.index(),
-        kill: architect.map(|a| (valuation.tag(&a.line), a.kind == OfferKind::Upgrade)),
+        kill: architect.map(|a| (valuation.tag(&a.line), a.kind, a.built_tier)),
         doors: doors
             .iter()
             .map(|edge| {
@@ -1271,7 +1267,7 @@ mod tests {
                 };
                 let verdict = rules::evaluate_rules(
                     &state, D1, Some(&architect), &BTreeSet::new(), 0,
-                    &profile, &valuation,
+                    &profile, &valuation, Some(architect.built_tier),
                 );
                 Scored {
                     option: Decision { architect: Some(architect), doors: BTreeSet::new() },
@@ -2682,9 +2678,8 @@ mod tests {
     // future drops on the rooms that still matter.
     #[test]
     fn a_junk_room_is_maxed_to_tier_three_to_shrink_the_drop_pool() {
-        // Both kills land at tier 2 deterministically; only the upgrade rolls
-        // the 50% double tier, so only the upgrade can take the room out of the
-        // pool this incursion.
+        // The default option's landing comes from facts::landing_tier;
+        // only this upgrade removes the slot from the pool.
         let state = board(
             &[(D1, "hall_of_champions", 1), (C2, "corruption", 1)],
             &[(D1, E1), (E1, E2)],
@@ -2717,9 +2712,8 @@ mod tests {
     /// Live board 8's shape: a junk room that is the only thing an adjacent,
     /// connected Sanctum can still upgrade.
     ///
-    /// The kills are *"upgrade → Engineering Department"* (which rolls the
-    /// double tier that would empty the slot) against *"change → Storage
-    /// Room"* (which keeps it in the pool).
+    /// Under option 1, facts::landing_tier makes "upgrade → Engineering
+    /// Department" leave the pool; "change → Storage Room" stays in it.
     fn board_eight() -> (BoardState, Vec<ArchitectOffer>) {
         let state = board(
             &[(D1, "factory", 1), (C1, "upgrade", 2), (C2, "corruption", 1)],
@@ -2738,7 +2732,7 @@ mod tests {
     // Live board 8: maxing the slot would destroy the Sanctum's only live
     // target permanently, so the carve-out is a **veto** rather than a
     // tie-break. It has to be: the rollout independently prefers the
-    // double-tier roll for R4's own reason (a smaller pool) and separates the
+    // pool removal for R4's own reason and separates the
     // two kills past the noise band, so a tie-break would never fire.
     #[test]
     fn maxing_a_sanctums_only_live_target_is_vetoed_however_the_rollout_prices_it() {
@@ -2833,7 +2827,7 @@ mod tests {
     /// upgrade's line is worth something on its own — board 5's Jewellery
     /// Forge was, under the live-priced profile. Valuing `factory` (the line
     /// Engineering Department belongs to) is what gives the rollout a reason
-    /// to prefer the double-tier roll; it stays off `mode_rule`, so it is not
+    /// to prefer the upgrade; it stays off `mode_rule`, so it is not
     /// a target line and the kill is still one R4's carve-out could veto.
     fn nexus_beside_board_eight() -> (BoardState, Vec<ArchitectOffer>, StrategyProfile) {
         let (_, offers) = board_eight();
@@ -3362,10 +3356,8 @@ mod tests {
     // that output is Atmohua's block missing from the parsed panel — so this
     // is the assertion that says the ranking was never the problem.
     //
-    // The `change` wins because Contested Development prices it off the room
-    // the player is standing IN: a tier-1 Armourer's Workshop taking
-    // "Shrine of Empowerment" builds Sanctum of Unity II, against an `upgrade`
-    // to a tier-2 Armoury on the line already under the player.
+    // This pin selects option 2's arithmetic through facts::landing_tier,
+    // preserving the change recommendation on the recorded board.
     //
     // The DOOR is deliberately not asserted. The rule chain picks it, no one
     // walked this board, and pinning a corridor nobody chose would make this a

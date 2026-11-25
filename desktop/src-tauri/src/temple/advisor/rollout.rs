@@ -25,10 +25,11 @@
 //!   one of the four mechanical lines with certainty. That inflated valuable-
 //!   line acquisition on exactly the slots rollouts land on most.
 
+use crate::temple::facts;
+use crate::temple::rooms::OfferKind;
 use crate::temple::lattice::Slot;
 use crate::temple::strategy::{
-    Line, Mode, ModeRule, StrategyProfile, TempleConfig, Tier, DOUBLE_TIER_CHANCE,
-    SCARAB_OF_TIMELINES_ACTIVE,
+    Line, Mode, ModeRule, StrategyProfile, TempleConfig, Tier, SCARAB_OF_TIMELINES_ACTIVE,
 };
 
 use super::state::{
@@ -238,8 +239,8 @@ pub struct Sim {
 pub struct Opening {
     /// Where the player is standing.
     pub slot: usize,
-    /// `(line tag, is_upgrade)`, or `None` when no architect block resolved.
-    pub kill: Option<(u8, bool)>,
+    /// `(line tag, kind, resolved built tier)`, or `None` for an unread offer.
+    pub kill: Option<(u8, OfferKind, Tier)>,
     /// The corridors the keys open, as slot index pairs.
     pub doors: Vec<(usize, usize)>,
 }
@@ -480,19 +481,36 @@ impl Sim {
         Valuation::JUNK
     }
 
-    /// Apply an architect kill.
-    ///
-    /// Both kinds land at `currentTier + 1` (Contested Development is assumed
-    /// taken). The double-tier roll is **upgrade only** — both Atlas nodes that
-    /// grant it read "killing non-resident Architects" — and never fires from
-    /// tier 0, because `0 → 2` does not exist.
-    pub fn apply_kill(&mut self, slot: usize, line: u8, upgrade: bool, rng: &mut Rng) {
-        let mut t = self.tier[slot] + 1;
-        if upgrade && self.tier[slot] > 0 && rng.chance(DOUBLE_TIER_CHANCE) {
-            t += 1;
-        }
+    /// Apply a future kill through [`facts::landing_tier`].
+    pub fn apply_kill(
+        &mut self,
+        slot: usize,
+        line: u8,
+        kind: OfferKind,
+        valuation: &Valuation,
+        config: &TempleConfig,
+    ) {
+        let current = Tier::new(self.tier[slot]).expect("sim tiers are bounded");
+        let built = facts::landing_tier(
+            config.played_consolidation(),
+            Some(current),
+            kind,
+            valuation.line(line).map(Line::key),
+        ).expect("the sim always knows the current tier");
         self.line[slot] = line;
-        self.tier[slot] = t.min(3);
+        self.tier[slot] = built.get();
+    }
+
+    /// Apply the panel's resolved opening; unread rooms use T0 in the sim,
+    /// so deriving this tier again would disagree with the panel.
+    pub fn open(&mut self, opening: &Opening) {
+        if let Some((line, _, tier)) = opening.kill {
+            self.line[opening.slot] = line;
+            self.tier[opening.slot] = tier.get();
+        }
+        for (a, b) in &opening.doors {
+            self.open_door(*a, *b);
+        }
     }
 
     /// The stand-in for a human on every future turn: connect the most
@@ -545,11 +563,7 @@ impl Sim {
         }
     }
 
-    /// Play the option under evaluation, then the rest of the temple.
-    ///
-    /// The current kill is applied **here** rather than folded into the board
-    /// beforehand because it carries the 50% double-tier roll, which is part of
-    /// the option's outcome distribution and not of its deterministic floor.
+    /// Apply the resolved opening, then simulate the rest of the temple.
     pub fn rollout_from(
         mut self,
         opening: &Opening,
@@ -558,12 +572,7 @@ impl Sim {
         config: &TempleConfig,
         rng: &mut Rng,
     ) -> f64 {
-        if let Some((line, upgrade)) = opening.kill {
-            self.apply_kill(opening.slot, line, upgrade, rng);
-        }
-        for (a, b) in &opening.doors {
-            self.open_door(*a, *b);
-        }
+        self.open(opening);
         // **ASSUMED:** the incursion being priced is the first of its map. The
         // panel prints the temple's remaining budget, never the map's, so the
         // true index is not readable. The cost of being wrong is that the
@@ -593,8 +602,8 @@ impl Sim {
             let upgrade_line = (self.tier[slot] > 0).then_some(self.line[slot]);
             let change_line = self.offered_change(slot, valuation, rng);
 
-            // Prefer whichever offer advances a target line; the upgrade side
-            // wins a tie because it also rolls the double tier.
+            // Prefer whichever offer advances a target line. The upgrade
+            // wins a tie: facts::landing_tier never lands it below the change.
             let target = [upgrade_line, Some(change_line)]
                 .into_iter()
                 .flatten()
@@ -603,18 +612,35 @@ impl Sim {
                 self.line[n] == Valuation::UPGRADE && self.tier[n] > 0 && self.has_door(slot, n)
             });
 
+            let current = Tier::new(self.tier[slot]).expect("sim tiers are bounded");
+            let change_tier = facts::landing_tier(
+                config.played_consolidation(), Some(current), OfferKind::Change,
+                valuation.line(change_line).map(Line::key),
+            ).expect("the sim knows the current tier");
+            let paired_upgrade = upgrade_line.and_then(|line| facts::landing_tier(
+                config.played_consolidation(), Some(current), OfferKind::Upgrade,
+                valuation.line(line).map(Line::key),
+            ));
+            let rc = near_shrine && paired_upgrade.is_some_and(|upgrade| {
+                (change_tier.get() + 1).min(Tier::MAX_VALUE) >= upgrade.get()
+            });
+
             if let Some(target) = target {
-                let is_upgrade = upgrade_line == Some(target);
-                self.apply_kill(slot, target, is_upgrade, rng);
-            } else if near_shrine {
+                let kind = if upgrade_line == Some(target) {
+                    OfferKind::Upgrade
+                } else {
+                    OfferKind::Change
+                };
+                self.apply_kill(slot, target, kind, valuation, config);
+            } else if rc {
                 // RC — spend the architect on the line and let the shrine
                 // supply the tier, so the shrine's scarce pick is not wasted.
-                self.apply_kill(slot, change_line, false, rng);
+                self.apply_kill(slot, change_line, OfferKind::Change, valuation, config);
             } else if let Some(line) = upgrade_line {
                 // R4 — max the junk room, so it leaves the drop pool.
-                self.apply_kill(slot, line, true, rng);
+                self.apply_kill(slot, line, OfferKind::Upgrade, valuation, config);
             } else {
-                self.apply_kill(slot, change_line, false, rng);
+                self.apply_kill(slot, change_line, OfferKind::Change, valuation, config);
             }
 
             if let Some(door) = self.default_policy_door(slot) {
@@ -732,6 +758,80 @@ mod tests {
             .map(|(a, b)| crate::temple::lattice::Edge::new(*a, *b))
             .collect();
         Sim::from_board(&board, &valuation())
+    }
+
+    mod keep_critical {
+        use super::*;
+        use crate::temple::rooms::CRADLE_LINE_KEY;
+        use crate::temple::strategy::Consolidation;
+
+        // Silent consequence: rollout prices tiers the panel never shows.
+        #[test]
+        fn future_kills_use_literal_landing_tiers_for_every_seed() {
+            use Consolidation::*;
+            use OfferKind::*;
+            let mut profile = rush();
+            profile.room_values.insert(Line::named(CRADLE_LINE_KEY), [0.0, 0.0, 9.0]);
+            let valuation = Valuation::for_profile(&profile);
+            let cradle = valuation.tag(&Line::named(CRADLE_LINE_KEY));
+            let rows = [
+                (NonResidentExtraTier, 0, 1, 1),
+                (NonResidentExtraTier, 1, 3, 1),
+                (NonResidentExtraTier, 2, 3, 1),
+                (ResidentCarry, 0, 1, 1),
+                (ResidentCarry, 1, 2, 2),
+                (ResidentCarry, 2, 3, 3),
+                (NotTaken, 0, 1, 1),
+                (NotTaken, 1, 2, 1),
+                (NotTaken, 2, 3, 1),
+            ];
+            for seed in 0..64 {
+                let mut rng = Rng::seeded(seed);
+                let slot = rng.below(13);
+                for (option, current, upgrade, change) in rows {
+                    let config = TempleConfig { consolidation: Some(option), ..TempleConfig::default() };
+                    for (kind, expected) in [(Upgrade, upgrade), (Change, change)] {
+                        for (line, want) in [(Valuation::CORRUPTION, expected), (cradle, 3)] {
+                            let mut sim = sim(&[], &[]);
+                            sim.tier[slot] = current;
+                            sim.apply_kill(slot, line, kind, &valuation, &config);
+                            assert_eq!(sim.tier[slot], want,
+                                "seed {seed}, {option:?}, tier {current}, {kind:?}, tag {line}");
+                            assert_eq!(sim.line[slot], line);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Silent consequence: the unread room's T0 stand-in underprices the
+        // opening, despite the panel resolving the upgrade to T3.
+        #[test]
+        fn the_opening_uses_the_panels_resolved_upgrade_tier() {
+            let profile = rush();
+            let valuation = Valuation::for_profile(&profile);
+            let config = TempleConfig::default();
+            let mut board = BoardState::empty();
+            board.position = Some(D1);
+            board.current_tier = None;
+            let offer = crate::temple::panel::ArchitectOffer {
+                architect_name: "Quipolatl".into(),
+                printed_target: "Armoury".into(),
+                kind: OfferKind::Upgrade,
+                rect: None,
+            };
+            let choices = crate::temple::advisor::resolve_architects(
+                &[offer], None, &config, &mut Vec::new(),
+            );
+            assert_eq!(choices[0].built_tier, Tier::T3);
+            let opening = crate::temple::advisor::opening_for(
+                D1, Some(&choices[0]), &std::collections::BTreeSet::new(), &valuation,
+            );
+            let mut sim = Sim::from_board(&board, &valuation);
+            sim.open(&opening);
+            assert_eq!(sim.tier[D1.index()], 3);
+            assert_eq!(sim.tier[D1.index()], choices[0].built_tier.get());
+        }
     }
 
     // -------------------------------------------------------- drop pool --
@@ -992,7 +1092,7 @@ mod tests {
         board.remaining = 5;
         let opening = Opening {
             slot: D1.index(),
-            kill: Some((Valuation::CORRUPTION, false)),
+            kill: Some((Valuation::CORRUPTION, OfferKind::Change, Tier::T1)),
             doors: vec![(D1.index(), E1.index())],
         };
         let first = evaluate(&board, &opening, &profile, &valuation, &config, 50, &mut Rng::seeded(9));

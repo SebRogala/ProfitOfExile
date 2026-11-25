@@ -639,12 +639,8 @@ export function recommendedExit(advice: AdviceView | null): ExitLabelView | null
 /**
  * What an offer actually builds.
  *
- * The **resolved** name and the tier the kill guarantees — never the printed
- * name on its own. POE-169's whole point is that the two differ: Contested
- * Development prints one line and builds `currentTier + 1` of it, so a surface
- * showing only what the panel printed is showing the player a room they are not
- * getting. When nothing resolved there is no name to show, and saying so is the
- * honest answer.
+ * The resolved name and tier come from Rust temple::facts::landing_tier.
+ * When the read cannot resolve an offer, there is no built name to show.
  */
 export function offerBuilds(offer: OfferView): string {
 	if (offer.displayName === null) return 'does not resolve to a known room';
