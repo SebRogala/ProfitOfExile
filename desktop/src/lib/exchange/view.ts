@@ -1397,11 +1397,12 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 		}
 		return {
 			// The line names both currencies and the tile carries the artwork of the
-			// one being converted, so the name would only repeat the tile.
+			// one being converted, so the name would only repeat the tile. It leads
+			// the hover instead.
 			name: null,
 			icon: convertLeg.itemIcon,
 			rate: `≈ ${withOrbUnit(ledger.sellTotal, quoteUnit(convertLeg.item))} → ${withOrbUnit(ledger.chainEnd, entryUnitShort)}`,
-			rateTitle: `Market posts "${pairLine('convert', convertLeg)}"; total is Spend + ROI (Get is Spend + Exp. ROI).`,
+			rateTitle: `${convertLeg.itemName} — market posts "${pairLine('convert', convertLeg)}"; total is Spend + ROI (Get is Spend + Exp. ROI).`,
 			suspect: convertLeg.suspect,
 			// The convert step carries its own book-shape flag for the same reason it
 			// carries its own `suspect`: the third trade is a real order against a
