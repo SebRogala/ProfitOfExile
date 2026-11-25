@@ -54,21 +54,35 @@ pub fn parse_top_row(
     want_lines: &[&str],
     have_lines: &[&str],
 ) -> Result<ExchangeSelection, ExchangeReadError> {
-    let (left, right) = ratio
-        .split_once(':')
-        .and_then(|(left, right)| Some((positive_decimal(left)?, positive_decimal(right)?)))
-        .ok_or(ExchangeReadError::RatioUnreadable)?;
+    parse_top_row_detailed(ratio, stock, want_lines, have_lines, &mut None)
+}
+
+pub(crate) fn parse_top_row_detailed(
+    ratio: &str,
+    stock: &str,
+    want_lines: &[&str],
+    have_lines: &[&str],
+    branch: &mut Option<&'static str>,
+) -> Result<ExchangeSelection, ExchangeReadError> {
+    let mut refused = |reason| {
+        *branch = Some(reason);
+        ExchangeReadError::RatioUnreadable
+    };
+    let (left, right) = ratio.split_once(':').ok_or_else(|| refused("ratio-no-colon"))?;
+    let (left, right) = positive_decimal(left)
+        .and_then(|left| Some((left, positive_decimal(right)?)))
+        .ok_or_else(|| refused(super::RATIO_SIDE_NOT_POSITIVE_DECIMAL))?;
     let (ratio, one_side) = if right == 1.0 {
         (left, OneSide::Right)
     } else if left == 1.0 {
         (right, OneSide::Left)
     } else {
-        return Err(ExchangeReadError::RatioUnreadable);
+        return Err(refused("ratio-neither-side-one"));
     };
     let stock = grouped_digits(stock)
         .and_then(|digits| digits.parse::<u64>().ok())
         .filter(|value| *value > 0)
-        .ok_or(ExchangeReadError::RatioUnreadable)?;
+        .ok_or_else(|| refused("bad-stock"))?;
     let want_name = joined_name(want_lines).ok_or(ExchangeReadError::NamesUnreadable)?;
     let have_name = joined_name(have_lines).ok_or(ExchangeReadError::NamesUnreadable)?;
     let (mode, currency) = if let Some(currency) = currency(&have_name) {

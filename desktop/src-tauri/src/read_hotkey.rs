@@ -494,11 +494,11 @@ pub fn spawn_read_hotkey(app: tauri::AppHandle, cancel: std::sync::Arc<std::sync
             let result_app = app.clone();
             ExchangePress {
                 pending: Box::new(pending),
-                finish: Box::new(move |outcome| crate::exchange_read::finish(outcome, handle.take(), pressed_at_ms, &mut |event| {
+                finish: Box::new(move |outcome| crate::exchange_read::finish_logged(outcome, &handle, pressed_at_ms, &mut |event| {
                     if let Err(error) = result_app.emit("exchange-read", event) {
                         log::warn!("Exchange read: event emission failed: {error}");
                     }
-                })),
+                }, &mut |line| crate::app_log(&result_app, line))),
             }
         });
     });

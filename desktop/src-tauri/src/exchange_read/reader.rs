@@ -15,12 +15,34 @@ pub type ExchangeReadResult = Result<ExchangeSelection, ExchangeReadError>;
 
 /// The per-press slot `consume` fills, held by the press's finish callback.
 #[derive(Clone, Default)]
-pub struct ExchangeReadHandle(Arc<Mutex<Option<ExchangeReadResult>>>);
+pub struct ExchangeReadHandle(Arc<Mutex<ReadSlot>>);
+
+#[derive(Default)]
+struct ReadSlot {
+    read: Option<ExchangeReadResult>,
+    diagnostic: RatioDiagnostic,
+}
+
+pub(crate) struct RatioDiagnostic {
+    pub(crate) branch: &'static str,
+    pub(crate) row: Option<String>,
+}
+
+impl Default for RatioDiagnostic {
+    fn default() -> Self {
+        Self { branch: "no-result", row: None }
+    }
+}
 
 impl ExchangeReadHandle {
     /// The press's result, once; `None` when nothing was consumed.
     pub fn take(&self) -> Option<ExchangeReadResult> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).read.take()
+    }
+
+    pub(crate) fn take_detailed(&self) -> (Option<ExchangeReadResult>, RatioDiagnostic) {
+        let slot = std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()));
+        (slot.read, slot.diagnostic)
     }
 }
 
@@ -32,6 +54,7 @@ pub struct ExchangePending {
     panel: Option<[i32; 4]>,
     scale: f32,
     probe_error: bool,
+    diagnostic: RatioDiagnostic,
 }
 
 /// Prepares one press. `standing` is the published screen slice at press
@@ -41,7 +64,7 @@ pub fn prepare(
     ocr: RecognizeLines,
 ) -> (ExchangePending, ExchangeReadHandle) {
     let result = ExchangeReadHandle::default();
-    (ExchangePending { standing, ocr, result: result.clone(), panel: None, scale: 1.0, probe_error: false }, result)
+    (ExchangePending { standing, ocr, result: result.clone(), panel: None, scale: 1.0, probe_error: false, diagnostic: RatioDiagnostic::default() }, result)
 }
 
 impl ExchangePending {
@@ -61,13 +84,16 @@ impl ExchangePending {
     }
 
     fn selection(&mut self, frame: &crate::capture::Capture) -> ExchangeReadResult {
-        use super::parse::{parse_top_row, ExchangeReadError::*};
+        use super::parse::{parse_top_row_detailed, ExchangeReadError::*};
         if self.probe_error {
+            self.diagnostic.branch = "probe_error";
             return Err(RatioUnreadable);
         }
+        self.diagnostic.branch = "row-crop-ocr-error";
         let mut row = self.read_crop(frame, [290, 342, 197, 26]).map_err(|_| RatioUnreadable)?;
         row.sort_by_key(|line| (line.x, line.y));
         let row = row.iter().map(|line| line.text.as_str()).collect::<Vec<_>>().join(" ");
+        self.diagnostic.row = Some(row.clone());
         let (ratio, stock) = ratio_and_stock(&row);
         let mut want = self.read_crop(frame, [65, 111, 190, 28]).map_err(|_| NamesUnreadable)?;
         let mut have = self.read_crop(frame, [565, 103, 160, 46]).map_err(|_| NamesUnreadable)?;
@@ -75,7 +101,10 @@ impl ExchangePending {
         have.sort_by_key(|line| (line.y, line.x));
         let want: Vec<_> = want.iter().map(|line| line.text.as_str()).collect();
         let have: Vec<_> = have.iter().map(|line| line.text.as_str()).collect();
-        parse_top_row(ratio, stock, &want, &have)
+        let mut branch = None;
+        let result = parse_top_row_detailed(ratio, stock, &want, &have, &mut branch);
+        if let Some(branch) = branch { self.diagnostic.branch = branch; }
+        result
     }
 }
 
@@ -107,8 +136,16 @@ impl<C> crate::read_hotkey::PendingRead<C> for ExchangePending {
     }
 
     fn consume(mut self: Box<Self>, frame: Result<&Arc<crate::capture::Capture>, &str>, _ctx: &C) {
-        let selection = frame.map_err(|_| ExchangeReadError::RatioUnreadable).and_then(|frame| self.selection(frame));
-        *self.result.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(selection);
+        let selection = match frame {
+            Ok(frame) => self.selection(frame),
+            Err(_) => {
+                self.diagnostic = RatioDiagnostic::default();
+                Err(ExchangeReadError::RatioUnreadable)
+            }
+        };
+        *self.result.0.lock().unwrap_or_else(|e| e.into_inner()) = ReadSlot {
+            read: Some(selection), diagnostic: self.diagnostic,
+        };
     }
 }
 

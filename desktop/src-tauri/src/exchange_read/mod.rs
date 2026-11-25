@@ -131,20 +131,30 @@ pub fn finish(
 }
 
 /// The diagnostic branch a ratio side that is not a positive decimal logs.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const RATIO_SIDE_NOT_POSITIVE_DECIMAL: &str = "ratio-side-not-positive-decimal";
 
 /// [`finish`] for a press's own result slot, with the sink its
 /// `RatioUnreadable` diagnostic line goes to.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn finish_logged(
     outcome: DispatchOutcome,
     handle: &reader::ExchangeReadHandle,
     pressed_at_ms: u64,
     emit: &mut dyn FnMut(ExchangeReadEvent),
-    _log: &mut dyn FnMut(String),
+    log: &mut dyn FnMut(String),
 ) {
-    finish(outcome, handle.take(), pressed_at_ms, emit);
+    let (read, diagnostic) = handle.take_detailed();
+    let diagnostic = if read.is_some() && matches!(outcome, DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Exchange)) {
+        diagnostic
+    } else {
+        reader::RatioDiagnostic::default()
+    };
+    finish(outcome, read, pressed_at_ms, &mut |event| {
+        if event.outcome == ExchangeReadOutcome::Error(ExchangeReadFailure::RatioUnreadable) {
+            let row = diagnostic.row.as_ref().map_or_else(|| "unavailable".to_string(), |row| format!("{row:?}"));
+            log(format!("Exchange read: RatioUnreadable branch={} row={row}", diagnostic.branch));
+        }
+        emit(event);
+    });
 }
 
 #[cfg(test)]
