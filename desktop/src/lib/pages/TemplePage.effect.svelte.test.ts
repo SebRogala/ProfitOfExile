@@ -230,11 +230,15 @@ describe('TemplePage Consolidation of Power row', () => {
 	});
 
 	// keep:happy
-	it('keep:happy keyboard focus on the info icon opens the tooltip portal with the glosses', async () => {
+	// keep:critical — silent consequence: a keyboard user can never read the option glosses
+	it('keep:critical the info icon is reached by Tab, opens the gloss tooltip and closes it on blur', async () => {
 		await mountUnset();
 
 		const icon = consolidationRow().querySelector<HTMLElement>('.tooltip-wrap .icon-circle');
 		if (!icon) throw new Error('the Consolidation row has no InfoTooltip icon');
+		// No user-event dependency: sequential Tab order requires tabIndex >= 0,
+		// and only then is the focus the browser's Tab would deliver dispatched.
+		expect(icon.tabIndex, 'info icon is not in the Tab order').toBeGreaterThanOrEqual(0);
 		icon.focus();
 		flushSync();
 		const tip = visibleTip();
@@ -244,5 +248,9 @@ describe('TemplePage Consolidation of Power row', () => {
 		expect(tip).toContain(`Option 2 — ${GLOSSES.residentCarry}`);
 		expect(tip).toContain(`Not taken — ${GLOSSES.notTaken}`);
 		expect(tip).toContain(`Cradle of Creation — ${GLOSSES.cradle}`);
+
+		icon.blur();
+		await vi.waitFor(() => expect(visibleTip()).toBe(''));
+		expect(document.activeElement).not.toBe(icon);
 	});
 });
