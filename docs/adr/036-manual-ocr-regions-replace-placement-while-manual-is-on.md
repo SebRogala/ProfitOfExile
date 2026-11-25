@@ -6,12 +6,10 @@ uid: d0be519f-626b-4f36-9f31-2e8edfd326d6
 
 ## Status
 
-Proposed (POE-411, 2026-11-24).
+Accepted (2026-11-24) (POE-411), per Operator acceptance 2026-11-24.
 
-This ADR is the proposed normative home for Manual OCR geometry. The Operator
-approved drafting it under Desk `poe411-plan-1124` (approve-except); acceptance
-of this ADR remains a separate Operator decision. WI-2 onward waits for that
-acceptance. This document does not claim implementation or delivery.
+This ADR is the normative home for Manual OCR geometry. This document does not
+claim implementation or delivery.
 
 ## Enforcement
 
