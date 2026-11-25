@@ -4,7 +4,7 @@
 </script>
 
 <Tooltip {text} position="below">
-	<span class="icon-circle">i</span>
+	<span class="icon-circle" tabindex="0">i</span>
 </Tooltip>
 
 <style>
