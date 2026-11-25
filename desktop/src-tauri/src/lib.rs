@@ -515,6 +515,8 @@ pub struct AppState {
     /// Acquired alone, never inside a module lock (lock order — see
     /// src/modules.rs).
     pub widgets: Mutex<std::collections::BTreeMap<String, settings::WidgetGeometry>>,
+    /// The OCR regions mode and Manual set (POE-411, ADR-036). Taken alone.
+    pub ocr_regions: Mutex<ssot::OcrRegionsSetting>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -1301,6 +1303,7 @@ pub fn run() {
         screen: Mutex::new(None),
         game_monitor: Mutex::new(None),
         widgets: Mutex::new(std::collections::BTreeMap::new()),
+        ocr_regions: Mutex::new(ssot::OcrRegionsSetting::default()),
     };
 
     tauri::Builder::default()

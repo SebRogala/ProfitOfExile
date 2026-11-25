@@ -31,6 +31,9 @@ use crate::AppState;
 
 mod lab;
 mod league;
+mod regions;
+
+pub use regions::{origin_scale_for_panel, resolve, ManualRegions, OcrRegionsMode, OcrRegionsSetting, RegionKey, Resolved, ScreenRef};
 
 pub use league::{__cmd__refresh_league, __cmd__set_league, league_command, refresh_league, set_league, spawn_league_fetch};
 pub(crate) use league::{note_server_league, parse_league_from_status, rearm_league, supersede_league_fetches, LeagueResolver};

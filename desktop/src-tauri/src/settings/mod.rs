@@ -278,6 +278,9 @@ pub struct Settings {
     /// back over what the owner just wrote.
     #[serde(default)]
     pub widgets: std::collections::BTreeMap<String, WidgetGeometry>,
+    /// The OCR regions mode and Manual set (POE-411, ADR-036). Absent → Auto.
+    #[serde(default)]
+    pub ocr_regions: crate::ssot::OcrRegionsSetting,
     /// Start WebView2 with `--disable-gpu`, so every window renders on the CPU.
     /// Observed 2026-11-08: while a Discord stream is watched and PoE has
     /// focus, GPU-rendered Chromium surfaces stall for seconds; this flag
@@ -788,6 +791,7 @@ impl Default for Settings {
             // writing today's numbers into the file would pin a user to them
             // the way an unchosen module default would (see `modules`).
             widgets: std::collections::BTreeMap::new(),
+            ocr_regions: Default::default(),
             webview_gpu_disabled: false,
             proxy_url: String::new(),
             proxy_trade: default_proxy_trade(),
@@ -1050,6 +1054,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         // forward by `persist_overlay_settings` — the owner is what
         // `set_widget_geometry` just wrote to, and the file is the stale copy.
         widgets: state.widgets.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        ocr_regions: Default::default(),
         webview_gpu_disabled: false, // File-owned, carried by persist_overlay_settings
         proxy_url: String::new(),    // File-owned, carried by persist_overlay_settings
         proxy_trade: default_proxy_trade(), // File-owned, carried by persist_overlay_settings
@@ -2133,6 +2138,7 @@ pub(crate) mod tests {
             exceptional_prices: Mutex::new(crate::font_alerts::PriceMirror::default()),
             screen: Mutex::new(None),
             widgets: Mutex::new(std::collections::BTreeMap::new()),
+            ocr_regions: Mutex::new(Default::default()),
         }
     }
 
@@ -4612,5 +4618,86 @@ pub(crate) mod tests {
         let expected_defaults: std::collections::BTreeMap<String, usize> =
             [("settings/mod.rs".to_string(), 1)].into();
         assert_eq!(default_reads, expected_defaults, "use settings::DEFAULT_SERVER_URL");
+    }
+
+    mod ocr_regions {
+        use super::*;
+        use crate::ssot::{ManualRegions, OcrRegionsMode, OcrRegionsSetting, ScreenRef};
+
+        mod keep_critical {
+            use super::*;
+
+            fn hand_placed_set() -> OcrRegionsSetting {
+                OcrRegionsSetting {
+                    mode: OcrRegionsMode::Manual,
+                    manual: Some(ManualRegions {
+                        set_on: ScreenRef { width: 3440, height: 1440, origin: [0, 0], at_ms: 1_732_400_000_000 },
+                        edited: true,
+                        lab_gem: Some([0, 0, 3440, 64]),
+                        lab_font: Some([1820, 293, 888, 908]),
+                        lab_gem_slots: None,
+                        temple_panel: Some([1451, 4, 544, 454]),
+                        merc_panel: None,
+                    }),
+                }
+            }
+
+            /// Irreversible consequence: Recalibrate and the stale-monitor
+            /// prune save through this chain, and losing the Manual set there
+            /// silently deletes the player's hand-placed regions for good.
+            #[test]
+            fn a_screen_scale_drop_saves_and_reloads_the_manual_set_unchanged() {
+                let dir = fresh_test_dir("ocr_regions_drop_chain");
+                let path = dir.join(SETTINGS_FILENAME);
+                let state = test_app_state();
+                *state.ocr_regions.lock().unwrap() = hand_placed_set();
+                let existing = Settings {
+                    screen_scale: Some(ScreenScaleSetting {
+                        width: 3440,
+                        height: 1440,
+                        ui_scale: 1.2,
+                        measured_at_ms: 1_732_400_000_000,
+                        monitor_id: 1,
+                        origin: (0, 0),
+                        client: [0, 0, 3440, 1440],
+                        anchors: None,
+                    }),
+                    ..Settings::default()
+                };
+
+                let mut target = from_state(&state);
+                forget_screen_scale(&existing, &mut target);
+                save_to(&path, &target).unwrap();
+                let loaded = load_from(&path).unwrap();
+                let _ = fs::remove_dir_all(&dir);
+
+                assert_eq!(loaded.ocr_regions, hand_placed_set());
+                assert_eq!(loaded.screen_scale, None);
+            }
+
+            /// Irreversible consequence: a settings file written before
+            /// `ocr_regions` existed that loads as anything but Auto, or loses
+            /// a field on its first save, corrupts every existing user's
+            /// settings on upgrade.
+            #[test]
+            fn a_settings_file_without_ocr_regions_loads_auto_and_round_trips_every_field() {
+                let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/settings/ocr-regions-upgrade.json");
+                let fixture: serde_json::Value = serde_json::from_str(&fs::read_to_string(&fixture_path).unwrap()).unwrap();
+                assert!(fixture.get("ocr_regions").is_none(), "the fixture is a pre-ocr_regions file");
+                let dir = fresh_test_dir("ocr_regions_upgrade");
+                let path = dir.join(SETTINGS_FILENAME);
+
+                let upgraded = load_from(&fixture_path).unwrap();
+                save_to(&path, &upgraded).unwrap();
+                let reloaded = load_from(&path).unwrap();
+                let _ = fs::remove_dir_all(&dir);
+
+                assert_eq!(upgraded.ocr_regions, OcrRegionsSetting { mode: OcrRegionsMode::Auto, manual: None });
+                let mut written: serde_json::Value =
+                    serde_json::from_str(&serde_json::to_string(&reloaded).unwrap()).unwrap();
+                written.as_object_mut().unwrap().remove("ocr_regions");
+                assert_eq!(written, fixture, "every pre-existing field survives load -> save -> load");
+            }
+        }
     }
 }

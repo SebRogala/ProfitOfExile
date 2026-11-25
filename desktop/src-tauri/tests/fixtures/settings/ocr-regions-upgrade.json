@@ -1,0 +1,142 @@
+{
+  "boss_loot": {
+    "layout": "grid",
+    "autoSaveSeconds": 10,
+    "notCounted": [
+      "Communion Support"
+    ],
+    "captureShortcut": {
+      "key": 2,
+      "shift": true,
+      "ctrl": false,
+      "alt": false
+    },
+    "previewShortcut": {
+      "key": 119,
+      "shift": true,
+      "ctrl": false,
+      "alt": false
+    }
+  },
+  "read_hotkey": {
+    "shortcut": {
+      "key": 82,
+      "shift": false,
+      "ctrl": false,
+      "alt": true
+    },
+    "delayMs": 150,
+    "recalibrateSeconds": 10
+  },
+  "exchange_read": {
+    "shortcut": {
+      "key": 2,
+      "shift": false,
+      "ctrl": false,
+      "alt": true
+    }
+  },
+  "overlay_dismiss": {
+    "timeoutSeconds": 10,
+    "shortcut": {
+      "key": 27,
+      "shift": false,
+      "ctrl": false,
+      "alt": false
+    },
+    "overlays": {}
+  },
+  "number_format": null,
+  "client_txt_path": "C:/PoE/logs/Client.txt",
+  "server_url": "https://fixture.invalid",
+  "window": null,
+  "sidebar_open": true,
+  "comparator_overlay": null,
+  "compass_overlay": null,
+  "pathstrip_overlay": null,
+  "timer_overlay": null,
+  "mercenary_overlay": null,
+  "lab_overlays_enabled": false,
+  "trade_stale_warn_secs": 121,
+  "trade_stale_critical_secs": 601,
+  "trade_auto_refresh_secs": 901,
+  "auto_trade_enabled": true,
+  "compass_mode": "fixture-mode",
+  "compass_strategy": "fixture-strategy",
+  "compass_difficulty": "fixture-difficulty",
+  "shrine_warn_enabled": false,
+  "shrine_warn_size": "fixture-size",
+  "shrine_warn_corner": "fixture-corner",
+  "shrine_warn_on_take": "fixture-on-take",
+  "timer_bg_opacity": 0.5,
+  "timer_text_stroke": false,
+  "lab_mode": "Dedication",
+  "autoclear_minutes": 7,
+  "dedication_pool": "transfigured",
+  "dedication_variant": "21/20",
+  "normal_variant": "1/0",
+  "show_low_confidence": false,
+  "show_all_lens_feeders": false,
+  "ui_prefs": {},
+  "modules": {},
+  "temple_profile": {
+    "apexScore": 2.0,
+    "pathCost": 0.0,
+    "rerollUntilFavourable": false,
+    "r4KeepUpgradeTargets": false
+  },
+  "temple_config": {
+    "artefactsOfTheVaal": true,
+    "scarabOfTimelines": false
+  },
+  "temple_preset": "default",
+  "temple_custom": {
+    "tierFraction": 0.8,
+    "cPerRarity": 0.5,
+    "dropsWeight": 1.0,
+    "comboPremium": 0.0,
+    "rooms": {}
+  },
+  "merc_sources_off": null,
+  "merc_trade_auto": true,
+  "merc_tier_floor": 3,
+  "screen_scale": {
+    "width": 2560,
+    "height": 1440,
+    "ui_scale": 1.25,
+    "measured_at_ms": 1732400000000,
+    "monitor_id": 65622,
+    "origin": [
+      0,
+      0
+    ],
+    "client": [
+      0,
+      0,
+      2560,
+      1080
+    ],
+    "anchors": {
+      "templeEntrance": [
+        1280,
+        713
+      ],
+      "mercPanel": null
+    }
+  },
+  "widgets": {
+    "temple.door": {
+      "x": 40,
+      "y": 60,
+      "width": 320,
+      "height": 180,
+      "visible": true,
+      "host_width": 2560,
+      "host_height": 1440
+    }
+  },
+  "webview_gpu_disabled": false,
+  "proxy_url": "",
+  "proxy_trade": true,
+  "privacy_accepted_revision": null
+}

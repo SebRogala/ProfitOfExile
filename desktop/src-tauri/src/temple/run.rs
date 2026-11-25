@@ -3585,4 +3585,48 @@ mod tests {
             );
         }
     }
+
+    mod manual_panel {
+        use super::*;
+
+        mod keep_happy {
+            use super::*;
+
+            // keep:happy — a Manual temple panel yields the Entrance origin and
+            // ui_scale the panel rule was drawn from, and the Manual merc panel
+            // is the placement readers and previews show.
+            #[test]
+            fn a_manual_temple_panel_round_trips_to_its_entrance_placement() {
+                let panel = panel_rect((1280, 713), 1.0);
+
+                let (origin, ui_scale) = crate::ssot::origin_scale_for_panel(panel);
+
+                assert!(
+                    (origin.0 - 1280).abs() <= 1 && (origin.1 - 713).abs() <= 1,
+                    "origin {origin:?} from panel {panel:?}",
+                );
+                assert!((ui_scale - 0.90).abs() <= 0.005, "ui_scale {ui_scale}");
+
+                let merc_panel = [1001, 598, 555, 477];
+                let setting = crate::ssot::OcrRegionsSetting {
+                    mode: crate::ssot::OcrRegionsMode::Manual,
+                    manual: Some(crate::ssot::ManualRegions {
+                        set_on: crate::ssot::ScreenRef { width: 2560, height: 1440, origin: [0, 0], at_ms: 1_732_400_000_000 },
+                        edited: true,
+                        lab_gem: None,
+                        lab_font: None,
+                        lab_gem_slots: None,
+                        temple_panel: Some(panel),
+                        merc_panel: Some(merc_panel),
+                    }),
+                };
+                let slice = crate::ssot::screen_from_geometry(2560, 1440, 1, (0, 0), [0, 0, 2560, 1440], 0);
+
+                let placements = crate::ssot::resolve(Some(&slice), &setting, Some((2560, 1440))).placements;
+
+                assert_eq!(placements.temple.map(|t| t.entrance_origin), Some((1280, 713)));
+                assert_eq!(placements.merc.map(|m| m.panel), Some(merc_panel));
+            }
+        }
+    }
 }

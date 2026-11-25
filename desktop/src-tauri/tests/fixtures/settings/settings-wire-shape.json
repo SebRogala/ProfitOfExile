@@ -102,6 +102,10 @@
   "merc_tier_floor": 3,
   "screen_scale": null,
   "widgets": {},
+  "ocr_regions": {
+    "mode": "auto",
+    "manual": null
+  },
   "webview_gpu_disabled": false,
   "proxy_url": "",
   "proxy_trade": true,
