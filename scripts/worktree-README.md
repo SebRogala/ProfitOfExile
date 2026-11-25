@@ -116,9 +116,11 @@ Generated `.env.local` exports `INTEGRATION_DB` to the host integration script
 before it sources `scripts/lib/integration-env.sh`. It also exports the lane
 Compose selection and reads the URI-encoded password from the private
 `.worktree/db-password` file. Thus the runner resets only the lane integration
-DB and launches its Go tests with that DB URL. Calling the integration scripts
-directly requires explicitly supplying the same environment; `.env` is read
-by Compose, not by Bash. Do not override these lane settings with main's values.
+DB and launches its Go tests with that DB URL.
+`./scripts/integration-test-leased.sh <package> [go test args…]` resolves the lease from lane-setup's generated `.env` and privately loads the lane password when unset.
+Calling the other integration scripts directly requires explicitly supplying
+the same environment; Compose reads `.env`, while those scripts do not.
+Do not override these lane settings with main's values.
 
 The guard regression test needs no Docker or database:
 

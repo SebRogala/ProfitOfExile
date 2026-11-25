@@ -3,10 +3,8 @@
 # exclusively leased lane database; does not provision, wipe or start daemons.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-test "${INTEGRATION_DB:-}" = profitofexile_lanesecond_integration || {
- echo 'FAIL: rollover requires the exclusively leased lanesecond integration database.' >&2
- exit 1
-}
+source scripts/lib/leased-db.sh
+resolve_leased_db
 unset DATABASE_URL
 source scripts/lib/integration-env.sh
 
@@ -22,7 +20,6 @@ collector_down
 # dependency startup and no external market calls occur in this fixture test.
 log="$(mktemp)"
 trap 'rm -f "$log"; collector_down' EXIT
-test "$INTEGRATION_DB" = profitofexile_lanesecond_integration
 docker run --rm --network infra \
  -v "$PWD:/app" -v profitofexile_go-pkg:/root/go/pkg -w /app \
  -e DATABASE_URL="$DATABASE_URL" -e GOFLAGS=-buildvcs=false \

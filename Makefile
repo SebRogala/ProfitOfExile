@@ -33,8 +33,8 @@ test: ## Run all Go tests with race detection
 test-integration: ## Run Go integration tests (build tag: integration) against a throwaway database
 	./scripts/integration-test.sh
 
-# Current committed CLI rollover proof against the migrated, exclusively leased
-# profitofexile_lanesecond_integration DB. Export .env and the lane password
+# Current committed CLI rollover proof against the checkout's migrated, exclusively leased
+# lane integration DB (INTEGRATION_DB from lane-setup). Export .env and the lane password
 # privately first, as in the integration gate instructions; keep collector down.
 .PHONY: test-league-rollover
 test-league-rollover: ## Prove committed rollover rejects stale contributions (Docker; leased lane DB)
