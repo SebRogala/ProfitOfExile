@@ -104,6 +104,40 @@ is not mistaken for a fact.
   content "Uber Atziri, area level 84" (`drops.rs`); sheet gid0.csv row 8,
   g744679169.csv row 32.
 
+### Consolidation of Power (current evidence, 2026-11-25)
+
+- **Power Struggle: Consolidation of Power.** Observed in the owner's
+  screenshot, 2026-11-19, recorded in POE-415. The node says "Selected option
+  can be reallocated at any time" and offers exactly one of:
+
+  1. "Killing non-resident Architects in your Maps adds an additional Upgrade Tier to the surviving Architect's Room"
+  2. "Killing resident Architects in your Maps adds their Upgrade Tier to the surviving Architect's Room"
+
+  "(Non-resident Architects are those that can be killed to upgrade the Incursion room)"
+
+  Resource Reallocation and Incursion Upgrade Chance were removed in 3.30;
+  the Operator confirmed this in game on 2026-11-19 (POE-415).
+- **A tier-0 room's kill lands at tier 1.** Owner correction, 2026-11-19,
+  POE-415: under either Consolidation option it never lands at tier 2.
+  See the architect-offer-kind entry above for what a tier-0 panel prints.
+  The Cradle exception is recorded below.
+- **A fresh temple has 12 incursions.** Owner-stated, 2026-11-19, POE-415.
+- **The pending next room survives leaving the map.** Owner-stated,
+  2026-11-19, POE-415: the next incursion room is generated when the current
+  incursion completes while the map still has incursions left. Leaving does
+  not reroll it; the next map opens on that same pending room.
+- **Whole-map no-revisit.** Owner rule recorded in POE-415, 2026-11-19:
+  no room visited in the current map can be revisited in that map.
+- **Cradle of Creation is always built at tier 3.** Operator note 6,
+  2026-11-25, POE-415, verbatim: "Cradle is always fully upgraded - so when
+  there is an option for Cradle, it's alway into final t3".
+
+The implementation home is `desktop/src-tauri/src/temple/facts.rs`:
+`landing_tier` resolves kill outcomes, `always_tier_three` identifies the
+Cradle exception, and `current_tier_from_upgrade_print` decodes an upgrade's
+printed tier using the architect-offer-kind evidence above. The inferred
+readings used by that implementation remain [Not validated](#not-validated-in-game).
+
 ### Vial recipes (removed in 3.30.0)
 
 Vials were removed in 3.30.0 (POE-366). Patch notes: "The following Vials no
@@ -388,6 +422,40 @@ shapes.
 ## Not validated
 
 Recorded so the status is explicit, not so they can be built on.
+
+### Not validated, in game
+
+The following six temple readings are **Not validated**. POE-415 adopts them
+as assumptions under the 2026-11-25 owner ruling; adoption does not establish
+in-game confirmation. The node text and owner corrections are recorded above.
+The landing implementation lives in `desktop/src-tauri/src/temple/facts.rs`.
+
+- **Option 1 upgrade.** Inferred from the 2026-11-19 node screenshot:
+  upgrading an occupied room adds two tiers deterministically, capped at
+  tier 3. `evidence/temple-upgrade-vs-explosives.png` is the upgrade-versus-change
+  regression board; its printed upgrade is not confirmation of the kill's
+  landing tier. Not validated.
+- **Upgrade without option 1.** Under option 2 or with the node not taken,
+  an occupied room's upgrade adds one tier, capped at tier 3. This is the
+  baseline reading used by POE-415, not a measured 3.30 result. Not validated.
+- **Option 2 change.** "Adds their Upgrade Tier" is inferred to mean the
+  changed room receives the killed resident's tier on top of its base:
+  current tier + 1, capped at tier 3. Source: POE-415's 2026-11-19 inference;
+  retained by the 2026-11-25 ruling. Not validated.
+- **Change without option 2.** Under option 1 or with the node not taken,
+  a non-Cradle change is inferred to land at the new room's base tier 1.
+  Source: POE-415's 2026-11-19 inference. The alternative change printed in
+  `evidence/temple-upgrade-vs-explosives.png` does not establish its landing
+  tier. Not validated.
+- **Cradle precedence over tier 0.** Applying the Operator's 2026-11-25
+  Cradle rule before the tier-0 rule, including a change from a tier-0 room,
+  is inferred from note 6's unconditional wording (POE-415). Not validated.
+- **No pending draw at a map's last incursion.** The rollout assumes no next
+  room is generated when the map has no incursions left. The 2026-11-19
+  pending-room owner fact covers a map that still has incursions left;
+  the last-incursion boundary is an inference in POE-415. Not validated.
+
+### Other unvalidated assumptions
 
 - **3.30 Currency Exchange ids.** Hand-added before the 3.30 feed was
   observed: `Metadata/Items/Threads/{Abyss,Bestiary,Betrayal,Blight,Breach,
