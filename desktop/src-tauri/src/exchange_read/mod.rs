@@ -130,6 +130,23 @@ pub fn finish(
     emit(ExchangeReadEvent { pressed_at_ms, outcome });
 }
 
+/// The diagnostic branch a ratio side that is not a positive decimal logs.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const RATIO_SIDE_NOT_POSITIVE_DECIMAL: &str = "ratio-side-not-positive-decimal";
+
+/// [`finish`] for a press's own result slot, with the sink its
+/// `RatioUnreadable` diagnostic line goes to.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn finish_logged(
+    outcome: DispatchOutcome,
+    handle: &reader::ExchangeReadHandle,
+    pressed_at_ms: u64,
+    emit: &mut dyn FnMut(ExchangeReadEvent),
+    _log: &mut dyn FnMut(String),
+) {
+    finish(outcome, handle.take(), pressed_at_ms, emit);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

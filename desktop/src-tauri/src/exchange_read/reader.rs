@@ -225,7 +225,15 @@ mod tests {
 
     /// One exchange press through the real dispatch: one grab of [`frame`],
     /// the reader's probe and consume, OCR answered per recognised crop.
-    fn press(mut answers: HashMap<&'static str, Result<Vec<OcrLineBox>, String>>) -> Press {
+    fn press(answers: HashMap<&'static str, Result<Vec<OcrLineBox>, String>>) -> Press {
+        let (outcome, handle, ocr_calls) = dispatched(answers);
+        Press { outcome, result: handle.take(), ocr_calls }
+    }
+
+    /// [`press`] with its result slot left unread, for the finish path.
+    fn dispatched(
+        mut answers: HashMap<&'static str, Result<Vec<OcrLineBox>, String>>,
+    ) -> (DispatchOutcome, ExchangeReadHandle, Vec<&'static str>) {
         let frame = frame();
         let placed: Vec<(&'static str, DynamicImage)> = CROPS
             .iter()
@@ -256,7 +264,7 @@ mod tests {
             &mut |_| panic!("an exchange press carries no dismissal"),
         );
         let ocr_calls = calls.lock().unwrap().clone();
-        Press { outcome, result: handle.take(), ocr_calls }
+        (outcome, handle, ocr_calls)
     }
 
     mod keep_happy {
@@ -341,6 +349,31 @@ mod tests {
             assert_eq!(
                 (read.outcome, read.result),
                 (DispatchOutcome::Selected(ReaderId::Exchange), Some(Err(ExchangeReadError::RatioUnreadable))),
+            );
+        }
+
+        // keep:critical — silent: a failed read leaves no evidence in app.log,
+        // so "Ratio unreadable" cannot be traced to the row OCR read or the
+        // refusal that fired.
+        #[test]
+        fn a_failed_read_logs_its_row_text_and_branch() {
+            use crate::exchange_read::{finish_logged, RATIO_SIDE_NOT_POSITIVE_DECIMAL};
+            let row = Row { ratio: "220 : l".into(), stock: "3".into(), ..fixture_row("ember-for-chaos") };
+            let (outcome, handle, _) = dispatched(answers(header_found(), &row, RowShape::TwoLines));
+
+            let (mut events, mut logs) = (Vec::new(), Vec::new());
+            finish_logged(
+                outcome,
+                &handle,
+                1_700_000_000_123,
+                &mut |event| events.push(serde_json::to_value(event).unwrap()),
+                &mut |line| logs.push(line),
+            );
+
+            assert_eq!(events, vec![serde_json::json!({"pressedAtMs": 1_700_000_000_123_u64, "error": "ratio-unreadable"})]);
+            assert!(
+                matches!(logs.as_slice(), [line] if line.contains(RATIO_SIDE_NOT_POSITIVE_DECIMAL) && line.contains("220 : l")),
+                "expected exactly one diagnostic line naming {RATIO_SIDE_NOT_POSITIVE_DECIMAL} and the row text \"220 : l\", got {logs:?}",
             );
         }
     }
