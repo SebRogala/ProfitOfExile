@@ -93,4 +93,47 @@ describe('run recorder submission', () => {
 
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
+
+	it('keep:regression a recovered run that repeats a room name keeps its whole room history', async () => {
+		let resolveCatchup!: (value: unknown) => void;
+		const catchup = new Promise((resolve) => { resolveCatchup = resolve; });
+		invokeMock.mockImplementation(async (cmd: string) => {
+			if (cmd === 'get_status') return { server_url: STATUS_URL, device_id: 'dev-1', app_version: '9.9.9' };
+			if (cmd === 'get_lab_catchup') return catchup;
+			return null;
+		});
+		const { applyServerSlice: seed } = await import('$lib/stores/server-base.svelte');
+		seed({ url: CARRIER, defaultUrl: CARRIER });
+		const { startRunRecorder } = await import('$lib/run-recorder');
+		startRunRecorder();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(invokeMock).toHaveBeenCalledWith('get_lab_catchup');
+
+		const nav = (payload: unknown) => handlers['lab-nav']({ payload });
+		nav({ type: 'RoomChanged', name: 'Estate Walkways' });
+		nav({ type: 'RoomChanged', name: 'Estate Path' });
+		resolveCatchup({
+			events: [
+				{ type: 'PlazaEntered' },
+				{ type: 'RoomChanged', name: 'Estate Walkways' },
+				{ type: 'RoomChanged', name: 'Sepulchre Atrium' },
+				{ type: 'RoomChanged', name: 'Estate Walkways' }
+			]
+		});
+		await vi.advanceTimersByTimeAsync(0);
+		await vi.advanceTimersByTimeAsync(5000);
+		nav({ type: 'LabFinished' });
+		nav({ type: 'LabExited' });
+		await vi.advanceTimersByTimeAsync(0);
+
+		const post = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/lab/runs'));
+		expect(post).toBeDefined();
+		const body = JSON.parse(String((post as [string, RequestInit])[1].body));
+		expect(body.rooms.map((r: { room_name: string }) => r.room_name)).toEqual([
+			'Estate Walkways',
+			'Sepulchre Atrium',
+			'Estate Walkways',
+			'Estate Path'
+		]);
+	});
 });
