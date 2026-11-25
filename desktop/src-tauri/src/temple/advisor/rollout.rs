@@ -815,49 +815,6 @@ mod tests {
         assert_eq!(sim.last_visited, None);
     }
 
-    // ------------------------------------------------------ the kill roll --
-
-    // `0 → 2` never happens: a tier-0 room has no line to upgrade, so the
-    // double-tier roll cannot apply to it.
-    #[test]
-    fn the_double_tier_roll_never_fires_from_tier_zero() {
-        for seed in 0..40u64 {
-            let mut sim = sim(&[], &[]);
-            let mut rng = Rng::seeded(seed);
-            sim.apply_kill(D2.index(), Valuation::CORRUPTION, true, &mut rng);
-            assert_eq!(sim.tier[D2.index()], 1, "seed {seed} produced 0 → 2");
-        }
-    }
-
-    // The roll is `upgrade` only. Both Atlas nodes read "killing non-resident
-    // Architects", and Contested Development powers `change` with a flat +1.
-    #[test]
-    fn the_double_tier_roll_never_fires_on_a_change() {
-        for seed in 0..40u64 {
-            let mut sim = sim(&[(D2, "junk", 1)], &[]);
-            let mut rng = Rng::seeded(seed);
-            sim.apply_kill(D2.index(), Valuation::CORRUPTION, false, &mut rng);
-            assert_eq!(sim.tier[D2.index()], 2, "seed {seed} doubled a change");
-        }
-    }
-
-    // And it does fire on an upgrade, or the 50% would be unmodelled.
-    #[test]
-    fn an_upgrade_from_tier_one_sometimes_reaches_tier_three() {
-        let doubled = (0..200u64)
-            .filter(|seed| {
-                let mut sim = sim(&[(D2, "junk", 1)], &[]);
-                let mut rng = Rng::seeded(*seed);
-                sim.apply_kill(D2.index(), Valuation::CORRUPTION, true, &mut rng);
-                sim.tier[D2.index()] == 3
-            })
-            .count();
-        assert!(
-            (60..140).contains(&doubled),
-            "expected roughly half of 200 to double, got {doubled}"
-        );
-    }
-
     // ------------------------------------------------- upgrade resolution --
 
     // The Apex is excluded from an upgrade room's target pool outright —

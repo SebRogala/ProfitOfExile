@@ -1995,8 +1995,9 @@ mod tests {
 
     // ---------------------------------------------- the architect rules ---
 
-    // R4's carve-out declines the double-tier roll that could take the
-    // Sanctum's only live target out of the pool. PROPOSED — see
+    // R4's carve-out declines the upgrade that would take the Sanctum's only
+    // live target out of the pool: under Consolidation option 1 a tier-1
+    // room's upgrade builds tier 3 and its change tier 1. PROPOSED — see
     // [`R4_POOL_CARVE_OUT`].
     #[test]
     fn the_carve_out_ranks_change_above_upgrade_beside_a_live_sanctum() {
@@ -2008,7 +2009,7 @@ mod tests {
         let change = verdict_with(
             &state,
             D1,
-            Some(&choice(OfferKind::Change, "museum_of_artefacts", 2)),
+            Some(&choice(OfferKind::Change, "museum_of_artefacts", 1)),
             &[],
             1,
             &profile,
@@ -2016,7 +2017,7 @@ mod tests {
         let upgrade = verdict_with(
             &state,
             D1,
-            Some(&choice(OfferKind::Upgrade, "factory", 2)),
+            Some(&choice(OfferKind::Upgrade, "factory", 3)),
             &[],
             1,
             &profile,
@@ -2059,7 +2060,7 @@ mod tests {
         let upgrade = verdict_with(
             &state,
             D1,
-            Some(&choice(OfferKind::Upgrade, "factory", 2)),
+            Some(&choice(OfferKind::Upgrade, "factory", 3)),
             &[],
             1,
             &profile,
@@ -2067,7 +2068,7 @@ mod tests {
         let change = verdict_with(
             &state,
             D1,
-            Some(&choice(OfferKind::Change, "museum_of_artefacts", 2)),
+            Some(&choice(OfferKind::Change, "museum_of_artefacts", 1)),
             &[],
             1,
             &profile,
@@ -2116,7 +2117,7 @@ mod tests {
         let upgrade = verdict(
             &state,
             D1,
-            Some(&choice(OfferKind::Upgrade, "factory", 2)),
+            Some(&choice(OfferKind::Upgrade, "factory", 3)),
             &[],
         );
         assert!(!upgrade.architect.vetoed(), "{:?}", upgrade.reasons);
@@ -2136,7 +2137,7 @@ mod tests {
         let upgrade = verdict_with(
             &state,
             D1,
-            Some(&choice(OfferKind::Upgrade, "factory", 2)),
+            Some(&choice(OfferKind::Upgrade, "factory", 3)),
             &[],
             1,
             &with_carve_out(),
@@ -2150,15 +2151,16 @@ mod tests {
     }
 
     // Without a shrine that can still hit the slot, R4 takes over and points
-    // the other way: max the junk room out of the pool.
+    // the other way: max the junk room out of the pool. Option 1's landing
+    // from tier 1: the upgrade builds tier 3, the change tier 1.
     #[test]
     fn r4_ranks_upgrade_above_change_when_no_shrine_can_still_hit_the_slot() {
         let state = board(&[(D1, "factory", 1), (C2, "corruption", 1)], &[(D1, E1)]);
-        let change = verdict(&state, D1, Some(&choice(OfferKind::Change, "museum_of_artefacts", 2)), &[]);
-        let upgrade = verdict(&state, D1, Some(&choice(OfferKind::Upgrade, "factory", 2)), &[]);
+        let change = verdict(&state, D1, Some(&choice(OfferKind::Change, "museum_of_artefacts", 1)), &[]);
+        let upgrade = verdict(&state, D1, Some(&choice(OfferKind::Upgrade, "factory", 3)), &[]);
         assert!(
             upgrade.architect > change.architect,
-            "only the upgrade rolls the double tier that empties the slot"
+            "only the upgrade builds the tier 3 that empties the slot"
         );
         assert!(upgrade.reasons.iter().any(|r| matches!(r, Reason::R4)));
     }
@@ -2173,7 +2175,9 @@ mod tests {
         profile.r4_keep_upgrade_targets = carve_out;
         [OfferKind::Upgrade, OfferKind::Change].into_iter().flat_map(|kind| {
             let line = if kind == OfferKind::Upgrade { "factory" } else { "museum_of_artefacts" };
-            let verdict = verdict_with(&state, D1, Some(&choice(kind, line, 2)), &[], 1, &profile);
+            // Option 1's landing from tier 1: the upgrade builds 3, the change 1.
+            let built = if kind == OfferKind::Upgrade { 3 } else { 1 };
+            let verdict = verdict_with(&state, D1, Some(&choice(kind, line, built)), &[], 1, &profile);
             assert!(!verdict.architect.vetoed(), "no future draw can justify a pool veto");
             if remaining <= 1 {
                 assert_eq!(verdict.architect.0[4], 0, "no future draw can justify a pool preference");
@@ -2208,11 +2212,11 @@ mod tests {
         state.remaining = 2;
         let profile = with_carve_out();
         let upgrade = verdict_with(
-            &state, D1, Some(&choice(OfferKind::Upgrade, "factory", 2)),
+            &state, D1, Some(&choice(OfferKind::Upgrade, "factory", 3)),
             &[], 1, &profile,
         );
         let change = verdict_with(
-            &state, D1, Some(&choice(OfferKind::Change, "museum_of_artefacts", 2)),
+            &state, D1, Some(&choice(OfferKind::Change, "museum_of_artefacts", 1)),
             &[], 1, &profile,
         );
         assert!(upgrade.architect.vetoed());

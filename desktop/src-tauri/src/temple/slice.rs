@@ -1992,6 +1992,35 @@ mod tests {
         }
     }
 
+    /// The default config with Consolidation of Power set to `option`
+    /// (`None` is unset, which plays option 1).
+    fn played(option: Option<crate::temple::strategy::Consolidation>) -> TempleConfig {
+        TempleConfig {
+            consolidation: option,
+            ..TempleConfig::default()
+        }
+    }
+
+    /// Option 2 (`ResidentCarry`): the one option whose `change` reads the
+    /// current tier, landing it at `min(3, current + 1)`.
+    fn option_two() -> TempleConfig {
+        played(Some(crate::temple::strategy::Consolidation::ResidentCarry))
+    }
+
+    /// `read` ranked and projected under `config`.
+    fn under(mut read: ReadResult<'_>, config: TempleConfig) -> ReadResult<'_> {
+        read.config = config;
+        read
+    }
+
+    /// Default settings with `config` in force.
+    fn settings_under(config: TempleConfig) -> TempleSettings {
+        TempleSettings {
+            config,
+            ..TempleSettings::default()
+        }
+    }
+
     // ------------------------------------------------------- projection --
 
     /// The headline projection: a plate that read a real room reaches the
@@ -2774,13 +2803,14 @@ mod tests {
     }
 
     /// The panel's printed target is NOT the answer — the slice publishes the
-    /// room the kill actually builds. On a tier-2 room, "change to Corruption
-    /// Chamber" builds the tier-3 room of that line. Fails if `offer_view`
-    /// echoes `printed_target` into `display_name`.
+    /// room the kill actually builds. Under Consolidation option 2
+    /// (`ResidentCarry`), on a tier-2 room, "change to Corruption Chamber"
+    /// builds the tier-3 room of that line. Fails if `offer_view` echoes
+    /// `printed_target` into `display_name`.
     #[test]
     fn an_offer_resolves_to_the_room_the_kill_actually_builds() {
         let layout = layout(Some(Slot::B0), &[], &[]);
-        // B0 holds a tier-2 room, so Contested Development's +1 lands on 3.
+        // B0 holds a tier-2 room, so option 2's change lands on 2 + 1 = 3.
         let rooms = board_rooms(&[(Slot::B0, "Catalyst of Corruption")]);
         let panel = panel(
             "Catalyst of Corruption",
@@ -2788,7 +2818,10 @@ mod tests {
             vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
+        let slice = project(
+            &under(read(&layout, &rooms, &panel, None, None, &valued()), option_two()),
+            None,
+        );
 
         let view = slice.panel.expect("a read publishes its panel");
         let first = view.offers.first().expect("one architect block");
@@ -2843,8 +2876,8 @@ mod tests {
     #[test]
     fn a_resolved_offer_publishes_its_line_grade_and_the_tier_three_room() {
         let layout = layout(Some(Slot::B0), &[], &[]);
-        // Tier 2 in hand, so Contested Development's +1 lands the kill on the
-        // line's own tier-3 room.
+        // Tier 2 in hand, so option 2 (`ResidentCarry`) lands the change on
+        // the line's own tier-3 room.
         let rooms = board_rooms(&[(Slot::B0, "Catalyst of Corruption")]);
         let panel = panel(
             "Catalyst of Corruption",
@@ -2852,7 +2885,10 @@ mod tests {
             vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
+        let slice = project(
+            &under(read(&layout, &rooms, &panel, None, None, &valued()), option_two()),
+            None,
+        );
 
         let first = slice
             .panel
@@ -2892,10 +2928,10 @@ mod tests {
     }
 
     /// The rating is about the LINE, not about the room the kill hands over.
-    /// A `change` taken on a tier-1 room builds tier 2, and the published
-    /// `line_top` is still the family's tier-3 room — which is what makes the
-    /// letter beside it honest. Fails if `offer_view` ever names
-    /// `display_name`'s own tier here.
+    /// Under option 2 (`ResidentCarry`) a `change` taken on a tier-1 room
+    /// builds tier 2, and the published `line_top` is still the family's
+    /// tier-3 room — which is what makes the letter beside it honest. Fails if
+    /// `offer_view` ever names `display_name`'s own tier here.
     #[test]
     fn a_change_resolved_at_tier_two_still_names_the_lines_tier_three_room() {
         let layout = layout(Some(Slot::B0), &[], &[]);
@@ -2906,7 +2942,10 @@ mod tests {
             vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
+        let slice = project(
+            &under(read(&layout, &rooms, &panel, None, None, &valued()), option_two()),
+            None,
+        );
 
         let first = slice.panel.expect("panel").offers.into_iter().next().expect("one block");
         assert_eq!(first.display_name.as_deref(), Some("Catalyst of Corruption"));
@@ -3149,10 +3188,11 @@ mod tests {
     /// is the one most likely to read Unknown — and the side panel's title is
     /// then the only source left for the room the player is in.
     ///
-    /// A `change` is the discriminating kind: its built tier is
-    /// `currentTier + 1` of a DIFFERENT line, so nothing in the printed text
-    /// carries it. From Office of Cartography II, *"change to Gemcutter's
-    /// Workshop"* builds the gem line's tier 3.
+    /// A `change` under Consolidation option 2 (`ResidentCarry`) is the
+    /// discriminating kind: its built tier is `currentTier + 1` of a DIFFERENT
+    /// line, so nothing in the printed text carries it. From Office of
+    /// Cartography II, *"change to Gemcutter's Workshop"* builds the gem
+    /// line's tier 3.
     ///
     /// Fails if the title is not consulted when the plate is unread, or if the
     /// tier falls back to `T0` — the shipped bug, which printed and ranked the
@@ -3164,7 +3204,10 @@ mod tests {
             vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
+        let slice = project(
+            &under(read(&layout, &rooms, &panel, None, None, &valued()), option_two()),
+            None,
+        );
         let published = slice
             .panel
             .expect("panel")
@@ -3179,54 +3222,11 @@ mod tests {
         );
         assert_eq!(published.built_tier, Some(3));
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued())
+        let advice = advise_read(&layout, &rooms, &panel, None, &settings_under(option_two()), &valued())
             .expect("a board with a current room ranks");
         let choice = ranked_choice(&advice, 0).expect("the change offer is ranked");
         assert_eq!(choice.built_tier, Tier::T3);
         assert_eq!(choice.display_name, "Doryani's Institute");
-    }
-
-    /// Neither source named the room: the plate is unread AND the panel title
-    /// did not resolve. A `change` offer's built tier is a fact about the room
-    /// the player is standing in, so there is no answer — and the advisor says
-    /// so instead of inventing tier 1.
-    ///
-    /// Fails if the unknown tier collapses back to `T0`, which would publish a
-    /// room name the kill will not build with no warning attached.
-    #[test]
-    fn a_change_offer_with_no_readable_current_room_warns_instead_of_guessing() {
-        let (layout, rooms, panel) = screenshot_board(
-            "Qwertz Chamber",
-            vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
-        );
-
-        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
-        let published = slice
-            .panel
-            .expect("panel")
-            .offers
-            .into_iter()
-            .next()
-            .expect("one architect block");
-        assert_eq!(published.display_name, None);
-        assert_eq!(published.built_tier, None);
-
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued())
-            .expect("a board with a current room still ranks its doors");
-        assert!(
-            advice.warnings.contains(&Warning::UnknownCurrentTier),
-            "the unknown tier must be stated, got {:?}",
-            advice.warnings,
-        );
-        assert!(
-            ranked_choice(&advice, 0).is_none(),
-            "an unresolvable change offer must not reach the ranking as a choice",
-        );
-        assert!(
-            !advice.warnings.contains(&Warning::UnresolvedArchitects),
-            "the architect's target read fine — it was the current room that did not: {:?}",
-            advice.warnings,
-        );
     }
 
     /// The same unreadable current room, but an `upgrade`: that kind prints
@@ -3309,8 +3309,9 @@ mod tests {
     }
 
     /// The plate read and the title did not: the plate is the FIRST source, and
-    /// this is the case that proves it is consulted at all. A `change` is the
-    /// discriminating kind — it resolves only if some source supplied the tier.
+    /// this is the case that proves it is consulted at all. A `change` under
+    /// option 2 (`ResidentCarry`) is the discriminating kind — it resolves only
+    /// if some source supplied the tier.
     ///
     /// Fails if the title becomes the only source, which is what the ordering in
     /// `current_identity` would collapse to if `plate.or(title)` lost its first
@@ -3328,7 +3329,10 @@ mod tests {
             vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
+        let slice = project(
+            &under(read(&layout, &rooms, &panel, None, None, &valued()), option_two()),
+            None,
+        );
         let published = slice
             .panel
             .expect("panel")
@@ -3364,13 +3368,17 @@ mod tests {
     /// of whole-screen OCR that can land on another plate's name.
     ///
     /// Fails if the title is preferred, or if the sources are merged some third
-    /// way: the plate's tier 1 builds Department of Thaumaturgy, the title's
-    /// tier 2 builds Doryani's Institute.
+    /// way: under option 2 (`ResidentCarry`) the plate's tier 1 builds
+    /// Department of Thaumaturgy, the title's tier 2 builds Doryani's
+    /// Institute.
     #[test]
     fn a_disagreeing_current_plate_beats_the_side_panel_title() {
         let (layout, rooms, panel) = disagreeing_board();
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
+        let slice = project(
+            &under(read(&layout, &rooms, &panel, None, None, &valued()), option_two()),
+            None,
+        );
         let published = slice
             .panel
             .expect("panel")
@@ -3450,8 +3458,8 @@ mod tests {
     }
 
     /// The unknown current tier is one fact about the read, not one per
-    /// architect block: two unresolvable `change` offers still produce a single
-    /// line for the overlay.
+    /// architect block: under option 2 (`ResidentCarry`) two unresolvable
+    /// `change` offers still produce a single line for the overlay.
     ///
     /// Fails if the warning is pushed per offer, which would print the same
     /// sentence twice under a two-architect panel — the common case.
@@ -3465,7 +3473,7 @@ mod tests {
             ],
         );
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued())
+        let advice = advise_read(&layout, &rooms, &panel, None, &settings_under(option_two()), &valued())
             .expect("ranks");
 
         assert_eq!(
@@ -3480,10 +3488,11 @@ mod tests {
         );
     }
 
-    /// The owner's report, end to end: on the screenshot board the swap that
-    /// completes Locus + Doryani must outrank the Atlas upgrade that completes
-    /// nothing. It was ranked below it because the change resolved to the
-    /// tier-1 Gemcutter's Workshop.
+    /// The owner's report, end to end: on the screenshot board, played under
+    /// Consolidation option 2 (`ResidentCarry`), the swap that completes
+    /// Locus + Doryani must outrank the Atlas upgrade that completes nothing.
+    /// It was ranked below it because the change resolved to the tier-1
+    /// Gemcutter's Workshop.
     ///
     /// Fails if the change offer is resolved at the wrong tier, or if the top
     /// recommendation is the upgrade.
@@ -3497,7 +3506,7 @@ mod tests {
             ],
         );
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued())
+        let advice = advise_read(&layout, &rooms, &panel, None, &settings_under(option_two()), &valued())
             .expect("ranks");
 
         let top = advice
@@ -4981,6 +4990,83 @@ mod tests {
     mod keep_happy {
         use super::*;
 
+        // keep:happy — POE-415 AC (a′). Neither source named the room: the plate
+        // is unread AND the panel title did not resolve. Under Consolidation
+        // option 2 (`ResidentCarry`) a `change` offer's built tier is a fact about
+        // the room the player is standing in, so there is no answer — and the
+        // advisor says so instead of inventing tier 1. Under option 1 a change
+        // lands at tier 1 whatever the current tier, so the same read resolves to
+        // the printed tier-1 room with no warning.
+        //
+        // Fails if the unknown tier collapses back to `T0` under option 2, which
+        // would publish a room name the kill will not build with no warning
+        // attached, or if option 1 still refuses a change it can resolve.
+        #[test]
+        fn a_change_offer_with_no_readable_current_room_warns_instead_of_guessing() {
+            let (layout, rooms, panel) = screenshot_board(
+                "Qwertz Chamber",
+                vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
+            );
+
+            let option_one = played(Some(crate::temple::strategy::Consolidation::NonResidentExtraTier));
+            let slice = project(
+                &under(read(&layout, &rooms, &panel, None, None, &valued()), option_one.clone()),
+                None,
+            );
+            let published = slice
+                .panel
+                .expect("panel")
+                .offers
+                .into_iter()
+                .next()
+                .expect("one architect block");
+            assert_eq!(
+                (published.display_name.as_deref(), published.built_tier),
+                (Some("Gemcutter's Workshop"), Some(1)),
+                "option 1: a change builds the printed line at tier 1 whatever the current tier",
+            );
+            let advice = advise_read(&layout, &rooms, &panel, None, &settings_under(option_one), &valued())
+                .expect("a board with a current room ranks");
+            assert!(
+                !advice.warnings.contains(&Warning::UnknownCurrentTier),
+                "option 1 needs no current tier for a change: {:?}",
+                advice.warnings,
+            );
+            let choice = ranked_choice(&advice, 0).expect("option 1 ranks the change offer");
+            assert_eq!((choice.built_tier, choice.display_name), (Tier::T1, "Gemcutter's Workshop"));
+
+            let slice = project(
+                &under(read(&layout, &rooms, &panel, None, None, &valued()), option_two()),
+                None,
+            );
+            let published = slice
+                .panel
+                .expect("panel")
+                .offers
+                .into_iter()
+                .next()
+                .expect("one architect block");
+            assert_eq!(published.display_name, None);
+            assert_eq!(published.built_tier, None);
+
+            let advice = advise_read(&layout, &rooms, &panel, None, &settings_under(option_two()), &valued())
+                .expect("a board with a current room still ranks its doors");
+            assert!(
+                advice.warnings.contains(&Warning::UnknownCurrentTier),
+                "the unknown tier must be stated, got {:?}",
+                advice.warnings,
+            );
+            assert!(
+                ranked_choice(&advice, 0).is_none(),
+                "an unresolvable change offer must not reach the ranking as a choice",
+            );
+            assert!(
+                !advice.warnings.contains(&Warning::UnresolvedArchitects),
+                "the architect's target read fine — it was the current room that did not: {:?}",
+                advice.warnings,
+            );
+        }
+
         // AC-1: every row of the editor table carries its line's facts, off the
         // one projection the offer box uses, and none of them is empty. The row
         // describes the line at tier 3, so it is the tier-3 offer's line facts
@@ -5767,8 +5853,9 @@ mod tests {
         rooms: &[RoomReading],
         panel: &PanelReading,
         valued: &Valued,
+        config: TempleConfig,
     ) -> Advice {
-        advise_read(layout, rooms, panel, None, &TempleSettings::default(), valued)
+        advise_read(layout, rooms, panel, None, &settings_under(config), valued)
             .expect("a board with a current room ranks")
     }
 
@@ -5787,8 +5874,9 @@ mod tests {
     }
 
     /// **Acceptance (1).** Standing in a tier-1 vial room with two `change`
-    /// offers, the advice is to switch — and to switch onto the corruption
-    /// line rather than the gem one.
+    /// offers, played under Consolidation option 2 (`ResidentCarry`, where a
+    /// change lands at the current tier + 1), the advice is to switch — and to
+    /// switch onto the corruption line rather than the gem one.
     ///
     /// The board is Pools of Restoration (the Sanctum of Immortality line at tier 1, worth 53.40
     /// on the committed capture) against Corruption Chamber (691.20) and
@@ -5826,14 +5914,14 @@ mod tests {
         );
         let valued = allflame_valuation();
 
-        let advice = advise_at_allflame_prices(&layout, &rooms, &panel, &valued);
+        let advice = advise_at_allflame_prices(&layout, &rooms, &panel, &valued, option_two());
 
         let (kind, line, tier) = top_kill(&advice);
         assert_eq!(kind, OfferKind::Change, "the verdict is a switch");
         assert_eq!(line, Line::Corruption, "onto the line the feed pays most for");
         assert_eq!(
             tier, 2,
-            "a `change` in a tier-1 room builds the new line at tier 2",
+            "under option 2 a `change` in a tier-1 room builds the new line at tier 2",
         );
         // And the board really is being ranked in chaos: a finished temple
         // scored on the 1-10 fixture ranking cannot reach three figures.
@@ -5883,7 +5971,9 @@ mod tests {
         );
         let valued = allflame_valuation();
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued), None);
+        // Acceptance (1)'s option: under `ResidentCarry` the change from tier 1
+        // builds the tier-2 corruption room.
+        let slice = project(&under(read(&layout, &rooms, &panel, None, None, &valued), option_two()), None);
 
         let value = slice.panel.expect("a read publishes its panel").offers[0]
             .value
@@ -5930,7 +6020,14 @@ mod tests {
         );
         let valued = allflame_valuation();
 
-        let advice = advise_at_allflame_prices(&layout, &rooms, &panel, &valued);
+        // Option 1, the played default: the upgrade from tier 2 caps at 3.
+        let advice = advise_at_allflame_prices(
+            &layout,
+            &rooms,
+            &panel,
+            &valued,
+            played(Some(crate::temple::strategy::Consolidation::NonResidentExtraTier)),
+        );
 
         let (kind, line, tier) = top_kill(&advice);
         assert_eq!(kind, OfferKind::Upgrade, "the verdict is an upgrade");

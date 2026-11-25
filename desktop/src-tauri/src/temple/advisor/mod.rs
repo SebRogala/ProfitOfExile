@@ -1014,7 +1014,7 @@ mod tests {
     use super::*;
     use crate::temple::lattice::Slot::*;
     use crate::temple::rooms::OfferKind::{Change, Upgrade};
-    use crate::temple::strategy::{Line, ModeRule, StrategyProfile};
+    use crate::temple::strategy::{Consolidation, Line, ModeRule, StrategyProfile};
 
     /// Rollouts per option in the tests.
     ///
@@ -1028,6 +1028,27 @@ mod tests {
 
     fn rush() -> StrategyProfile {
         StrategyProfile::locus_doryani_rush()
+    }
+
+    /// The default config with the Consolidation of Power option set to
+    /// `option` (`None` is unset, which plays option 1).
+    fn played(option: Option<Consolidation>) -> TempleConfig {
+        TempleConfig {
+            consolidation: option,
+            ..TempleConfig::default()
+        }
+    }
+
+    /// The architect choice the advice made for one offer block, wherever it
+    /// ranked, or `None` when the block never reached the ranking.
+    fn choice_for(advice: &Advice, offer_index: usize) -> Option<&ArchitectChoice> {
+        advice
+            .recommendations
+            .iter()
+            .map(|r| &r.option)
+            .chain(advice.gambles.iter().map(|g| &g.option))
+            .filter_map(|option| option.architect.as_ref())
+            .find(|a| a.offer_index == offer_index)
     }
 
     /// The nine walked boards: the eight Sebastian decided, plus the one the
@@ -1085,13 +1106,14 @@ mod tests {
             state.set_room(C1, Some(Line::Upgrade), Tier::T2);
             state.doors.insert(Edge::new(C1, D1));
         }
+        // Option 1's landing from the tier-1 room: upgrade 3, change 1.
         let choices: Vec<_> = offers.iter().enumerate().map(|(index, (kind, line))| {
             Some(ArchitectChoice {
                 offer_index: index,
                 architect_name: "fixture".to_string(),
                 kind: *kind,
                 line: Line::named(line),
-                built_tier: Tier::T2,
+                built_tier: if *kind == Upgrade { Tier::T3 } else { Tier::T1 },
                 display_name: "fixture",
             })
         }).collect();
@@ -1186,7 +1208,10 @@ mod tests {
         state.current_tier = Some(Tier::T2);
         let offers = [offer("fixture", Change, "Cultivar Chamber"),
             offer("fixture", Change, "Grand Reactor")];
-        let advice = advise(&state, &offers, 0, &rush(), &TempleConfig::default(), 0, SEED);
+        // Option 2 lands a change from tier 2 at tier 3, out of the pool.
+        let advice = advise(
+            &state, &offers, 0, &rush(), &played(Some(Consolidation::ResidentCarry)), 0, SEED,
+        );
         assert_eq!(advice.recommendations.len(), 2);
         assert!(advice.recommendations.iter().all(|option| option.reasons.contains(&Reason::R4)));
     }
@@ -1357,6 +1382,11 @@ mod tests {
         )
     }
 
+    /// `case` at this suite's `N`/`SEED` under `profile` and `config`.
+    fn advise_case_under(case: &cases::Case, profile: &StrategyProfile, config: &TempleConfig) -> Advice {
+        advise(&case.state, &case.offers, case.keys, profile, config, N, SEED)
+    }
+
     fn advise_case(case: &cases::Case) -> Advice {
         advise(
             &case.state,
@@ -1470,6 +1500,11 @@ mod tests {
     }
 
     // The excluded play is shown, not hidden, with the model's own risk number.
+    // Under Consolidation option 1, the played default, the corruption upgrade
+    // from tier 1 builds Locus of Corruption at tier 3 with no roll, so no
+    // rollout loses the room: the risk the gamble carries is exactly 0. The
+    // 8% Sebastian recorded was the 3.29 board's, priced on the 50%
+    // double-tier roll that 3.30 removed (POE-415).
     #[test]
     fn case_two_surfaces_the_apex_play_as_a_gamble_carrying_its_measured_risk() {
         let case = cases::case_2_corruption_chamber();
@@ -1479,16 +1514,9 @@ mod tests {
             .iter()
             .find(|g| opened_toward(&g.option.doors, B1) == vec![A0])
             .expect("the Apex play must be offered as a gamble");
-        // The number the user is shown, not a band wide enough to accept any
-        // number: Sebastian's live guess was "50/50" and his considered figure
-        // *"really just 8% risk"*, so a model that drifted to 30% would be
-        // telling him something he has already rejected. Measured at N = 400
-        // rollouts on SEED — both are fixed in this module, and this assertion
-        // moves if either does.
-        assert!(
-            (0.03..=0.13).contains(&apex.risk),
-            "the recorded risk of losing the room is 8%, got {}",
-            apex.risk
+        assert_eq!(
+            apex.risk, 0.0,
+            "option 1 banks Locus at tier 3, so the Apex play cannot lose it"
         );
         assert!(has_reason(
             &Ranked {
@@ -1543,18 +1571,19 @@ mod tests {
     // RU by way of its cheapest form: every remaining corridor would dilute the
     // Sanctum's saturated pool, so nothing is worth opening, and the kill that
     // builds the Sanctum wins outright.
+    // Played under Consolidation option 2 (`ResidentCarry`): the change from
+    // tier 1 lands at tier 2, the Sanctum the recorded play built.
     #[test]
     fn case_five_poison_garden_builds_the_sanctum_and_opens_nothing() {
         let case = cases::case_5_poison_garden();
-        let advice = advise_case(&case);
+        let advice = advise_case_under(&case, &rush(), &played(Some(Consolidation::ResidentCarry)));
         let top = &advice.recommendations[0];
         assert!(top.option.doors.is_empty(), "{}", case.decision);
         let architect = top.option.architect.as_ref().expect("resolved");
         assert_eq!(architect.kind, Change);
         assert_eq!(
             architect.display_name, "Sanctum of Unity",
-            "Contested Development turns the printed Shrine of Empowerment into \
-             its tier-2 room"
+            "option 2 turns the printed Shrine of Empowerment into its tier-2 room"
         );
         assert!(
             has_reason(top, |r| matches!(r, Reason::ExpectedValue)),
@@ -2550,9 +2579,10 @@ mod tests {
         );
     }
 
-    // RC. Live board 5: beside a connected Shrine, spend the architect on the
-    // line and let the shrine supply the tier — an upgrade wastes its pick half
-    // the time.
+    // RC. Live board 5, played under Consolidation option 2 (`ResidentCarry`):
+    // both kills land at tier 2 there, so beside a connected Shrine the change
+    // spends the architect on the line and lets the shrine supply the tier.
+    // Option 1 is the option-comparison acceptance test's subject.
     #[test]
     fn beside_a_connected_shrine_the_change_architect_outranks_the_upgrade() {
         let state = board(
@@ -2570,7 +2600,7 @@ mod tests {
             &offers,
             0,
             &rush(),
-            &TempleConfig::default(),
+            &played(Some(Consolidation::ResidentCarry)),
             N,
             SEED,
         );
@@ -2587,6 +2617,9 @@ mod tests {
     // RT. While no valuable room exists anywhere the upgrade line is worth
     // taking wherever it is offered, because every neighbour is still in the
     // drop pool.
+    //
+    // Played under Consolidation option 2 (`ResidentCarry`): both changes from
+    // tier 1 land at tier 2, so the line alone tells the kills apart.
     #[test]
     fn the_upgrade_line_is_taken_speculatively_while_the_board_holds_no_target() {
         let state = board(&[(D1, JUNK, 1)], &[(D1, E1), (E1, E2)], D1, 9);
@@ -2599,7 +2632,7 @@ mod tests {
             &offers,
             0,
             &rush(),
-            &TempleConfig::default(),
+            &played(Some(Consolidation::ResidentCarry)),
             N,
             SEED,
         );
@@ -3337,11 +3370,14 @@ mod tests {
     // The DOOR is deliberately not asserted. The rule chain picks it, no one
     // walked this board, and pinning a corridor nobody chose would make this a
     // change-detector for the chain rather than a check on the kill.
+    //
+    // Played under Consolidation option 2 (`ResidentCarry`), the arithmetic
+    // the recorded play assumed: the change from tier 1 builds tier 2.
     #[test]
     fn the_pc_board_kills_the_change_architect_once_both_blocks_are_read() {
         let case = cases::case_7_armourers_workshop();
 
-        let advice = advise_case(&case);
+        let advice = advise_case_under(&case, &rush(), &played(Some(Consolidation::ResidentCarry)));
 
         let top = advice.recommendations.first().expect("the board ranks");
         let architect = top
@@ -3390,12 +3426,13 @@ mod tests {
 
         let case = cases::case_7_armourers_workshop();
 
+        // The same option as the N = 400 pin above.
         let advice = advise(
             &case.state,
             &case.offers,
             case.keys,
             &rush(),
-            &TempleConfig::default(),
+            &played(Some(Consolidation::ResidentCarry)),
             PROD_ROLLOUTS,
             PROD_SEED,
         );
@@ -3573,7 +3610,9 @@ mod tests {
             // 3 Chasm late — the Apex, free at last. Xopec's kill is the
             // priority kill (POE-465): it builds on the Cradle of Creation
             // line. Xipocado's change builds Lightning Workshop, which is not.
-            &["R1Apex", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs", "ArchitectPriority"],
+            // The Cradle kill builds tier 3 (POE-415), out of the drop pool,
+            // so R4 speaks on it.
+            &["R1Apex", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs", "ArchitectPriority", "R4"],
             // 4 Chasm merge — one door changes anything, and it is RV that
             // makes it worth a key.
             &["RvMerge", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs"],
@@ -3607,13 +3646,15 @@ mod tests {
             &["Rd", "R2", "FasterArrival", "R1Gradient", "Rs"],
             // 8 Lightning Workshop — R1-apex fires on both corridors (reaching
             // on B0, adjacent on B1) and the rest of the door chain ranks them.
-            // On the kill: RC, because C2's Sanctum is adjacent and connected
-            // and can supply the tier; R4, because the `upgrade` maxes C1 out
-            // of the drop pool. R4's carve-out does NOT veto that — C2 already
-            // holds three open corridors against two picks, so C1 is not a live
-            // target it could lose. No `ExpectedValue`: neither kill is vetoed
-            // and the rollout cannot separate them, so the band covers both.
-            &["R1Apex", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs", "Rc", "R4"],
+            // On the kill: R4, because the `upgrade` builds tier 3 under
+            // option 1 and maxes C1 out of the drop pool. RC is silent: the
+            // change builds tier 1, and C2's Sanctum lifting it to 2 does not
+            // reach the upgrade's 3 (POE-415). R4's carve-out does NOT veto the
+            // upgrade — C2 already holds three open corridors against two
+            // picks, so C1 is not a live target it could lose. No
+            // `ExpectedValue`: neither kill is vetoed and the rollout cannot
+            // separate them, so the band covers both.
+            &["R1Apex", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs", "R4"],
             // 9 Corruption Chamber arrival — RV on the corruption upgrade
             // (the kill builds the target room in this very slot, and either
             // corridor into the Entrance cluster connects it, ∞ → 1 hop), so
@@ -3721,17 +3762,16 @@ mod tests {
         );
     }
 
-    /// The 2026-10-17 tier rungs change two kills from the strategy fixture.
-    /// Board 1 records "kill either"; board 8 records a door, whose
-    /// separate regression stays unchanged. Board 8 now prefers the B4
-    /// Conduit upgrade over the E2 explosives change on the cold read too.
-    /// Board 7 still plays the recorded Sanctum change, and board 2 still
-    /// upgrades corruption. Board 3 no longer moves: under either profile the
-    /// Cradle-line priority (POE-465) kills Xopec's throne_of_atziri change.
-    /// Pin the exact differences so a ranking change cannot silently move
-    /// another board.
+    /// The 2026-10-17 tier rungs change one kill from the strategy fixture,
+    /// under Consolidation option 1, the played default. Board 1 records
+    /// "kill either". Board 8 no longer moves: with its upgrade building tier
+    /// 3 and its explosives change tier 1, the fixture takes the Conduit
+    /// upgrade too (POE-415). Board 2 still upgrades corruption. Board 3 does
+    /// not move: under either profile the Cradle-line priority (POE-465)
+    /// kills Xopec's throne_of_atziri change. Pin the exact differences so a
+    /// ranking change cannot silently move another board.
     #[test]
-    fn the_production_tier_rungs_change_two_fixture_kills() {
+    fn the_production_tier_rungs_change_one_fixture_kill() {
         let production = production_profile();
 
         let moved: Vec<(&str, Option<(OfferKind, String, u8)>, Option<(OfferKind, String, u8)>)> =
@@ -3752,11 +3792,6 @@ mod tests {
                     Some((Change, "museum_of_artefacts".to_string(), 1)),
                     Some((Change, "hall_of_champions".to_string(), 1)),
                 ),
-                (
-                    "8 LightningWorkshop",
-                    Some((Change, "explosive".to_string(), 2)),
-                    Some((Upgrade, "conduit_of_lightning".to_string(), 2)),
-                ),
             ],
         );
     }
@@ -3771,18 +3806,22 @@ mod tests {
     /// `decision` string is the assertion message, so a failure names his play
     /// rather than a tuple.
     ///
+    /// Played under Consolidation option 2 (`ResidentCarry`), the arithmetic
+    /// his recorded change to the tier-2 Sanctum assumed.
+    ///
     /// Fails if the bridge zeroes the instrumental lines again, on either read.
     #[test]
     fn the_production_profile_plays_sebastians_kill_on_board_seven_cold_and_live() {
         let case = cases::case_7_armourers_workshop();
         let sebastian = Some((Change, "upgrade".to_string(), 2));
+        let option_two = played(Some(Consolidation::ResidentCarry));
 
         for (label, profile) in [
             ("cold", production_profile()),
             ("live", live_production_profile()),
         ] {
             assert_eq!(
-                top_kill_of(&advise_case_with(&case, &profile)),
+                top_kill_of(&advise_case_under(&case, &profile, &option_two)),
                 sebastian,
                 "{label}: {}",
                 case.decision,
@@ -3797,7 +3836,8 @@ mod tests {
     /// it is the assertion that says re-denominating the board in chaos did not
     /// cost the app the decision the epic exists for. Fails if the corruption
     /// line stops outranking a junk `change` once every other line on the board
-    /// carries a value of its own.
+    /// carries a value of its own. Under option 1, the played default, the
+    /// upgrade from tier 1 builds tier 3.
     #[test]
     fn the_production_profile_still_upgrades_the_corruption_line_on_board_two() {
         let case = cases::case_2_corruption_chamber();
@@ -3806,7 +3846,7 @@ mod tests {
 
         assert_eq!(
             top_kill_of(&advice),
-            Some((Upgrade, "corruption".to_string(), 2)),
+            Some((Upgrade, "corruption".to_string(), 3)),
             "recorded decision: {}",
             case.decision,
         );
@@ -3856,11 +3896,14 @@ mod tests {
         );
     }
 
-    /// The kill on every walked board at the capture's prices. These are
-    /// the valuation's current answers, including the C1 instrumental rung
-    /// for Temple Nexus. Board 3 kills Xopec's Cradle-line change, the
-    /// POE-465 priority. Board 7 retains the recorded Sanctum change; board
-    /// 8 chooses the Conduit upgrade on both cold and live reads now.
+    /// The kill on every walked board at the capture's prices, under
+    /// Consolidation option 1, the played default. These are the valuation's
+    /// current answers, including the C1 instrumental rung for Temple Nexus.
+    /// Board 3 kills Xopec's Cradle-line change, the POE-465 priority, which
+    /// builds tier 3 (POE-415). An upgrade from tier 1 builds tier 3 and a
+    /// change tier 1, so board 7 takes the Chamber of Iron upgrade here; its
+    /// recorded Sanctum change is pinned under option 2 by
+    /// `the_production_profile_plays_sebastians_kill_on_board_seven_cold_and_live`.
     /// Fails if the bridge stops copying the valuation into the profile.
     #[test]
     fn the_live_priced_profile_kills_this_on_every_walked_board() {
@@ -3875,14 +3918,14 @@ mod tests {
             killed,
             vec![
                 ("1 Tombs", Some((Change, "hall_of_champions".to_string(), 1))),
-                ("2 CorruptionChamber", Some((Upgrade, "corruption".to_string(), 2))),
-                ("3 Chasm-late", Some((Change, "throne_of_atziri".to_string(), 1))),
+                ("2 CorruptionChamber", Some((Upgrade, "corruption".to_string(), 3))),
+                ("3 Chasm-late", Some((Change, "throne_of_atziri".to_string(), 3))),
                 ("4 Chasm-merge", Some((Change, "hybridisation_chamber".to_string(), 1))),
-                ("5 PoisonGarden", Some((Change, "upgrade".to_string(), 2))),
+                ("5 PoisonGarden", Some((Change, "upgrade".to_string(), 1))),
                 ("6 Cloister-blind", Some((Change, "hall_of_champions".to_string(), 1))),
-                ("8 LightningWorkshop", Some((Upgrade, "conduit_of_lightning".to_string(), 2))),
-                ("9 CorruptionChamber-arrival", Some((Upgrade, "corruption".to_string(), 2))),
-                ("7 ArmourersWorkshop-PC", Some((Change, "upgrade".to_string(), 2))),
+                ("8 LightningWorkshop", Some((Upgrade, "conduit_of_lightning".to_string(), 3))),
+                ("9 CorruptionChamber-arrival", Some((Upgrade, "corruption".to_string(), 3))),
+                ("7 ArmourersWorkshop-PC", Some((Upgrade, "chamber_of_iron".to_string(), 3))),
             ],
         );
     }
@@ -4076,6 +4119,138 @@ mod tests {
     mod keep_happy {
         use super::*;
 
+        /// The built tier `advise` resolved for each offer block, by index.
+        fn built_tiers(advice: &Advice, blocks: usize) -> Vec<Option<u8>> {
+            (0..blocks)
+                .map(|index| choice_for(advice, index).map(|a| a.built_tier.get()))
+                .collect()
+        }
+
+        // keep:happy — POE-415 AC (a), through `advise`. Standing in a tier-1
+        // room with an upgrade (block 0) and a change (block 1) on the panel,
+        // each Consolidation of Power option lands the two kills at its ruled
+        // tiers, with no randomness: option 1 upgrade 3 / change 1, option 2
+        // 2 / 2, not taken 2 / 1, unset plays option 1. In a tier-0 room the
+        // only kill is a change, and it lands at tier 1 under every option.
+        #[test]
+        fn each_consolidation_option_lands_the_kills_at_its_ruled_tiers() {
+            let tier_one = || board(&[(D1, "chamber_of_iron", 1)], &[(D1, E1)], D1, 5);
+            let tier_zero = || board(&[(D1, "", 0)], &[(D1, E1)], D1, 5);
+            let both = || {
+                vec![
+                    offer("Quipolatl", Upgrade, "Armoury"),
+                    offer("Ticaba", Change, "Storage Room"),
+                ]
+            };
+            let change_only = || vec![offer("Ticaba", Change, "Storage Room")];
+            let rows: Vec<(&str, BoardState, Vec<ArchitectOffer>, Option<Consolidation>, Vec<Option<u8>>)> = vec![
+                ("tier 1, option 1", tier_one(), both(), Some(Consolidation::NonResidentExtraTier), vec![Some(3), Some(1)]),
+                ("tier 1, option 2", tier_one(), both(), Some(Consolidation::ResidentCarry), vec![Some(2), Some(2)]),
+                ("tier 1, not taken", tier_one(), both(), Some(Consolidation::NotTaken), vec![Some(2), Some(1)]),
+                ("tier 1, unset", tier_one(), both(), None, vec![Some(3), Some(1)]),
+                ("tier 0, option 1", tier_zero(), change_only(), Some(Consolidation::NonResidentExtraTier), vec![Some(1)]),
+                ("tier 0, option 2", tier_zero(), change_only(), Some(Consolidation::ResidentCarry), vec![Some(1)]),
+                ("tier 0, not taken", tier_zero(), change_only(), Some(Consolidation::NotTaken), vec![Some(1)]),
+                ("tier 0, unset", tier_zero(), change_only(), None, vec![Some(1)]),
+            ];
+            let mut failures = Vec::new();
+            for (name, state, offers, option, want) in &rows {
+                // Every seed must agree: the landing is deterministic.
+                for seed in [SEED, SEED + 1, SEED + 2] {
+                    let advice = advise(state, offers, 0, &rush(), &played(*option), 0, seed);
+                    let got = built_tiers(&advice, offers.len());
+                    if got != *want {
+                        failures.push(format!(
+                            "{name} (seed {seed}): built tiers (upgrade, change) got {got:?}, want {want:?}"
+                        ));
+                    }
+                }
+            }
+            assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+        }
+
+        // keep:happy — POE-415 AC (b). A tier-1 room beside a connected
+        // Shrine of Empowerment I, both offered lines junk to the rusher, so
+        // the two kills sit inside the noise band and the architect rules
+        // decide. Under option 1 the upgrade builds tier 3 and the change
+        // only tier 1, so the Shrine cannot make the change catch up and the
+        // upgrade is taken; under option 2 both build tier 2 and the change
+        // plus the Shrine's +1 is the better kill.
+        #[test]
+        fn option_one_takes_the_upgrade_where_option_two_takes_the_change() {
+            let state = board(
+                &[(D1, "chamber_of_iron", 1), (C1, "upgrade", 1)],
+                &[(C1, D1), (D1, E1)],
+                D1,
+                3,
+            );
+            let offers = vec![
+                offer("Quipolatl", Upgrade, "Armoury"),
+                offer("Ticaba", Change, "Storage Room"),
+            ];
+            let top = |option: Consolidation| {
+                let advice = advise(&state, &offers, 0, &rush(), &played(Some(option)), N, SEED);
+                (top_kill_of(&advice), ranking_dump(&advice))
+            };
+            let (one, one_dump) = top(Consolidation::NonResidentExtraTier);
+            let (two, two_dump) = top(Consolidation::ResidentCarry);
+            assert_eq!(
+                one.as_ref().map(|(kind, _, _)| *kind),
+                Some(Upgrade),
+                "option 1 takes the upgrade: {one:?}\n{one_dump}"
+            );
+            assert_eq!(
+                two.as_ref().map(|(kind, _, _)| *kind),
+                Some(Change),
+                "option 2 takes the change: {two:?}\n{two_dump}"
+            );
+        }
+
+        // keep:happy — POE-415 AC (d), Operator note 6. An offer to Cradle of
+        // Creation builds Cradle of Creation at tier 3 under every
+        // Consolidation option and unset: a change from a tier-0, tier-1 or
+        // tier-2 room or with the current room unread, and an upgrade on a
+        // legacy Queen-line read (Royal Meeting Room I prints Hall of Lords).
+        #[test]
+        fn a_cradle_of_creation_offer_builds_tier_three_under_every_option() {
+            let standing = |tier: u8, line: &str| {
+                let key = if tier == 0 { "" } else { line };
+                board(&[(D1, key, tier)], &[(D1, E1)], D1, 5)
+            };
+            let unread = || {
+                let mut state = board(&[(D1, "", 0)], &[(D1, E1)], D1, 5);
+                state.current_tier = None;
+                state
+            };
+            let boards: Vec<(&str, BoardState, ArchitectOffer)> = vec![
+                ("change from tier 0", standing(0, "corruption"), offer("Tzamoto", Change, "Cradle of Creation")),
+                ("change from tier 1", standing(1, "corruption"), offer("Tzamoto", Change, "Cradle of Creation")),
+                ("change from tier 2", standing(2, "corruption"), offer("Tzamoto", Change, "Cradle of Creation")),
+                ("change, current room unread", unread(), offer("Tzamoto", Change, "Cradle of Creation")),
+                ("upgrade on Royal Meeting Room I", standing(1, "throne_of_atziri"), offer("Xopec", Upgrade, "Hall of Lords")),
+            ];
+            let options = [
+                Some(Consolidation::NonResidentExtraTier),
+                Some(Consolidation::ResidentCarry),
+                Some(Consolidation::NotTaken),
+                None,
+            ];
+            let mut failures = Vec::new();
+            for (name, state, block) in &boards {
+                for option in options {
+                    let advice = advise(state, std::slice::from_ref(block), 0, &rush(), &played(option), 0, SEED);
+                    let got = choice_for(&advice, 0).map(|a| (a.built_tier.get(), a.display_name));
+                    if got != Some((3, "Cradle of Creation")) {
+                        failures.push(format!(
+                            "{name}, {option:?}: got {got:?}, want Some((3, \"Cradle of Creation\")); warnings {:?}",
+                            advice.warnings
+                        ));
+                    }
+                }
+            }
+            assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+        }
+
         // keep:happy — AC-1. A kill that builds on the Cradle of Creation
         // line ranks first under either offer kind, whoever prints it,
         // although it prices below the rival kill. Every other option stays,
@@ -4115,6 +4290,58 @@ mod tests {
 
     mod keep_critical {
         use super::*;
+
+        // keep:critical — POE-415, RC's reference tier. Silent consequence:
+        // with the current room unread the board carries a tier-0 stand-in,
+        // and an RC measured against it promotes the change, a plausible
+        // ranking that inverts the option-1 reading, and nothing flags it.
+        // Under option 1 the change builds tier 1 and the upgrade (printed at
+        // tier 2) builds tier 3, so the connected Shrine's +1 cannot close the
+        // gap: RC stays silent. The same board read at tier 1 under option 2
+        // lands both kills at tier 2, and RC fires.
+        #[test]
+        fn rc_measures_the_change_against_the_upgrade_it_competes_with() {
+            let offers = vec![
+                offer("Quipolatl", Upgrade, "Armoury"),
+                offer("Ticaba", Change, "Storage Room"),
+            ];
+            let mut unread = board(&[(D1, "", 0), (C1, "upgrade", 1)], &[(C1, D1), (D1, E1)], D1, 5);
+            unread.current_tier = None;
+            let read_at_one =
+                board(&[(D1, "chamber_of_iron", 1), (C1, "upgrade", 1)], &[(C1, D1), (D1, E1)], D1, 5);
+            let rows = [
+                ("current room unread, option 1", unread, Consolidation::NonResidentExtraTier, (3, 1), false),
+                ("read at tier 1, option 2", read_at_one, Consolidation::ResidentCarry, (2, 2), true),
+            ];
+            let mut failures = Vec::new();
+            for (name, state, option, (upgrade_tier, change_tier), want_rc) in rows {
+                let advice = advise(&state, &offers, 0, &rush(), &played(Some(option)), 0, SEED);
+                let tiers = (
+                    choice_for(&advice, 0).map(|a| a.built_tier.get()),
+                    choice_for(&advice, 1).map(|a| a.built_tier.get()),
+                );
+                if tiers != (Some(upgrade_tier), Some(change_tier)) {
+                    failures.push(format!(
+                        "{name}: built tiers (upgrade, change) {tiers:?}, want ({upgrade_tier}, {change_tier}); warnings {:?}",
+                        advice.warnings
+                    ));
+                    continue;
+                }
+                let change_rc: Vec<bool> = advice
+                    .recommendations
+                    .iter()
+                    .filter(|r| r.option.architect.as_ref().map(|a| a.offer_index) == Some(1))
+                    .map(|r| has_reason(r, |x| matches!(x, Reason::Rc { upgrader: C1 })))
+                    .collect();
+                if change_rc.is_empty() || change_rc.iter().any(|rc| *rc != want_rc) {
+                    failures.push(format!(
+                        "{name}: RC on the change {change_rc:?}, want {want_rc}\n{}",
+                        ranking_dump(&advice)
+                    ));
+                }
+            }
+            assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+        }
 
         // keep:critical — AC-1. Silent consequence: the overlay names
         // Xipocado's box as the priority kill, a plausible instruction the
@@ -4299,13 +4526,13 @@ mod tests {
                     true,
                 ),
                 (
-                    "a change from filler builds Royal Meeting Room",
+                    "a change from filler builds Cradle of Creation",
                     standing_in(0, &[]),
                     vec![offer("Tzamoto", Change, "Cradle of Creation"), unrelated().remove(0)],
                     true,
                 ),
                 (
-                    "a change from tier 1 builds Hall of Lords",
+                    "a change from tier 1 builds Cradle of Creation",
                     standing_in(1, &[]),
                     vec![unrelated().remove(0), offer("Tzamoto", Change, "Cradle of Creation")],
                     true,
@@ -4313,6 +4540,16 @@ mod tests {
                 (
                     "a change from tier 2 builds Cradle of Creation",
                     standing_in(2, &[]),
+                    vec![offer("Tzamoto", Change, "Cradle of Creation"), unrelated().remove(0)],
+                    true,
+                ),
+                (
+                    "a change with the current room unread builds Cradle of Creation",
+                    {
+                        let mut state = standing_in(0, &[]);
+                        state.current_tier = None;
+                        state
+                    },
                     vec![offer("Tzamoto", Change, "Cradle of Creation"), unrelated().remove(0)],
                     true,
                 ),
@@ -4360,6 +4597,32 @@ mod tests {
 
     mod keep_regression {
         use super::*;
+
+        // keep:regression — POE-415 (c), Operator-reported 2026-11-24: on the
+        // upgrade-vs-explosives board, under option 1 (the played option),
+        // Hayoxi's upgrade builds the conduit line at tier 3 and is the top
+        // kill on both the cold and the live production profile. The
+        // explosives change builds tier 1 only, so the connected Shrine's +1
+        // no longer makes it the equal kill RC assumed.
+        #[test]
+        fn the_upgrade_vs_explosives_board_takes_the_grand_reactor_upgrade() {
+            let case = cases::case_10_lightning_workshop_upgrade();
+            let config = played(Some(Consolidation::NonResidentExtraTier));
+            let mut failures = Vec::new();
+            for (label, profile) in [("cold", production_profile()), ("live", live_production_profile())] {
+                let advice = advise(&case.state, &case.offers, case.keys, &profile, &config, N, SEED);
+                let got = top_kill_of(&advice);
+                if got != Some((Upgrade, "conduit_of_lightning".to_string(), 3)) {
+                    failures.push(format!(
+                        "{label}: top kill {got:?}, want the upgrade to the conduit line at tier 3; \
+                         top reasons {:?}\n{}",
+                        advice.recommendations.first().map(|r| &r.reasons),
+                        ranking_dump(&advice)
+                    ));
+                }
+            }
+            assert!(failures.is_empty(), "{}: {}\n{}", case.name, case.decision, failures.join("\n"));
+        }
 
         // keep:regression — POE-465 AC-1, the reported board. Standing in
         // Torment Cells (torture line, tier 1), Xipocado's box prints Torture
@@ -4433,15 +4696,18 @@ mod tests {
                         (Some(1), "no door"),
                     ],
                 ),
+                // Under option 1, the played default, the upgrade builds tier 3
+                // and the change tier 1: RC is silent and R4 puts the upgrade
+                // first (POE-415).
                 (
                     cases::case_8_lightning_workshop(),
                     vec![
-                        (Some(1), "B0-C1"),
-                        (Some(1), "B1-C1"),
-                        (Some(1), "no door"),
                         (Some(0), "B0-C1"),
                         (Some(0), "B1-C1"),
                         (Some(0), "no door"),
+                        (Some(1), "B0-C1"),
+                        (Some(1), "B1-C1"),
+                        (Some(1), "no door"),
                     ],
                 ),
             ];
@@ -4466,14 +4732,12 @@ mod tests {
         }
 
         // keep:regression — AC-4. An offer that cannot be ranked — its printed
-        // target unknown, or a change with no current tier to resolve against
-        // — gets no priority, and the warnings say what they said before.
+        // target unknown — gets no priority, and the warnings say what they
+        // said before. A Cradle-line change with no current tier is no longer
+        // unrankable: the POE-415 Cradle rule builds tier 3 whatever the
+        // current tier (`a_cradle_of_creation_offer_builds_tier_three_under_every_option`).
         #[test]
         fn an_unrankable_qualifying_offer_gets_no_priority() {
-            let unknown_tier = |mut state: BoardState| {
-                state.current_tier = None;
-                state
-            };
             let rival = || offer("Azcapa", Upgrade, "Catalyst of Corruption");
             let rows = [
                 (
@@ -4483,18 +4747,6 @@ mod tests {
                     vec![Warning::UnresolvedOffer {
                         printed: "Definitely Not A Room".to_string(),
                     }],
-                ),
-                (
-                    "a Cradle of Creation change with no current tier",
-                    unknown_tier(priority_board("corruption", 1)),
-                    vec![offer("Tzamoto", Change, "Cradle of Creation"), rival()],
-                    vec![Warning::UnknownCurrentTier],
-                ),
-                (
-                    "a Royal Meeting Room change with no current tier",
-                    unknown_tier(priority_board("corruption", 1)),
-                    vec![offer("Xopec", Change, "Royal Meeting Room"), rival()],
-                    vec![Warning::UnknownCurrentTier],
                 ),
             ];
             for (name, state, offers, warnings) in rows {

@@ -1719,17 +1719,18 @@ mod tests {
         use super::*;
 
         // keep:regression — POE-465 AC-2. In 3.30 a kill on the Queen line
-        // builds Cradle of Creation at every tier, so the built result names
-        // it whatever the built tier; the table's pre-3.30 tier-1/2 names
-        // still parse to their own tier, because old panels and market keys
-        // print them. Fails if the built display reads the legacy tier name
-        // (the reported Torment Cells board printed "Hall of Lords"), or if
-        // the fix renames the legacy table cells instead.
+        // builds Cradle of Creation, and since POE-415 (Operator note 6) it
+        // builds it at tier 3 whatever the current tier; the table's pre-3.30
+        // tier-1/2 names still parse to their own tier, because old panels
+        // and market keys print them. Fails if the built display reads the
+        // legacy tier name (the reported Torment Cells board printed "Hall of
+        // Lords"), if the built tier follows the current tier, or if the fix
+        // renames the legacy table cells instead.
         #[test]
         fn a_queen_line_kill_builds_cradle_of_creation_at_every_built_tier() {
             let throne = line_by_key("throne_of_atziri");
             let mut failures = Vec::new();
-            for (current, built) in [(Tier::T1, Tier::T2), (Tier::T0, Tier::T1), (Tier::T2, Tier::T3)] {
+            for (current, built) in [(Tier::T1, Tier::T3), (Tier::T0, Tier::T3), (Tier::T2, Tier::T3)] {
                 let got = resolve_offer_for("Cradle of Creation", OfferKind::Change, Some(current));
                 let want = OfferResolution::Built(ResolvedOffer {
                     line: throne,

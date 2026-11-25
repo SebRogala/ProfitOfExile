@@ -416,6 +416,61 @@ pub fn case_9_corruption_chamber_arrival() -> Case {
     }
 }
 
+// --- Case 10 — 2026-11-24, 5 left, in Lightning Workshop I (B0) -----------
+// POE-415, the Operator's "upgrade vs explosives" board
+// (evidence/temple-upgrade-vs-explosives.png). Lightning Workshop I sits under
+// the Apex with Shrine of Empowerment I connected below it. Hayoxi prints
+// "upgrade to Grand Reactor", Xopec "change to Explosives Room". Under
+// Consolidation option 1 the upgrade builds the conduit line at tier 3 while
+// the change builds Explosives Room I, and the Operator takes the upgrade.
+// Not a walked board: it stays out of [`retrospective`].
+pub fn case_10_lightning_workshop_upgrade() -> Case {
+    Case {
+        name: "10 LightningWorkshop-upgrade",
+        state: board(
+            &[
+                // The room he is standing in.
+                (B0, "conduit_of_lightning", 1),
+                (B1, "hall_of_champions", 3),
+                (C0, "apex_of_ascension", 1),
+                (C1, "upgrade", 1),
+                (C2, "gem", 3),
+                // Banquet Hall, Cellar — tier-0 fillers, no line at all.
+                (D0, "", 0),
+                (D1, "", 0),
+                (D2, "corruption", 1),
+                (D3, "chamber_of_iron", 1),
+                (E0, "hybridisation_chamber", 1),
+                (E2, "museum_of_artefacts", 3),
+            ],
+            &[
+                (A0, B0),
+                (A0, B1),
+                (B0, B1),
+                (B0, C1),
+                (B1, C2),
+                (C0, D1),
+                (D1, E0),
+                (D1, E1),
+                (D2, D3),
+                (D2, E1),
+                (D2, E2),
+                (E0, E1),
+                (E1, E2),
+            ],
+            B0,
+            5,
+        ),
+        offers: vec![
+            offer("Hayoxi", Upgrade, "Grand Reactor"),
+            offer("Xopec", Change, "Explosives Room"),
+        ],
+        keys: 1,
+        decision: "upgrade → Grand Reactor (the conduit line at tier 3 under option 1), \
+                   not change → Explosives Room",
+    }
+}
+
 /// The eight WALKED boards, in order.
 ///
 /// [`case_7_armourers_workshop`] is deliberately not among them: it records
