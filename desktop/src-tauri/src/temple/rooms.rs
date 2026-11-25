@@ -1322,7 +1322,7 @@ mod tests {
 
     // An architect printing a renamed tier-2 name builds the next tier of
     // that line. Fails if the renamed name stops resolving or lands on
-    // another line.
+    // another line. An upgrade under Consolidation option 1: min(3, 2 + 2).
     #[test]
     fn an_offer_naming_grand_reactor_on_a_tier_2_room_builds_conduit_of_lightning() {
         let got = resolve_offer("Grand Reactor", tier(2)).expect("a real offer");
@@ -1331,12 +1331,14 @@ mod tests {
         assert_eq!(got.display_name, "Conduit of Lightning");
     }
 
+    // An upgrade printing Royal Forge on a tier-1 room, under Consolidation
+    // option 1: min(3, 1 + 2) builds the line's tier-3 Crucible of Flame.
     #[test]
-    fn an_offer_naming_royal_forge_on_a_tier_1_room_builds_royal_forge() {
+    fn an_offer_naming_royal_forge_on_a_tier_1_room_builds_crucible_of_flame() {
         let got = resolve_offer("Royal Forge", tier(1)).expect("a real offer");
         assert_eq!(got.line.key(), "crucible_of_flame");
-        assert_eq!(got.built_tier, Tier::T2);
-        assert_eq!(got.display_name, "Royal Forge");
+        assert_eq!(got.built_tier, Tier::T3);
+        assert_eq!(got.display_name, "Crucible of Flame");
     }
 
     // `Royal Forge` shares the Jaro-Winkler-boosted prefix with `Royal
@@ -1407,7 +1409,8 @@ mod tests {
     // The live case from TEMPLE-CORE-RULES §6d: the panel printed
     // "Kill to change to Sacrificial Chamber" on a TIER-2 room and the game
     // built Apex of Ascension III. Fails the moment resolve_offer echoes the
-    // printed name or forgets the +1.
+    // printed name or forgets the +1. A change under Consolidation option 2
+    // (`ResidentCarry`), the one option whose change reads the current tier.
     #[test]
     fn sacrificial_chamber_offered_on_a_tier_2_room_builds_apex_of_ascension_iii() {
         let got = resolve_offer("Sacrificial Chamber", tier(2)).expect("a real offer");
@@ -1422,7 +1425,8 @@ mod tests {
 
     // Case 5's play: "change to Shrine of Empowerment" standing in a tier-1
     // Poison Garden yields Sanctum of Unity II, which is what makes the
-    // double-neighbour upgrade certain. Fails if the +1 is dropped.
+    // double-neighbour upgrade certain. Fails if the +1 is dropped. A change
+    // under Consolidation option 2 (`ResidentCarry`).
     #[test]
     fn shrine_of_empowerment_offered_on_a_tier_1_room_builds_sanctum_of_unity_ii() {
         let got = resolve_offer("Shrine of Empowerment", tier(1)).expect("a real offer");
@@ -1433,6 +1437,7 @@ mod tests {
 
     // Boundary, not a reachable case: tier-3 rooms leave the drop pool, so
     // the player cannot be standing in one. Fails if the min(3, …) clamp goes.
+    // An upgrade under Consolidation option 1: min(3, 3 + 2).
     #[test]
     fn an_offer_on_a_tier_3_room_caps_at_tier_3() {
         let got = resolve_offer("Corruption Chamber", tier(3)).expect("a real offer");
@@ -1440,9 +1445,9 @@ mod tests {
         assert_eq!(got.display_name, "Locus of Corruption");
     }
 
-    // Contested Development's flat +1 applies from tier 0 too, and 0 -> 2
-    // never happens. Fails if the arithmetic is changed to +2 or to "the
-    // printed tier".
+    // A kill from tier 0 builds tier 1, and 0 -> 2 never happens. Fails if
+    // the arithmetic is changed to +2 or to "the printed tier". An upgrade
+    // under Consolidation option 1, whose +2 the tier-0 row overrides.
     #[test]
     fn an_offer_on_a_tier_0_room_builds_tier_1_of_the_printed_line() {
         let got = resolve_offer("Catalyst of Corruption", Tier::T0).expect("a real offer");
@@ -1454,7 +1459,8 @@ mod tests {
     }
 
     // The printed target is looked up to its LINE whatever tier it names, so
-    // a tier-3 name on a tier-1 room still resolves through the line.
+    // a tier-3 name on a tier-1 room still resolves through the line. A
+    // change under Consolidation option 2 (`ResidentCarry`): 1 + 1.
     #[test]
     fn a_tier_3_name_on_the_panel_still_resolves_through_its_line() {
         let got = resolve_offer("Locus of Corruption", tier(1)).expect("a real offer");
@@ -1472,7 +1478,8 @@ mod tests {
         assert_eq!(resolve_offer("Fictional Room", tier(1)), None);
     }
 
-    // The panel text is OCR'd, so the offer target has to survive noise.
+    // The panel text is OCR'd, so the offer target has to survive noise. A
+    // change under Consolidation option 2 (`ResidentCarry`), as above.
     #[test]
     fn an_offer_target_read_with_noise_still_resolves() {
         let got = resolve_offer("SacrificiaI Chamber", tier(2)).expect("a fuzzy offer");

@@ -4981,7 +4981,10 @@ mod tests {
     ];
 
     /// The offer box's description for an upgrade printed at `target`: the
-    /// tier it builds and the line's content text at that tier.
+    /// tier it builds and the line's content text at that tier. Projected
+    /// under Consolidation option 2 (`ResidentCarry`), where an unread
+    /// upgrade builds its printed tier, so each printed name exercises its own
+    /// tier's description.
     fn offered_description(target: &str) -> (Option<u8>, Option<String>) {
         let view = offer_view(0, &offer("Quipolatl", target, OfferKind::Upgrade), None, &valued());
         (view.built_tier, view.line.and_then(|line| line.content))
@@ -5237,7 +5240,8 @@ mod tests {
         }
 
         // The mounted offer-box test reads this fixture; a stale copy would let
-        // it pass on descriptions the app no longer shows.
+        // it pass on descriptions the app no longer shows. Projected under
+        // Consolidation option 2 (`ResidentCarry`), like `offered_description`.
         #[test]
         fn tier_offers_fixture_matches_the_projection() {
             let fresh = serde_json::Value::Array(

@@ -1844,8 +1844,9 @@ mod tests {
     }
 
     // The gotcha, end to end from panel text: Case 5's kill on a TIER-1
-    // Poison Garden. The panel says "Shrine of Empowerment"; the player gets
-    // Sanctum of Unity II, which is what makes Doryani certain there.
+    // Poison Garden. The panel says "Shrine of Empowerment"; under
+    // Consolidation option 2 (`ResidentCarry`) the player gets Sanctum of
+    // Unity II, which is what makes Doryani certain there.
     #[test]
     fn a_parsed_offer_resolves_to_the_room_that_is_actually_built() {
         let got = offer(&["Tacati, Architect of Toxins (Kill to change to Shrine of Empowerment)"]);
