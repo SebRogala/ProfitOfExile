@@ -375,7 +375,7 @@ fn press_placement(state: &AppState, grab: &crate::capture::Capture) -> (Option<
         return (None, false);
     }
     let placement = screen.and_then(|slice| {
-        crate::ssot::placements_for(Some(&slice)).merc.panel.map(|panel| (panel, slice.ui_scale))
+        crate::ssot::placements_for(Some(&slice)).merc.map(|placed| (placed.panel, slice.ui_scale))
     });
     (placement, false)
 }
