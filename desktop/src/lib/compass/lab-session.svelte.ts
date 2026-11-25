@@ -121,6 +121,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 	let interval: ReturnType<typeof setInterval> | null = null;
 	let registrations: Promise<Unlisten>[] = [];
 	let pollErrorLogged = false;
+	let layoutNoticeEnabled = true;
 	let layoutNotice: LabLayoutNoticeSnapshot = { revision: nextLayoutNoticeRevision(), notice: null };
 
 	function log(msg: string): void {
@@ -161,7 +162,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 		if (!layout || g !== generation || request !== layoutRequest) return;
 		if ('missing' in layout) {
 			if (!selected) return;
-			setMissingLayout(selected);
+			if (layoutNoticeEnabled) setMissingLayout(selected);
 			navState = {
 				...createNavState(),
 				strategy: navState.strategy,
@@ -181,6 +182,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 
 	function applyEvent(event: LabNavMessage): void {
 		if (event.type === 'LayoutChanged') {
+			layoutNoticeEnabled = true;
 			void fetchLayoutFromServer(event.difficulty);
 			return;
 		}
@@ -189,6 +191,9 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 			return;
 		}
 		if (event.type === 'LabExited') {
+			// Deferred resets and pending init settings still load layouts after exit.
+			// Only the next LayoutChanged may enable their missing-layout notice again.
+			layoutNoticeEnabled = false;
 			layoutRequest++;
 			setMissingLayout(null);
 		}
@@ -344,6 +349,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 		settings = null;
 		history = [];
 		pollErrorLogged = false;
+		layoutNoticeEnabled = true;
 	}
 
 	/**
