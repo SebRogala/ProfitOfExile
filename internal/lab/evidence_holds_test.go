@@ -1,14 +1,36 @@
 package lab
 
 import (
+	"context"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
+
+	"profitofexile/internal/league"
 )
 
 var holdAsOf = time.Date(2026, 11, 16, 6, 44, 0, 0, time.UTC)
 
 const heldName = "Held Gem of Test"
+
+// keep:critical — an unnecessary history read can prevent an already-SOLID
+// snapshot from reaching classification when history is unavailable.
+func TestKeepCritical_LoadEvidenceHoldsSkipsHistoryForSolidSnapshot(t *testing.T) {
+	gems := []GemPrice{
+		{Name: "Smite of Divine Judgement", Variant: "20/20", Chaos: 138, Listings: 9, SampleCount: solidSample(), IsTransfigured: true, GemColor: "RED"},
+		{Name: "Spark of Nova", Variant: "1/20", Chaos: 75, Listings: 3, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"},
+	}
+
+	// A nil repository makes any history query fail instead of hiding it.
+	got, err := LoadEvidenceHolds(context.Background(), nil, league.Historical("Covens"), gems, holdAsOf)
+	if err != nil {
+		t.Fatalf("all-SOLID snapshot: %v", err)
+	}
+	if !reflect.DeepEqual(got, gems) {
+		t.Fatalf("all-SOLID snapshot changed: got %+v, want %+v", got, gems)
+	}
+}
 
 // heldSnapshot is a shallow 20/20 market of floor-SOLID peers (3 listings)
 // plus heldName at 100c with 2 listings and a thin sample: it fails the floor
