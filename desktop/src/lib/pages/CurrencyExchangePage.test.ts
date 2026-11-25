@@ -241,6 +241,21 @@ describe('CurrencyExchangePage no offers mark', () => {
 		expect(rowOf(html, 'TwoSidedOrb', null)).not.toContain(NO_OFFERS_LABEL);
 	});
 
+	it('keep:happy the shared no offers label reads the same on a route row and the filter chip', async () => {
+		await threeRows();
+		const html = render(CurrencyExchangePage).body;
+		const rowLabel = rowOf(html, 'BuyBlockedOrb', 'SellBlockedOrb').match(
+			/<span class="no-offers[^"]*" title="([^"]*)">([^<]*)<\/span>/
+		);
+		const chip = html.match(/<button class="no-offers-chip[^"]*"[^>]*>([^<]*)<\/button>/);
+
+		expect({
+			rowText: rowLabel?.[2],
+			rowTitle: rowLabel?.[1],
+			chipText: chip?.[1]
+		}).toEqual({ rowText: 'no offers', rowTitle: 'no offers', chipText: 'no offers' });
+	});
+
 	it('no offers rows keep the order the server answered with', async () => {
 		await settledOn([flaggedPlay('SellBlockedOrb', 'sell'), flaggedPlay('BuyBlockedOrb', 'buy')]);
 		const html = render(CurrencyExchangePage).body;
