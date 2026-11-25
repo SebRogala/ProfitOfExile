@@ -13,7 +13,9 @@
  * `desktop/src/lib/README.md` → "Screen Geometry (SSOT)".
  */
 
-import type { OcrRegionsSnapshot, Placements, ScreenSlice } from '$lib/stores/ssot.svelte';
+import type { OcrRegionsSnapshot, OcrScreenRef, Placements, ScreenSlice } from '$lib/stores/ssot.svelte';
+import type { EditableRegion } from '$lib/overlay/ocr-region-editor';
+import type { OcrRectView, RegionKey } from '$lib/pages/ocr-preview-request';
 // Reused rather than re-implemented: `formatTimeAgo` already has three homes
 // with three wordings (README → Conventions → Relative time), and a fourth would
 // be the one that finally makes them disagree.
@@ -102,8 +104,17 @@ function verifiedText(screen: ScreenSlice): string {
 export function screenGeometryView(
 	screen: ScreenSlice | null,
 	now: Date,
-	placements: Placements | null = null
+	placements: Placements | null = null,
+	ocrRegions: OcrRegionsSnapshot | null = null
 ): ScreenGeometryView {
+	const placed = placementText(placements);
+	if (ocrRegions?.mode === 'manual') {
+		const manual = ocrRegions.manual;
+		placed.labGem = manual?.labGem ? rectText(manual.labGem) : 'Not set';
+		placed.labFont = manual?.labFont ? rectText(manual.labFont) : 'Not set';
+		placed.mercPanel = manual?.mercPanel ? rectText(manual.mercPanel) : 'Not set';
+		placed.templeEntrance = manual?.templePanel ? placed.templeEntrance : 'Not set';
+	}
 	if (screen === null) {
 		return {
 			resolution: 'Not measured yet',
@@ -114,7 +125,7 @@ export function screenGeometryView(
 			measured: 'Never',
 			verified: 'Not measured yet',
 			unmeasured: true,
-			placements: placementText(placements)
+			placements: placed
 		};
 	}
 	return {
@@ -138,7 +149,7 @@ export function screenGeometryView(
 		// that no cue looked at the game's art.
 		verified: verifiedText(screen),
 		unmeasured: false,
-		placements: placementText(placements)
+		placements: placed
 	};
 }
 
@@ -155,10 +166,75 @@ export function screenGeometryView(
 export function ocrRectsKey(
 	screen: ScreenSlice | null,
 	placements: Placements | null,
-	_ocrRegions: OcrRegionsSnapshot | null = null
+	ocrRegions: OcrRegionsSnapshot | null = null
 ): string {
 	return JSON.stringify([
 		placements,
-		screen && [screen.width, screen.height, screen.uiScale, screen.client, screen.anchors]
+		screen && [screen.width, screen.height, screen.uiScale, screen.client, screen.anchors],
+		ocrRegions && [ocrRegions.mode, ocrRegions.manual,
+			ocrRegions.screenWarning && [ocrRegions.screenWarning.live.width,
+				ocrRegions.screenWarning.live.height, ocrRegions.screenWarning.live.origin]]
 	]);
+}
+
+const OCR_ROWS: { key: string; label: string; edit: EditableRegion | null; state: RegionKey }[] = [
+	{ key: 'lab.gem', label: 'Gem tooltip', edit: 'labGem', state: 'lab_gem' },
+	{ key: 'lab.font', label: 'Font panel', edit: 'labFont', state: 'lab_font' },
+	{ key: 'lab.gemSlots', label: 'Gem choice slots', edit: 'labGemSlots', state: 'lab_gem_slots' },
+	{ key: 'temple.panel', label: 'Temple panel', edit: 'templePanel', state: 'temple_panel' },
+	{ key: 'temple.remaining', label: 'Temple remaining', edit: null, state: 'temple_panel' },
+	{ key: 'merc.panel', label: 'Merc OCR crop', edit: 'mercPanel', state: 'merc_panel' }
+];
+
+function screenRefText(screen: OcrScreenRef): string {
+	return `${screen.width}×${screen.height} @ (${screen.origin.join(', ')})`;
+}
+
+function autoSource(source: string | undefined): string {
+	if (source === 'seed') return '(seed, scaled from reference)';
+	if (source === 'remembered') return '(remembered anchor)';
+	if (source === 'unlocated') return '(unlocated)';
+	return '';
+}
+
+export function ocrRegionsView(
+	snapshot: OcrRegionsSnapshot | null,
+	rows: OcrRectView[] = [],
+	now: Date = new Date()
+) {
+	const mode = snapshot?.mode ?? 'auto';
+	const manual = mode === 'manual';
+	const set = snapshot?.manual;
+	const warning = manual ? snapshot?.screenWarning : null;
+	const missing = OCR_ROWS.filter(row => row.edit && !set?.[row.edit]);
+	return {
+		mode,
+		recalibrateDisabled: manual,
+		warning: warning ? `Screen changed · set on ${screenRefText(warning.setOn)} · now ${screenRefText(warning.live)}` : '',
+		firstUse: manual && set && !set.edited
+			? `Copied from Auto · ${formatTimeAgo(new Date(set.setOn.at_ms), now)}${missing.length
+				? ` · not set: ${missing.length === 5 ? 'all regions' : missing.map(row => row.edit === 'mercPanel' ? 'Merc panel' : row.label).join(', ')}` : ''}` : '',
+		setOn: manual && set ? `Set on ${screenRefText(set.setOn)} · ${formatTimeAgo(new Date(set.setOn.at_ms), now)}` : '',
+		rows: OCR_ROWS.filter(row => manual || row.key !== 'lab.gemSlots').map(config => {
+			const previewKey = config.key === 'lab.gemSlots' ? 'lab.font' : config.key;
+			const row = rows.find(row => row.key === previewKey);
+			const saved = config.edit ? set?.[config.edit] ?? null : null;
+			const rect = manual && config.edit
+				? config.edit === 'mercPanel' ? row?.rect ?? saved : saved
+				: row?.rect ?? null;
+			const state = row?.regionStates?.[config.state];
+			const pastEdge = manual && (state === 'clipped' || state === 'past-edge');
+			const source = !manual ? autoSource(row?.source)
+				: !config.edit ? '(follows Temple panel)'
+				: !saved ? '(not read)'
+				: pastEdge ? '(past the screen edge)'
+				: config.edit === 'mercPanel' ? '(from Merc panel)'
+				: set?.edited ? '(manual)' : '(manual, copied from Auto)';
+			return { ...config, label: row && config.key !== 'lab.gemSlots' ? row.label : config.label,
+				previewKey, value: rect ? rectText(rect) : manual ? 'not set' : 'unlocated', source, pastEdge,
+				editEnabled: manual && config.edit !== null,
+				previewDisabled: !row?.rect || (manual && config.edit !== null && !saved),
+				previewTitle: row?.rect ? `Preview ${config.label}` : 'Not located yet — open the panel once' };
+		})
+	};
 }

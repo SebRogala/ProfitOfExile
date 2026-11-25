@@ -11,7 +11,8 @@
 	import ExchangeReadSetting from '$lib/components/ExchangeReadSetting.svelte';
 	import OverlayDismissSetting from '$lib/components/OverlayDismissSetting.svelte';
 	import { untrack } from 'svelte';
-	import { ocrRectsKey, screenGeometryView } from '$lib/geometry/view';
+	import { ocrRectsKey, ocrRegionsView, screenGeometryView } from '$lib/geometry/view';
+	import { createRegionEditorOwner, type EditableRegion } from '$lib/overlay/ocr-region-editor';
 	import { createOcrPreviewOwner } from '$lib/overlay/ocr-preview';
 	import { requestOcrPreview, type OcrRectView } from '$lib/pages/ocr-preview-request';
 	import { createWidgetConfigRequestController } from '$lib/overlay/widgets/widget-config-request.svelte';
@@ -35,11 +36,6 @@
 	import { NUMBER_FORMAT_OPTIONS, parseNumberFormat } from '$lib/number-format';
 	import { groupNumber, numberFormat, setNumberFormat } from '$lib/stores/number-format.svelte';
 	import { getVersion } from '@tauri-apps/api/app';
-	const LAB_PREVIEW_KEYS = ['lab.gem', 'lab.font'] as const;
-	const TEMPLE_PREVIEW_KEYS = ['temple.panel', 'temple.remaining'] as const;
-	const MERC_PREVIEW_KEYS = ['merc.panel'] as const;
-	const LAB_GEM_PREVIEW_KEY = LAB_PREVIEW_KEYS[0];
-	const LAB_FONT_PREVIEW_KEY = LAB_PREVIEW_KEYS[1];
 
 	// --- Update ---
 	let appVersion = $state('...');
@@ -132,7 +128,7 @@
 	});
 	// Every rendering decision, including the one that matters, lives in
 	// `geometry/view.ts` where a test can reach it.
-	const screenGeometry = $derived(screenGeometryView(ssot.screen, geometryNow, ssot.placements));
+	const screenGeometry = $derived(screenGeometryView(ssot.screen, geometryNow, ssot.placements, ssot.ocrRegions));
 
 	let recalibrating = $state(false);
 
@@ -164,6 +160,34 @@
 	let ocrRects = $state<OcrRectView[]>([]);
 	let ocrRectsLoaded = $state(false);
 	const ocrPreview = createOcrPreviewOwner();
+	const regionEditor = createRegionEditorOwner();
+	const regions = $derived(ocrRegionsView(ssot.ocrRegions, ocrRects, geometryNow));
+	let modePending = $state(false);
+	let regionError = $state('');
+
+	async function setRegionMode(mode: string): Promise<void> {
+		if (modePending || mode === regions.mode) return;
+		modePending = true;
+		try {
+			await invoke('set_ocr_regions_mode', { mode });
+			await fetchSsot();
+			regionError = '';
+		} catch (error) {
+			regionError = String(error).includes('game monitor unknown')
+				? 'Game monitor unknown — focus the game once' : String(error);
+		} finally {
+			modePending = false;
+		}
+	}
+
+	async function editOcrRegion(select: EditableRegion | null = null): Promise<void> {
+		try {
+			await regionEditor.open(select);
+			regionError = '';
+		} catch (error) {
+			regionError = String(error);
+		}
+	}
 
 	// Inline editing states
 	let editingServerUrl = $state(false);
@@ -235,26 +259,6 @@
 		};
 	});
 
-	function findOcrRect(key: string): OcrRectView | undefined {
-		return ocrRects.find((row) => row.key === key);
-	}
-
-	function formatOcrRect(rect: OcrRectView['rect']): string {
-		return rect ? `[${rect.join(', ')}]` : 'unlocated';
-	}
-
-	function ocrPreviewTitle(row: OcrRectView | undefined): string {
-		return row?.rect ? `Preview ${row.label}` : 'Not located yet — open the panel once';
-	}
-
-	/** Where the rect came from in the shared placement contract. */
-	function ocrSourceLabel(source: string | undefined): string {
-		if (source === 'seed') return '(seed, scaled from reference)';
-		if (source === 'remembered') return '(remembered anchor)';
-		if (source === 'unlocated') return '(unlocated)';
-		return '';
-	}
-
 	async function loadOcrRects(): Promise<void> {
 		try {
 			ocrRects = await invoke<OcrRectView[]>('get_ocr_rects');
@@ -273,7 +277,7 @@
 
 	// Reload when what the rows are projected from changes, so a Recalibrate or a
 	// module measuring the screen replaces "unlocated" without a restart.
-	const ocrKey = $derived(ocrRectsKey(ssot.screen, ssot.placements));
+	const ocrKey = $derived(ocrRectsKey(ssot.screen, ssot.placements, ssot.ocrRegions));
 	$effect(() => {
 		void ocrKey;
 		if (nav.view !== 'settings' || !untrack(() => ocrRectsLoaded)) return;
@@ -554,6 +558,15 @@
 		<!-- OCR Regions -->
 		<section>
 			<h2>OCR Regions</h2>
+			<div class="setting-row">
+				<span class="setting-label">Region mode</span>
+				<SegmentedButtons value={regions.mode} title="OCR region mode" options={[{ value: 'auto', label: 'Auto' }, { value: 'manual', label: 'Manual' }]} onselect={setRegionMode} />
+				<span class="setting-value"></span>
+				{#if regionError}<span class="setting-error" role="alert">{regionError}</span>{/if}
+				{#if regions.mode === 'manual'}<Button onclick={() => editOcrRegion()}>Edit regions</Button>{/if}
+			</div>
+			{#if regions.warning}<div class="region-notice mismatch" role="status">{regions.warning}</div>{/if}
+			{#if regions.firstUse}<div class="region-notice first-use" role="status">{regions.firstUse}</div>{/if}
 
 			{#if store.status?.ocr_language_warning}
 				<div class="warning-banner">
@@ -563,59 +576,18 @@
 				</div>
 			{/if}
 
-			<div class="setting-row">
-				<span class="setting-label">{findOcrRect(LAB_GEM_PREVIEW_KEY)?.label ?? 'Gem Tooltip Region'}</span>
-				<span class="setting-value mono">{formatOcrRect(findOcrRect(LAB_GEM_PREVIEW_KEY)?.rect ?? null)}</span>
-				<span class="region-source">{ocrSourceLabel(findOcrRect(LAB_GEM_PREVIEW_KEY)?.source)}</span>
-				<Button
-					onclick={() => previewOcrRegion(LAB_GEM_PREVIEW_KEY)}
-					disabled={!findOcrRect(LAB_GEM_PREVIEW_KEY)?.rect}
-					title={ocrPreviewTitle(findOcrRect(LAB_GEM_PREVIEW_KEY))}
-				>Preview</Button>
-			</div>
-
-			<div class="setting-row">
-				<span class="setting-label">{findOcrRect(LAB_FONT_PREVIEW_KEY)?.label ?? 'Font Panel Region'}</span>
-				<span class="setting-value mono">{formatOcrRect(findOcrRect(LAB_FONT_PREVIEW_KEY)?.rect ?? null)}</span>
-				<span class="region-source">{ocrSourceLabel(findOcrRect(LAB_FONT_PREVIEW_KEY)?.source)}</span>
-				<Button
-					onclick={() => previewOcrRegion(LAB_FONT_PREVIEW_KEY)}
-					disabled={!findOcrRect(LAB_FONT_PREVIEW_KEY)?.rect}
-					title={ocrPreviewTitle(findOcrRect(LAB_FONT_PREVIEW_KEY))}
-				>Preview</Button>
-			</div>
-
-			{#if hasFeature(TEMPLE_FEATURE)}
-				{#each TEMPLE_PREVIEW_KEYS as key}
-					{@const row = findOcrRect(key)}
+			{#each regions.rows as row (row.key)}
+				{#if (!row.key.startsWith('temple.') || hasFeature(TEMPLE_FEATURE)) && (row.key !== 'merc.panel' || hasFeature(MERC_FEATURE))}
 					<div class="setting-row">
-						<span class="setting-label">{row?.label ?? key}</span>
-						<span class="setting-value mono">{formatOcrRect(row?.rect ?? null)}</span>
-						<span class="region-source">{ocrSourceLabel(row?.source)}</span>
-						<Button
-							onclick={() => previewOcrRegion(key)}
-							disabled={!row?.rect}
-							title={ocrPreviewTitle(row)}
-						>Preview</Button>
+						<span class="setting-label">{row.label}</span>
+						<span class="setting-value mono">{row.value}</span>
+						<span class="region-source" class:past-edge={row.pastEdge}>{row.source}</span>
+						{#if row.editEnabled}<Button onclick={() => editOcrRegion(row.edit)}>Edit</Button>{/if}
+						<Button onclick={() => previewOcrRegion(row.previewKey)} disabled={row.previewDisabled} title={row.previewTitle}>Preview</Button>
 					</div>
-				{/each}
-			{/if}
-
-			{#if hasFeature(MERC_FEATURE)}
-				{#each MERC_PREVIEW_KEYS as key}
-					{@const row = findOcrRect(key)}
-					<div class="setting-row">
-						<span class="setting-label">{row?.label ?? key}</span>
-						<span class="setting-value mono">{formatOcrRect(row?.rect ?? null)}</span>
-						<span class="region-source">{ocrSourceLabel(row?.source)}</span>
-						<Button
-							onclick={() => previewOcrRegion(key)}
-							disabled={!row?.rect}
-							title={ocrPreviewTitle(row)}
-						>Preview</Button>
-					</div>
-				{/each}
-			{/if}
+				{/if}
+			{/each}
+			{#if regions.setOn}<p class="setting-note">{regions.setOn}</p>{/if}
 		</section>
 
 		<!-- Screen geometry -->
@@ -645,7 +617,7 @@
 			<div class="setting-row">
 				<span class="setting-label">Measured</span>
 				<span class="setting-value" class:muted={screenGeometry.unmeasured}>{screenGeometry.measured}</span>
-				<Button onclick={recalibrateGeometry} disabled={recalibrating}>Recalibrate</Button>
+				<Button onclick={recalibrateGeometry} disabled={recalibrating || regions.recalibrateDisabled} title={regions.recalibrateDisabled ? 'Off in Manual mode' : undefined}>Recalibrate</Button>
 			</div>
 
 			<div class="setting-row">
@@ -1028,6 +1000,11 @@
 		color: var(--text-muted);
 		white-space: nowrap;
 	}
+
+	.region-source.past-edge { color: var(--color-lab-red); font-weight: 600; }
+	.region-notice { margin: 0.4rem 0; padding: 8px 12px; border: 1px solid; border-radius: 6px; font-size: 0.8rem; }
+	.region-notice.mismatch { color: var(--color-lab-yellow); background: rgba(234, 179, 8, 0.12); border-color: rgba(234, 179, 8, 0.45); }
+	.region-notice.first-use { color: var(--color-lab-blue); background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.4); }
 
 	.setting-note {
 		margin: 0.35rem 0 0;
