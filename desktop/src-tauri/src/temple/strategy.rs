@@ -765,21 +765,6 @@ mod tests {
     }
 
     #[test]
-    fn the_apex_on_its_own_scores_two() {
-        assert_score(rush().aggregate(&[], true, 0), 2.0, "Apex alone");
-    }
-
-    #[test]
-    fn the_apex_beside_the_cradle_adds_only_the_assumed_mixed_increment() {
-        let board = [(cradle(), Tier::T3)];
-        assert_score(
-            rush().aggregate(&board, true, 0),
-            9.5,
-            "Cradle + Apex (9 plus the assumed 0.5)",
-        );
-    }
-
-    #[test]
     fn the_apex_beside_an_unpriced_doryani_pays_its_full_standalone_score() {
         // Doryani's Institute is worth nothing on the Cradle profile, so the
         // board carries no value and the Apex is all there is.
@@ -1193,5 +1178,53 @@ mod tests {
             ..TempleConfig::default()
         };
         assert!(config.r5_applies());
+    }
+
+    mod keep_happy {
+        use super::*;
+
+        // keep:happy — POE-496 AC-4. A reached Apex on a board that carries
+        // nothing else scores the standalone 2: about 1 div on the reference
+        // scale, where the Cradle of Creation is 9.
+        #[test]
+        fn the_apex_on_its_own_scores_two() {
+            assert_score(rush().aggregate(&[], true, 0), 2.0, "Apex alone");
+        }
+
+        // keep:happy — POE-496 AC-3. The Cradle of Creation beside a reached
+        // Apex is one joint outcome worth 14 (about 7 div, seven bare Apexes),
+        // more than the Cradle and the bare Apex scored apart.
+        #[test]
+        fn the_cradle_beside_a_reached_apex_scores_the_joint_fourteen() {
+            let board = [(cradle(), Tier::T3)];
+            let joint = rush().aggregate(&board, true, 0);
+            assert_score(joint, 14.0, "Cradle of Creation + reached Apex");
+            let apart = rush().aggregate(&board, false, 0) + rush().aggregate(&[], true, 0);
+            assert!(
+                joint > apart,
+                "the joint outcome {joint} must exceed the Cradle and the Apex apart, {apart}"
+            );
+        }
+    }
+
+    mod keep_critical {
+        use super::*;
+
+        // keep:critical — POE-496. Silent consequence: a finished temple
+        // whose Apex was never reached, or whose Cradle-line room is short of
+        // the Cradle of Creation, scores the Cradle+Apex joint 14 — a
+        // plausible outcome value the rollout's EV trusts, so a kill or door
+        // that strands the Apex ranks as if it had reached it. Each row
+        // misses one half of the pair and scores what that half alone pays.
+        #[test]
+        fn the_cradle_apex_outcome_is_not_earned_with_half_the_pair_missing() {
+            let rows: [(&str, &[(Line, Tier)], bool, f64); 2] = [
+                ("Cradle of Creation, Apex unreached", &[(cradle(), Tier::T3)], false, 9.0),
+                ("Hall of Lords (tier 2) beside a reached Apex", &[(cradle(), Tier::T2)], true, 2.0),
+            ];
+            for (what, board, apex_reached, want) in rows {
+                assert_score(rush().aggregate(board, apex_reached, 0), want, what);
+            }
+        }
     }
 }

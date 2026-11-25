@@ -414,10 +414,9 @@ pub fn case_9_corruption_chamber_arrival() -> Case {
             offer("Paquate", Change, "Explosives Room"),
         ],
         keys: 1,
-        decision: "the advisor now opens C1-B0, beside the Apex, where Sebastian opened C1-D1 \
-                   (Strongbox Chamber, the faster arrival); the move follows the Cradle-plus-Apex \
-                   targets ruling (Desk poe-temple-targets-1124); ranking the Apex above RD/RV \
-                   when no Cradle is on the board is deferred until the Operator promotes it",
+        decision: "open C1-D1 (Strongbox Chamber): with no Cradle of Creation on the board, \
+                   connecting the Apex cluster to the Entrance outranks the Apex-adjacent B0, and \
+                   D1 is the faster arrival, five hops Entrance to Apex against seven via C0",
     }
 }
 

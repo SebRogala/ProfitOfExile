@@ -1089,6 +1089,25 @@ mod tests {
         )
     }
 
+    /// The fixture and both production profiles, each at this suite's
+    /// `N`/`SEED` and at the numbers a read actually uses (`slice::ROLLOUTS`
+    /// and `slice::SEED`, imported so no copy of them can outlive production's).
+    fn every_profile_and_rollout() -> Vec<(String, StrategyProfile, u32, u64)> {
+        use crate::temple::slice::{ROLLOUTS as PROD_ROLLOUTS, SEED as PROD_SEED};
+
+        let mut rows = Vec::new();
+        for (label, profile) in [
+            ("fixture", rush()),
+            ("cold", production_profile()),
+            ("live", live_production_profile()),
+        ] {
+            for (n, seed) in [(N, SEED), (PROD_ROLLOUTS, PROD_SEED)] {
+                rows.push((format!("{label}, N={n} seed={seed:#x}"), profile.clone(), n, seed));
+            }
+        }
+        rows
+    }
+
     /// Zero rollouts isolate the rule ranking from future-policy EV. The
     /// change offer is first so only an active preference can promote upgrade.
     fn grade_limited_r4_scores(offers: &[(OfferKind, &str)], carve_out: bool) -> Vec<Scored> {
@@ -1469,24 +1488,6 @@ mod tests {
         );
     }
 
-    // The Corruption Chamber is an ordinary room under the Cradle target set,
-    // so RV has nothing stranded to protect and the Apex door — the move
-    // Sebastian played on the 3.29 board — is the pick, reaching the Apex.
-    #[test]
-    fn case_two_corruption_chamber_takes_the_apex_now_the_room_is_no_target() {
-        let case = cases::case_2_corruption_chamber();
-        let advice = advise_case(&case);
-        let top = &advice.recommendations[0];
-        let architect = top.option.architect.as_ref().expect("resolved");
-        assert_eq!(architect.kind, Upgrade, "{}", case.decision);
-        assert_eq!(architect.line, Line::Corruption);
-        assert_eq!(top_doors(&advice, B1), vec![A0], "{}", case.decision);
-        assert!(has_reason(top, |r| matches!(
-            r,
-            Reason::R1Apex { reaches_apex: true }
-        )));
-    }
-
     // With no target room stranded, RV files no option as a gamble: the Apex
     // play is an ordinary recommendation.
     #[test]
@@ -1618,9 +1619,9 @@ mod tests {
     // RA. Both corridors into the Entrance cluster connect the same value and
     // merge the same two clusters; before RA the row gradient took Banquet
     // Hall (C0, row C) over Strongbox Chamber (D1, row D), the corridor that
-    // leaves the Entrance seven hops from the Apex instead of five. With the
-    // Corruption Chamber no longer a target neither corridor is RV's, so the
-    // pick is the Apex-adjacent B0 and RA orders the two below it.
+    // leaves the Entrance seven hops from the Apex instead of five. Both
+    // connect the Apex cluster to the Entrance on a board with no Cradle of
+    // Creation, and RA orders them.
     #[test]
     fn case_nine_corruption_chamber_ranks_the_corridor_that_arrives_faster_above_banquet_hall() {
         let case = cases::case_9_corruption_chamber_arrival();
@@ -3687,9 +3688,9 @@ mod tests {
 
     /// The door the app actually recommends on each walked board, pinned.
     ///
-    /// Under the Cradle target set two boards leave Sebastian's recorded
-    /// door: board 2 takes the Apex he played, and board 9 the Apex-adjacent
-    /// B0 rather than his C1-D1.
+    /// Under the Cradle target set board 2 takes the Apex he played, and
+    /// board 9 his C1-D1: with no Cradle of Creation on the board, connecting
+    /// the Apex cluster to the Entrance outranks the Apex-adjacent B0.
     ///
     /// The recorded decisions are mostly about the DOOR, and the door axis is
     /// decided by the rule chain rather than by the rollout — R1, R2 and RS
@@ -3738,8 +3739,8 @@ mod tests {
                 ("6 Cloister-blind", vec![C1]),
                 // "open B0-C1 (B0 already reaches the Apex)"
                 ("8 LightningWorkshop", vec![B0]),
-                // Sebastian opened C1-D1; with no RV the Apex-adjacent B0 wins
-                ("9 CorruptionChamber-arrival", vec![B0]),
+                // "open C1-D1": the Apex cluster to the Entrance, the faster arrival
+                ("9 CorruptionChamber-arrival", vec![D1]),
                 // Board 7 records a MISS on the kill; its door was never in
                 // dispute.
                 ("7 ArmourersWorkshop-PC", vec![B1]),
@@ -3875,7 +3876,7 @@ mod tests {
                 ("5 PoisonGarden", Vec::new()),
                 ("6 Cloister-blind", vec![C1]),
                 ("8 LightningWorkshop", vec![B0]),
-                ("9 CorruptionChamber-arrival", vec![B0]),
+                ("9 CorruptionChamber-arrival", vec![D1]),
                 ("7 ArmourersWorkshop-PC", vec![B1]),
             ],
         );
@@ -4294,6 +4295,33 @@ mod tests {
                 },
             ]);
         }
+        // keep:happy — POE-496 AC-2. Case 2: standing in the Corruption
+        // Chamber (B1) with the Apex one corridor away and no target room
+        // stranded, the advisor upgrades the corruption line and opens B1-A0,
+        // reaching the Apex, on the fixture and both production profiles at
+        // either rollout setting. B1-A0 joins the Apex to this room, not to
+        // the Entrance, so the Apex-connection priority leaves it alone.
+        #[test]
+        fn case_two_corruption_chamber_takes_the_apex_on_every_profile_and_rollout() {
+            let case = cases::case_2_corruption_chamber();
+            let mut failures = Vec::new();
+            for (label, profile, n, seed) in every_profile_and_rollout() {
+                let advice = advise(
+                    &case.state, &case.offers, case.keys, &profile, &TempleConfig::default(), n, seed,
+                );
+                let top = &advice.recommendations[0];
+                let kill = top.option.architect.as_ref().map(|a| (a.kind, a.line.clone()));
+                let doors = top_doors(&advice, B1);
+                let reaches = has_reason(top, |r| matches!(r, Reason::R1Apex { reaches_apex: true }));
+                if kill != Some((Upgrade, Line::Corruption)) || doors != vec![A0] || !reaches {
+                    failures.push(format!(
+                        "{label}: kill {kill:?}, doors {doors:?}, R1Apex reaches {reaches}\n{}",
+                        ranking_dump(&advice)
+                    ));
+                }
+            }
+            assert!(failures.is_empty(), "{}: {}\n{}", case.name, case.decision, failures.join("\n"));
+        }
     }
 
     mod keep_critical {
@@ -4600,10 +4628,94 @@ mod tests {
             }
             assert!(failures.is_empty(), "\n{}", failures.join("\n"));
         }
+
+        // keep:critical — POE-496. Silent consequence: the overlay sends the
+        // player to connect the Apex while the Cradle line stays off the
+        // Entrance, a plausible door the player trusts, and the profile's one
+        // target line is lost to an Apex connection. Standing in D1 inside
+        // the Entrance cluster with one key, D1-C0 connects the Apex cluster
+        // (A0-B0-C0) to the Entrance and D1-D2 connects a Royal Meeting Room
+        // (Cradle line, tier 1). With no Cradle of Creation anywhere the Apex
+        // connection is the pick; a Cradle of Creation stranded elsewhere,
+        // already connected, or built in D1 by this very kill turns that
+        // priority off, and the Cradle-line corridor is the pick again.
+        #[test]
+        fn a_built_cradle_of_creation_anywhere_turns_off_the_apex_connection_priority() {
+            let junk_change = || offer("Ticaba", Change, "Storage Room");
+            let rows: [(&str, &[(Slot, &str, u8)], &[(Slot, Slot)], ArchitectOffer, Slot); 4] = [
+                ("no Cradle of Creation on the board", &[], &[], junk_change(), C0),
+                ("a Cradle of Creation stranded in D3", &[(D3, "throne_of_atziri", 3)], &[], junk_change(), D2),
+                ("a Cradle of Creation connected in E0", &[(E0, "throne_of_atziri", 3)], &[(E0, E1)], junk_change(), D2),
+                (
+                    "this kill builds Cradle of Creation in D1",
+                    &[],
+                    &[],
+                    offer("Tzamoto", Change, "Cradle of Creation"),
+                    D2,
+                ),
+            ];
+            let mut failures = Vec::new();
+            for (name, extra_rooms, extra_doors, block, want) in rows {
+                let mut rooms = vec![
+                    (B0, JUNK, 1),
+                    (C0, JUNK, 1),
+                    (D1, "museum_of_artefacts", 1),
+                    (D2, "throne_of_atziri", 1),
+                ];
+                rooms.extend_from_slice(extra_rooms);
+                let mut doors = vec![(A0, B0), (B0, C0), (D1, E1)];
+                doors.extend_from_slice(extra_doors);
+                let state = board(&rooms, &doors, D1, 8);
+                let advice = advise(
+                    &state,
+                    std::slice::from_ref(&block),
+                    1,
+                    &rush(),
+                    &TempleConfig::default(),
+                    N,
+                    SEED,
+                );
+                let got = top_doors(&advice, D1);
+                if got != vec![want] {
+                    failures.push(format!(
+                        "{name}: opened toward {got:?}, want [{want:?}]\n{}",
+                        ranking_dump(&advice)
+                    ));
+                }
+            }
+            assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+        }
     }
 
     mod keep_regression {
         use super::*;
+
+        // keep:regression — POE-496, Operator-reported: POE-415's Cradle
+        // target set left no corridor on the Corruption Chamber arrival board
+        // (case 9) worth connecting, so R1-apex took C1-B0, beside an Apex
+        // C1 can already walk to. With no Cradle of Creation on the board,
+        // connecting the Apex cluster to the Entrance is the value the door
+        // chases, and Sebastian's C1-D1 (Strongbox Chamber) is the faster of
+        // the two corridors that do it — on the fixture and both production
+        // profiles, at either rollout setting.
+        #[test]
+        fn the_corruption_chamber_arrival_board_connects_the_apex_through_strongbox_chamber() {
+            let case = cases::case_9_corruption_chamber_arrival();
+            let mut failures = Vec::new();
+            for (label, profile, n, seed) in every_profile_and_rollout() {
+                let advice = advise(
+                    &case.state, &case.offers, case.keys, &profile, &TempleConfig::default(), n, seed,
+                );
+                let got = top_doors(&advice, C1);
+                if got != vec![D1] {
+                    failures.push(format!(
+                        "{label}: opened toward {got:?}, want [D1]\n{}",
+                        ranking_dump(&advice)
+                    ));
+                }
+            }
+            assert!(failures.is_empty(), "{}: {}\n{}", case.name, case.decision, failures.join("\n"));
+        }
 
         // keep:regression — POE-415 WI-6, Operator-reported
         // (evidence/temple-door-halls-vs-corruption.png). The shipped profile

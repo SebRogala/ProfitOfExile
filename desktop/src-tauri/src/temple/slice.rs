@@ -5588,7 +5588,7 @@ mod tests {
     /// The shipped fixture profile is not what the bridge produces, and the
     /// bridge does not edit it.
     ///
-    /// The Rush is the fixture behind the pinned Cradle 9 / Apex 2 and
+    /// The Rush is the fixture behind the pinned Cradle 9 / Apex 2 / Cradle+Apex 14 and
     /// retrospective-board suites, and those suites only keep their meaning
     /// while it states that ranking rather than today's market.
     /// Fails if the bridge ever mutates the constructor it splats over.
@@ -5597,7 +5597,7 @@ mod tests {
         let after = TempleProfileSettings::default().to_profile(&allflame_valuation());
         let rush = StrategyProfile::cradle_apex();
 
-        // The fixture still states the Cradle-only ranking, not today's
+        // The fixture still states the Cradle-and-Apex ranking, not today's
         // market, and the bridge's own answer is a different object.
         assert_ne!(after.room_values, rush.room_values);
         assert_eq!(
@@ -5606,7 +5606,11 @@ mod tests {
         );
         assert_eq!(rush.room_values[&Line::Corruption], [0.0, 0.0, 0.0]);
         assert_eq!(rush.room_values[&Line::Gem], [0.0, 0.0, 0.0]);
-        assert!(rush.combinations.is_empty(), "no joint outcome is priced");
+        assert_eq!(
+            rush.aggregate(&[(Line::named(rooms::CRADLE_LINE_KEY), Tier::T3)], true, 0),
+            14.0,
+            "the fixture prices the Cradle of Creation beside a reached Apex as one joint outcome",
+        );
         assert_eq!(rush.value_scale(), 1.0, "the reference scale is its own");
     }
 
