@@ -50,6 +50,7 @@
 				]);
 				if (!alive) return;
 				if (!monitor || !(sf > 0)) throw new Error('Monitor geometry unknown');
+				if (!snapshot.ocrRegions) throw new Error('OCR regions unavailable');
 				monitorKnown = !!game && game.x === monitor.position.x && game.y === monitor.position.y;
 				const requested = new URLSearchParams(window.location.search).get('region');
 				draft = createRegionEditorDraft({
