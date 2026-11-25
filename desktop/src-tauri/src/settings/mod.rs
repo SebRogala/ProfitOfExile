@@ -4720,7 +4720,7 @@ pub(crate) mod tests {
             /// file keeps the old one and the next launch loses the edits.
             #[test]
             fn a_manual_save_racing_whole_file_saves_leaves_the_file_and_state_on_the_saved_set() {
-                use std::sync::atomic::{AtomicBool, Ordering};
+                use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
                 const N: usize = 200;
                 let live = ScreenRef { width: 3440, height: 1440, origin: [0, 0], at_ms: 1_732_500_000_000 };
                 let set = |x: i32| ManualRegions {
@@ -4740,16 +4740,24 @@ pub(crate) mod tests {
                 *state.ocr_regions.lock().unwrap() = OcrRegionsSetting { mode: OcrRegionsMode::Manual, manual: Some(set(837)) };
                 save_to(&path, &from_state(&state)).unwrap();
                 let stop = AtomicBool::new(false);
+                let competing_saves = AtomicUsize::new(0);
 
-                let mismatches = std::thread::scope(|scope| {
-                    scope.spawn(|| {
+                let (mismatches, competing_saves_during_loop, competing_errors) = std::thread::scope(|scope| {
+                    let competitor = scope.spawn(|| {
+                        let mut errors = Vec::new();
                         while !stop.load(Ordering::Relaxed) {
-                            let _ = update_at(&path, |loaded| loaded.unwrap_or_default(), |existing| {
+                            match update_at(&path, |loaded| loaded.unwrap_or_default(), |existing| {
                                 let mut target = from_state(&state);
                                 merge_stored_rows(existing, &mut target);
                                 target
-                            });
+                            }) {
+                                Ok(()) => {
+                                    competing_saves.fetch_add(1, Ordering::SeqCst);
+                                }
+                                Err(e) => errors.push(e),
+                            }
                         }
+                        errors
                     });
                     let mut mismatches = Vec::new();
                     for i in 0..N {
@@ -4765,11 +4773,17 @@ pub(crate) mod tests {
                             mismatches.push((i, result, file, held));
                         }
                     }
+                    let competing_saves_during_loop = competing_saves.load(Ordering::SeqCst);
                     stop.store(true, Ordering::Relaxed);
-                    mismatches
+                    (mismatches, competing_saves_during_loop, competitor.join().unwrap())
                 });
                 let _ = fs::remove_dir_all(&dir);
 
+                assert!(competing_errors.is_empty(), "the competing whole-file writer failed: {competing_errors:?}");
+                assert!(
+                    competing_saves_during_loop > 0,
+                    "the competing whole-file writer never saved while the {N} Manual saves ran"
+                );
                 assert!(
                     mismatches.is_empty(),
                     "{} of {N} saves left the file or AppState off the saved set; first: {:?}",
