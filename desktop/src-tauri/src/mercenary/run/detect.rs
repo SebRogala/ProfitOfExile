@@ -374,7 +374,10 @@ fn press_placement(state: &AppState, grab: &crate::capture::Capture) -> (Option<
     if !crate::ssot::screen_matches(&screen, (grab.image.width(), grab.image.height()), grab.origin, grab.client) {
         return (None, false);
     }
-    (resolved.merc, false)
+    let placement = screen.and_then(|slice| {
+        crate::ssot::placements_for(Some(&slice)).merc.panel.map(|panel| (panel, slice.ui_scale))
+    });
+    (placement, false)
 }
 
 /// One press's probe under the placement [`press_placement`] decided.
