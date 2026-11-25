@@ -445,7 +445,8 @@ fn debug_capture_blocking(
         let state = app.state::<crate::AppState>();
         let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
         let origin = display_origin.or(screen.map(|s| s.origin)).unwrap_or((0, 0));
-        super::run::hint_for_capture(screen.as_ref(), (img.width(), img.height()), origin, client)
+        let geometry = super::run::TempleGeometry::current(&state, (img.width(), img.height()));
+        super::run::hint_for_capture(&geometry, (img.width(), img.height()), origin, client)
     };
     let started = std::time::Instant::now();
     let layout = reader::read_layout_with_hint(&img, hint.as_ref());

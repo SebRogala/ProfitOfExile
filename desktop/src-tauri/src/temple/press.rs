@@ -104,6 +104,11 @@ impl PressContext for AppHandle {
     fn screen(&self) -> Option<crate::ssot::ScreenSlice> {
         *self.state::<crate::AppState>().screen.lock().unwrap_or_else(|e| e.into_inner())
     }
+    fn geometry(&self, frame: &Capture) -> super::run::TempleGeometry {
+        super::run::TempleGeometry::current(
+            &self.state::<crate::AppState>(), (frame.image.width(), frame.image.height()),
+        )
+    }
     fn press_sender(&self) -> Option<Sender<PressedFrame>> {
         let state = self.state::<crate::AppState>();
         if state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get("temple") != Some(&true) {
@@ -158,7 +163,7 @@ pub struct TemplePending {
     tx: Sender<PressedFrame>,
     reason: Option<ArmReason>,
     prompt: Option<u64>,
-    screen: Option<crate::ssot::ScreenSlice>,
+    geometry: super::run::TempleGeometry,
     probe: Option<super::run::TempleProbe>,
     epoch: u64,
     reconciled: bool,
@@ -170,7 +175,7 @@ impl<C: PressContext> ScreenReader<C> for TempleReader {
     fn prepare(&self, ctx: &C, _press: &Press) -> Option<Box<dyn PendingRead<C>>> {
         let tx = ctx.press_sender()?;
         let reason = press_reason(ctx.arm_state(), super::run::now_ms());
-        Some(Box::new(TemplePending { tx, reason, prompt: ctx.prompt_arm(), screen: ctx.screen(), probe: None, epoch: ctx.epoch(), reconciled: false }))
+        Some(Box::new(TemplePending { tx, reason, prompt: ctx.prompt_arm(), geometry: super::run::TempleGeometry::Auto(ctx.screen()), probe: None, epoch: ctx.epoch(), reconciled: false }))
     }
 }
 
@@ -180,23 +185,28 @@ impl TemplePending {
     fn reconcile<C: PressContext>(&mut self, frame: &Capture, ctx: &C) {
         if self.reconciled { return; }
         self.reconciled = true;
-        self.screen = ctx.reconcile_screen(frame);
+        self.geometry = match ctx.geometry(frame) {
+            super::run::TempleGeometry::Auto(_) => super::run::TempleGeometry::Auto(ctx.reconcile_screen(frame)),
+            manual => manual,
+        };
         ctx.forget_other_setup(frame);
     }
 }
 
 impl<C: PressContext> PendingRead<C> for TemplePending {
     fn needs_calibration(&mut self, frame: &Arc<Capture>, ctx: &C) -> bool {
+        self.reconcile(frame, ctx);
         let stopped = ctx.epoch() != self.epoch || ctx.press_sender().is_none();
-        !stopped && !super::run::is_calibrated(frame, self.screen) && !ctx.sweep_spent(frame)
+        !stopped && super::run::locate_on_miss(&self.geometry)
+            && !super::run::is_calibrated(frame, &self.geometry) && !ctx.sweep_spent(frame)
     }
     fn calibrate(&mut self, frame: &Arc<Capture>, ctx: &C) -> Option<String> {
         let started = std::time::Instant::now();
         self.reconcile(frame, ctx);
-        if super::run::is_calibrated(frame, self.screen) { return None; }
+        if !super::run::locate_on_miss(&self.geometry) || super::run::is_calibrated(frame, &self.geometry) { return None; }
         let stop = || ctx.epoch() != self.epoch || ctx.press_sender().is_none();
         let key = ctx.sweep_key(frame);
-        let found = super::run::calibrate_frame(frame, self.screen, &stop);
+        let found = super::run::calibrate_frame(frame, &self.geometry, &stop);
         if stop() {
             return Some(format!("Temple: calibration — cancelled, {} ms", started.elapsed().as_millis()));
         }
@@ -212,7 +222,7 @@ impl<C: PressContext> PendingRead<C> for TemplePending {
             return Some(format!("Temple: calibration — superseded by Recalibrate, {} ms", started.elapsed().as_millis()));
         }
         let (x, y) = found.origin();
-        if let Some(screen) = self.screen {
+        if let super::run::TempleGeometry::Auto(Some(screen)) = self.geometry {
             if ctx.bank_entrance([x, y], frame, screen.ui_scale, key.rearm).is_none() {
                 return Some(format!("Temple: calibration — superseded by Recalibrate, {} ms", started.elapsed().as_millis()));
             }
@@ -226,7 +236,7 @@ impl<C: PressContext> PendingRead<C> for TemplePending {
             if ctx.epoch() != self.epoch || ctx.press_sender().is_none() { self.probe = None; return Ok(false); }
             return Ok(true);
         }
-        self.probe = super::run::probe_frame(frame, self.screen, &|| ctx.epoch() != self.epoch || ctx.press_sender().is_none()).map_err(|e| format!("{e:?}"))?;
+        self.probe = super::run::probe_frame(frame, &self.geometry, &|| ctx.epoch() != self.epoch || ctx.press_sender().is_none()).map_err(|e| format!("{e:?}"))?;
         Ok(self.probe.is_some())
     }
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, _ctx: &C) {

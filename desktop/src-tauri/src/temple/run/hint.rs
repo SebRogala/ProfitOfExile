@@ -5,16 +5,16 @@ use crate::AppState;
 use super::super::anchor::{self, CheapHint};
 use super::super::reader::TempleLayout;
 use super::super::slice;
-use super::{now_ms, unit_ratio_line, Session};
+use super::{now_ms, unit_ratio_line, Session, TempleGeometry};
 
-/// The scale hint this capture's screen slice supplies (POE-234 WI-2).
+/// The scale hint supplied by the resolved geometry (POE-234 WI-2, POE-411).
 ///
-/// The shared slice is the app's one store of the screen's UI scale. This
+/// Auto uses the shared slice; Manual uses the panel-derived UI scale. This
 /// converts it into the temple unit through [`anchor::scale_for_ui_scale`]. The
 /// placed origin is added separately by [`cheap_hint_from_screen`]; this helper
 /// remains the scale-only geometry validation seam used by commands and tests.
 ///
-/// # Four sources can be behind the number, and one of them drifts
+/// # Auto screen validation
 ///
 /// `None` — no scale hint, and the caller is uncalibrated — in these cases:
 ///
@@ -33,40 +33,49 @@ use super::{now_ms, unit_ratio_line, Session};
 ///   is reachable — the cost of being sure is one comparison, and the cost of
 ///   being wrong is a zero-size template.
 pub fn hint_for_capture(
-    screen: Option<&crate::ssot::ScreenSlice>,
+    geometry: &TempleGeometry,
     capture: (u32, u32),
     origin: (i32, i32),
     client: [i32; 4],
 ) -> Option<anchor::AnchorCalibration> {
-    let screen = screen?;
-    if !crate::ssot::screen_matches(&Some(*screen), capture, origin, client) {
-        return None;
-    }
-    if !screen.ui_scale.is_finite() || screen.ui_scale <= 0.0 {
+    let ui_scale = match geometry {
+        TempleGeometry::Manual(panel) => panel.as_ref()?.1,
+        TempleGeometry::Auto(screen) => {
+            let screen = screen.as_ref()?;
+            if !crate::ssot::screen_matches(&Some(*screen), capture, origin, client) {
+                return None;
+            }
+            screen.ui_scale
+        }
+    };
+    if !ui_scale.is_finite() || ui_scale <= 0.0 {
         return None;
     }
     Some(anchor::AnchorCalibration {
         screen_w: capture.0,
         screen_h: capture.1,
-        scale: anchor::scale_for_ui_scale(screen.ui_scale),
+        scale: anchor::scale_for_ui_scale(ui_scale),
     })
 }
 
-/// Build the cheap recheck hint from the current screen slice.
+/// Build the cheap recheck hint from the current Auto or Manual geometry.
 ///
-/// `ssot::placements` owns the Entrance origin, including any origin the
-/// fallback has remembered. The scale crosses units only through
+/// In Auto, `ssot::placements` owns the Entrance origin, including any origin
+/// the fallback has remembered. Manual uses the resolved panel origin.
+/// The scale crosses units only through
 /// [`anchor::scale_for_ui_scale`]. The value is rebuilt for each capture and is
 /// never taken from the prior read.
 pub(super) fn cheap_hint_from_screen(
-    screen: Option<&crate::ssot::ScreenSlice>,
+    geometry: &TempleGeometry,
     capture: (u32, u32),
     display_origin: (i32, i32),
     client: [i32; 4],
 ) -> Option<CheapHint> {
-    let screen = screen?;
-    let calibration = hint_for_capture(Some(screen), capture, display_origin, client)?;
-    let origin = crate::ssot::placements(screen).temple?.entrance_origin;
+    let calibration = hint_for_capture(geometry, capture, display_origin, client)?;
+    let origin = match geometry {
+        TempleGeometry::Manual(panel) => panel.as_ref()?.0,
+        TempleGeometry::Auto(screen) => crate::ssot::placements(screen.as_ref()?).temple?.entrance_origin,
+    };
     Some(CheapHint { calibration, origin })
 }
 
@@ -88,17 +97,20 @@ pub(super) fn hint_from_slice(
     bool,
     Option<[i32; 2]>,
 ) {
-    let screen = {
+    let geometry = {
         let state = app.state::<AppState>();
-        let slot = state.screen.lock().unwrap_or_else(|e| e.into_inner());
-        *slot
+        TempleGeometry::current(&state, capture)
     };
-    let hint = cheap_hint_from_screen(screen.as_ref(), capture, display_origin, client);
+    let hint = cheap_hint_from_screen(&geometry, capture, display_origin, client);
     // The ANCHORED origin, which is a different question from the hint's
     // origin: `ssot::placements` answers the latter with a SEED for any
     // non-null slice, so the hint alone cannot tell "a plate was found here"
     // from "arithmetic put the centre here". `cold_sweep_reason` needs the
     // first — see the note on its `placed_origin`.
+    let screen = match geometry {
+        TempleGeometry::Auto(screen) => screen,
+        TempleGeometry::Manual(_) => None,
+    };
     let anchored = screen
         .and_then(|screen| screen.anchors)
         .and_then(|anchors| anchors.temple_entrance);
@@ -109,16 +121,23 @@ pub(super) fn hint_from_slice(
 /// [`anchor::anchor_for_loop`] before any probe (POE-389, Coordinator ruling
 /// 2026-11-13; calibrate-first since POE-440).
 ///
-/// True only for a null slice or one with no ANCHORED Entrance origin: there is
+/// Auto is true only for a null slice or one with no ANCHORED Entrance origin: there is
 /// no placement to trust, so the frame is the only way to find the sheet. A
 /// placed miss is the sheet not being open, and is `NoPanel` with no search;
 /// Recalibrate is the manual fix for a placement that is wrong.
 ///
-/// `anchored_origin` is the slice's anchored origin, never the hint's: the hint
+/// Every Manual geometry refuses a sweep, including an unset panel.
+/// The origin is the slice's anchored origin, never the hint's: the hint
 /// carries a seed for any non-null slice (POE-278), and reading that as a
 /// verified placement would never search a screen that merely exists.
-pub(super) fn locate_on_miss(screen_present: bool, anchored_origin: Option<[i32; 2]>) -> bool {
-    !screen_present || anchored_origin.is_none()
+pub(crate) fn locate_on_miss(geometry: &TempleGeometry) -> bool {
+    match geometry {
+        TempleGeometry::Manual(_) => false,
+        TempleGeometry::Auto(screen) => screen
+            .and_then(|s| s.anchors)
+            .and_then(|a| a.temple_entrance)
+            .is_none(),
+    }
 }
 
 /// The origin a successful fallback should remember, or `None` when the sweep

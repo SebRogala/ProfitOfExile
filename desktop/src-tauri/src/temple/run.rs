@@ -73,10 +73,12 @@ use super::reader::{self, TempleLayout};
 use super::slice::{self, TempleSettings, TempleSlice, TempleStatus};
 
 mod hint;
+mod probe;
+pub(crate) use probe::{calibrate_frame, is_calibrated, probe_frame, TempleGeometry};
 
-pub use hint::hint_for_capture;
+pub(crate) use hint::{hint_for_capture, locate_on_miss};
 use hint::{
-    cheap_hint_from_screen, hint_from_slice, hint_line, locate_on_miss,
+    cheap_hint_from_screen, hint_from_slice, hint_line,
     placed_origin_contradiction, placed_origin_contradiction_line, publish_anchor_scale,
     remember_fallback_anchor, GEOMETRY_NOTICE_LINE,
 };
@@ -1047,45 +1049,6 @@ pub struct TempleProbe {
     locate_time: Duration,
 }
 
-/// The press's calibration of the Entrance (POE-440): the whole-frame
-/// [`anchor::anchor_for_loop`] locate on the pressed frame, run only while the
-/// matching slice has no anchored Entrance origin ([`locate_on_miss`]).
-/// `Ok(None)` when the slice is calibrated or the plate is not on the frame;
-/// a found plate is `located` evidence the probe selects without a second
-/// correlation.
-pub fn calibrate_frame(
-    grab: &crate::capture::Capture,
-    screen: Option<crate::ssot::ScreenSlice>,
-    stop: &dyn Fn() -> bool,
-) -> Result<Option<TempleProbe>, super::ReadError> {
-    if stop() || is_calibrated(grab, screen) { return Ok(None); }
-    let size = (grab.image.width(), grab.image.height());
-    let screen = screen.filter(|s| crate::ssot::screen_matches(&Some(*s), size, grab.origin, grab.client));
-    let cheap_hint = cheap_hint_from_screen(screen.as_ref(), size, grab.origin, grab.client);
-    let hint = cheap_hint.map(|h| h.calibration);
-    let locating = Instant::now();
-    let found = match anchor::anchor_for_loop(
-        &grab.image,
-        hint.as_ref(),
-        (grab.client[2].max(0) as u32, grab.client[3].max(0) as u32),
-        stop,
-    ) {
-        Ok(found) => found,
-        Err(super::ReadError::AnchorNotFound { .. }) => return Ok(None),
-    };
-    if stop() { return Ok(None); }
-    Ok(Some(TempleProbe { found, located: true, hint, placed_origin: cheap_hint.map(|h| h.origin), cheap_ncc: f32::NAN,
-        cheap_time: Duration::ZERO, locate_time: locating.elapsed() }))
-}
-
-/// Whether `screen` matches the pressed frame and holds an anchored Entrance
-/// origin, so the press needs no calibration ([`locate_on_miss`]).
-pub fn is_calibrated(grab: &crate::capture::Capture, screen: Option<crate::ssot::ScreenSlice>) -> bool {
-    let size = (grab.image.width(), grab.image.height());
-    let screen = screen.filter(|s| crate::ssot::screen_matches(&Some(*s), size, grab.origin, grab.client));
-    !locate_on_miss(screen.is_some(), screen.and_then(|s| s.anchors).and_then(|a| a.temple_entrance))
-}
-
 impl TempleProbe {
     /// The located Entrance origin, capture-relative.
     pub fn origin(&self) -> (i32, i32) { self.found.origin }
@@ -1095,36 +1058,6 @@ impl TempleProbe {
     /// The Entrance's temple scale (image px per reference px).
     #[cfg(test)]
     pub fn scale(&self) -> f32 { self.found.scale }
-}
-
-/// Where a press reads the temple: Auto's screen slice, or Manual's origin and
-/// ui_scale (`None` when the temple panel is unset or unreadable).
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum TempleGeometry {
-    Auto(Option<crate::ssot::ScreenSlice>),
-    Manual(Option<((i32, i32), f32)>),
-}
-
-/// The press's presence test: one windowed recheck at the placed Entrance
-/// origin. A miss is `Ok(None)`; nothing here searches the frame (POE-440).
-pub fn probe_frame(
-    grab: &crate::capture::Capture,
-    screen: Option<crate::ssot::ScreenSlice>,
-    stop: &dyn Fn() -> bool,
-) -> Result<Option<TempleProbe>, super::ReadError> {
-    if stop() { return Ok(None); }
-    let size = (grab.image.width(), grab.image.height());
-    let screen = screen.filter(|s| crate::ssot::screen_matches(&Some(*s), size, grab.origin, grab.client));
-    let cheap_hint = cheap_hint_from_screen(screen.as_ref(), size, grab.origin, grab.client);
-    let hint = cheap_hint.map(|h| h.calibration);
-    let placed_origin = cheap_hint.map(|h| h.origin);
-    let started = Instant::now();
-    let cheap = anchor::detect_cheap(&grab.image, cheap_hint.as_ref());
-    let cheap_time = started.elapsed();
-    let cheap_ncc = cheap.ncc();
-    let anchor::CheapDetect::Anchored(found) = cheap else { return Ok(None) };
-    if stop() { return Ok(None); }
-    Ok(Some(TempleProbe { found, located: false, hint, placed_origin, cheap_ncc, cheap_time, locate_time: Duration::ZERO }))
 }
 
 /// A selected anchor is read once; only a successful located read may persist
@@ -2186,7 +2119,7 @@ mod tests {
         let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.90, 7);
         let placements = crate::ssot::placements(&screen);
         let hint = cheap_hint_from_screen(
-            Some(&screen),
+            &TempleGeometry::Auto(Some(screen)),
             (1920, 1080),
             (0, 0),
             [0, 0, 1920, 1080],
@@ -2221,7 +2154,7 @@ mod tests {
     fn a_remembered_scale_for_this_screen_becomes_the_hint_the_table_measured() {
         let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.90, 7);
 
-        let hint = hint_for_capture(Some(&screen), (1920, 1080), (0, 0), [0, 0, 1920, 1080])
+        let hint = hint_for_capture(&TempleGeometry::Auto(Some(screen)), (1920, 1080), (0, 0), [0, 0, 1920, 1080])
             .expect("this screen has one");
 
         let measured = anchor::table_scale(1920, 1080).expect("1920x1080 is the measured row");
@@ -2241,7 +2174,7 @@ mod tests {
     fn a_scale_measured_on_another_display_is_not_a_hint() {
         let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.90, 7);
 
-        assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), (1920, 0), [0, 0, 1920, 1080]), None);
+        assert_eq!(hint_for_capture(&TempleGeometry::Auto(Some(screen)), (1920, 1080), (1920, 0), [0, 0, 1920, 1080]), None);
     }
 
     /// A measurement of a different resolution is not a hint. The capture loop
@@ -2252,7 +2185,7 @@ mod tests {
     fn a_scale_measured_at_another_resolution_is_not_a_hint() {
         let screen = remembered(ScreenScaleSource::MercFrame, 2560, 1440, 1.20, 7);
 
-        assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), (0, 0), [0, 0, 1920, 1080]), None);
+        assert_eq!(hint_for_capture(&TempleGeometry::Auto(Some(screen)), (1920, 1080), (0, 0), [0, 0, 1920, 1080]), None);
     }
 
     /// A `ui_scale` that cannot describe a screen produces no hint rather than a
@@ -2266,7 +2199,7 @@ mod tests {
             let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, bad, 7);
 
             assert_eq!(
-                hint_for_capture(Some(&screen), (1920, 1080), (0, 0), [0, 0, 1920, 1080]),
+                hint_for_capture(&TempleGeometry::Auto(Some(screen)), (1920, 1080), (0, 0), [0, 0, 1920, 1080]),
                 None,
                 "ui_scale {bad} is not a screen",
             );
@@ -3399,25 +3332,29 @@ mod tests {
 
     #[test]
     fn a_null_slice_is_located_on_the_pressed_frame() {
-        assert!(locate_on_miss(false, None));
+        assert!(locate_on_miss(&TempleGeometry::Auto(None)));
     }
 
     /// A slice with a seeded but never ANCHORED origin is unplaced (POE-278).
     #[test]
     fn an_unanchored_slice_is_located_on_the_pressed_frame() {
-        assert!(locate_on_miss(true, None));
+        assert!(locate_on_miss(&TempleGeometry::Auto(Some(remembered(
+            ScreenScaleSource::MercFrame, 1920, 1080, 0.90, 7,
+        )))));
     }
 
     /// A placed miss is the sheet not being open: no locate, `NoPanel`.
     #[test]
     fn a_placed_miss_is_not_located() {
-        assert!(!locate_on_miss(true, Some([960, 713])));
+        let mut screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.90, 7);
+        screen.anchors = Some(crate::ssot::Anchors { temple_entrance: Some([960, 713]), merc_panel: None });
+        assert!(!locate_on_miss(&TempleGeometry::Auto(Some(screen))));
     }
 
     #[test]
     fn a_cancelled_probe_cannot_select_a_visible_panel() {
         let frame = crate::capture::Capture { image: live_capture(), monitor_id: 1, origin:(0,0), client:[0,0,1920,1080], timing:Default::default() };
-        assert!(calibrate_frame(&frame, None, &|| true).unwrap().is_none());
+        assert!(calibrate_frame(&frame, &TempleGeometry::Auto(None), &|| true).unwrap().is_none());
     }
 
     #[test]
@@ -3425,8 +3362,8 @@ mod tests {
         let frame = crate::capture::Capture { image: live_capture(), monitor_id: 1, origin:(0,0), client:[0,0,1920,1080], timing:Default::default() };
         let mut screen = crate::ssot::screen_from_geometry(1920,1080,1,(0,0),frame.client,0);
         screen.anchors = Some(crate::ssot::Anchors { temple_entrance: Some([100,100]), merc_panel: None });
-        assert!(calibrate_frame(&frame, Some(screen), &|| false).unwrap().is_none());
-        assert!(probe_frame(&frame, Some(screen), &|| false).unwrap().is_none());
+        assert!(calibrate_frame(&frame, &TempleGeometry::Auto(Some(screen)), &|| false).unwrap().is_none());
+        assert!(probe_frame(&frame, &TempleGeometry::Auto(Some(screen)), &|| false).unwrap().is_none());
         assert_eq!(screen.anchors.unwrap().temple_entrance, Some([100,100]));
     }
 
@@ -3455,7 +3392,7 @@ mod tests {
         #[test]
         fn the_locate_finds_the_panel_on_the_live_frame() {
             let frame = crate::capture::Capture { image: live_capture(), monitor_id: 1, origin:(0,0), client:[0,0,1920,1080], timing:Default::default() };
-            let proof = calibrate_frame(&frame, None, &|| false).unwrap().expect("the live sheet is found without a Client.txt arm or geometry");
+            let proof = calibrate_frame(&frame, &TempleGeometry::Auto(None), &|| false).unwrap().expect("the live sheet is found without a Client.txt arm or geometry");
             assert!(proof.located);
             let found = proof.found;
             let tol = slice::FRAME_ORIGIN_TOLERANCE;
@@ -3466,7 +3403,7 @@ mod tests {
             );
             let layout = reader::read_layout_at(&frame.image, found);
             assert_eq!(layout.origin, found.origin, "selected read consumes the proved anchor");
-            assert!(probe_frame(&frame, None, &|| false).unwrap().is_none(), "the probe must not sweep");
+            assert!(probe_frame(&frame, &TempleGeometry::Auto(None), &|| false).unwrap().is_none(), "the probe must not sweep");
         }
     }
 
