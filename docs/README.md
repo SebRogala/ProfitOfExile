@@ -73,7 +73,7 @@ rollover in [ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-a
 - [ADR-033: One versioned privacy notice gates every server request](adr/033-one-versioned-privacy-notice-gates-every-server-request.md)
 - [ADR-034: Market data is retained for 21 days](adr/034-market-data-is-retained-for-21-days.md) — supersedes the retention parts of ADR-010 and ADR-011
 - [ADR-035: A read-key press sweeps only after every banked probe missed, once per screen setup](adr/035-a-read-key-press-sweeps-only-after-every-banked-probe-missed-once-per-screen-setup.md) — amends ADR-025 temple clause 4
-- [ADR-036: Manual OCR regions replace placement while Manual is on](adr/036-manual-ocr-regions-replace-placement-while-manual-is-on.md) — Proposed; POE-411 Manual-only geometry exception, awaiting Operator acceptance.
+- [ADR-036: Manual OCR regions replace placement while Manual is on](adr/036-manual-ocr-regions-replace-placement-while-manual-is-on.md) — Accepted; POE-411 Manual-only geometry exception, including the Font-save amendment.
 
 Superseded:
 

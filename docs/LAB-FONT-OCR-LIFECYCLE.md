@@ -11,6 +11,7 @@
 The game wording and craft-count semantics live in [Game facts](GAME-FACTS.md#divine-font).
 Screen geometry follows [ADR-020](adr/020-one-shared-screen-scale-a-module-corroborates-or-withholds.md)
 and [ADR-024](adr/024-module-ocr-positions-are-placed-from-the-screen-slice-not-located.md).
+Current Auto/Manual region selection follows [Screen Geometry — Mode](../desktop/src/lib/README.md#ocr-region-mode).
 Every read follows [Screen reading (GGG policy)](OVERLAY-GUIDE.md#screen-reading-ggg-policy),
 including its capture guards and armed-only font-options exception.
 

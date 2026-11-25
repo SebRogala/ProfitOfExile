@@ -64,6 +64,8 @@ Related: [Overlay Guide](OVERLAY-GUIDE.md) (windows, click-through, smoke items)
 
 ## Per press
 
+Current Auto/Manual region selection follows [Screen Geometry — Mode](../desktop/src/lib/README.md#ocr-region-mode).
+
 Current as amended 2026-11-23 (POE-460). Homes: `temple/press.rs` (`TempleReader`, `press_reason`,
 `TemplePending::calibrate`) and `temple/run.rs` (`worker_loop`, `read_press`, `calibrate_frame`,
 `probe_frame`, `locate_on_miss`).

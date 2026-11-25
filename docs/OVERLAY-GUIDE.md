@@ -19,7 +19,8 @@ flags and `lab_overlays_enabled` documented here are NOT modules.
    `desktop/src-tauri/capabilities/default.json`. Missing labels make Tauri APIs
    unavailable to that window. The bare `overlay` label in that list is a legacy
    entry: nothing builds a window under it (checked 2026-09-12). The global
-   read prompt window `prompt` (POE-388) is listed there too.
+   read prompt window `prompt` (POE-388) and OCR region editor window
+   `overlay-region-editor` (POE-411) are listed there too.
 2. **Physical persistence:** `outerPosition()` and `outerSize()` produce physical
    coordinates. Widget placements persist physical, window-relative geometry;
    OCR previews apply exact `PhysicalPosition`/`PhysicalSize` after construction.
@@ -250,6 +251,11 @@ Save, Cancel, drag, or resize controls. Escape is handled by the Settings
 window, which destroys the preview. `overlay-preview` is excluded from every
 screen grab while the grab is taken, so its frame and label cannot become OCR
 input.
+
+The current `overlay-region-editor` window at `/overlay/region-editor` edits
+one Manual OCR region at a time; Settings owns it through
+`createRegionEditorOwner` in `desktop/src/lib/overlay/ocr-region-editor.ts`.
+Its mode and geometry source follow [Screen Geometry — Mode](../desktop/src/lib/README.md#ocr-region-mode).
 
 The Lab comparator widget is the interactive Lab surface: it marks the button
 column (and the trade-queue row while that shows) with `[data-hot]`, and the

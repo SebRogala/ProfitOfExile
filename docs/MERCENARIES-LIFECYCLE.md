@@ -21,6 +21,8 @@ and the work/page boundary remains in
 
 ## Per press
 
+Current Auto/Manual region selection follows [Screen Geometry — Mode](../desktop/src/lib/README.md#ocr-region-mode).
+
 Current: POE-390 per-press worker, amended by POE-409 selection.
 
 - Client.txt: a known Inspect text updates global prompt/reader recency and is
