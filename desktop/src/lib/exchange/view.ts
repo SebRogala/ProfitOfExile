@@ -1017,11 +1017,9 @@ function marketPair(
  * One market's own posted pair, as a LINE: `buy 16 for 1 div`,
  * `convert 1 div for 209c`, or the decimal rate when even the pair is unusable.
  *
- * A `pairLine` is a LOT and not the row's own count. The row's ends beside it
- * count the exchanges the row is priced for, so the caller is REQUIRED to hover it with
- * that fact (`lotNotScale`) — a mixed-quantity reading with nothing on screen to
- * name it is the exact failure `docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md` exists
- * to end.
+ * The unpriced convert fallback prioritizes its missing-price explanation
+ * (`CONVERT_UNPRICED`). Other fallback lines use `lotNotScale` to disclose the
+ * difference between a market order and the row's size.
  *
  * THREE places on the row have no total to print, and each emits its line
  * through here (spec §4.7): the exempt branch, whose response cannot value the
@@ -1399,12 +1397,11 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 		}
 		return {
 			// The line names both currencies and the tile carries the artwork of the
-			// one being converted, so the name would only repeat the tile. It leads
-			// the hover instead, where the ratio it replaced also lives.
+			// one being converted, so the name would only repeat the tile.
 			name: null,
 			icon: convertLeg.itemIcon,
 			rate: `≈ ${withOrbUnit(ledger.sellTotal, quoteUnit(convertLeg.item))} → ${withOrbUnit(ledger.chainEnd, entryUnitShort)}`,
-			rateTitle: `${convertLeg.itemName} — Market posts "${pairLine('convert', convertLeg)}"; total is Spend + ROI (Get is Spend + Exp. ROI).`,
+			rateTitle: `Market posts "${pairLine('convert', convertLeg)}"; total is Spend + ROI (Get is Spend + Exp. ROI).`,
 			suspect: convertLeg.suspect,
 			// The convert step carries its own book-shape flag for the same reason it
 			// carries its own `suspect`: the third trade is a real order against a

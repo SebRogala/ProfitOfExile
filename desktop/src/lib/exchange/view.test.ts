@@ -2023,7 +2023,7 @@ describe('routeSlots', () => {
 		const title = routeSlots(divineScarab(), DIVINE_RATE)?.buy.rateTitle;
 
 		expect(title).toContain('Market posts 16 for 1 div');
-		expect(title).not.toContain('orders,');
+		expect(title).not.toContain(' order');
 		expect(title).not.toContain('left over');
 		expect(title).not.toContain('more than this row\'s');
 	});
@@ -2458,7 +2458,7 @@ describe('routeSlots', () => {
 
 		expect(route?.buy.rate.startsWith('buy 1 ')).toBe(true);
 		expect(route?.sell.rate.startsWith('sell 1 ')).toBe(true);
-		expect(route?.buy.rateTitle).not.toContain('orders,');
+		expect(route?.buy.rateTitle).not.toContain(' order');
 		expect(route?.sell.rateTitle).toContain('Posts 4 at a time');
 	});
 
@@ -2544,7 +2544,7 @@ describe('routeSlots', () => {
 		const title = routeSlots(chaosLot(), DIVINE_RATE)?.buy.rateTitle;
 
 		expect(title).toContain('Market posts');
-		expect(title).not.toContain('orders,');
+		expect(title).not.toContain(' order');
 	});
 
 	it('totals the row’s own posting at step 3 rather than one lot of its market', () => {
@@ -2689,7 +2689,7 @@ describe('routeSlots', () => {
 		// alone.
 		expect(routeSlots(omen(), DIVINE_RATE)?.buy.rate).toBe('buy 1 for ≈ 35c');
 		expect(routeSlots(omen(), DIVINE_RATE)?.buy.rateTitle).toContain('Market posts');
-		expect(routeSlots(omen(), DIVINE_RATE)?.buy.rateTitle).not.toContain('orders,');
+		expect(routeSlots(omen(), DIVINE_RATE)?.buy.rateTitle).not.toContain(' order');
 	});
 
 	it('totals the row’s count on a step whose market posts a bigger lot than the play', () => {
@@ -2710,7 +2710,7 @@ describe('routeSlots', () => {
 
 		expect(title).toContain('Market posts');
 		expect(title).not.toContain('more than this row\'s');
-		expect(title).not.toContain('orders,');
+		expect(title).not.toContain(' order');
 	});
 
 	it('says on a step whose lot is bigger than the play that no order fits', () => {

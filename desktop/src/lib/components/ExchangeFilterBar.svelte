@@ -318,14 +318,6 @@
 					verb: SHIPPED_FLOOR_LEVELS.length === 1 ? 'is' : 'are'
 				};
 
-	/**
-	 * How many knobs this build ships OFF — the figure the Defaults button's
-	 * wording leans on ("the other five off").
-	 *
-	 * Counted rather than written, because the sentence is a claim about
-	 * `gateDefaults` and a hand-written "five" would survive a level being armed
-	 * or disarmed while quietly becoming false.
-	 */
 	const GATES_SHIPPED_OFF = Object.values(gateDefaults).filter((level) => level === 0).length;
 
 	let pickerOpen = $state(false);
