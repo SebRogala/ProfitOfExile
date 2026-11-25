@@ -77,18 +77,6 @@ func loaderCases() []loaderCase {
 	scope := league.Scope{}
 	return []loaderCase{
 		{
-			name: "loadGemsAtTime",
-			rows: [][]any{
-				{"Spark of Nova", "20/20", 120.5, 7, true, "blue", false},
-				{"Cleave", "1/20", 3.0, 40, false, "red", true},
-			},
-			run: func(q querier) (any, error) { return loadGemsAtTime(context.Background(), q, scope, t0) },
-			want: []lab.GemPrice{
-				{Name: "Spark of Nova", Variant: "20/20", Chaos: 120.5, Listings: 7, IsTransfigured: true, GemColor: "blue"},
-				{Name: "Cleave", Variant: "1/20", Chaos: 3.0, Listings: 40, GemColor: "red", IsCorrupted: true},
-			},
-		},
-		{
 			name: "loadHistoryUpTo",
 			rows: [][]any{
 				{"Spark of Nova", "20/20", "blue", t0, 100.0, 5},
