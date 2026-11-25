@@ -43,6 +43,7 @@ export function startExchangeReadStore(): () => void {
 		stopped = true;
 		unlisten?.();
 		if (stopStore === stop) stopStore = null;
+		latest = null;
 	};
 	stopStore = stop;
 	void listen<ExchangeReadEvent>(EXCHANGE_READ_EVENT, (event) => {
