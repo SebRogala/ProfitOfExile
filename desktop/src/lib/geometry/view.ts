@@ -13,7 +13,7 @@
  * `desktop/src/lib/README.md` → "Screen Geometry (SSOT)".
  */
 
-import type { Placements, ScreenSlice } from '$lib/stores/ssot.svelte';
+import type { OcrRegionsSnapshot, Placements, ScreenSlice } from '$lib/stores/ssot.svelte';
 // Reused rather than re-implemented: `formatTimeAgo` already has three homes
 // with three wordings (README → Conventions → Relative time), and a fourth would
 // be the one that finally makes them disagree.
@@ -152,7 +152,11 @@ export function screenGeometryView(
  * store replaces both objects on every poll and a fresh measurement restamps
  * `measuredAtMs`, so neither identity nor the whole slice is a usable trigger.
  */
-export function ocrRectsKey(screen: ScreenSlice | null, placements: Placements | null): string {
+export function ocrRectsKey(
+	screen: ScreenSlice | null,
+	placements: Placements | null,
+	_ocrRegions: OcrRegionsSnapshot | null = null
+): string {
 	return JSON.stringify([
 		placements,
 		screen && [screen.width, screen.height, screen.uiScale, screen.client, screen.anchors]

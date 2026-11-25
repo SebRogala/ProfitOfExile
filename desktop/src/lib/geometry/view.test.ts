@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ocrRectsKey, screenGeometryView } from './view';
-import type { Placements, ScreenSlice } from '$lib/stores/ssot.svelte';
+import type { ManualOcrRegions, OcrRegionsSnapshot, Placements, ScreenSlice } from '$lib/stores/ssot.svelte';
 
 /** The reference measurement — 1920x1200 at 1.0 IS the reference fixture. */
 const referenceScreen: ScreenSlice = {
@@ -180,5 +180,58 @@ describe('ocrRectsKey', () => {
 		expect(ocrRectsKey({ ...referenceScreen, measuredAtMs: 1_800_000_000_000 }, placements)).toBe(
 			ocrRectsKey(referenceScreen, placements)
 		);
+	});
+
+	describe('at an unchanged Auto slice', () => {
+		const savedSet: ManualOcrRegions = {
+			setOn: { width: 1920, height: 1200, origin: [0, 0], at_ms: 1_700_000_000_000 },
+			edited: true,
+			labGem: [30, 45, 550, 75],
+			labFont: [460, 270, 530, 350],
+			labGemSlots: [506, 373, 246, 48],
+			templePanel: null,
+			mercPanel: [698, 615, 555, 477]
+		};
+		const autoMode: OcrRegionsSnapshot = {
+			mode: 'auto',
+			manual: savedSet,
+			auto: placements,
+			screenWarning: null
+		};
+		const manualMode: OcrRegionsSnapshot = { ...autoMode, mode: 'manual' };
+
+		// keep:critical
+		// Consequence (silent): the Settings OCR rows keep the geometry and sources
+		// of the previous mode or set, so the player trusts stale rects and Preview
+		// frames that the readers no longer use.
+		it.each<[string, OcrRegionsSnapshot, OcrRegionsSnapshot]>([
+			['the mode switches from Auto to Manual', autoMode, manualMode],
+			['the mode switches from Manual to Auto', manualMode, autoMode],
+			[
+				'a Manual save moves one region',
+				manualMode,
+				{ ...manualMode, manual: { ...savedSet, labFont: [500, 290, 530, 350] } }
+			],
+			[
+				'a Manual save places a region that was not set',
+				manualMode,
+				{ ...manualMode, manual: { ...savedSet, templePanel: [1100, 4, 405, 338] } }
+			],
+			[
+				'the live game monitor stops matching the Manual set',
+				manualMode,
+				{
+					...manualMode,
+					screenWarning: {
+						setOn: savedSet.setOn,
+						live: { width: 2560, height: 1440, origin: [0, 0], at_ms: 1_700_000_100_000 }
+					}
+				}
+			]
+		])('changes when %s', (_scenario, before, after) => {
+			expect(ocrRectsKey(referenceScreen, placements, after)).not.toBe(
+				ocrRectsKey(referenceScreen, placements, before)
+			);
+		});
 	});
 });
