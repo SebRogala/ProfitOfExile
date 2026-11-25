@@ -87,7 +87,8 @@
   },
   "temple_config": {
     "artefactsOfTheVaal": true,
-    "scarabOfTimelines": false
+    "scarabOfTimelines": false,
+    "consolidation": null
   },
   "temple_preset": "default",
   "temple_custom": {
