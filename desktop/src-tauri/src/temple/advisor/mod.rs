@@ -3754,16 +3754,19 @@ mod tests {
         );
     }
 
-    /// The 2026-10-17 tier rungs change one kill from the strategy fixture,
-    /// under Consolidation option 1, the played default. Board 1 records
-    /// "kill either". Board 8 no longer moves: with its upgrade building tier
+    /// The 2026-10-17 tier rungs change two kills from the strategy fixture,
+    /// under Consolidation option 1, the played default. These are rollout
+    /// outcomes under the WI-5 draw rules (POE-415): whole-map no-revisit, two
+    /// changes on a tier-0 room, pending-room carry-over. Board 1 records
+    /// "kill either". On board 7 the fixture takes the Sanctum change while the
+    /// shipped profile takes the Chamber of Iron upgrade. Board 8 no longer moves: with its upgrade building tier
     /// 3 and its explosives change tier 1, the fixture takes the Conduit
     /// upgrade too (POE-415). Board 2 still upgrades corruption. Board 3 does
     /// not move: under either profile the Cradle-line priority (POE-465)
     /// kills Xopec's throne_of_atziri change. Pin the exact differences so a
     /// ranking change cannot silently move another board.
     #[test]
-    fn the_production_tier_rungs_change_one_fixture_kill() {
+    fn the_production_tier_rungs_change_two_fixture_kills() {
         let production = production_profile();
 
         let moved: Vec<(&str, Option<(OfferKind, String, u8)>, Option<(OfferKind, String, u8)>)> =
@@ -3783,6 +3786,11 @@ mod tests {
                     "1 Tombs",
                     Some((Change, "museum_of_artefacts".to_string(), 1)),
                     Some((Change, "hall_of_champions".to_string(), 1)),
+                ),
+                (
+                    "7 ArmourersWorkshop-PC",
+                    Some((Change, "upgrade".to_string(), 1)),
+                    Some((Upgrade, "chamber_of_iron".to_string(), 3)),
                 ),
             ],
         );
@@ -3891,8 +3899,8 @@ mod tests {
     /// The kill on every walked board at the capture's prices, under
     /// Consolidation option 1, the played default. These are the valuation's
     /// current answers, including the C1 instrumental rung for Temple Nexus.
-    /// Board 1 kills the Museum change once future tier-0 rooms offer both
-    /// architects' change lines (POE-415).
+    /// These are rollout outcomes under the WI-5 draw rules (POE-415): whole-
+    /// map no-revisit, two changes on a tier-0 room, pending-room carry-over.
     /// Board 3 kills Xopec's Cradle-line change, the POE-465 priority, which
     /// builds tier 3 (POE-415). An upgrade from tier 1 builds tier 3 and a
     /// change tier 1, so board 7 takes the Chamber of Iron upgrade here; its
@@ -3911,12 +3919,12 @@ mod tests {
         assert_eq!(
             killed,
             vec![
-                ("1 Tombs", Some((Change, "museum_of_artefacts".to_string(), 1))),
+                ("1 Tombs", Some((Change, "hall_of_champions".to_string(), 1))),
                 ("2 CorruptionChamber", Some((Upgrade, "corruption".to_string(), 3))),
                 ("3 Chasm-late", Some((Change, "throne_of_atziri".to_string(), 3))),
                 ("4 Chasm-merge", Some((Change, "hybridisation_chamber".to_string(), 1))),
                 ("5 PoisonGarden", Some((Change, "upgrade".to_string(), 1))),
-                ("6 Cloister-blind", Some((Change, "hall_of_champions".to_string(), 1))),
+                ("6 Cloister-blind", Some((Change, "museum_of_artefacts".to_string(), 1))),
                 ("8 LightningWorkshop", Some((Upgrade, "conduit_of_lightning".to_string(), 3))),
                 ("9 CorruptionChamber-arrival", Some((Upgrade, "corruption".to_string(), 3))),
                 ("7 ArmourersWorkshop-PC", Some((Upgrade, "chamber_of_iron".to_string(), 3))),
