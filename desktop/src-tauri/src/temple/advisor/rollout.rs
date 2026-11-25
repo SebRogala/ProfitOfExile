@@ -625,7 +625,10 @@ impl Sim {
                 self.pending = None;
                 slot
             }
-            None => self.draw_slot(rng)?,
+            None => self.draw_slot(rng).or_else(|| {
+                self.leave_map();
+                self.draw_slot(rng)
+            })?,
         };
 
         let upgrade_line = (self.tier[slot] > 0).then_some(self.line[slot]);
