@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"profitofexile/internal/price/evidence"
 	"profitofexile/internal/price/resolve"
 )
 
@@ -25,4 +26,9 @@ func GemPricePolicy() resolve.Policy {
 		ThinSample:       labThinSampleCount,
 		MaxRevisitAge:    GemTradeMaxRevisitAge,
 	}
+}
+
+// GemEvidencePolicy is the Lab evidence floor for gem prices.
+func GemEvidencePolicy() evidence.Policy {
+	return evidence.Policy{}
 }
