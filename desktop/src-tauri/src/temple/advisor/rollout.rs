@@ -802,7 +802,7 @@ mod tests {
         // POE-415 review F-1: a map whose drop pool runs out before its
         // entrances are spent must hand the remaining budget to the next map,
         // not end the temple. Under Consolidation option 2 an upgrade lifts the
-        // T1 Corruption room on D1 one tier per visit, so it needs a visit in
+        // T1 Cradle-line room on D1 one tier per visit, so it needs a visit in
         // each of two maps to reach T3; every other drop slot is already T3.
         #[test]
         fn a_map_whose_drop_pool_runs_out_hands_the_budget_to_the_next_map() {
@@ -817,7 +817,7 @@ mod tests {
                 .filter(|s| ![Slot::APEX, Slot::ENTRANCE, D1].contains(*s))
                 .map(|s| (*s, "junk", 3))
                 .collect();
-            rooms.push((D1, "corruption", 1));
+            rooms.push((D1, crate::temple::rooms::CRADLE_LINE_KEY, 1));
             let mut board = sim(&rooms, &[(D1, E1)]);
             board.remaining = 2;
             assert_eq!(board.drop_pool(), vec![D1.index()], "D1 is the only drop slot");
@@ -825,10 +825,10 @@ mod tests {
 
             let score = board.rollout(&profile, &valuation, &config, &mut Rng::seeded(1));
 
-            // Corruption pays only at T3 (9.0); at T2 it pays nothing, so a
+            // The Cradle pays only at T3 (9.0); at T2 it pays nothing, so a
             // rollout that stops after the first map scores the 0.05 room
             // baselines alone.
-            assert!(score >= 9.0, "D1 must reach Corruption T3 in the second map, score {score}");
+            assert!(score >= 9.0, "D1 must reach the Cradle at T3 in the second map, score {score}");
         }
     }
 
@@ -870,12 +870,14 @@ mod tests {
         }
 
         // Both architects of a tier-0 room offer a change, so the policy kills
-        // for a target line that only the second offer names. Seed 46 draws D1
-        // (the only drop slot), then a junk change line, then Corruption.
+        // for a target line that only the second offer names. Seed 3 draws D1
+        // (the only drop slot), then a junk change line, then the Cradle.
         #[test]
         fn a_tier_zero_room_kills_for_a_target_line_only_its_second_architect_offers() {
             let mut profile = rush();
-            profile.room_values.insert(Line::Corruption, [5.0, 0.0, 9.0]);
+            profile
+                .room_values
+                .insert(Line::named(crate::temple::rooms::CRADLE_LINE_KEY), [0.0, 0.0, 9.0]);
             let valuation = Valuation::for_profile(&profile);
             let others: Vec<(Slot, &str, u8)> = Slot::ALL
                 .iter()
@@ -886,11 +888,12 @@ mod tests {
             board.remaining = 1;
             assert_eq!(board.drop_pool(), vec![D1.index()], "D1 is the only draw");
 
-            let score = board.rollout(&profile, &valuation, &TempleConfig::default(), &mut Rng::seeded(46));
+            let score = board.rollout(&profile, &valuation, &TempleConfig::default(), &mut Rng::seeded(3));
 
-            // Corruption at T1 on D1 pays 5.0; D1 and the junk room the policy
-            // door connects pay 0.05 each. A junk kill on D1 would score 0.1.
-            assert!((score - 5.1).abs() < 1e-9, "D1 must hold Corruption T1, score {score}");
+            // A Cradle-line kill lands tier 3, so D1 holds the Cradle at 9.0;
+            // D1 and the junk room the policy door connects pay 0.05 each. A
+            // junk kill on D1 would score 0.1.
+            assert!((score - 9.1).abs() < 1e-9, "D1 must hold the Cradle at T3, score {score}");
         }
     }
 
@@ -898,6 +901,28 @@ mod tests {
         use super::*;
         use crate::temple::rooms::CRADLE_LINE_KEY;
         use crate::temple::strategy::Consolidation;
+
+        // POE-415 WI-6. Silent consequence: `for_profile` drops a mode-rule
+        // line that `room_values` does not name, so a profile whose target set
+        // collapses to empty (or still names the former Locus/Doryani pair)
+        // ranks every Cradle room as junk while RV and the mode switch protect
+        // nothing. The Rush chases the Cradle line and only it.
+        #[test]
+        fn the_rush_profiles_target_exactly_the_cradle_line() {
+            let shipped = crate::temple::slice::TempleProfileSettings::default().to_profile(
+                &crate::temple::slice::value_read(
+                    &crate::temple::slice::TempleSettings::default(),
+                    &crate::temple::market::MarketInput::none(),
+                ),
+            );
+            for (what, profile) in [("the shipped profile", shipped), ("the Rush", rush())] {
+                let valuation = Valuation::for_profile(&profile);
+                let cradle = valuation.tag(&Line::named(CRADLE_LINE_KEY));
+
+                assert_ne!(cradle, Valuation::JUNK, "{what} prices the Cradle line");
+                assert_eq!(valuation.targets, vec![cradle], "{what}");
+            }
+        }
 
         // Silent consequence: rerolling a pending room changes the distribution
         // used to rank recommendations while still producing plausible advice.
@@ -1198,17 +1223,15 @@ mod tests {
     fn a_room_reachable_only_by_blasting_scores_at_the_blast_discount() {
         let profile = rush();
         let valuation = valuation();
-        // Locus at C1, one closed corridor from the Entrance, plus a connected
-        // Explosives Room to pay for the blast.
-        let blasted = sim(
-            &[(C1, "corruption", 3), (D1, "explosive", 1)],
-            &[(D1, E1)],
-        );
+        // The Cradle at C1, one closed corridor from the Entrance, plus a
+        // connected Explosives Room to pay for the blast.
+        let cradle = crate::temple::rooms::CRADLE_LINE_KEY;
+        let blasted = sim(&[(C1, cradle, 3), (D1, "explosive", 1)], &[(D1, E1)]);
         let mut rng = Rng::seeded(5);
         let with_charge = blasted.score(&mut rng, &profile, &valuation);
 
         let natural = sim(
-            &[(C1, "corruption", 3), (D1, "explosive", 1)],
+            &[(C1, cradle, 3), (D1, "explosive", 1)],
             &[(D1, E1), (C1, D1)],
         );
         let mut rng = Rng::seeded(5);
@@ -1225,33 +1248,34 @@ mod tests {
         );
     }
 
-    // The score is the profile's, not the rollout's: a board with both tier-3
-    // rooms connected is the combination value plus RD's per-room baseline.
+    // The score is the profile's, not the rollout's: a board with the Cradle
+    // and an unpriced Doryani's Institute connected is the Cradle's value plus
+    // RD's per-room baseline.
     #[test]
-    fn a_finished_board_scores_the_profiles_combination_plus_the_room_baseline() {
+    fn a_finished_board_scores_the_profiles_room_value_plus_the_room_baseline() {
         let profile = rush();
         let board = sim(
-            &[(E0, "corruption", 3), (E2, "gem", 3)],
+            &[(E0, crate::temple::rooms::CRADLE_LINE_KEY, 3), (E2, "gem", 3)],
             &[(E0, E1), (E1, E2)],
         );
         let mut rng = Rng::seeded(1);
         let score = board.score(&mut rng, &profile, &valuation());
-        // 10.0 for Locus + Doryani, plus 0.05 for each of the two built rooms;
-        // the Entrance itself pays no baseline.
-        assert!((score - 10.1).abs() < 1e-9, "got {score}");
+        // 9.0 for the Cradle, nothing for Doryani's Institute, plus 0.05 for
+        // each of the two built rooms; the Entrance itself pays no baseline.
+        assert!((score - 9.1).abs() < 1e-9, "got {score}");
     }
 
     // ------------------------------------------------------------ profile --
 
     // The "lost the room" threshold is derived from the profile's own target
-    // values, not hard-coded to Sebastian's 7.0.
+    // values, not hard-coded: the Cradle's 9.0 until the profile reprices it.
     #[test]
     fn the_lost_room_threshold_is_the_cheapest_target_outcome_in_the_profile() {
-        assert!((valuation().lost_threshold - 7.0).abs() < 1e-9);
+        assert!((valuation().lost_threshold - 9.0).abs() < 1e-9);
         let mut profile = rush();
         profile
             .room_values
-            .insert(Line::Gem, [0.0, 0.0, 4.0]);
+            .insert(Line::named(crate::temple::rooms::CRADLE_LINE_KEY), [0.0, 0.0, 4.0]);
         assert!((Valuation::for_profile(&profile).lost_threshold - 4.0).abs() < 1e-9);
     }
 

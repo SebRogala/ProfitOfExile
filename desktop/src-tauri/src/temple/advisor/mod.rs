@@ -1010,6 +1010,7 @@ mod tests {
     use super::*;
     use crate::temple::lattice::Slot::*;
     use crate::temple::rooms::OfferKind::{Change, Upgrade};
+    use crate::temple::rooms::CRADLE_LINE_KEY;
     use crate::temple::strategy::{Consolidation, Line, ModeRule, StrategyProfile};
 
     /// Rollouts per option in the tests.
@@ -1468,64 +1469,39 @@ mod tests {
         );
     }
 
-    // RV. The Apex door is the move that cost Sebastian the temple; the room is
-    // valuable and unconnected, so only doors that shorten the distance to the
-    // Entrance component are recommended.
+    // The Corruption Chamber is an ordinary room under the Cradle target set,
+    // so RV has nothing stranded to protect and the Apex door — the move
+    // Sebastian played on the 3.29 board — is the pick, reaching the Apex.
     #[test]
-    fn case_two_corruption_chamber_connects_down_rather_than_taking_the_apex() {
+    fn case_two_corruption_chamber_takes_the_apex_now_the_room_is_no_target() {
         let case = cases::case_2_corruption_chamber();
         let advice = advise_case(&case);
         let top = &advice.recommendations[0];
         let architect = top.option.architect.as_ref().expect("resolved");
         assert_eq!(architect.kind, Upgrade, "{}", case.decision);
         assert_eq!(architect.line, Line::Corruption);
-        let doors = top_doors(&advice, B1);
-        assert!(
-            doors == vec![C1] || doors == vec![C2],
-            "{}: expected a downward connection, got {doors:?}",
-            case.decision
-        );
-        assert!(
-            advice
-                .recommendations
-                .iter()
-                .all(|r| opened_toward(&r.option.doors, B1) != vec![A0]
-                    || r.option.architect.as_ref().is_some_and(|a| a.line != Line::Corruption)),
-            "no corruption-line option may recommend the Apex door"
-        );
+        assert_eq!(top_doors(&advice, B1), vec![A0], "{}", case.decision);
+        assert!(has_reason(top, |r| matches!(
+            r,
+            Reason::R1Apex { reaches_apex: true }
+        )));
     }
 
-    // The excluded play is shown, not hidden, with the model's own risk number.
-    // Under Consolidation option 1, the played default, the corruption upgrade
-    // from tier 1 builds Locus of Corruption at tier 3 with no roll, so no
-    // rollout loses the room: the risk the gamble carries is exactly 0. The
-    // 8% Sebastian recorded was the 3.29 board's, priced on the 50%
-    // double-tier roll that 3.30 removed (POE-415).
+    // With no target room stranded, RV files no option as a gamble: the Apex
+    // play is an ordinary recommendation.
     #[test]
-    fn case_two_surfaces_the_apex_play_as_a_gamble_carrying_its_measured_risk() {
+    fn case_two_files_no_gamble_now_that_no_target_room_is_stranded() {
         let case = cases::case_2_corruption_chamber();
         let advice = advise_case(&case);
-        let apex = advice
-            .gambles
-            .iter()
-            .find(|g| opened_toward(&g.option.doors, B1) == vec![A0])
-            .expect("the Apex play must be offered as a gamble");
-        assert_eq!(
-            apex.risk, 0.0,
-            "option 1 banks Locus at tier 3, so the Apex play cannot lose it"
+        assert!(
+            advice.gambles.is_empty(),
+            "{:?}",
+            advice.gambles.iter().map(|g| g.option.headline()).collect::<Vec<_>>()
         );
-        assert!(has_reason(
-            &Ranked {
-                option: apex.option.clone(),
-                ev: apex.ev,
-                reasons: apex.reasons.clone()
-            },
-            |r| matches!(r, Reason::RvGamble { .. })
-        ));
     }
 
-    // The inverse of case 2 on the same door: Locus is banked and connected, so
-    // nothing outranks the Apex any more.
+    // Case 2's board one step on: nothing on it is stranded, so nothing
+    // outranks the Apex.
     #[test]
     fn case_three_chasm_takes_the_apex_once_the_locus_is_banked() {
         let case = cases::case_3_chasm_late();
@@ -1537,9 +1513,8 @@ mod tests {
         )));
     }
 
-    // Both lines are built and connected, which would select Scarab mode; the
-    // Incursion Scarab of Timelines is gone in 3.30, so the advisor stays in
-    // Chase (POE-377).
+    // No Cradle-line room is connected on this board, and the Incursion Scarab
+    // of Timelines is gone in 3.30 (POE-377): the advisor stays in Chase.
     #[test]
     fn case_three_stays_in_chase_mode_while_the_scarab_is_inactive() {
         let advice = advise_case(&cases::case_3_chasm_late());
@@ -1582,9 +1557,9 @@ mod tests {
             "option 2 turns the printed Shrine of Empowerment into its tier-2 room"
         );
         assert!(
-            has_reason(top, |r| matches!(r, Reason::ExpectedValue)),
-            "the rollout separated the two kills by 3+ points here, and the \
-             leader must say so rather than look rule-decided: {:?}",
+            has_reason(top, |r| matches!(r, Reason::Rt)),
+            "no Cradle-line room is on the board, so the rollout leaves the \
+             kills inside the band and RT takes the upgrade line: {:?}",
             top.reasons
         );
         assert!(
@@ -1643,29 +1618,29 @@ mod tests {
     // RA. Both corridors into the Entrance cluster connect the same value and
     // merge the same two clusters; before RA the row gradient took Banquet
     // Hall (C0, row C) over Strongbox Chamber (D1, row D), the corridor that
-    // leaves the Entrance seven hops from the Apex instead of five.
+    // leaves the Entrance seven hops from the Apex instead of five. With the
+    // Corruption Chamber no longer a target neither corridor is RV's, so the
+    // pick is the Apex-adjacent B0 and RA orders the two below it.
     #[test]
-    fn case_nine_corruption_chamber_opens_the_corridor_that_arrives_faster() {
+    fn case_nine_corruption_chamber_ranks_the_corridor_that_arrives_faster_above_banquet_hall() {
         let case = cases::case_9_corruption_chamber_arrival();
         let advice = advise_case(&case);
-        assert_eq!(
-            top_doors(&advice, C1),
-            vec![D1],
-            "{}: Sebastian's move was {}",
+        let rank_of = |far: Slot| {
+            advice
+                .recommendations
+                .iter()
+                .position(|r| {
+                    opened_toward(&r.option.doors, C1) == vec![far]
+                        && r.option.architect.as_ref().map(|a| a.line.key()) == Some("corruption")
+                })
+                .expect("both corridors are enumerated on the upgrade kill")
+        };
+        assert!(
+            rank_of(D1) < rank_of(C0),
+            "{}: Strongbox Chamber must rank above Banquet Hall\n{}",
             case.name,
-            case.decision
+            ranking_dump(&advice)
         );
-        // The corridor the app took, ranked below on the same kill: the walk
-        // it leaves is the longer one, and nothing above RA separates the two.
-        let banquet = advice
-            .recommendations
-            .iter()
-            .position(|r| {
-                opened_toward(&r.option.doors, C1) == vec![C0]
-                    && r.option.architect.as_ref().map(|a| a.line.key()) == Some("corruption")
-            })
-            .expect("the C0 corridor is enumerated on the upgrade kill");
-        assert!(banquet > 0, "{}: Banquet Hall must rank below the middle", case.name);
     }
 
     // What the page prints beside each of the two corridors: the walk it
@@ -1696,14 +1671,14 @@ mod tests {
         };
         assert_eq!(
             arrival(D1),
-            Some((Some(5), 3, 1)),
-            "{}: Strongbox Chamber — Entrance → Apex 5 hops, Entrance → the Chamber 3",
+            Some((Some(5), 1, 1)),
+            "{}: Strongbox Chamber — Entrance → Apex 5 hops, Entrance → the Royal Meeting Room 1",
             case.name
         );
         assert_eq!(
             arrival(C0),
-            Some((Some(7), 5, 1)),
-            "{}: Banquet Hall — Entrance → Apex 7 hops, Entrance → the Chamber 5",
+            Some((Some(7), 1, 1)),
+            "{}: Banquet Hall — Entrance → Apex 7 hops, Entrance → the Royal Meeting Room 1",
             case.name
         );
     }
@@ -1723,12 +1698,21 @@ mod tests {
             PROD_ROLLOUTS,
             PROD_SEED,
         );
-        assert_eq!(
-            top_doors(&advice, C1),
-            vec![D1],
-            "{}: Sebastian's move was {}",
+        let rank_of = |far: Slot| {
+            advice
+                .recommendations
+                .iter()
+                .position(|r| {
+                    opened_toward(&r.option.doors, C1) == vec![far]
+                        && r.option.architect.as_ref().map(|a| a.line.key()) == Some("corruption")
+                })
+                .expect("both corridors are enumerated on the upgrade kill")
+        };
+        assert!(
+            rank_of(D1) < rank_of(C0),
+            "{}: Strongbox Chamber must rank above Banquet Hall\n{}",
             case.name,
-            case.decision
+            ranking_dump(&advice)
         );
     }
 
@@ -2124,13 +2108,14 @@ mod tests {
 
     // ============================================ RV constrains the passage
 
-    /// A stranded Corruption Chamber at B1, and the two kills Case 2 offers.
+    /// A stranded Royal Meeting Room (the Cradle line, tier 1) at B1, an
+    /// upgrade toward the Cradle and a junk change.
     ///
     /// `doors` decides whether anything on the board can still connect it.
-    fn stranded_corruption(doors: &[(Slot, Slot)]) -> (BoardState, Vec<ArchitectOffer>) {
+    fn stranded_cradle(doors: &[(Slot, Slot)]) -> (BoardState, Vec<ArchitectOffer>) {
         let state = board(
             &[
-                (B1, "corruption", 1),
+                (B1, CRADLE_LINE_KEY, 1),
                 (B0, JUNK, 1),
                 (C1, JUNK, 1),
                 (C2, JUNK, 1),
@@ -2140,7 +2125,7 @@ mod tests {
             7,
         );
         let offers = vec![
-            offer("Azcapa", Upgrade, "Catalyst of Corruption"),
+            offer("Azcapa", Upgrade, "Hall of Lords"),
             offer("Paquate", Change, "Jeweller's Workshop"),
         ];
         (state, offers)
@@ -2156,12 +2141,12 @@ mod tests {
     }
 
     // RV constrains the passage, never the kill. With no key there is no
-    // passage, so the corruption upgrade Sebastian calls a no-brainer must not
-    // be filed as a gamble while the junk change stays safe — that ranking
-    // recommends changing the corruption room to junk.
+    // passage, so the upgrade toward the Cradle must not be filed as a gamble
+    // while the junk change stays safe — that ranking recommends changing the
+    // Cradle-line room to junk.
     #[test]
     fn a_zero_key_incursion_never_turns_the_valuable_kill_into_a_gamble() {
-        let (state, offers) = stranded_corruption(&[(C1, D1), (D1, E1)]);
+        let (state, offers) = stranded_cradle(&[(C1, D1), (D1, E1)]);
         let advice = advise(
             &state,
             &offers,
@@ -2186,7 +2171,7 @@ mod tests {
     // still has no opinion to give.
     #[test]
     fn a_key_with_no_connecting_corridor_never_turns_the_valuable_kill_into_a_gamble() {
-        let (state, offers) = stranded_corruption(&[(B1, C1), (C1, C2), (B0, C1), (A0, B0)]);
+        let (state, offers) = stranded_cradle(&[(B1, C1), (C1, C2), (B0, C1), (A0, B0)]);
         let advice = advise(
             &state,
             &offers,
@@ -2211,7 +2196,7 @@ mod tests {
     // the connecting door is the recommendation, the Apex door is the gamble.
     #[test]
     fn a_connecting_corridor_puts_the_apex_back_on_the_gamble_side() {
-        let (state, offers) = stranded_corruption(&[(C1, D1), (D1, E1)]);
+        let (state, offers) = stranded_cradle(&[(C1, D1), (D1, E1)]);
         let advice = advise(
             &state,
             &offers,
@@ -2459,9 +2444,9 @@ mod tests {
     #[test]
     fn merging_a_cluster_that_holds_a_target_room_outranks_the_apex_corridor() {
         // B1 sits in the Entrance component; its corridors lead to the Apex,
-        // to a lone Chasm at B0, and to a two-room cluster holding a Locus.
+        // to a lone Chasm at B0, and to a two-room cluster holding a Cradle.
         let state = board(
-            &[(C2, "corruption", 3), (D3, JUNK, 1)],
+            &[(C2, CRADLE_LINE_KEY, 3), (D3, JUNK, 1)],
             &[(C2, D3), (B1, C1), (C1, D1), (D1, E1)],
             B1,
             8,
@@ -2495,11 +2480,11 @@ mod tests {
     #[test]
     fn a_door_that_dilutes_a_saturated_upgrade_room_loses_to_the_merge_that_does_not() {
         // The Shrine at C1 has exactly one connected neighbour, C0, which is
-        // one tier off Doryani's Institute — so its single pick is currently a
-        // certainty. Standing in D1, two corridors merge that same cluster in:
-        // D1-C0 leaves the Shrine alone, D1-C1 dilutes it.
+        // one tier off the Cradle of Creation — so its single pick is
+        // currently a certainty. Standing in D1, two corridors merge that same
+        // cluster in: D1-C0 leaves the Shrine alone, D1-C1 dilutes it.
         let state = board(
-            &[(C1, "upgrade", 1), (C0, "gem", 2)],
+            &[(C1, "upgrade", 1), (C0, CRADLE_LINE_KEY, 2)],
             &[(C0, C1), (D1, E1)],
             D1,
             6,
@@ -2615,10 +2600,12 @@ mod tests {
     // drop pool.
     //
     // Played under Consolidation option 2 (`ResidentCarry`): both changes from
-    // tier 1 land at tier 2, so the line alone tells the kills apart.
+    // tier 1 land at tier 2, so the line alone tells the kills apart. One
+    // incursion is left, so no future draw separates the two kills and the
+    // architect chain decides.
     #[test]
     fn the_upgrade_line_is_taken_speculatively_while_the_board_holds_no_target() {
-        let state = board(&[(D1, JUNK, 1)], &[(D1, E1), (E1, E2)], D1, 9);
+        let state = board(&[(D1, JUNK, 1)], &[(D1, E1), (E1, E2)], D1, 1);
         let offers = vec![
             offer("Tacati", Change, "Shrine of Empowerment"),
             offer("Ticaba", Change, "Storage Room"),
@@ -2647,7 +2634,7 @@ mod tests {
     #[test]
     fn the_upgrade_line_loses_its_speculative_preference_once_a_target_exists() {
         let state = board(
-            &[(D1, JUNK, 1), (C2, "corruption", 1)],
+            &[(D1, JUNK, 1), (C2, CRADLE_LINE_KEY, 1)],
             &[(D1, E1), (E1, E2)],
             D1,
             9,
@@ -2670,7 +2657,7 @@ mod tests {
                 .recommendations
                 .iter()
                 .all(|r| !has_reason(r, |x| matches!(x, Reason::Rt))),
-            "RT must not fire while a corruption room is on the board"
+            "RT must not fire while a Cradle-line room is on the board"
         );
     }
 
@@ -2979,17 +2966,30 @@ mod tests {
 
     // ======================================================== R5 and the mode
 
-    // Live board 10: the corruption line was just taken below tier 3, so the
+    /// A profile chasing Hybridisation Chamber, priced 9 at tier 3.
+    ///
+    /// R5 reads only the chased line, and every Cradle-line kill builds tier
+    /// 3, so the Rush itself never reaches R5: its mechanism is pinned on a
+    /// line a kill can take below tier 3.
+    fn hybridisation_chase() -> StrategyProfile {
+        let line = Line::named("hybridisation_chamber");
+        let mut profile = rush();
+        profile.room_values.insert(line.clone(), [0.0, 0.0, 9.0]);
+        profile.mode_rule = ModeRule::LinesConnected(vec![line]);
+        profile
+    }
+
+    // Live board 10: the chased line was just taken below tier 3, so the
     // next incursion of this map is a guaranteed zero against it.
     #[test]
     fn r5_leaves_the_map_after_the_chased_line_is_used_below_tier_three() {
         let state = board(&[(D1, JUNK, 1)], &[(D1, E1), (E1, E2)], D1, 8);
-        let offers = vec![offer("Paquate", Change, "Corruption Chamber")];
+        let offers = vec![offer("Paquate", Change, "Hatchery")];
         let advice = advise(
             &state,
             &offers,
             0,
-            &rush(),
+            &hybridisation_chase(),
             &TempleConfig::default(),
             N,
             SEED,
@@ -3003,26 +3003,26 @@ mod tests {
     #[test]
     fn a_persisted_timelines_scarab_does_not_take_r5_away() {
         let state = board(&[(D1, JUNK, 1)], &[(D1, E1), (E1, E2)], D1, 8);
-        let offers = vec![offer("Paquate", Change, "Corruption Chamber")];
+        let offers = vec![offer("Paquate", Change, "Hatchery")];
         let config = TempleConfig {
             artefacts_of_the_vaal: true,
             scarab_of_timelines: true,
             consolidation: None,
         };
-        let advice = advise(&state, &offers, 0, &rush(), &config, N, SEED);
+        let advice = advise(&state, &offers, 0, &hybridisation_chase(), &config, N, SEED);
         assert_eq!(advice.map_action, MapAction::LeaveMap);
     }
 
     // R5 stops once the room is at tier 3 — it has left the drop pool anyway.
     #[test]
     fn r5_does_not_fire_when_the_kill_takes_the_line_to_tier_three() {
-        let state = board(&[(D1, "corruption", 2)], &[(D1, E1), (E1, E2)], D1, 8);
-        let offers = vec![offer("Azcapa", Upgrade, "Locus of Corruption")];
+        let state = board(&[(D1, "hybridisation_chamber", 2)], &[(D1, E1), (E1, E2)], D1, 8);
+        let offers = vec![offer("Azcapa", Upgrade, "Hybridisation Chamber")];
         let advice = advise(
             &state,
             &offers,
             0,
-            &rush(),
+            &hybridisation_chase(),
             &TempleConfig::default(),
             N,
             SEED,
@@ -3030,34 +3030,35 @@ mod tests {
         assert_eq!(advice.map_action, MapAction::Continue);
     }
 
-    // Both target lines connected would select Scarab mode, but the scarab is
+    // The chased line connected would select Scarab mode, but the scarab is
     // gone in 3.30 (POE-377): the advisor stays in Chase and R5 still leaves.
     #[test]
-    fn both_connected_target_lines_stay_chase_while_the_scarab_is_inactive() {
-        let offers = vec![offer("Paquate", Change, "Corruption Chamber")];
-        let both = both_lines_board();
-        let advice = advise(&both, &offers, 0, &rush(), &TempleConfig::default(), N, SEED);
+    fn a_connected_chased_line_stays_chase_while_the_scarab_is_inactive() {
+        let offers = vec![offer("Paquate", Change, "Hatchery")];
+        let both = chased_line_board();
+        let advice = advise(&both, &offers, 0, &hybridisation_chase(), &TempleConfig::default(), N, SEED);
         assert_eq!(advice.mode, Mode::Chase);
         assert_eq!(advice.map_action, MapAction::LeaveMap);
     }
 
     // A persisted Scarab of Timelines flag does not switch the mode either.
     #[test]
-    fn a_persisted_timelines_scarab_on_a_both_lines_board_stays_chase() {
-        let offers = vec![offer("Paquate", Change, "Corruption Chamber")];
+    fn a_persisted_timelines_scarab_on_a_chased_line_board_stays_chase() {
+        let offers = vec![offer("Paquate", Change, "Hatchery")];
         let config = TempleConfig {
             artefacts_of_the_vaal: true,
             scarab_of_timelines: true,
             consolidation: None,
         };
-        let advice = advise(&both_lines_board(), &offers, 0, &rush(), &config, N, SEED);
+        let advice = advise(&chased_line_board(), &offers, 0, &hybridisation_chase(), &config, N, SEED);
         assert_eq!(advice.mode, Mode::Chase);
     }
 
-    fn both_lines_board() -> BoardState {
+    /// The chased Hybridisation Chamber line built and connected at E0.
+    fn chased_line_board() -> BoardState {
         board(
-            &[(D1, JUNK, 1), (E0, "gem", 1), (E2, "corruption", 1)],
-            &[(D1, E1), (E0, E1), (E1, E2)],
+            &[(D1, JUNK, 1), (E0, "hybridisation_chamber", 1)],
+            &[(D1, E1), (E0, E1)],
             D1,
             8,
         )
@@ -3067,7 +3068,7 @@ mod tests {
     #[test]
     fn a_stranded_target_line_does_not_switch_the_mode() {
         let state = board(
-            &[(E0, "gem", 1), (C2, "corruption", 1)],
+            &[(E0, "gem", 1), (C2, CRADLE_LINE_KEY, 1)],
             &[(E0, E1), (E1, E2)],
             D1,
             8,
@@ -3075,21 +3076,13 @@ mod tests {
         assert_eq!(rush().select_mode(&state.connected_rooms()), Mode::Chase);
     }
 
-    // The mode rule is profile data, so a third required line changes it.
+    // The mode rule is profile data, so a second required line changes it.
     #[test]
-    fn the_mode_rule_is_profile_data_not_a_hard_coded_pair() {
-        let state = board(
-            &[(E0, "gem", 1), (E2, "corruption", 1)],
-            &[(E0, E1), (E1, E2)],
-            D1,
-            8,
-        );
+    fn the_mode_rule_is_profile_data_not_a_hard_coded_line() {
+        let state = board(&[(E0, CRADLE_LINE_KEY, 1)], &[(E0, E1)], D1, 8);
         let mut profile = rush();
-        profile.mode_rule = ModeRule::LinesConnected(vec![
-            Line::Corruption,
-            Line::Gem,
-            Line::named("factory"),
-        ]);
+        profile.mode_rule =
+            ModeRule::LinesConnected(vec![Line::named(CRADLE_LINE_KEY), Line::named("factory")]);
         assert_eq!(profile.select_mode(&state.connected_rooms()), Mode::Chase);
     }
 
@@ -3585,35 +3578,35 @@ mod tests {
             // 1 Tombs — a free kill, and a door decided by the scarcity chain.
             // `Ru` is on the corridor into E2's Sanctum, not on the pick.
             &["Rd", "R2", "FasterArrival", "R1Gradient", "Rs", "Ru"],
-            // 2 Corruption Chamber — RV on both sides of the line, and the
-            // rollout separating the two kills.
+            // 2 Corruption Chamber — no target room on the board, so no RV:
+            // the door chain decides, R1-apex on the Apex corridors, and R4
+            // on the corruption upgrade that builds tier 3.
+            &["R1Apex", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs", "R4"],
+            // 3 Chasm late — the Apex, free at last. Xopec's kill is the
+            // priority kill (POE-465): it builds on the Cradle of Creation
+            // line, the Rush's target, so it advances the target rather than
+            // drawing R4. Xipocado's change builds Lightning Workshop, which
+            // is not on the line.
             &[
-                "ExpectedValue",
-                "Rv",
-                "RvMerge",
+                "R1Apex",
                 "Rd",
                 "R2",
                 "FasterArrival",
                 "R1Gradient",
                 "Rs",
+                "ArchitectPriority",
                 "AdvancesTarget",
-                "R1Apex",
             ],
-            // 3 Chasm late — the Apex, free at last. Xopec's kill is the
-            // priority kill (POE-465): it builds on the Cradle of Creation
-            // line. Xipocado's change builds Lightning Workshop, which is not.
-            // The Cradle kill builds tier 3 (POE-415), out of the drop pool,
-            // so R4 speaks on it.
-            &["R1Apex", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs", "ArchitectPriority", "R4"],
-            // 4 Chasm merge — one door changes anything, and it is RV that
-            // makes it worth a key.
-            &["RvMerge", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs"],
+            // 4 Chasm merge — one door changes anything; with no target room
+            // on the board the door chain alone ranks it.
+            &["Rd", "R2", "FasterArrival", "R1Gradient", "Rs"],
             // 5 Poison Garden — the Sanctum kill makes every corridor
             // degree-priced, so the doors ARE enumerated and each is declined
             // by RU (the top pick still opens nothing); the Cultivar kill
-            // prices none of them, so its side still reads NoUsableDoor. The
-            // rollout separates the kills by 3+ points. `ZeroKey` here would
-            // be a lie: a key did drop.
+            // prices none of them, so its side still reads NoUsableDoor. With
+            // no target room on the board the kills sit inside the band and RT
+            // takes the upgrade line. `ZeroKey` here would be a lie: a key did
+            // drop.
             //
             // `R1Apex` was in this list until POE-248 and its absence is the
             // FIX, not a re-recording: the corridor that scored it is C0-B0,
@@ -3623,7 +3616,6 @@ mod tests {
             // is silent — see its note. The recorded decision is untouched: the
             // top pick still opens nothing, for RU's reason.
             &[
-                "ExpectedValue",
                 "NoUsableDoor",
                 "FasterArrival",
                 "R1Gradient",
@@ -3631,6 +3623,7 @@ mod tests {
                 "R4",
                 "Rd",
                 "Rs",
+                "Rt",
                 "Ru",
                 "RuDeclined",
             ],
@@ -3647,25 +3640,21 @@ mod tests {
             // `ExpectedValue`: neither kill is vetoed and the rollout cannot
             // separate them, so the band covers both.
             &["R1Apex", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs", "R4"],
-            // 9 Corruption Chamber arrival — RV on the corruption upgrade
-            // (the kill builds the target room in this very slot, and either
-            // corridor into the Entrance cluster connects it, ∞ → 1 hop), so
-            // RvMerge on both; R1Apex on the B0 corridor, which is
-            // Apex-adjacent even though the Apex is already in the room's own
-            // cluster; the door chain on every keyed set, RA included; the
-            // rollout separates the A1 upgrade from the change to junk past
-            // the band, so the change's options carry ExpectedValue.
+            // 9 Corruption Chamber arrival — the corruption upgrade builds an
+            // ordinary room, so no RV and R4 on its tier 3; R1Apex on the B0
+            // corridor, which is Apex-adjacent even though the Apex is already
+            // in the room's own cluster; the door chain on every keyed set, RA
+            // included; the rollout separates options past the band, so they
+            // carry ExpectedValue.
             &[
                 "ExpectedValue",
-                "Rv",
-                "RvMerge",
                 "R1Apex",
                 "Rd",
                 "R2",
                 "FasterArrival",
                 "R1Gradient",
                 "Rs",
-                "AdvancesTarget",
+                "R4",
             ],
         ];
 
@@ -3698,6 +3687,10 @@ mod tests {
 
     /// The door the app actually recommends on each walked board, pinned.
     ///
+    /// Under the Cradle target set two boards leave Sebastian's recorded
+    /// door: board 2 takes the Apex he played, and board 9 the Apex-adjacent
+    /// B0 rather than his C1-D1.
+    ///
     /// The recorded decisions are mostly about the DOOR, and the door axis is
     /// decided by the rule chain rather than by the rollout — R1, R2 and RS
     /// read the graph, not the prices. So this is NOT written as "the same
@@ -3711,7 +3704,7 @@ mod tests {
     /// fixture does. Verified against `best_row.min(far.row())` inverted to
     /// `.max` in `rules::door_key`, which moves board 1 off Chamber of Iron.
     #[test]
-    fn the_production_profile_opens_sebastians_recorded_door_on_every_walked_board() {
+    fn the_production_profile_opens_the_pinned_door_on_every_walked_board() {
         let production = production_profile();
 
         let opened: Vec<(&str, Vec<Slot>)> = all_walked_boards()
@@ -3733,8 +3726,8 @@ mod tests {
             vec![
                 // "open D3-C2 (up, and merges two singletons)"
                 ("1 Tombs", vec![C2]),
-                // "connect DOWN (B1-C1 or B1-C2)"
-                ("2 CorruptionChamber", vec![C2]),
+                // "open B1-A0": the Corruption Chamber is no target
+                ("2 CorruptionChamber", vec![A0]),
                 // "open B0-A0 (the Apex is finally free value)"
                 ("3 Chasm-late", vec![A0]),
                 // "open B1-C2 (the only door that changes anything)"
@@ -3745,8 +3738,8 @@ mod tests {
                 ("6 Cloister-blind", vec![C1]),
                 // "open B0-C1 (B0 already reaches the Apex)"
                 ("8 LightningWorkshop", vec![B0]),
-                // "open C1-D1 (the middle one arrives faster)"
-                ("9 CorruptionChamber-arrival", vec![D1]),
+                // Sebastian opened C1-D1; with no RV the Apex-adjacent B0 wins
+                ("9 CorruptionChamber-arrival", vec![B0]),
                 // Board 7 records a MISS on the kill; its door was never in
                 // dispute.
                 ("7 ArmourersWorkshop-PC", vec![B1]),
@@ -3754,19 +3747,20 @@ mod tests {
         );
     }
 
-    /// The 2026-10-17 tier rungs change two kills from the strategy fixture,
+    /// The 2026-10-17 tier rungs change one kill from the strategy fixture,
     /// under Consolidation option 1, the played default. These are rollout
     /// outcomes under the WI-5 draw rules (POE-415): whole-map no-revisit, two
     /// changes on a tier-0 room, pending-room carry-over. Board 1 records
-    /// "kill either". On board 7 the fixture takes the Sanctum change while the
-    /// shipped profile takes the Chamber of Iron upgrade. Board 8 no longer moves: with its upgrade building tier
-    /// 3 and its explosives change tier 1, the fixture takes the Conduit
-    /// upgrade too (POE-415). Board 2 still upgrades corruption. Board 3 does
-    /// not move: under either profile the Cradle-line priority (POE-465)
-    /// kills Xopec's throne_of_atziri change. Pin the exact differences so a
-    /// ranking change cannot silently move another board.
+    /// "kill either". Board 7 no longer moves: under the Cradle target set the
+    /// fixture takes the Chamber of Iron upgrade the shipped profile takes.
+    /// Board 8 does not move: with its upgrade building tier 3 and its
+    /// explosives change tier 1, the fixture takes the Conduit upgrade too
+    /// (POE-415). Board 2 still upgrades corruption. Board 3 does not move:
+    /// under either profile the Cradle-line priority (POE-465) kills Xopec's
+    /// throne_of_atziri change. Pin the exact differences so a ranking change
+    /// cannot silently move another board.
     #[test]
-    fn the_production_tier_rungs_change_two_fixture_kills() {
+    fn the_production_tier_rungs_change_one_fixture_kill() {
         let production = production_profile();
 
         let moved: Vec<(&str, Option<(OfferKind, String, u8)>, Option<(OfferKind, String, u8)>)> =
@@ -3781,18 +3775,11 @@ mod tests {
 
         assert_eq!(
             moved,
-            vec![
-                (
-                    "1 Tombs",
-                    Some((Change, "museum_of_artefacts".to_string(), 1)),
-                    Some((Change, "hall_of_champions".to_string(), 1)),
-                ),
-                (
-                    "7 ArmourersWorkshop-PC",
-                    Some((Change, "upgrade".to_string(), 1)),
-                    Some((Upgrade, "chamber_of_iron".to_string(), 3)),
-                ),
-            ],
+            vec![(
+                "1 Tombs",
+                Some((Change, "museum_of_artefacts".to_string(), 1)),
+                Some((Change, "hall_of_champions".to_string(), 1)),
+            )],
         );
     }
 
@@ -3829,15 +3816,13 @@ mod tests {
         }
     }
 
-    /// Board 2 is the one whose recorded decision the Locus/Doryani targets
-    /// drive, and the production profile reaches it too.
+    /// Board 2's recorded kill, and the production profile reaches it too.
     ///
-    /// *"Upgrade the corruption line"* is the whole point of the strategy, and
-    /// it is the assertion that says re-denominating the board in chaos did not
-    /// cost the app the decision the epic exists for. Fails if the corruption
-    /// line stops outranking a junk `change` once every other line on the board
-    /// carries a value of its own. Under option 1, the played default, the
-    /// upgrade from tier 1 builds tier 3.
+    /// *"Upgrade the corruption line"*: Locus of Corruption is no target any
+    /// more, but it is still the board's richest room at its chaos price.
+    /// Fails if the corruption line stops outranking a junk `change` once
+    /// every other line on the board carries a value of its own. Under option
+    /// 1, the played default, the upgrade from tier 1 builds tier 3.
     #[test]
     fn the_production_profile_still_upgrades_the_corruption_line_on_board_two() {
         let case = cases::case_2_corruption_chamber();
@@ -3856,14 +3841,14 @@ mod tests {
     /// The door on every walked board, at the capture's prices.
     ///
     /// The same literals as
-    /// `the_production_profile_opens_sebastians_recorded_door_on_every_walked_board`,
+    /// `the_production_profile_opens_the_pinned_door_on_every_walked_board`,
     /// and that is the finding: a board whose value spread goes from 800/2 to
     /// 846/2.1 opens the same corridor every time, because the door axis is the
     /// rule chain's and the rule chain reads the graph. Verified against
     /// `best_row.min(far.row())` inverted to `.max` in `rules::door_key`, which
     /// moves board 1 off Chamber of Iron.
     #[test]
-    fn the_live_priced_profile_opens_sebastians_recorded_door_on_every_walked_board() {
+    fn the_live_priced_profile_opens_the_pinned_door_on_every_walked_board() {
         let live = live_production_profile();
 
         let opened: Vec<(&str, Vec<Slot>)> = all_walked_boards()
@@ -3884,13 +3869,13 @@ mod tests {
             opened,
             vec![
                 ("1 Tombs", vec![C2]),
-                ("2 CorruptionChamber", vec![C2]),
+                ("2 CorruptionChamber", vec![A0]),
                 ("3 Chasm-late", vec![A0]),
                 ("4 Chasm-merge", vec![C2]),
                 ("5 PoisonGarden", Vec::new()),
                 ("6 Cloister-blind", vec![C1]),
                 ("8 LightningWorkshop", vec![B0]),
-                ("9 CorruptionChamber-arrival", vec![D1]),
+                ("9 CorruptionChamber-arrival", vec![B0]),
                 ("7 ArmourersWorkshop-PC", vec![B1]),
             ],
         );
@@ -3902,9 +3887,9 @@ mod tests {
     /// These are rollout outcomes under the WI-5 draw rules (POE-415): whole-
     /// map no-revisit, two changes on a tier-0 room, pending-room carry-over.
     /// Board 3 kills Xopec's Cradle-line change, the POE-465 priority, which
-    /// builds tier 3 (POE-415). An upgrade from tier 1 builds tier 3 and a
-    /// change tier 1, so board 7 takes the Chamber of Iron upgrade here; its
-    /// recorded Sanctum change is pinned under option 2 by
+    /// builds tier 3 (POE-415). Under the Cradle target set board 7 takes the
+    /// Sanctum change at tier 1 here, and board 6 the Hall of Champions change;
+    /// board 7's recorded tier-2 Sanctum is pinned under option 2 by
     /// `the_production_profile_plays_sebastians_kill_on_board_seven_cold_and_live`.
     /// Fails if the bridge stops copying the valuation into the profile.
     #[test]
@@ -3924,10 +3909,10 @@ mod tests {
                 ("3 Chasm-late", Some((Change, "throne_of_atziri".to_string(), 3))),
                 ("4 Chasm-merge", Some((Change, "hybridisation_chamber".to_string(), 1))),
                 ("5 PoisonGarden", Some((Change, "upgrade".to_string(), 1))),
-                ("6 Cloister-blind", Some((Change, "museum_of_artefacts".to_string(), 1))),
+                ("6 Cloister-blind", Some((Change, "hall_of_champions".to_string(), 1))),
                 ("8 LightningWorkshop", Some((Upgrade, "conduit_of_lightning".to_string(), 3))),
                 ("9 CorruptionChamber-arrival", Some((Upgrade, "corruption".to_string(), 3))),
-                ("7 ArmourersWorkshop-PC", Some((Upgrade, "chamber_of_iron".to_string(), 3))),
+                ("7 ArmourersWorkshop-PC", Some((Change, "upgrade".to_string(), 1))),
             ],
         );
     }
@@ -4094,7 +4079,7 @@ mod tests {
     }
 
     /// A tier-`tier` room of `line` at D1, beside a connected Doryani's
-    /// Institute that only a Locus completes into the profile's combination.
+    /// Institute.
     fn priority_board(line: &str, tier: u8) -> BoardState {
         board(&[(D1, line, tier), (E2, "gem", 3)], &[(D1, E1), (E1, E2)], D1, 5)
     }
@@ -4114,6 +4099,27 @@ mod tests {
 
     fn carve_out_profile() -> StrategyProfile {
         let mut profile = rush();
+        profile.r4_keep_upgrade_targets = true;
+        profile
+    }
+
+    /// The Rush with the corruption line priced 100 at tier 3, far above the
+    /// Cradle's 9, so a rival corruption kill carries the higher EV and a
+    /// priority row tests the priority rather than the ranking it overrides.
+    /// Corruption is an ordinary priced room here, not a target.
+    fn rival_priced() -> StrategyProfile {
+        let mut profile = rush();
+        profile.room_values.insert(Line::Corruption, [0.0, 0.0, 100.0]);
+        profile
+    }
+
+    /// R4's carve-out on a profile that does not chase the Cradle line.
+    ///
+    /// A target-line kill is never vetoed, and the Rush's one target is the
+    /// Cradle, so the veto the priority overrides is only reachable while the
+    /// Cradle is off the target set.
+    fn carve_out_off_the_cradle() -> StrategyProfile {
+        let mut profile = hybridisation_chase();
         profile.r4_keep_upgrade_targets = true;
         profile
     }
@@ -4268,7 +4274,7 @@ mod tests {
                         offer("Azcapa", Upgrade, "Catalyst of Corruption"),
                     ],
                     keys: 1,
-                    profile: rush(),
+                    profile: rival_priced(),
                     qualifying: &[0],
                     precondition: Precondition::LowerEv,
                     expected: kill_groups(&[0, 1], &PRIORITY_BOARD_DOORS),
@@ -4281,7 +4287,7 @@ mod tests {
                         offer("Xopec", Upgrade, "Hall of Lords"),
                     ],
                     keys: 1,
-                    profile: rush(),
+                    profile: rival_priced(),
                     qualifying: &[1],
                     precondition: Precondition::LowerEv,
                     expected: kill_groups(&[1, 0], &PRIORITY_BOARD_DOORS),
@@ -4364,7 +4370,7 @@ mod tests {
                         offer("Azcapa", Upgrade, "Catalyst of Corruption"),
                     ],
                     1,
-                    rush(),
+                    rival_priced(),
                     1,
                 ),
                 (
@@ -4375,7 +4381,7 @@ mod tests {
                         offer("xipocado", Upgrade, "Grand Reactor"),
                     ],
                     1,
-                    rush(),
+                    rival_priced(),
                     0,
                 ),
                 (
@@ -4415,8 +4421,7 @@ mod tests {
 
         // keep:critical — AC-2 and AC-3. Silent consequence: the overlay
         // points at the wrong architect block, a plausible kill the player
-        // trusts, and the Cradle of Creation line is lost to a Locus/Doryani
-        // move. Any architect's kill that builds on the throne_of_atziri line
+        // trusts, and the Cradle of Creation line is lost to a rival move. Any architect's kill that builds on the throne_of_atziri line
         // ranks first at every tier a kill can build; with two priority kills
         // the old order between them stands.
         #[test]
@@ -4437,7 +4442,7 @@ mod tests {
                         offer("Xopec", Change, "Royal Meeting Room"),
                     ],
                     keys: 1,
-                    profile: rush(),
+                    profile: rival_priced(),
                     qualifying: &[1],
                     precondition: Precondition::LowerEv,
                     expected: kill_groups(&[1, 0], &PRIORITY_BOARD_DOORS),
@@ -4450,7 +4455,7 @@ mod tests {
                         offer("Azcapa", Upgrade, "Locus of Corruption"),
                     ],
                     keys: 1,
-                    profile: rush(),
+                    profile: rival_priced(),
                     qualifying: &[0],
                     precondition: Precondition::LowerEv,
                     expected: kill_groups(&[0, 1], &PRIORITY_BOARD_DOORS),
@@ -4463,7 +4468,7 @@ mod tests {
                         offer("Juatalotli", Change, "Storage Room"),
                     ],
                     keys: 0,
-                    profile: carve_out_profile(),
+                    profile: carve_out_off_the_cradle(),
                     qualifying: &[0],
                     precondition: Precondition::Vetoed,
                     expected: kill_groups(&[0, 1], &["no door"]),
@@ -4600,6 +4605,28 @@ mod tests {
     mod keep_regression {
         use super::*;
 
+        // keep:regression — POE-415 WI-6, Operator-reported
+        // (evidence/temple-door-halls-vs-corruption.png). The shipped profile
+        // sealed Corruption Chamber (C2-D2) on the Gemcutter's Workshop board
+        // because the Locus/Doryani target set made the Workshop a stranded
+        // target room. With the Cradle as the only target line nothing here
+        // is worth connecting to the Entrance, and the door is Halls, beside
+        // the Apex.
+        #[test]
+        fn the_gemcutters_workshop_board_opens_halls_beside_the_apex() {
+            let case = cases::case_11_gemcutters_workshop_halls();
+            let advice = advise_case_with(&case, &production_profile());
+            let top = &advice.recommendations[0];
+            assert_eq!(
+                opened_toward(&top.option.doors, C2),
+                vec![B1],
+                "{}: {}\n{}",
+                case.name,
+                case.decision,
+                ranking_dump(&advice)
+            );
+        }
+
         // keep:regression — POE-415 (c), Operator-reported 2026-11-24: on the
         // upgrade-vs-explosives board, under option 1 (the played option),
         // Hayoxi's upgrade builds the conduit line at tier 3 and is the top
@@ -4689,12 +4716,15 @@ mod tests {
                 (
                     cases::case_2_corruption_chamber(),
                     vec![
+                        (Some(0), "A0-B1"),
+                        (Some(0), "B0-B1"),
                         (Some(0), "B1-C2"),
                         (Some(0), "B1-C1"),
-                        (Some(1), "B1-C2"),
-                        (Some(1), "B1-C1"),
+                        (Some(0), "no door"),
                         (Some(1), "A0-B1"),
                         (Some(1), "B0-B1"),
+                        (Some(1), "B1-C2"),
+                        (Some(1), "B1-C1"),
                         (Some(1), "no door"),
                     ],
                 ),

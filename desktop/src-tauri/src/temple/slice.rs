@@ -4865,8 +4865,8 @@ mod tests {
         assert!(profile.reroll_until_favourable);
         assert!(!profile.r4_keep_upgrade_targets);
         // Neither of these is a settings field and neither is a magnitude, so
-        // both come through the fixture untouched. `mode_rule` names the two
-        // lines RV and the mode flip read; `blast_discount` is a fraction of a
+        // both come through the fixture untouched. `mode_rule` names the one
+        // line RV and the mode flip read, the Cradle; `blast_discount` is a fraction of a
         // score difference, which is scale-free by construction. A bridge that
         // RESCALED `blast_discount` would slip past here — the scale is 1 —
         // and is caught by
@@ -4875,7 +4875,7 @@ mod tests {
         assert_eq!(profile.mode_rule, rush.mode_rule);
         assert_eq!(
             profile.mode_rule,
-            ModeRule::LinesConnected(vec![Line::Corruption, Line::Gem]),
+            ModeRule::LinesConnected(vec![Line::named(rooms::CRADLE_LINE_KEY)]),
         );
         assert_eq!(profile.blast_discount, rush.blast_discount);
     }
@@ -5583,22 +5583,25 @@ mod tests {
     /// The shipped fixture profile is not what the bridge produces, and the
     /// bridge does not edit it.
     ///
-    /// `locus_doryani_rush` is the fixture behind the pinned 10/9/7/2 and
+    /// The Rush is the fixture behind the pinned Cradle 9 / Apex 2 and
     /// retrospective-board suites, and those suites only keep their meaning
-    /// while it is Sebastian's measured ranking rather than today's market.
+    /// while it states that ranking rather than today's market.
     /// Fails if the bridge ever mutates the constructor it splats over.
     #[test]
     fn the_bridge_leaves_the_pinned_fixture_profile_alone() {
         let after = TempleProfileSettings::default().to_profile(&allflame_valuation());
         let rush = StrategyProfile::locus_doryani_rush();
 
-        // The fixture still states Sebastian's measured ranking, not today's
+        // The fixture still states the Cradle-only ranking, not today's
         // market, and the bridge's own answer is a different object.
         assert_ne!(after.room_values, rush.room_values);
-        assert_eq!(rush.room_values[&Line::Corruption], [0.0, 0.0, 9.0]);
-        assert_eq!(rush.room_values[&Line::Gem], [0.0, 0.0, 7.0]);
-        assert_eq!(rush.combinations.len(), 1, "and 9 + 7 still yields 10");
-        assert_eq!(rush.combinations[0].score, 10.0);
+        assert_eq!(
+            rush.room_values[&Line::named(rooms::CRADLE_LINE_KEY)],
+            [0.0, 0.0, REFERENCE_TOP_ROOM_VALUE],
+        );
+        assert_eq!(rush.room_values[&Line::Corruption], [0.0, 0.0, 0.0]);
+        assert_eq!(rush.room_values[&Line::Gem], [0.0, 0.0, 0.0]);
+        assert!(rush.combinations.is_empty(), "no joint outcome is priced");
         assert_eq!(rush.value_scale(), 1.0, "the reference scale is its own");
     }
 

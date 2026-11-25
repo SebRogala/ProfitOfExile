@@ -1213,7 +1213,7 @@ fn live_upgrade_target(board: &BoardState, slot: Slot) -> Option<Slot> {
 mod tests {
     use super::*;
     use crate::temple::lattice::Slot::*;
-    use crate::temple::rooms::OfferKind;
+    use crate::temple::rooms::{OfferKind, CRADLE_LINE_KEY};
     use crate::temple::strategy::Tier;
 
     use super::super::rollout::Valuation;
@@ -1471,12 +1471,12 @@ mod tests {
     // connected: it protects a *stranded* valuable room.
     #[test]
     fn rv_is_silent_while_the_current_room_is_in_the_entrance_component() {
-        let state = board(&[(D1, "corruption", 1)], &[(D1, E1)]);
+        let state = board(&[(D1, CRADLE_LINE_KEY, 1)], &[(D1, E1)]);
         let doors = BTreeSet::from([Edge::new(D1, C1)]);
         let verdict = rv_verdict(
             &state,
             D1,
-            Some(&Line::Corruption),
+            Some(&Line::named(CRADLE_LINE_KEY)),
             &doors,
             &Valuation::for_profile(&rush()),
             true,
@@ -1488,14 +1488,14 @@ mod tests {
     // board: you only get to open its doors while standing in it.
     #[test]
     fn rv_keeps_only_the_doors_that_shorten_the_walk_to_the_entrance() {
-        // B1 holds a Corruption Chamber and is stranded; C1 leads to the
+        // B1 holds a tier-1 Cradle-line room and is stranded; C1 leads to the
         // Entrance side, A0 (the Apex) leads nowhere.
-        let state = board(&[(B1, "corruption", 1)], &[(C1, D1), (D1, E1)]);
+        let state = board(&[(B1, CRADLE_LINE_KEY, 1)], &[(C1, D1), (D1, E1)]);
         let valuation = Valuation::for_profile(&rush());
         let down = rv_verdict(
             &state,
             B1,
-            Some(&Line::Corruption),
+            Some(&Line::named(CRADLE_LINE_KEY)),
             &BTreeSet::from([Edge::new(B1, C1)]),
             &valuation,
             true,
@@ -1511,7 +1511,7 @@ mod tests {
         let apex = rv_verdict(
             &state,
             B1,
-            Some(&Line::Corruption),
+            Some(&Line::named(CRADLE_LINE_KEY)),
             &BTreeSet::from([Edge::new(B1, A0)]),
             &valuation,
             true,
@@ -1524,11 +1524,11 @@ mod tests {
     // declining it buys the stranded room nothing either.
     #[test]
     fn rv_has_no_opinion_when_no_door_set_can_shorten_the_walk() {
-        let state = board(&[(B1, "corruption", 1)], &[(C1, D1), (D1, E1)]);
+        let state = board(&[(B1, CRADLE_LINE_KEY, 1)], &[(C1, D1), (D1, E1)]);
         let apex = rv_verdict(
             &state,
             B1,
-            Some(&Line::Corruption),
+            Some(&Line::named(CRADLE_LINE_KEY)),
             &BTreeSet::from([Edge::new(B1, A0)]),
             &Valuation::for_profile(&rush()),
             false,
@@ -1557,7 +1557,7 @@ mod tests {
     // nothing left to protect and the option is not a gamble.
     #[test]
     fn rv_is_silent_when_the_kill_does_not_build_a_target_line() {
-        let state = board(&[(B1, "corruption", 1)], &[(C1, D1), (D1, E1)]);
+        let state = board(&[(B1, CRADLE_LINE_KEY, 1)], &[(C1, D1), (D1, E1)]);
         let verdict = rv_verdict(
             &state,
             B1,
@@ -1797,7 +1797,7 @@ mod tests {
     #[test]
     fn a_keyed_set_prints_the_walk_it_leaves_from_the_entrance() {
         let state = board(
-            &[(C1, "corruption", 1)],
+            &[(C1, CRADLE_LINE_KEY, 1)],
             &[(A0, B1), (B1, C1), (C0, D0), (D0, D1), (D1, E0), (E0, E1)],
         );
         let arrival = |doors: &[(Slot, Slot)]| {
@@ -2137,17 +2137,17 @@ mod tests {
     }
 
     // A kill that builds a target line is never vetoed — an upgrade toward
-    // Locus outranks any drop-pool argument.
+    // the Cradle outranks any drop-pool argument.
     #[test]
     fn the_carve_out_never_vetoes_a_kill_that_builds_a_target_line() {
         let state = board(
-            &[(D1, "corruption", 1), (C1, "upgrade", 2)],
+            &[(D1, CRADLE_LINE_KEY, 1), (C1, "upgrade", 2)],
             &[(C1, D1), (D1, E1)],
         );
         let upgrade = verdict(
             &state,
             D1,
-            Some(&choice(OfferKind::Upgrade, "corruption", 2)),
+            Some(&choice(OfferKind::Upgrade, CRADLE_LINE_KEY, 2)),
             &[],
         );
         assert!(!upgrade.architect.vetoed(), "{:?}", upgrade.reasons);
@@ -2298,12 +2298,12 @@ mod tests {
         assert!(verdict.reasons.contains(&Reason::RerollUntilFavourable));
     }
 
-    // R4 never applies to a target line — you do not want the corruption room
+    // R4 never applies to a target line — you do not want the Cradle-line room
     // out of the pool for the sake of a smaller pool.
     #[test]
     fn r4_is_silent_on_a_kill_that_builds_a_target_line() {
-        let state = board(&[(D1, "corruption", 1)], &[(D1, E1)]);
-        let verdict = verdict(&state, D1, Some(&choice(OfferKind::Upgrade, "corruption", 2)), &[]);
+        let state = board(&[(D1, CRADLE_LINE_KEY, 1)], &[(D1, E1)]);
+        let verdict = verdict(&state, D1, Some(&choice(OfferKind::Upgrade, CRADLE_LINE_KEY, 2)), &[]);
         assert!(!verdict.reasons.iter().any(|r| matches!(r, Reason::R4)));
         assert!(verdict
             .reasons
@@ -2387,8 +2387,9 @@ mod tests {
     #[test]
     fn a_profile_worth_nothing_keeps_the_reference_floor() {
         let mut nothing = rush();
-        nothing.room_values.insert(Line::Corruption, [0.0, 0.0, 0.0]);
-        nothing.room_values.insert(Line::Gem, [0.0, 0.0, 0.0]);
+        for values in nothing.room_values.values_mut() {
+            *values = [0.0, 0.0, 0.0];
+        }
 
         assert_eq!(noise_margin(&nothing, 0.0), NOISE_FLOOR);
     }

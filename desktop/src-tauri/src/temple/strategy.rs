@@ -724,26 +724,54 @@ mod tests {
         StrategyProfile::locus_doryani_rush()
     }
 
-    // -- the four measured outcomes -------------------------------------------
-    // Sebastian's ranking is an outcome ranking with no board attached, so the
-    // RD tally is zero in these four; a real board adds its baseline on top.
+    /// The Cradle line, the Rush's one target line.
+    fn cradle() -> Line {
+        Line::named(crate::temple::rooms::CRADLE_LINE_KEY)
+    }
+
+    /// A second priced line, so the combination machinery has a pair to
+    /// match: the Rush plus Hybridisation Chamber III at 7 and the pair at 10,
+    /// a joint outcome no per-room sum (9 + 7) reproduces.
+    fn paired() -> StrategyProfile {
+        let mut profile = rush();
+        profile
+            .room_values
+            .insert(Line::named("hybridisation_chamber"), [0.0, 0.0, 7.0]);
+        profile.combinations = vec![Combination {
+            requires: vec![
+                (cradle(), Tier::T3),
+                (Line::named("hybridisation_chamber"), Tier::T3),
+            ],
+            score: 10.0,
+        }];
+        profile
+    }
+
+    // -- the measured outcomes -------------------------------------------------
+    // An outcome ranking with no board attached, so the RD tally is zero in
+    // these; a real board adds its baseline on top.
 
     #[test]
-    fn locus_together_with_doryani_scores_the_combination_value_of_ten() {
-        let board = [(Line::Corruption, Tier::T3), (Line::Gem, Tier::T3)];
-        assert_score(rush().aggregate(&board, false, 0), 10.0, "Locus + Doryani");
+    fn the_cradle_on_its_own_scores_nine() {
+        let board = [(cradle(), Tier::T3)];
+        assert_score(rush().aggregate(&board, false, 0), 9.0, "Cradle alone");
     }
 
     #[test]
-    fn locus_on_its_own_scores_nine() {
-        let board = [(Line::Corruption, Tier::T3)];
-        assert_score(rush().aggregate(&board, false, 0), 9.0, "Locus alone");
-    }
-
-    #[test]
-    fn doryani_on_its_own_scores_seven() {
-        let board = [(Line::Gem, Tier::T3)];
-        assert_score(rush().aggregate(&board, false, 0), 7.0, "Doryani alone");
+    fn the_corruption_and_gem_tier_three_rooms_score_nothing() {
+        // They are ordinary rooms on the Cradle profile: no room value and no
+        // combination prices them, alone or together.
+        let rows: [(&str, &[(Line, Tier)]); 3] = [
+            ("Locus alone", &[(Line::Corruption, Tier::T3)]),
+            ("Doryani alone", &[(Line::Gem, Tier::T3)]),
+            (
+                "Locus + Doryani",
+                &[(Line::Corruption, Tier::T3), (Line::Gem, Tier::T3)],
+            ),
+        ];
+        for (what, board) in rows {
+            assert_score(rush().aggregate(board, false, 0), 0.0, what);
+        }
     }
 
     #[test]
@@ -752,49 +780,53 @@ mod tests {
     }
 
     #[test]
-    fn the_apex_beside_locus_adds_only_the_assumed_mixed_increment() {
-        let board = [(Line::Corruption, Tier::T3)];
+    fn the_apex_beside_the_cradle_adds_only_the_assumed_mixed_increment() {
+        let board = [(cradle(), Tier::T3)];
         assert_score(
             rush().aggregate(&board, true, 0),
             9.5,
-            "Locus + Apex (9 plus the assumed 0.5)",
+            "Cradle + Apex (9 plus the assumed 0.5)",
         );
     }
 
     #[test]
-    fn doryani_beside_the_apex_scores_seven_point_five() {
+    fn the_apex_beside_an_unpriced_doryani_pays_its_full_standalone_score() {
+        // Doryani's Institute is worth nothing on the Cradle profile, so the
+        // board carries no value and the Apex is all there is.
         let board = [(Line::Gem, Tier::T3)];
         assert_score(
             rush().aggregate(&board, true, 0),
-            7.5,
-            "Doryani + Apex (7 plus the assumed 0.5)",
+            2.0,
+            "Doryani + Apex (the Apex alone)",
         );
     }
 
     #[test]
-    fn both_target_rooms_plus_the_apex_score_ten_point_five() {
+    fn a_matched_combination_plus_the_apex_scores_ten_point_five() {
         // The Apex is charged on top of a *matched combination*, not only on
-        // top of a room-value sum: the prototype's SCORE_TABLE tops out at
-        // 10.5, not at the combination's 10.
-        let board = [(Line::Corruption, Tier::T3), (Line::Gem, Tier::T3)];
+        // top of a room-value sum.
+        let board = [
+            (cradle(), Tier::T3),
+            (Line::named("hybridisation_chamber"), Tier::T3),
+        ];
         assert_score(
-            rush().aggregate(&board, true, 0),
+            paired().aggregate(&board, true, 0),
             10.5,
-            "Locus + Doryani + Apex",
+            "Cradle + Hybridisation + Apex",
         );
     }
 
     // -- partial credit --------------------------------------------------------
 
     #[test]
-    fn a_catalyst_of_corruption_scores_nothing_beyond_the_room_baseline() {
-        // Tier 2 of the corruption line, connected and built, and worth only
+    fn a_tier_two_cradle_room_scores_nothing_beyond_the_room_baseline() {
+        // Tier 2 of the Cradle line, connected and built, and worth only
         // what RD pays any built room. Partial credit is essentially none.
-        let board = [(Line::Corruption, Tier::T2)];
+        let board = [(cradle(), Tier::T2)];
         assert_score(
             rush().aggregate(&board, false, 1),
             0.05,
-            "Catalyst II alone",
+            "Hall of Lords II alone",
         );
     }
 
@@ -814,33 +846,33 @@ mod tests {
 
     #[test]
     fn a_second_room_of_the_same_line_does_not_pay_twice() {
-        let board = [(Line::Gem, Tier::T3), (Line::Gem, Tier::T3)];
+        let board = [(cradle(), Tier::T3), (cradle(), Tier::T3)];
         assert_score(
             rush().aggregate(&board, false, 0),
-            7.0,
-            "two Doryani's Institutes",
+            9.0,
+            "two Cradles of Creation",
         );
     }
 
     #[test]
     fn a_lower_tier_of_a_line_does_not_drag_down_its_best_room() {
-        // Gemcutter's Workshop (tier 1, worth 0) alongside Doryani's Institute
-        // must still score the Institute.
-        let board = [(Line::Gem, Tier::T1), (Line::Gem, Tier::T3)];
+        // A tier-1 Cradle-line room (worth 0) alongside the Cradle of Creation
+        // must still score the Cradle.
+        let board = [(cradle(), Tier::T1), (cradle(), Tier::T3)];
         assert_score(
             rush().aggregate(&board, false, 0),
-            7.0,
-            "Workshop plus Institute",
+            9.0,
+            "tier 1 plus the Cradle",
         );
     }
 
     #[test]
     fn the_room_baseline_is_charged_once_per_connected_built_room() {
-        let board = [(Line::Corruption, Tier::T3)];
+        let board = [(cradle(), Tier::T3)];
         assert_score(
             rush().aggregate(&board, false, 6),
             9.3,
-            "Locus on a board of six built rooms",
+            "Cradle on a board of six built rooms",
         );
     }
 
@@ -849,9 +881,10 @@ mod tests {
     #[test]
     fn a_matching_combination_replaces_the_room_value_sum_rather_than_adding_to_it() {
         // The whole reason combinations exist: summing would give 16.
-        let board = [(Line::Corruption, Tier::T3), (Line::Gem, Tier::T3)];
-        let summed = rush().room_values[&Line::Corruption][2] + rush().room_values[&Line::Gem][2];
-        let scored = rush().aggregate(&board, false, 0);
+        let hybridisation = Line::named("hybridisation_chamber");
+        let board = [(cradle(), Tier::T3), (hybridisation.clone(), Tier::T3)];
+        let summed = paired().room_values[&cradle()][2] + paired().room_values[&hybridisation][2];
+        let scored = paired().aggregate(&board, false, 0);
         assert!(
             scored < summed,
             "combination must override the sum: sum {summed}, scored {scored}"
@@ -861,12 +894,15 @@ mod tests {
 
     #[test]
     fn the_highest_scoring_matching_combination_wins() {
-        let mut profile = rush();
+        let mut profile = paired();
         profile.combinations.push(Combination {
-            requires: vec![(Line::Corruption, Tier::T3)],
+            requires: vec![(cradle(), Tier::T3)],
             score: 4.0,
         });
-        let board = [(Line::Corruption, Tier::T3), (Line::Gem, Tier::T3)];
+        let board = [
+            (cradle(), Tier::T3),
+            (Line::named("hybridisation_chamber"), Tier::T3),
+        ];
         assert_score(
             profile.aggregate(&board, false, 0),
             10.0,
@@ -891,11 +927,14 @@ mod tests {
 
     #[test]
     fn an_unmet_requirement_leaves_the_combination_out_of_the_running() {
-        let board = [(Line::Corruption, Tier::T3), (Line::Gem, Tier::T2)];
+        let board = [
+            (cradle(), Tier::T3),
+            (Line::named("hybridisation_chamber"), Tier::T2),
+        ];
         assert_score(
-            rush().aggregate(&board, false, 0),
+            paired().aggregate(&board, false, 0),
             9.0,
-            "Department of Thaumaturgy is not Doryani's Institute",
+            "Automaton Lab is not Hybridisation Chamber",
         );
     }
 
@@ -923,23 +962,23 @@ mod tests {
 
     #[test]
     fn raising_only_the_apex_score_flips_the_ranking_of_two_boards() {
-        // Board A is the bare Apex; board B is Doryani's Institute with no
+        // Board A is the bare Apex; board B is the Cradle of Creation with no
         // Apex. The Rush prefers B; a profile that differs ONLY in apex_score
         // prefers A. Same aggregate() both times.
         let apex_only: [(Line, Tier); 0] = [];
-        let doryani_only = [(Line::Gem, Tier::T3)];
+        let cradle_only = [(cradle(), Tier::T3)];
 
         let rush = rush();
         assert!(
-            rush.aggregate(&apex_only, true, 0) < rush.aggregate(&doryani_only, false, 0),
-            "the Rush must prefer Doryani's Institute to a bare Apex"
+            rush.aggregate(&apex_only, true, 0) < rush.aggregate(&cradle_only, false, 0),
+            "the Rush must prefer the Cradle of Creation to a bare Apex"
         );
 
         let mut apex_lover = rush.clone();
-        apex_lover.apex_score = 9.0;
+        apex_lover.apex_score = 10.0;
         assert!(
             apex_lover.aggregate(&apex_only, true, 0)
-                > apex_lover.aggregate(&doryani_only, false, 0),
+                > apex_lover.aggregate(&cradle_only, false, 0),
             "an Apex-weighted profile must prefer the bare Apex"
         );
     }
@@ -948,25 +987,28 @@ mod tests {
     fn raising_only_the_mixed_increment_flips_a_ranking_on_boards_that_already_pay() {
         // The bare-Apex board above is the one place `apex_score` is read; on
         // every board that already carries value the Apex weight is
-        // `apex_mixed_increment`. Board A is Locus III with the Apex reached,
-        // board B is Locus III plus Doryani's Institute without it. The Rush
-        // prefers B (10 over 9.5); a profile differing ONLY in the increment
-        // prefers A.
-        let locus_and_apex = [(Line::Corruption, Tier::T3)];
-        let both_rooms = [(Line::Corruption, Tier::T3), (Line::Gem, Tier::T3)];
+        // `apex_mixed_increment`. Board A is the Cradle with the Apex reached,
+        // board B is the Cradle plus Hybridisation Chamber III without it. The
+        // paired profile prefers B (10 over 9.5); a profile differing ONLY in
+        // the increment prefers A.
+        let cradle_and_apex = [(cradle(), Tier::T3)];
+        let both_rooms = [
+            (cradle(), Tier::T3),
+            (Line::named("hybridisation_chamber"), Tier::T3),
+        ];
 
-        let rush = rush();
+        let paired = paired();
         assert!(
-            rush.aggregate(&locus_and_apex, true, 0) < rush.aggregate(&both_rooms, false, 0),
-            "the Rush must prefer both target rooms to Locus beside the Apex"
+            paired.aggregate(&cradle_and_apex, true, 0) < paired.aggregate(&both_rooms, false, 0),
+            "the paired profile must prefer the pair to the Cradle beside the Apex"
         );
 
-        let mut apex_lover = rush.clone();
+        let mut apex_lover = paired.clone();
         apex_lover.apex_mixed_increment = 2.0;
         assert!(
-            apex_lover.aggregate(&locus_and_apex, true, 0)
+            apex_lover.aggregate(&cradle_and_apex, true, 0)
                 > apex_lover.aggregate(&both_rooms, false, 0),
-            "an Apex-weighted profile must prefer Locus beside the Apex"
+            "an Apex-weighted profile must prefer the Cradle beside the Apex"
         );
     }
 
@@ -974,20 +1016,20 @@ mod tests {
 
     #[test]
     fn a_positive_path_cost_prefers_the_board_that_is_fewer_hops_away() {
-        let board = [(Line::Corruption, Tier::T3)];
+        let board = [(cradle(), Tier::T3)];
         let mut profile = rush();
         profile.path_cost = 0.5;
 
         let near = profile.aggregate_with_path(&board, false, 0, 3);
         let far = profile.aggregate_with_path(&board, false, 0, 6);
 
-        assert_score(near, 7.5, "Locus three hops in at 0.5/hop");
+        assert_score(near, 7.5, "Cradle three hops in at 0.5/hop");
         assert!(near > far, "near {near} must beat far {far}");
     }
 
     #[test]
     fn a_zero_path_cost_leaves_two_boards_of_different_length_tied() {
-        let board = [(Line::Corruption, Tier::T3)];
+        let board = [(cradle(), Tier::T3)];
         let rush = rush();
 
         let near = rush.aggregate_with_path(&board, false, 0, 3);
@@ -1001,7 +1043,7 @@ mod tests {
 
     #[test]
     fn the_blast_discount_halves_what_charge_only_reachability_adds() {
-        // Naturally reachable: 2. Charges bring the Locus into range: 9.
+        // Naturally reachable: 2. Charges bring the Cradle into range: 9.
         assert_score(
             rush().blend_blast(2.0, 9.0),
             5.5,
@@ -1021,34 +1063,33 @@ mod tests {
     // -- mode selection --------------------------------------------------------
 
     #[test]
-    fn both_target_lines_connected_selects_scarab_mode() {
-        // Tier 1 of each — the scarab re-rolls tiers, so only the lines matter.
-        let connected = [(Line::Corruption, Tier::T1), (Line::Gem, Tier::T1)];
+    fn the_connected_cradle_line_selects_scarab_mode() {
+        // Tier 1 — the scarab re-rolls tiers, so only the line matters.
+        let connected = [(cradle(), Tier::T1)];
         assert_eq!(rush().select_mode(&connected), Mode::Scarab);
     }
 
     #[test]
-    fn a_gem_room_the_entrance_cannot_reach_stays_in_chase_mode() {
-        // The v1 boundary. Whether the gem room was never built or is built
-        // but stranded, the Entrance reaches only the Locus — and v1 prices
+    fn a_cradle_room_the_entrance_cannot_reach_stays_in_chase_mode() {
+        // The v1 boundary. Whether the Cradle room was never built or is built
+        // but stranded, the Entrance reaches only other lines — and v1 prices
         // both the same, because a scarab fired now would copy a temple whose
-        // gem room may never be connected.
-        let connected = [(Line::Corruption, Tier::T3)];
+        // Cradle room may never be connected.
+        let connected = [(Line::Corruption, Tier::T3), (Line::Gem, Tier::T3)];
         assert_eq!(rush().select_mode(&connected), Mode::Chase);
     }
 
     #[test]
     fn a_connected_tier_zero_slot_does_not_count_as_a_built_line() {
-        let connected = [(Line::Corruption, Tier::T3), (Line::Gem, Tier::T0)];
+        let connected = [(cradle(), Tier::T0)];
         assert_eq!(rush().select_mode(&connected), Mode::Chase);
     }
 
     #[test]
-    fn the_mode_rule_is_data_so_a_third_required_line_changes_the_verdict() {
-        let connected = [(Line::Corruption, Tier::T1), (Line::Gem, Tier::T1)];
+    fn the_mode_rule_is_data_so_a_second_required_line_changes_the_verdict() {
+        let connected = [(cradle(), Tier::T1)];
         let mut profile = rush();
-        profile.mode_rule =
-            ModeRule::LinesConnected(vec![Line::Corruption, Line::Gem, Line::Explosive]);
+        profile.mode_rule = ModeRule::LinesConnected(vec![cradle(), Line::Explosive]);
         assert_eq!(profile.select_mode(&connected), Mode::Chase);
     }
 
@@ -1113,7 +1154,7 @@ mod tests {
         let profile = rush();
         let json = serde_json::to_string(&profile).expect("profile serialises");
         assert!(
-            json.contains("\"corruption\":["),
+            json.contains("\"throne_of_atziri\":["),
             "line keys must be bare strings: {json}"
         );
 

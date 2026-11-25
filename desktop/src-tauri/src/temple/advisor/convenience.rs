@@ -236,7 +236,7 @@ mod tests {
 
     use super::super::fixtures::{board, JUNK};
     use super::super::rules::ArchitectChoice;
-    use crate::temple::rooms::OfferKind;
+    use crate::temple::rooms::{OfferKind, CRADLE_LINE_KEY};
     use crate::temple::strategy::{Line, Tier};
 
     fn rush() -> Valuation {
@@ -278,13 +278,13 @@ mod tests {
     }
 
     // Walk 2. The Apex walk is already straight, so the corridor that brings the
-    // Locus closer to the Entrance decides: C2 holds it, reached today via E2,
+    // Cradle closer to the Entrance decides: C2 holds it, reached today via E2,
     // D3, D2 (four hops from E1); C1-C2 makes it three. C1-D2 is the competitor
-    // and leaves the Locus where it was.
+    // and leaves the Cradle where it was.
     #[test]
     fn with_the_apex_walk_straight_the_wanted_rooms_walk_decides() {
         let state = board(
-            &[(C1, JUNK, 1), (C2, "corruption", 3)],
+            &[(C1, JUNK, 1), (C2, CRADLE_LINE_KEY, 3)],
             &[
                 (E1, D1),
                 (D1, C1),
@@ -312,13 +312,13 @@ mod tests {
         );
     }
 
-    // Walk 3. Neither the Apex walk nor the Entrance → Locus walk can improve —
-    // the Locus at D2 is one hop from E1 already — but its walk UP to the Apex
+    // Walk 3. Neither the Apex walk nor the Entrance → Cradle walk can improve —
+    // the Cradle at D2 is one hop from E1 already — but its walk UP to the Apex
     // is D2, D1, C1, B0, A0 (four) and C1-D2 makes it three.
     #[test]
     fn with_both_entrance_walks_settled_the_wanted_rooms_to_apex_walk_decides() {
         let state = board(
-            &[(C1, JUNK, 1), (D2, "corruption", 3)],
+            &[(C1, JUNK, 1), (D2, CRADLE_LINE_KEY, 3)],
             &[(E1, D1), (D1, C1), (C1, B0), (B0, A0), (E1, D2), (D1, D2), (D1, C0)],
             C1,
             5,
@@ -392,7 +392,7 @@ mod tests {
     // The board is read AFTER the kill. C1 is junk today and reached from E1
     // the long way round (E1, D2, D3, C2, B1, C1: five hops); with no wanted
     // room on the board the fallback closes the longest loop, which is C1-D1
-    // (D1 is five hops away). A `change` that builds the Locus in this very
+    // (D1 is five hops away). A `change` that builds the Cradle in this very
     // slot makes C1 a wanted room, and then C1-D2 — one hop off E1 — wins on
     // the Entrance → wanted rooms walk even though its loop is the shorter.
     #[test]
@@ -407,9 +407,9 @@ mod tests {
             offer_index: 0,
             architect_name: "Tacati".to_string(),
             kind: OfferKind::Change,
-            line: Line::Corruption,
+            line: Line::named(CRADLE_LINE_KEY),
             built_tier: Tier::T3,
-            display_name: "Locus of Corruption",
+            display_name: "Cradle of Creation",
         };
 
         let without = pick(&state).expect("corridors inside the cluster");

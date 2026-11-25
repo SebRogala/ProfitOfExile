@@ -917,46 +917,11 @@ mod tests {
         );
     }
 
-    /// Pricing BOTH target lines at zero warns that the advisor still chases
-    /// them.
-    ///
-    /// `mode_rule` and RV name `corruption` and `gem` structurally, not by
-    /// their value: the mode flip and the hard "do not bank an unreachable
-    /// target" constraint read the two line identities. So a table that zeroes
-    /// both stops them scoring without stopping the advisor protecting them,
-    /// and a player who did it on purpose is owed that sentence rather than a
-    /// board they cannot explain.
-    ///
-    /// Fails if the check is dropped, and fails if it is loosened to either
-    /// line — see the sibling test.
+    /// Zeroing the gem line, which is not a target, is not the case that
+    /// warning is about: no target line is left unpriced, so the advisor
+    /// still scores what it chases.
     #[test]
-    fn pricing_both_target_lines_at_zero_warns_that_they_are_still_protected() {
-        let custom = TempleCustomSettings {
-            rooms: BTreeMap::from([
-                ("corruption".to_string(), vec![None, None, Some(0.0)]),
-                ("gem".to_string(), vec![None, None, Some(0.0)]),
-            ]),
-            ..Default::default()
-        };
-
-        let (overrides, warnings) = custom.overrides();
-
-        assert_eq!(overrides.len(), 2, "both entries are honoured");
-        assert_eq!(warnings.len(), 1, "got {warnings:?}");
-        assert!(
-            warnings[0].contains("RV") && !warnings[0].to_lowercase().contains("scarab"),
-            "the warning names what still reads the two lines: {warnings:?}",
-        );
-    }
-
-    /// Zeroing ONE target line is not the case that warning is about.
-    ///
-    /// A rusher who prices the gem line at nothing and keeps the corruption
-    /// line is stating a strategy, not walking into a gap: the advisor still
-    /// scores the line he cares about. Fails if the check is loosened from
-    /// "both" to "either", which would warn on an ordinary rusher table.
-    #[test]
-    fn zeroing_one_target_line_alone_produces_no_warning() {
+    fn zeroing_the_non_target_gem_line_produces_no_warning() {
         let custom = TempleCustomSettings {
             rooms: BTreeMap::from([("gem".to_string(), vec![None, None, Some(0.0)])]),
             ..Default::default()
@@ -1158,18 +1123,17 @@ mod tests {
 
     /// The one warning that refuses nothing still refuses nothing.
     ///
-    /// Both target lines at zero is a position a player may hold; the sentence
-    /// exists so they know the advisor still protects the pair. Fails if
-    /// `validate` is ever written as "reject if `overrides` warned", which is
-    /// the obvious shortcut and would make that position unreachable from the
-    /// UI.
+    /// The target line at zero is a position a player may hold; the sentence
+    /// exists so they know the advisor still protects it. Fails if `validate`
+    /// is ever written as "reject if `overrides` warned", which is the obvious
+    /// shortcut and would make that position unreachable from the UI.
     #[test]
-    fn pricing_both_target_lines_at_zero_is_accepted_by_the_setter() {
+    fn pricing_the_cradle_target_line_at_zero_is_accepted_by_the_setter() {
         let custom = TempleCustomSettings {
-            rooms: BTreeMap::from([
-                ("corruption".to_string(), vec![None, None, Some(0.0)]),
-                ("gem".to_string(), vec![None, None, Some(0.0)]),
-            ]),
+            rooms: BTreeMap::from([(
+                crate::temple::rooms::CRADLE_LINE_KEY.to_string(),
+                vec![None, None, Some(0.0)],
+            )]),
             ..Default::default()
         };
 
@@ -1479,6 +1443,47 @@ mod tests {
     mod keep_critical {
         use super::*;
         use crate::temple::valuation::DriverKind;
+
+        // keep:critical — POE-415 WI-6. Silent consequence: a table that
+        // zeroes the profile's target set stops the Cradle scoring while RV
+        // still chases it, and without this sentence every Cradle room ranks
+        // as junk on a board the player cannot explain. The warning follows
+        // the TARGET SET (the Cradle line), so zeroing the former Locus and
+        // Doryani lines is an ordinary table and a priced Cradle is silent.
+        #[test]
+        fn a_table_warns_exactly_when_it_zeroes_the_profiles_target_set() {
+            let rows: [(&str, Vec<(&str, f64)>, usize); 3] = [
+                ("the Cradle zeroed", vec![("throne_of_atziri", 0.0)], 1),
+                ("the Cradle priced", vec![("throne_of_atziri", 500.0)], 0),
+                (
+                    "corruption and gem zeroed",
+                    vec![("corruption", 0.0), ("gem", 0.0)],
+                    0,
+                ),
+            ];
+            for (what, rooms, want) in rows {
+                let custom = TempleCustomSettings {
+                    rooms: rooms
+                        .iter()
+                        .map(|(key, top)| (key.to_string(), vec![None, None, Some(*top)]))
+                        .collect(),
+                    ..Default::default()
+                };
+
+                let (overrides, warnings) = custom.overrides();
+
+                assert_eq!(overrides.len(), rooms.len(), "{what}: every entry is honoured");
+                assert_eq!(warnings.len(), want, "{what}: got {warnings:?}");
+                if want == 1 {
+                    assert!(
+                        warnings[0].contains("throne_of_atziri")
+                            && warnings[0].contains("RV")
+                            && !warnings[0].to_lowercase().contains("scarab"),
+                        "{what}: the warning names the target line and what still reads it: {warnings:?}",
+                    );
+                }
+            }
+        }
 
         // keep:critical — POE-470 AC-1. Silent consequence: a cache that
         // serves the table built for the other Cradle context hands the read

@@ -68,7 +68,9 @@ pub fn case_1_tombs() -> Case {
 }
 
 // --- Case 2 — 2026-08-03_22-43-37, 7 left, in Corruption Chamber I (B1) -----
-// The trap. He opened the Apex and never got back to connect the room. RV.
+// He opened the Apex and never got back to connect the room — the trap while
+// the corruption line was a target. Under the Cradle target set (POE-415) the
+// Corruption Chamber is an ordinary room and the Apex door is the pick.
 pub fn case_2_corruption_chamber() -> Case {
     Case {
         name: "2 CorruptionChamber",
@@ -104,13 +106,14 @@ pub fn case_2_corruption_chamber() -> Case {
             offer("Paquate", Change, "Jeweller's Workshop"),
         ],
         keys: 1,
-        decision: "upgrade the corruption line; connect DOWN (B1-C1 or B1-C2)",
+        decision: "upgrade the corruption line; open B1-A0 (no target room is stranded, \
+                   so nothing outranks the Apex)",
     }
 }
 
 // --- Case 3 — 2026-08-03_22-54-58, 2 left, in Chasm (B0) -------------------
-// The inverse of case 2 on the same door: Locus is banked and connected, so
-// nothing outranks the Apex any more.
+// Case 2's board one step on: nothing on it is stranded, so nothing outranks
+// the Apex.
 pub fn case_3_chasm_late() -> Case {
     Case {
         name: "3 Chasm-late",
@@ -468,6 +471,49 @@ pub fn case_10_lightning_workshop_upgrade() -> Case {
         keys: 1,
         decision: "upgrade → Grand Reactor (the conduit line at tier 3 under option 1), \
                    not change → Explosives Room",
+    }
+}
+
+// --- Case 11 — 2026-11-24, 11 left, in Gemcutter's Workshop I (C2) --------
+// POE-415, the Operator's "Halls vs Corruption Chamber" board
+// (evidence/temple-door-halls-vs-corruption.png). The Entrance cluster is E1
+// with Hatchery (E0), Cellar (D1) to Sacrificial Chamber (C0), and Corruption
+// Chamber (D2) to Armourer's Workshop (D3); C2 touches it through D2 and D3.
+// Jiquani prints "upgrade to Department of Thaumaturgy", Zalati "change to
+// Workshop". The app sealed Corruption Chamber (C2-D2); the Operator wants
+// Halls (C2-B1), the corridor beside the Apex. No Cradle is on the board, so
+// nothing here is worth connecting to the Entrance.
+// Not a walked board: it stays out of [`retrospective`].
+pub fn case_11_gemcutters_workshop_halls() -> Case {
+    Case {
+        name: "11 GemcuttersWorkshop-halls",
+        state: board(
+            &[
+                // Passageways, Halls, Tombs, Banquet Hall, Cellar — tier-0
+                // fillers, no line at all.
+                (B0, "", 0),
+                (B1, "", 0),
+                (C0, "apex_of_ascension", 1),
+                (C1, "", 0),
+                // The room he is standing in.
+                (C2, "gem", 1),
+                (D0, "", 0),
+                (D1, "", 0),
+                (D2, "corruption", 1),
+                (D3, "chamber_of_iron", 1),
+                (E0, "hybridisation_chamber", 1),
+                (E2, "museum_of_artefacts", 1),
+            ],
+            &[(C0, D1), (D1, E1), (D2, E1), (D2, D3), (E0, E1)],
+            C2,
+            11,
+        ),
+        offers: vec![
+            offer("Jiquani", Upgrade, "Department of Thaumaturgy"),
+            offer("Zalati", Change, "Workshop"),
+        ],
+        keys: 1,
+        decision: "open C2-B1 (Halls, beside the Apex), not C2-D2 (Corruption Chamber)",
     }
 }
 
