@@ -186,10 +186,15 @@ describe('lab session lifecycle', () => {
 		expect(h.order).toEqual([]);
 	});
 
-	it('registers both listeners and reads settings on the first acquire', () => {
+	it('registers the nav, layout and notice-request listeners and reads settings on the first acquire', () => {
 		const h = makeHarness();
 		h.session.acquire({});
-		expect(h.order.slice(0, 3)).toEqual(['listen:lab-nav', 'listen:lab-layout-updated', 'get_compass_settings']);
+		expect(h.order.slice(0, 4)).toEqual([
+			'listen:lab-nav',
+			'listen:lab-layout-updated',
+			'listen:lab-layout-notice-request',
+			'get_compass_settings'
+		]);
 	});
 
 	it('adds no listener, interval or catch-up on a second acquire', async () => {
@@ -199,7 +204,7 @@ describe('lab session lifecycle', () => {
 		h.session.acquire({});
 		await flush();
 		await vi.advanceTimersByTimeAsync(2000);
-		expect(h.listen).toHaveBeenCalledTimes(2);
+		expect(h.listen).toHaveBeenCalledTimes(3);
 		expect(h.count('get_lab_catchup')).toBe(1);
 		// immediate poll + init + one interval tick
 		expect(h.count('get_compass_settings')).toBe(3);
@@ -225,7 +230,7 @@ describe('lab session lifecycle', () => {
 		const before = h.count('get_compass_settings');
 		await vi.advanceTimersByTimeAsync(4000);
 		expect(h.count('get_compass_settings')).toBe(before);
-		expect(h.unlistened.sort()).toEqual(['lab-layout-updated', 'lab-nav']);
+		expect(h.unlistened.sort()).toEqual(['lab-layout-notice-request', 'lab-layout-updated', 'lab-nav']);
 	});
 
 	it('ignores a second call of the same release while another subscriber holds the session', async () => {
