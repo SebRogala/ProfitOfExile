@@ -56,14 +56,20 @@ fn probe_font_frame(frame: &Capture, region: [i32; 4],
     Ok((panel.font_active && !panel.options.is_empty()).then_some(FontRecognition { lines, panel }))
 }
 
-impl PendingRead<AppHandle> for PendingFontRead {
-    fn probe(&mut self, frame: &Arc<Capture>, app: &AppHandle) -> Result<bool, String> {
-        let state = app.state::<AppState>();
+impl PendingFontRead {
+    fn probe_in(&mut self, frame: &Capture, state: &AppState,
+        recognize: impl FnOnce(&image::DynamicImage) -> Result<Vec<String>, String>) -> Result<bool, String> {
         if armed_token(&state.lab_scan) != Some(self.token)
             || !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return Ok(false); }
         let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
-        self.recognition = probe_font_frame(frame, crate::ssot::placements_for(screen.as_ref()).lab.font, crate::ocr::recognize_text)?;
+        self.recognition = probe_font_frame(frame, crate::ssot::placements_for(screen.as_ref()).lab.font, recognize)?;
         Ok(self.recognition.is_some())
+    }
+}
+
+impl PendingRead<AppHandle> for PendingFontRead {
+    fn probe(&mut self, frame: &Arc<Capture>, app: &AppHandle) -> Result<bool, String> {
+        self.probe_in(frame, &app.state::<AppState>(), crate::ocr::recognize_text)
     }
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, app: &AppHandle) {
         if frame.is_err() { return; }
@@ -317,5 +323,107 @@ mod tests {
         let sealed = read.record.unwrap().outcome.unwrap().sealed.expect("one press of the new panel seals");
         assert_eq!(sealed.round.crafts_remaining, Some(2));
         assert_eq!(sealed.round.options.len(), 3);
+    }
+
+    mod manual_regions {
+        use super::*;
+        use crate::ssot::{screen_from_geometry, ManualRegions, OcrRegionsMode, OcrRegionsSetting, ScreenRef};
+
+        const SET_ON_3440: ScreenRef = ScreenRef { width: 3440, height: 1440, origin: [0, 0], at_ms: 1_732_400_000_000 };
+
+        /// A Manual set on 3440x1440 holding only `lab_font`.
+        fn manual_font(lab_font: Option<[i32; 4]>) -> OcrRegionsSetting {
+            OcrRegionsSetting {
+                mode: OcrRegionsMode::Manual,
+                manual: Some(ManualRegions {
+                    set_on: SET_ON_3440,
+                    edited: true,
+                    lab_gem: None,
+                    lab_font,
+                    lab_gem_slots: None,
+                    temple_panel: None,
+                    merc_panel: None,
+                }),
+            }
+        }
+
+        /// A test `AppState` on a measured 3440x1440 slice holding `setting`,
+        /// with a font context armed; returns the state and the press token.
+        fn armed_state_3440(setting: OcrRegionsSetting) -> (AppState, u64) {
+            let state = test_app_state();
+            *state.screen.lock().unwrap() = Some(screen_from_geometry(3440, 1440, 1, (0, 0), [0, 0, 3440, 1440], 0));
+            *state.ocr_regions.lock().unwrap() = setting;
+            let token = font_context::arm_font_context(&state).token;
+            (state, token)
+        }
+
+        fn pending(token: u64) -> PendingFontRead {
+            PendingFontRead { token, prompt: None, recognition: None }
+        }
+
+        /// A black 3440x1440 capture with the right half of `rect` white, so a
+        /// crop of any other rect of the same size differs from a crop of `rect`.
+        fn capture_marking(rect: [i32; 4]) -> Capture {
+            let mut image = image::RgbImage::new(3440, 1440);
+            let [x, y, w, h] = rect.map(|v| v as u32);
+            for py in y..y + h {
+                for px in x + w / 2..x + w {
+                    image.put_pixel(px, py, image::Rgb([255, 255, 255]));
+                }
+            }
+            Capture { image: image::DynamicImage::ImageRgb8(image), monitor_id: 1, origin: (0, 0), client: [0, 0, 3440, 1440], timing: Default::default() }
+        }
+
+        mod keep_happy {
+            use super::*;
+
+            // keep:happy — AC-1: the controller layout's centre-right Font
+            // panel is read from the placed Manual rect, not Auto's
+            // [837, 293, 888, 908] on the same slice.
+            #[test]
+            fn a_press_on_a_3440x1440_capture_ocrs_the_manual_font_rect() {
+                let font = [1820, 293, 888, 908];
+                let (state, token) = armed_state_3440(manual_font(Some(font)));
+                let frame = capture_marking(font);
+                let mut seen: Option<image::DynamicImage> = None;
+
+                let read = pending(token).probe_in(&frame, &state, |crop| { seen = Some(crop.clone()); Ok(options_panel()) });
+
+                let expected = crate::capture::preprocess_for_ocr(&frame.image.crop_imm(1820, 293, 888, 908));
+                assert_eq!(read, Ok(true), "the options panel read from the Manual Font is a recognition");
+                assert!(
+                    seen.as_ref() == Some(&expected),
+                    "OCR must receive the preprocessed [1820, 293, 888, 908] crop; got {:?}",
+                    seen.as_ref().map(|crop| (crop.width(), crop.height())),
+                );
+            }
+        }
+
+        mod keep_critical {
+            use super::*;
+
+            /// Silent consequence: a Manual Font that is unset or wholly past
+            /// the capture keeps Auto's display-only rect in the placements;
+            /// OCR of that rect reads whatever UI lies there on every press and
+            /// records it as the Font's options with nothing to say so (AC-5:
+            /// unset or unreadable regions are not read).
+            #[test]
+            fn an_unread_manual_font_runs_no_ocr_at_the_auto_fallback_rect() {
+                let cases = [
+                    ("Font unset", None),
+                    ("Font wholly past x = 3440", Some([3500, 293, 888, 908])),
+                ];
+
+                for (case, lab_font) in cases {
+                    let (state, token) = armed_state_3440(manual_font(lab_font));
+                    let frame = capture_marking([837, 293, 888, 908]);
+                    let mut ocrs = 0;
+
+                    let read = pending(token).probe_in(&frame, &state, |_| { ocrs += 1; Ok(options_panel()) });
+
+                    assert_eq!((read, ocrs), (Ok(false), 0), "{case}: an unread Font takes no OCR and selects no frame");
+                }
+            }
+        }
     }
 }

@@ -53,15 +53,20 @@ struct PendingGemRead {
     lab: Option<LabPlacements>,
 }
 
-impl PendingRead<AppHandle> for PendingGemRead {
-    fn probe(&mut self, frame: &Arc<Capture>, app: &AppHandle) -> Result<bool, String> {
-        let state = app.state::<AppState>();
-        if !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return Ok(false); }
+impl PendingGemRead {
+    fn probe_in(&mut self, frame: &Capture, state: &AppState) -> bool {
+        if !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return false; }
         let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
         let lab = crate::ssot::placements_for(screen.as_ref()).lab;
-        if super::panel_probe::probe(frame, &lab).is_none() { return Ok(false); }
+        if super::panel_probe::probe(frame, &lab).is_none() { return false; }
         self.lab = Some(lab);
-        Ok(true)
+        true
+    }
+}
+
+impl PendingRead<AppHandle> for PendingGemRead {
+    fn probe(&mut self, frame: &Arc<Capture>, app: &AppHandle) -> Result<bool, String> {
+        Ok(self.probe_in(frame, &app.state::<AppState>()))
     }
     fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, app: &AppHandle) {
         let Ok(frame) = frame else { return; };
@@ -1416,5 +1421,150 @@ mod tests {
         assert_eq!((committed, flipped), (true, true), "the arrangement must reproduce the race");
         assert!(held(&state).is_empty(), "g1 gems of a choice armed across the flip must not survive it");
         assert_eq!(last(&state), None);
+    }
+
+    mod manual_regions {
+        use super::*;
+        use crate::ssot::{screen_from_geometry, ManualRegions, OcrRegionsMode, OcrRegionsSetting, ScreenRef};
+
+        const SET_ON_2560: ScreenRef = ScreenRef { width: 2560, height: 1440, origin: [0, 0], at_ms: 1_732_400_000_000 };
+        /// The ultrawide setup's placed slot strip (AC-2).
+        const STRIP: [i32; 4] = [826, 373, 246, 48];
+        const MANUAL_SLOTS: [[i32; 4]; 3] = [[826, 373, 48, 48], [925, 373, 48, 48], [1024, 373, 48, 48]];
+
+        fn manual_slots(lab_gem_slots: Option<[i32; 4]>) -> OcrRegionsSetting {
+            OcrRegionsSetting {
+                mode: OcrRegionsMode::Manual,
+                manual: Some(ManualRegions {
+                    set_on: SET_ON_2560,
+                    edited: true,
+                    lab_gem: None,
+                    lab_font: None,
+                    lab_gem_slots,
+                    temple_panel: None,
+                    merc_panel: None,
+                }),
+            }
+        }
+
+        /// A test `AppState` on the POE-472 whole-capture fallback slice (a
+        /// 2560x1440 capture whose client is the whole monitor, ui 1.2).
+        fn state_on_whole_capture(setting: OcrRegionsSetting) -> AppState {
+            let state = test_app_state();
+            *state.screen.lock().unwrap() = Some(screen_from_geometry(2560, 1440, 1, (0, 0), [0, 0, 2560, 1440], 0));
+            *state.ocr_regions.lock().unwrap() = setting;
+            state
+        }
+
+        fn pending(state: &AppState) -> PendingGemRead {
+            PendingGemRead {
+                identity: crate::lab::commands::gem_read_identity(state),
+                generation: 0,
+                cursor: None,
+                prompt: None,
+                lab: None,
+            }
+        }
+
+        /// `panel_probe`'s real 1080p gem-choice fixture.
+        fn fixture_1080p() -> DynamicImage {
+            image::load_from_memory(include_bytes!("../../tests/fixtures/lab/font-gems-1080p.png")).unwrap()
+        }
+
+        fn capture_2560x1440(image: DynamicImage) -> Capture {
+            Capture { image, monitor_id: 1, origin: (0, 0), client: [0, 0, 2560, 1440], timing: Default::default() }
+        }
+
+        /// The fixture at its own 1080p scale (slots [[506, 373, 48, 48], …])
+        /// translated onto a black 2560x1440 capture so its slots sit at
+        /// [`MANUAL_SLOTS`].
+        fn capture_with_panel_at_manual_slots() -> Capture {
+            let mut image = DynamicImage::new_rgb8(2560, 1440);
+            image::imageops::overlay(&mut image, &fixture_1080p(), 826 - 506, 0);
+            capture_2560x1440(image)
+        }
+
+        /// The fixture scaled to the whole 2560x1440 capture, so its slots sit
+        /// where Auto places them at ui 1.2: [[675, 497, 64, 64], …].
+        fn capture_with_panel_at_auto_slots() -> Capture {
+            capture_2560x1440(fixture_1080p().resize_exact(2560, 1440, image::imageops::FilterType::Lanczos3))
+        }
+
+        /// Precondition for the tests whose frame holds the panel only at the
+        /// Auto-at-1.2 slots: Auto places its slots there and its probe
+        /// selects that frame, so a Manual `false` is the Manual geometry's.
+        fn assert_auto_selects(frame: &Capture) {
+            let state = state_on_whole_capture(OcrRegionsSetting::default());
+            let mut auto = pending(&state);
+            assert!(auto.probe_in(frame, &state), "control: the Auto probe selects the panel at its own slots");
+            assert_eq!(auto.lab.map(|lab| lab.gem_slots[0]), Some([675, 497, 64, 64]), "control: Auto-at-1.2 slots");
+        }
+
+        mod keep_happy {
+            use super::*;
+
+            // keep:happy — AC-2: the ultrawide 2560x1080-on-1440 setup's
+            // placed strip selects the gem choice drawn at its slots, and the
+            // press carries those slots into its consume.
+            #[test]
+            fn a_manual_strip_on_the_whole_capture_slice_probes_the_panel_at_its_slots() {
+                let state = state_on_whole_capture(manual_slots(Some(STRIP)));
+                let mut read = pending(&state);
+
+                let selected = read.probe_in(&capture_with_panel_at_manual_slots(), &state);
+
+                assert!(selected, "panel_probe must find the fixture panel at the Manual slots");
+                assert_eq!(read.lab.map(|lab| lab.gem_slots), Some(MANUAL_SLOTS));
+            }
+        }
+
+        mod keep_critical {
+            use super::*;
+
+            /// Silent consequence: an unset or past-edge Manual strip keeps
+            /// Auto's display-only slots in the placements; probing and
+            /// icon-matching those slots selects whatever panel lies there and
+            /// commits its gems as the player's choice with nothing to say so
+            /// (AC-5: unset or unreadable regions are not read).
+            #[test]
+            fn an_unread_manual_strip_selects_no_frame_at_the_auto_fallback_slots() {
+                let frame = capture_with_panel_at_auto_slots();
+                assert_auto_selects(&frame);
+                let cases = [
+                    ("slot strip unset", None),
+                    ("slot strip crossing x = 2560", Some([2400, 497, 328, 64])),
+                ];
+
+                for (case, strip) in cases {
+                    let state = state_on_whole_capture(manual_slots(strip));
+                    let mut read = pending(&state);
+
+                    let selected = read.probe_in(&frame, &state);
+
+                    assert_eq!((selected, read.lab), (false, None), "{case}: an unread strip selects no frame");
+                }
+            }
+        }
+
+        mod keep_regression {
+            use super::*;
+
+            /// POE-472(b), Operator-reported: on the whole-capture fallback
+            /// slice the gem probe ran at the Auto-at-1.2 slots
+            /// [[675, 497, 64, 64], …], off the 2560x1080 client's panel. With
+            /// the Manual strip saved, a panel at those Auto slots is not the
+            /// choice the player placed.
+            #[test]
+            fn a_manual_strip_does_not_probe_the_auto_at_1_2_slots() {
+                let frame = capture_with_panel_at_auto_slots();
+                assert_auto_selects(&frame);
+                let state = state_on_whole_capture(manual_slots(Some(STRIP)));
+                let mut read = pending(&state);
+
+                let selected = read.probe_in(&frame, &state);
+
+                assert_eq!((selected, read.lab), (false, None), "the Manual strip probes its own slots only");
+            }
+        }
     }
 }
