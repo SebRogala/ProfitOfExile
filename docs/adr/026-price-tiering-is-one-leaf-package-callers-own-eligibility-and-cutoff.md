@@ -159,3 +159,21 @@ fallback. Lab's live percentile helper, eligibility and cutoff policy, and
 `TierBoundaries = tier.Boundaries` alias remain unchanged, as do the
 classification fixtures. With no production callers of the removed code,
 production behavior is inferred unchanged.
+
+## Amendment — 2026-11-25 (POE-404)
+
+Status: accepted; current tier implementation.
+
+Decision 3 also permits callers to retain an eligible row while withholding its
+price from TOP detection and tier boundaries, through `tier.Item.Gated`.
+`LowConfidence` includes caller-gated items unless the policy's cutoff excludes
+them. This widens Decision 2: `DepthUnknown` skips only relative-depth detection
+and still honours the caller's gate. Gated items remain in the median-depth
+input for the relative rule.
+
+`Classify` retains each gated item above the cutoff in `Result.Items` with
+`LowConfidence: true`. It uses the existing tier boundaries, including CHAOTIC
+above the highest boundary, or FLOOR when the group has no boundaries. An
+all-gated group has neither boundaries nor a TOP boundary. With no caller gates,
+classification is unchanged. Callers continue to own the evidence policy that
+sets the gate; the tier package introduces no evidence floor.

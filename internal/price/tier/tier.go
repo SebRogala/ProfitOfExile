@@ -3,7 +3,7 @@
 // Dedication pools, the double-corrupt gate and the Harvest fixture generator.
 //
 // Per group (one market — a gem variant, a Harvest family), independently:
-//  1. Low confidence: items whose depth is under 40% of the group median.
+//  1. Low confidence: caller-gated items or depth under 40% of the group median.
 //  2. TOP: the gap-detected cluster at the top of the confident pool.
 //  3. Boundaries: FLOOR anchored to the top-5 average, HIGH and MID-HIGH
 //     gap-snapped, MID at the largest relative gap below MID-HIGH.
@@ -80,8 +80,8 @@ type Policy struct {
 	// when HasCutoff is set.
 	CutoffChaos float64
 	HasCutoff   bool
-	// DepthUnknown skips low-confidence detection for markets whose depth is
-	// not measured: no item is low-confidence and none is CHAOTIC.
+	// DepthUnknown skips relative-depth detection for markets whose depth is
+	// not measured. Caller-gated items remain low-confidence.
 	DepthUnknown bool
 }
 
@@ -157,11 +157,16 @@ func Classify(items []Item, p Policy) Result {
 	return result
 }
 
-// LowConfidence identifies thin-market items whose prices are unreliable: per
-// group, items whose depth is under 40% of the group's median depth. Under
-// DepthUnknown it flags none.
+// LowConfidence identifies caller-gated items and, per group, items whose depth
+// is under 40% of the group's median depth. DepthUnknown skips only the relative
+// depth rule; the policy's cutoff excludes items from both rules.
 func LowConfidence(items []Item, p Policy) map[Key]bool {
 	result := make(map[Key]bool)
+	for _, it := range items {
+		if it.Gated && !p.excludes(it.Price) {
+			result[Key{it.Group, it.Key}] = true
+		}
+	}
 	if p.DepthUnknown {
 		return result
 	}
