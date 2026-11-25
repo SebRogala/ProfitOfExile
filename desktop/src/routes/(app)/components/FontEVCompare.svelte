@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { LOW_CONFIDENCE_TOOLTIP } from '$lib/tooltips';
 	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, DEDICATION_POOL_LABELS, type DedicationPool, VARIANTS, type FontEVResponse, type FontLensCraft, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
 	import { baseGemTradeUrl, cheapestCorruptedTradeUrl, buyBaseUrl, baseGemNoQualityUrl, exceptionalSupportTradeUrl } from '$lib/trade-utils';
 	import { formatPrice, formatPriceSigned, type PriceUnit } from '$lib/price.svelte';
@@ -477,7 +478,7 @@
 								<div class="pool-tier-row pool-risky-row">
 									<span class="pool-tier-name pool-risky-name">RISKY</span>
 									<span class="pool-tier-count">{lcGems.length}</span>
-									<Tooltip text="<b>Low confidence gems</b> — very few listings relative to normal. Could be a new meta build (demand spike) or price manipulation (buyout). Excluded from Font EV calculation.<br><br>{lcTooltip}"><span class="pool-tier-range">excluded from EV</span></Tooltip>
+									<Tooltip text="<b>Low confidence gems</b> — {LOW_CONFIDENCE_TOOLTIP} Excluded from Font EV calculation.<br><br>{lcTooltip}"><span class="pool-tier-range">excluded from EV</span></Tooltip>
 								</div>
 							{/if}
 						</div>
@@ -636,7 +637,7 @@
 								<div class="pool-tier-row pool-risky-row">
 									<span class="pool-tier-name pool-risky-name">RISKY</span>
 									<span class="pool-tier-count">{lcGems.length}</span>
-									<Tooltip text="<b>Low confidence gems</b> — very few listings relative to normal. Could be a new meta build (demand spike) or price manipulation (buyout). Excluded from Font EV calculation.<br><br>{lcTooltip}"><span class="pool-tier-range">excluded from EV</span></Tooltip>
+									<Tooltip text="<b>Low confidence gems</b> — {LOW_CONFIDENCE_TOOLTIP} Excluded from Font EV calculation.<br><br>{lcTooltip}"><span class="pool-tier-range">excluded from EV</span></Tooltip>
 								</div>
 							{/if}
 						</div>

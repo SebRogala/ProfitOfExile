@@ -3,6 +3,9 @@
  * Sourced from FRONTEND-DESIGN.md "Tooltips — Detailed Signal Descriptions".
  */
 
+export const LOW_CONFIDENCE_TOOLTIP =
+	'Too few listings or poe.ninja data points to trust the price, or far fewer listings than usual for this variant.';
+
 export const SIGNAL_TOOLTIPS: Record<string, string> = {
 	STABLE:
 		'Price and listings are steady. Safe to farm \u2014 predictable returns.',
