@@ -1957,7 +1957,7 @@ describe('routeSlots', () => {
 		// order takes off the reader's hands. The ends price all 12, so without
 		// this clause the residue is invisible.
 		expect(routeSlots(chaosLot(), DIVINE_RATE)?.sell.rateTitle).toContain(
-			'2 of the 12 bought stay unsold'
+			'2 left unsold'
 		);
 	});
 
@@ -1968,11 +1968,11 @@ describe('routeSlots', () => {
 		// a lot of 10) could not produce at all.
 		const title = routeSlots(divineScarab(), DIVINE_RATE)?.sell.rateTitle;
 
-		expect(title).toContain('6 of the 16 bought stay unsold');
+		expect(title).toContain('6 left unsold');
 		// Sixteen against a lot of ten is ONE whole order and a remainder, so the
 		// same sentence carries the SINGULAR of the order count — the side of the
 		// plural the twelve-against-fives row above cannot reach.
-		expect(title).toContain('is 1 whole order and');
+		expect(title).toContain('1 order,');
 	});
 
 	it('agrees the residue verb with a lot that leaves exactly one item unsold', () => {
@@ -2000,7 +2000,7 @@ describe('routeSlots', () => {
 		});
 
 		expect(routeSlots(oddLot, DIVINE_RATE)?.sell.rateTitle).toContain(
-			'1 of the 3 bought stays unsold'
+			'1 left unsold'
 		);
 	});
 
@@ -2010,7 +2010,7 @@ describe('routeSlots', () => {
 		// the printed pair alone.
 		const title = routeSlots(chaosOvershoot(), DIVINE_RATE)?.sell.rateTitle;
 
-		expect(title).toContain('This market printed');
+		expect(title).toContain('Market posts');
 		expect(title).not.toContain('unsold');
 	});
 
@@ -2022,10 +2022,10 @@ describe('routeSlots', () => {
 		// hover read "multiples of 16 ... 2 left over".
 		const title = routeSlots(divineScarab(), DIVINE_RATE)?.buy.rateTitle;
 
-		expect(title).toContain('This market printed 16 for 1 div');
-		expect(title).not.toContain('multiples of');
+		expect(title).toContain('Market posts 16 for 1 div');
+		expect(title).not.toContain('orders,');
 		expect(title).not.toContain('left over');
-		expect(title).not.toContain('bigger than the whole play');
+		expect(title).not.toContain('more than this row\'s');
 	});
 
 	it('quotes the buy step of a divine-entry posting in divine', () => {
@@ -2444,8 +2444,8 @@ describe('routeSlots', () => {
 		expect(unscaled?.buy.rate).toBe('buy 1 for ≈ 35c');
 		expect(unscaled?.sell.rate).toBe('sell 1 for ≈ 0.25 div');
 		expect(unscaled?.convert?.rate).toBe('≈ 0.25 div → 51c');
-		expect(unscaled?.buy.rateTitle).toContain('This market printed');
-		expect(unscaled?.sell.rateTitle).toContain('This market printed');
+		expect(unscaled?.buy.rateTitle).toContain('Market posts');
+		expect(unscaled?.sell.rateTitle).toContain('Market posts');
 	});
 
 	it('leads both steps with the same count on a row whose markets post different lots', () => {
@@ -2458,8 +2458,8 @@ describe('routeSlots', () => {
 
 		expect(route?.buy.rate.startsWith('buy 1 ')).toBe(true);
 		expect(route?.sell.rate.startsWith('sell 1 ')).toBe(true);
-		expect(route?.buy.rateTitle).not.toContain('multiples of');
-		expect(route?.sell.rateTitle).toContain('This market posts 4 at a time');
+		expect(route?.buy.rateTitle).not.toContain('orders,');
+		expect(route?.sell.rateTitle).toContain('Posts 4 at a time');
 	});
 
 	it('leaves the hover off a step whose market posted no pair to word', () => {
@@ -2543,8 +2543,8 @@ describe('routeSlots', () => {
 		// twelve-at-a-time lots, so there is no indivisibility to disclose.
 		const title = routeSlots(chaosLot(), DIVINE_RATE)?.buy.rateTitle;
 
-		expect(title).toContain('This market printed');
-		expect(title).not.toContain('multiples of');
+		expect(title).toContain('Market posts');
+		expect(title).not.toContain('orders,');
 	});
 
 	it('totals the row’s own posting at step 3 rather than one lot of its market', () => {
@@ -2596,14 +2596,14 @@ describe('routeSlots', () => {
 		// twice and the gap between them as an arithmetic fault.
 		const title = routeSlots(omen(), DIVINE_RATE)?.convert?.rateTitle;
 
-		expect(title).toContain('the Spend plus the ROI column');
+		expect(title).toContain('total is Spend + ROI');
 		expect(title).toContain(
-			'The Get slot at the end of the row is the Spend plus the Exp. ROI column'
+			'Get is Spend + Exp. ROI'
 		);
 		// The identities are chaos identities, and the columns are chaos while a
 		// divine route's ends are not — the qualifying clause is what keeps the
 		// hover true on that route, so it is pinned with the identities it guards.
-		expect(title).toContain('at the divine rate');
+		expect(title).toContain('Spend + ROI (Get is Spend + Exp. ROI)');
 	});
 
 	it('shows the market’s ratio at step 3 of a row it cannot value in chaos', () => {
@@ -2628,7 +2628,7 @@ describe('routeSlots', () => {
 
 		expect(route?.convert?.rate).toBe('convert @ 0.00 c');
 		expect(route?.sell.rate).toBe('sell 1 for ≈ 0.25 div');
-		expect(route?.convert?.rateTitle).toContain('carried no usable price this hour');
+		expect(route?.convert?.rateTitle).toContain('No convert price this hour');
 	});
 
 	it('words the caveat for a line that shows no quantity pair at all', () => {
@@ -2641,7 +2641,7 @@ describe('routeSlots', () => {
 		const title = routeSlots(priceless, DIVINE_RATE)?.convert?.rateTitle;
 
 		expect(title).toContain(
-			'this market posted no quantity pair, so the line shows its per-unit rate'
+			'No convert price this hour; proceeds read off the sell step.'
 		);
 		expect(title).not.toContain('the quantity pair it posts');
 	});
@@ -2660,7 +2660,7 @@ describe('routeSlots', () => {
 
 		expect(route?.sell.rate).toBe('sell @ 0.00 div');
 		expect(route?.sell.rateTitle).toContain(
-			'the amounts at both ends of the row count the exchanges the row is priced for'
+			'Per-unit rate; this market posted no quantity pair.'
 		);
 	});
 
@@ -2678,9 +2678,9 @@ describe('routeSlots', () => {
 		// posts, so a line reading 12 asserts a quantity no single order can move.
 		const title = routeSlots(chaosLot(), DIVINE_RATE)?.sell.rateTitle;
 
-		expect(title).toContain('multiples of 5');
-		expect(title).toContain('the 12 this row counts is 2 whole orders');
-		expect(title).toContain('2 of the 12 bought stay unsold');
+		expect(title).toContain('Market posts 5 for 2c');
+		expect(title).toContain('2 orders,');
+		expect(title).toContain('2 left unsold');
 	});
 
 	it('buys the whole count when the buy market posts one at a time', () => {
@@ -2688,8 +2688,8 @@ describe('routeSlots', () => {
 		// count is a whole number of its lots and the hover is the printed pair
 		// alone.
 		expect(routeSlots(omen(), DIVINE_RATE)?.buy.rate).toBe('buy 1 for ≈ 35c');
-		expect(routeSlots(omen(), DIVINE_RATE)?.buy.rateTitle).toContain('This market printed');
-		expect(routeSlots(omen(), DIVINE_RATE)?.buy.rateTitle).not.toContain('multiples of');
+		expect(routeSlots(omen(), DIVINE_RATE)?.buy.rateTitle).toContain('Market posts');
+		expect(routeSlots(omen(), DIVINE_RATE)?.buy.rateTitle).not.toContain('orders,');
 	});
 
 	it('totals the row’s count on a step whose market posts a bigger lot than the play', () => {
@@ -2708,9 +2708,9 @@ describe('routeSlots', () => {
 		// tell the reader the market cannot take an order this small.
 		const title = routeSlots(chaosLot(), DIVINE_RATE)?.buy.rateTitle;
 
-		expect(title).toContain('This market printed');
-		expect(title).not.toContain('bigger than the whole play');
-		expect(title).not.toContain('multiples of');
+		expect(title).toContain('Market posts');
+		expect(title).not.toContain('more than this row\'s');
+		expect(title).not.toContain('orders,');
 	});
 
 	it('says on a step whose lot is bigger than the play that no order fits', () => {
@@ -2719,9 +2719,9 @@ describe('routeSlots', () => {
 		// divide the row's count.
 		const title = routeSlots(omen(), DIVINE_RATE)?.sell.rateTitle;
 
-		expect(title).toContain('posts 4 at a time');
-		expect(title).toContain('more than the 1 this row counts');
-		expect(title).toContain('the smallest order it accepts is bigger than the whole play');
+		expect(title).toContain('Posts 4 at a time');
+		expect(title).toContain('more than this row\'s 1');
+		expect(title).toContain('Posts 4 at a time, more than this row\'s 1.');
 	});
 
 	it('says on a buy step that posts past the run how far past it the order goes', () => {
@@ -2731,9 +2731,9 @@ describe('routeSlots', () => {
 		// Scale column beside it printing ×167 with no mention of the posting.
 		const title = routeSlots(chaosOvershoot(), DIVINE_RATE)?.buy.rateTitle;
 
-		expect(title).toContain('This market printed 1,000 for 20c');
-		expect(title).toContain('This market posts 1,000 at a time, more than the ×167 run');
-		expect(title).toContain('one order is the smallest trade it accepts');
+		expect(title).toContain('Market posts 1,000 for 20c');
+		expect(title).toContain('Posts 1,000 at a time, above the ×167 run');
+		expect(title).toContain('at a time, above the ×');
 	});
 
 	it('says the same on a DIVINE buy step that posts past its run', () => {
@@ -2763,9 +2763,9 @@ describe('routeSlots', () => {
 
 		const title = routeSlots(posted, DIVINE_RATE)?.buy.rateTitle;
 
-		expect(title).toContain('This market printed 100 for 1 div');
-		expect(title).toContain('This market posts 100 at a time, more than the ×50 run');
-		expect(title).toContain('one order is the smallest trade it accepts');
+		expect(title).toContain('Market posts 100 for 1 div');
+		expect(title).toContain('Posts 100 at a time, above the ×50 run');
+		expect(title).toContain('at a time, above the ×');
 	});
 
 	it('claims no overshoot on a buy step whose posting sits inside the run', () => {
@@ -2775,8 +2775,8 @@ describe('routeSlots', () => {
 		// sentence on nearly every chaos row in the table.
 		const title = routeSlots(chaosLot(), DIVINE_RATE)?.buy.rateTitle;
 
-		expect(title).toContain('This market printed');
-		expect(title).not.toContain('run the Scale column sizes');
+		expect(title).toContain('Market posts');
+		expect(title).not.toContain('above the ×');
 	});
 
 	it('claims no overshoot on a posting that is exactly the run', () => {
@@ -2785,8 +2785,8 @@ describe('routeSlots', () => {
 		// it, so a guard written `>=` would report an overshoot of zero.
 		const title = routeSlots(chaosOvershoot({ expectedRoi: 0.1 }), DIVINE_RATE)?.buy.rateTitle;
 
-		expect(title).toContain('This market printed');
-		expect(title).not.toContain('run the Scale column sizes');
+		expect(title).toContain('Market posts');
+		expect(title).not.toContain('above the ×');
 	});
 
 	it('claims no overshoot on a buy step of a play with no run to be past', () => {
@@ -2795,8 +2795,8 @@ describe('routeSlots', () => {
 		// prints as a dash.
 		const title = routeSlots(chaosOvershoot({ expectedRoi: -1 }), DIVINE_RATE)?.buy.rateTitle;
 
-		expect(title).toContain('This market printed');
-		expect(title).not.toContain('run the Scale column sizes');
+		expect(title).toContain('Market posts');
+		expect(title).not.toContain('above the ×');
 	});
 
 	it('leaves the overshoot off the sell step, whose lot has no claim on the run', () => {
@@ -2806,8 +2806,8 @@ describe('routeSlots', () => {
 		// run for the buy step alone.
 		const title = routeSlots(chaosOvershoot(), DIVINE_RATE)?.sell.rateTitle;
 
-		expect(title).toContain('This market printed 1,000 for 30c');
-		expect(title).not.toContain('run the Scale column sizes');
+		expect(title).toContain('Market posts 1,000 for 30c');
+		expect(title).not.toContain('above the ×');
 	});
 
 	it('totals a step whose market posted no pair at all', () => {
@@ -3640,8 +3640,8 @@ describe('row closure', () => {
 			// exchanges the row is priced for.
 			const route = routeSlots(divineScarab(), 0);
 
-			expect(route?.buy.rateTitle).toContain('one order of this market');
-			expect(route?.sell.rateTitle).toContain('one order of this market');
+			expect(route?.buy.rateTitle).toContain('One market order, not the row\'s size');
+			expect(route?.sell.rateTitle).toContain('One market order, not the row\'s size');
 		});
 
 		it('draws the row by the sign of its measurement here too', () => {

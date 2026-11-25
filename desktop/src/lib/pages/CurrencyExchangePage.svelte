@@ -296,8 +296,8 @@
 	 */
 	const gatesEmptyMessage = $derived(
 		movedGates(gates).length === 0 && (gates.minItemPrice > 0 || gates.minItemPriceDiv > 0)
-			? `No play served this hour costs the ${gates.minItemPrice}c (or ${gates.minItemPriceDiv} div, on a divine-quoted entry) minimum item price — those floors are the filters this app arms for you. Type 0 into Min item price and Min item price (div) in the filter bar’s Gates row to see the cheaper plays.`
-			: 'No plays clear your gates right now — lower them in the filter bar’s Gates row.'
+			? `No plays cost at least ${gates.minItemPrice}c (${gates.minItemPriceDiv} div).`
+			: 'No plays clear your gates.'
 	);
 
 	/**
@@ -417,7 +417,7 @@
 			value={parseSort(sortPref.value)}
 			options={SORT_OPTIONS}
 			onselect={(v) => (sortPref.value = parseSort(v))}
-			title="Rank by the simulated chaos the Exp. ROI column shows, by the hour's best-case chaos the ROI column shows, or by how long the market needs to absorb the play's worthwhile scale, shortest wait first. Each sort orders the figure its own column prints and nothing else: the two money columns are one posting of the market the row enters on, so a market that posts a thousand at a time ranks above one that posts a single item at ten times the price, and a row whose column prints a dash has no key and sits at the end. The server's order only breaks ties between rows whose column reads the same."
+			title="Order rows by Exp. ROI, ROI, or shortest Scale wait; dashes sort last."
 		/>
 
 		<div class="divider"></div>
@@ -427,7 +427,7 @@
 			value={parseRowCap(rowCapPref.value)}
 			options={ROW_CAP_OPTIONS}
 			onselect={(v) => (rowCapPref.value = parseRowCap(v))}
-			title="How many rows to draw, from the top of the order you picked. It hides nothing: the counter beside the search says how many plays the filters left and how many the server sent, and offers All in one click. A search ignores it — every match is shown. Clear leaves it alone, like the sort and the density."
+			title="Rows drawn from the top of the chosen order; a search shows every match."
 		/>
 
 		<div class="divider"></div>

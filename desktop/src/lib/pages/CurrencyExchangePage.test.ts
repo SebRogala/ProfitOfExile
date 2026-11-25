@@ -169,7 +169,7 @@ describe('CurrencyExchangePage during a changed-query fetch', () => {
 	});
 });
 
-const NO_OFFERS_LABEL = 'no offers - make your own';
+const NO_OFFERS_LABEL = 'no offers';
 
 /** A play on `name` whose buy or sell leg carries `noOffers`, or neither. */
 function flaggedPlay(name: string, blocked: 'buy' | 'sell' | null) {

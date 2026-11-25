@@ -109,7 +109,7 @@
 
 <div class="picker" bind:this={root} role="dialog" aria-label="Add an item rule">
 	<div class="section">
-		<span class="label">Categories — the coarse layer</span>
+		<span class="label">Categories</span>
 		<ExchangeCategoryPills {categories} {categoryRules} {oncategoryrule} compact />
 	</div>
 
@@ -185,7 +185,7 @@
 		{:else}
 			<div class="empty">
 				{#if items.length === 0}
-					No plays on screen yet, so there is nothing to rule on.
+					No plays yet.
 				{:else}
 					No item in these plays matches “{query}”.
 				{/if}

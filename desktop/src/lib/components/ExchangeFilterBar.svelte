@@ -53,7 +53,7 @@
 	import ExchangeItemPicker from './ExchangeItemPicker.svelte';
 	import ItemIcon from './ItemIcon.svelte';
 	import Tooltip from './Tooltip.svelte';
-	import { EXCHANGE_TOOLTIPS } from '$lib/exchange/tooltips';
+	import { EXCHANGE_TOOLTIPS, NO_OFFERS_LABEL } from '$lib/exchange/tooltips';
 
 	let {
 		categories,
@@ -499,14 +499,11 @@
 		{#if !gatesOpen}
 			<span class="unit-hint">
 				{#if movedKnobs.size > 0}
-					item price, item price (div), profit, turnover, price step, edge vs step, return — your
-					settings run whether or not this row is open
+					item price, item price (div), profit, turnover, price step, edge vs step, return
 				{:else if SHIPPED_FLOORS !== null}
-					item price, item price (div), profit, turnover, price step, edge vs step, return — only {SHIPPED_FLOORS.phrase}
-					{SHIPPED_FLOORS.verb} on
+					item price, item price (div), profit, turnover, price step, edge vs step, return — {SHIPPED_FLOOR_LEVELS.join(', ')} on
 				{:else}
 					item price, item price (div), profit, turnover, price step, edge vs step, return — all off
-					until you set one
 				{/if}
 			</span>
 		{/if}
@@ -545,8 +542,8 @@
 			<button
 				class="clear"
 				title={SHIPPED_FLOORS !== null
-					? `Empties all seven boxes, back to the shipped state: ${SHIPPED_FLOORS.phrase} on, the other ${GATES_SHIPPED_OFF} off — the table shows everything the server served above the trash tier.`
-					: 'Empties all seven boxes, which turns every gate off — the table shows everything the server served.'}
+					? `Resets all seven gates: ${SHIPPED_FLOOR_LEVELS.join(' and ')} floors on, the rest off.`
+					: 'Resets all seven gates: all off.'}
 				onclick={ongatedefaults}>Defaults</button
 			>
 		</div>
@@ -687,7 +684,7 @@
 		{#if counts.capped}
 			<button
 				class="show-all"
-				title="Draws every matching play. Sets the Show pick to All, so it stays lifted until you set it back."
+				title="Draws every matching play by setting Show to All."
 				onclick={onshowall}>show all</button
 			>
 		{/if}
@@ -695,12 +692,12 @@
 			class="no-offers-chip"
 			class:active={noOffersOnly}
 			aria-pressed={noOffersOnly}
-			title="no offers - make your own"
-			onclick={() => onnooffers(!noOffersOnly)}>no offers</button
+			title="Only plays with a step whose book has no offers."
+			onclick={() => onnooffers(!noOffersOnly)}>{NO_OFFERS_LABEL}</button
 		>
 		<button
 			class="clear"
-			title="Clears the category and item rules and the run investment bounds. The gates, the search, the sort, the row cap and the density are left alone."
+			title="Clears category and item rules and Run cost bounds."
 			onclick={onclear}>Clear</button
 		>
 	</div>

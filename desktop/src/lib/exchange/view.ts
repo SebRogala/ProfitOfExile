@@ -981,7 +981,7 @@ function marketPair(
 	const itemQty = leg.priceItemQty;
 	const quoteQty = leg.priceQuoteQty;
 
-	const printed = `This market printed ${withUnit(itemQty, quoteUnit(leg.item))} for ${withUnit(quoteQty, quoteUnit(leg.quote))} — the hour's extreme, exactly as the exchange posts it. The order that fills sits one price step tighter, which is the step the ≈ totals on this row already pay for.`;
+	const printed = `Market posts ${withUnit(itemQty, quoteUnit(leg.item))} for ${withUnit(quoteQty, quoteUnit(leg.quote))}; fills one step tighter.`;
 
 	// Appended to whichever lot clause the count lands on, rather than to the
 	// exact-lot branch alone. Today only that branch can carry it — the buy step
@@ -991,7 +991,7 @@ function marketPair(
 	// anywhere else on the row.
 	const overshoot =
 		runFlips !== null && units > runFlips
-			? ` This market posts ${formatChaos(units)} at a time, more than the ×${formatChaos(runFlips)} run the Scale column sizes — one order is the smallest trade it accepts, so the row counts it whole.`
+			? ` Posts ${formatChaos(units)} at a time, above the ×${formatChaos(runFlips)} run.`
 			: '';
 
 	// A count under a single lot has no order beneath it at all, which is a
@@ -999,19 +999,18 @@ function marketPair(
 	// reader has to act on, since the smallest order this market accepts is more
 	// than the whole play.
 	if (units < itemQty) {
-		return `${printed} This market posts ${formatChaos(itemQty)} at a time, which is more than the ${formatChaos(units)} this row counts — the smallest order it accepts is bigger than the whole play.${overshoot}`;
+		return `${printed} Posts ${formatChaos(itemQty)} at a time, more than this row's ${formatChaos(units)}.${overshoot}`;
 	}
 
 	const rest = units % itemQty;
 	if (rest === 0) return `${printed}${overshoot}`;
 
-	// The verb follows the RESIDUE and not the count beside it: a lot that leaves
-	// one item over reads "1 of the 3 bought stays unsold".
+	// The residue is unsold on the sell step and left over on the buy step.
 	const residue = bought
-		? ` and ${formatChaos(rest)} of the ${formatChaos(units)} bought ${rest === 1 ? 'stays' : 'stay'} unsold.`
-		: ` with ${formatChaos(rest)} left over.`;
+		? `, ${formatChaos(rest)} left unsold.`
+		: `, ${formatChaos(rest)} left over.`;
 	const whole = Math.floor(units / itemQty);
-	return `${printed} This market posts in multiples of ${formatChaos(itemQty)}, so the ${formatChaos(units)} this row counts is ${formatChaos(whole)} whole ${whole === 1 ? 'order' : 'orders'}${residue}${overshoot}`;
+	return `${printed} ${formatChaos(whole)} ${whole === 1 ? 'order' : 'orders'}${residue}${overshoot}`;
 }
 
 /**
@@ -1063,7 +1062,7 @@ function pairLine(verb: string, leg: CurrencyExchangeLeg): string {
  * match.
  */
 const LOT_NOT_SCALE_PAIR =
-	'This step has no total to print, so the line shows one order of this market — the quantity pair it posts — while the amounts at both ends of the row count the exchanges the row is priced for.';
+	'One market order, not the row\'s size; see Spend and Get.';
 
 /**
  * The same caveat for a line that fell all the way through to the DECIMAL rate.
@@ -1071,12 +1070,10 @@ const LOT_NOT_SCALE_PAIR =
  * Such a line posts no pair, so the pair wording above would name a quantity
  * that is nowhere on screen — the caveat would be describing the reading the
  * reader was not given. What is true of it instead is that it is a per-unit
- * rate, which is not an order the exchange can hold at all; the count-versus-lot
- * half of the sentence is unchanged, because the ends beside it still count the
- * row's own size either way.
+ * rate, which is not an order the exchange can hold at all.
  */
 const LOT_NOT_SCALE_RATE =
-	'This step has no total to print and this market posted no quantity pair, so the line shows its per-unit rate alone while the amounts at both ends of the row count the exchanges the row is priced for.';
+	'Per-unit rate; this market posted no quantity pair.';
 
 /**
  * Whichever of the two caveats matches the branch `pairLine` took for this leg.
@@ -1088,9 +1085,9 @@ function lotNotScale(leg: CurrencyExchangeLeg): string {
 	return hasQuantityPair(leg) ? LOT_NOT_SCALE_PAIR : LOT_NOT_SCALE_RATE;
 }
 
-/** Why a convert step fell back to its market's ratio, appended to `lotNotScale`. */
+/** Why a convert step fell back to its market's ratio. */
 const CONVERT_UNPRICED =
-	'This market carried no usable price this hour, so the proceeds of the sale are read off the sell step instead.';
+	'No convert price this hour; proceeds read off the sell step.';
 
 /**
  * The Get slot's profit line: `keep ≈ 102c`, `lose ≈ 3c`, `keep ≈ 0c`.
@@ -1397,7 +1394,7 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 			return step(
 				convertLeg,
 				pairLine('convert', convertLeg),
-				`${lotNotScale(convertLeg)} ${CONVERT_UNPRICED}`
+				CONVERT_UNPRICED
 			);
 		}
 		return {
@@ -1407,7 +1404,7 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 			name: null,
 			icon: convertLeg.itemIcon,
 			rate: `≈ ${withOrbUnit(ledger.sellTotal, quoteUnit(convertLeg.item))} → ${withOrbUnit(ledger.chainEnd, entryUnitShort)}`,
-			rateTitle: `${convertLeg.itemName} — this market posts "${pairLine('convert', convertLeg)}". The line totals what this row counts instead: the step-2 proceeds it converts, and what the hour's best case would have paid for them — the Spend plus the ROI column. The Get slot at the end of the row is the Spend plus the Exp. ROI column, and the gap between the two amounts is the gap between those two columns. Both identities are in chaos, and a divine-entry route prints them at the divine rate.`,
+			rateTitle: `${convertLeg.itemName} — Market posts "${pairLine('convert', convertLeg)}"; total is Spend + ROI (Get is Spend + Exp. ROI).`,
 			suspect: convertLeg.suspect,
 			// The convert step carries its own book-shape flag for the same reason it
 			// carries its own `suspect`: the third trade is a real order against a

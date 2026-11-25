@@ -73,6 +73,7 @@
 		type RouteStep
 	} from '$lib/exchange/view';
 	import ItemIcon from './ItemIcon.svelte';
+	import { NO_OFFERS_LABEL } from '$lib/exchange/tooltips';
 
 	let {
 		play,
@@ -100,8 +101,6 @@
 		 */
 		showConvert: boolean;
 	} = $props();
-
-	const NO_OFFERS_LABEL = 'no offers - make your own';
 
 	const route = $derived(routeSlots(play, divineChaosRate));
 	const dense = $derived(density === 'dense');
