@@ -2443,6 +2443,18 @@ pub(crate) mod tests {
         let slice = state.temple.lock().unwrap().clone();
         assert_eq!(slice.config, settings.temple_config);
         assert_eq!(slice.profile, settings.temple_profile);
+        // POE-415: the Consolidation row's tooltip glosses ride the same
+        // seeding, so the page can explain the options with the module off.
+        assert_eq!(
+            serde_json::to_value(&slice).expect("slice serialises")["consolidationGlosses"],
+            serde_json::json!({
+                "nonResidentExtraTier": "T1 room: upgrade → T3, change → T1",
+                "residentCarry": "T1 room: upgrade → T2, change → T2",
+                "notTaken": "T1 room: upgrade → T2, change → T1",
+                "cradle": "always built at tier 3",
+                "unsetPlays": "nonResidentExtraTier"
+            }),
+        );
     }
 
     /// A frame measurement fixed at a known instant, so a round trip has real
