@@ -2,6 +2,7 @@ package tier
 
 import (
 	"reflect"
+	"strconv"
 	"testing"
 )
 
@@ -403,5 +404,106 @@ func TestClassify_GroupsSharingKeysClassifyIndependently(t *testing.T) {
 	}
 	if len(joint.Items) != len(a)+len(b) {
 		t.Errorf("classified %d items, want %d", len(joint.Items), len(a)+len(b))
+	}
+}
+
+// labLikePolicy mirrors Lab's tier policy: a 5c cutoff.
+var labLikePolicy = Policy{CutoffChaos: 5, HasCutoff: true}
+
+func gatedItem(group, key string, price float64, depth int) Item {
+	it := item(group, key, price, depth)
+	it.Gated = true
+	return it
+}
+
+// keep:happy — the ruled Covens-shaped 20/20 example.
+func TestKeepHappy_ClassifyGatedCovensGroupKeepsEveryRowWithoutBoundariesOrTop(t *testing.T) {
+	prices := []float64{527, 264, 170, 88, 64, 45, 33, 24, 17, 12, 8}
+	items := make([]Item, len(prices))
+	for i, price := range prices {
+		items[i] = gatedItem("20/20", "covens-"+strconv.Itoa(i), price, 1+i%2)
+	}
+
+	res := Classify(items, labLikePolicy)
+
+	if len(res.Items) != len(items) {
+		t.Errorf("len(Items) = %d, want %d — every gated row must stay", len(res.Items), len(items))
+	}
+	for _, it := range items {
+		got, ok := res.Items[k(it.Group, it.Key)]
+		if !ok {
+			t.Errorf("%s (%.0fc) missing from Items", it.Key, it.Price)
+			continue
+		}
+		if !got.LowConfidence {
+			t.Errorf("%s (%.0fc) LowConfidence = false, want true", it.Key, it.Price)
+		}
+	}
+	if b, ok := res.Boundaries["20/20"]; ok {
+		t.Errorf("Boundaries[20/20] = %+v, want no entry for an all-gated group", b)
+	}
+	if tb, ok := res.TopBoundary["20/20"]; ok {
+		t.Errorf("TopBoundary[20/20] = %v, want no entry for an all-gated group", tb)
+	}
+}
+
+// keep:critical — silent: a gated ask re-anchoring the group would relabel
+// every tier that later steps trust.
+func TestKeepCritical_ClassifyGatedOutlierMovesNoBoundaryOrTop(t *testing.T) {
+	prices := []float64{300, 280, 150, 120, 100, 90, 70, 50, 40, 30}
+	depths := []int{30, 35, 40, 45, 50, 50, 55, 60, 65, 70} // median 50
+	base := make([]Item, len(prices))
+	for i := range prices {
+		base[i] = item("deep", "gem-"+strconv.Itoa(i), prices[i], depths[i])
+	}
+	outlier := gatedItem("deep", "gated-outlier", 527, 50)
+	withOutlier := append(append([]Item{}, base...), outlier)
+
+	want := Classify(base, labLikePolicy)
+	if _, ok := want.TopBoundary["deep"]; !ok {
+		t.Fatalf("fixture: base group has no TopBoundary; the comparison would be vacuous")
+	}
+	got := Classify(withOutlier, labLikePolicy)
+
+	if !reflect.DeepEqual(got.Boundaries["deep"], want.Boundaries["deep"]) {
+		t.Errorf("Boundaries[deep] = %+v, want %+v (as without the gated item)", got.Boundaries["deep"], want.Boundaries["deep"])
+	}
+	gotTop, gotOK := got.TopBoundary["deep"]
+	if wantTop := want.TopBoundary["deep"]; !gotOK || gotTop != wantTop {
+		t.Errorf("TopBoundary[deep] = %v (present %v), want %v (as without the gated item)", gotTop, gotOK, wantTop)
+	}
+	wantClass := Classification{Tier: Chaotic, LowConfidence: true}
+	if c := got.Items[k("deep", "gated-outlier")]; c != wantClass {
+		t.Errorf("gated outlier = %+v, want %+v", c, wantClass)
+	}
+}
+
+// keep:critical — silent (row a): Double-corrupt reads LowConfidence directly
+// and would price gated outcomes.
+func TestKeepCritical_LowConfidenceIncludesGatedItems(t *testing.T) {
+	peers := []Item{
+		item("20/20", "peer-a", 120, 40),
+		item("20/20", "peer-b", 90, 40),
+		item("20/20", "peer-c", 60, 40),
+		item("20/20", "peer-d", 30, 40),
+	}
+	gated := gatedItem("20/20", "gated", 50, 40)
+	items := append(append([]Item{}, peers...), gated)
+
+	tests := []struct {
+		name   string
+		policy Policy
+	}{
+		{"lab-like cutoff policy", labLikePolicy},
+		{"depth unknown", Policy{DepthUnknown: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := LowConfidence(items, tt.policy)
+			want := map[Key]bool{k("20/20", "gated"): true}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("LowConfidence = %v, want %v", got, want)
+			}
+		})
 	}
 }

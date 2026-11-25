@@ -62,6 +62,9 @@ type Item struct {
 	Key   string
 	Price float64
 	Depth int
+	// Gated is a caller-owned eligibility input: a gated item keeps its row
+	// and takes no part in TOP or boundaries.
+	Gated bool
 }
 
 // Key identifies a classified item.
