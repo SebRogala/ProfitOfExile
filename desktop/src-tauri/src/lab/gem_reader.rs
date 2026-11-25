@@ -1548,6 +1548,42 @@ mod tests {
                     assert_eq!((selected, read.lab), (false, None), "{case}: an unread strip selects no frame");
                 }
             }
+
+            /// Silent consequence: with the Manual tooltip band unset or past
+            /// the capture edge, a hovered press would crop the band at a
+            /// fallback or past-edge rect on every hover and override the
+            /// slot's icon read with a silently wrong gem name.
+            #[test]
+            fn an_unread_manual_tooltip_band_selects_the_frame_without_its_hover() {
+                let frame = capture_with_panel_at_manual_slots();
+                let on_slot_0 = Some((850, 397));
+                let with_band = |lab_gem: Option<[i32; 4]>| {
+                    let mut setting = manual_slots(Some(STRIP));
+                    if let Some(manual) = setting.manual.as_mut() { manual.lab_gem = lab_gem; }
+                    setting
+                };
+                let control = state_on_whole_capture(with_band(Some([826, 0, 600, 53])));
+                let mut read = PendingGemRead { cursor: on_slot_0, ..pending(&control) };
+                assert!(read.probe_in(&frame, &control), "control: a readable band selects the frame");
+                assert_eq!(read.cursor, on_slot_0, "control: a readable band keeps the hover");
+                let cases = [
+                    ("tooltip band unset", None),
+                    ("tooltip band past x = 2560", Some([2600, 0, 400, 53])),
+                ];
+
+                for (case, band) in cases {
+                    let state = state_on_whole_capture(with_band(band));
+                    let mut read = PendingGemRead { cursor: on_slot_0, ..pending(&state) };
+
+                    let selected = read.probe_in(&frame, &state);
+
+                    assert_eq!(
+                        (selected, read.lab.map(|lab| lab.gem_slots), read.cursor),
+                        (true, Some(MANUAL_SLOTS), None),
+                        "{case}: the icon read keeps the frame, the unread band drops the hover",
+                    );
+                }
+            }
         }
 
         mod keep_regression {
