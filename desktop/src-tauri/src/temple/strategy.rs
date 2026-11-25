@@ -10,12 +10,12 @@
 //! A finished temple is scored from the rooms that are **reachable from the
 //! Entrance**. A matching entry in [`StrategyProfile::combinations`] wins
 //! outright; otherwise the reachable lines' per-tier values are summed. On top
-//! of that sits the Apex term, then RD's per-room baseline. Traversal cost
+//! of that sits the Apex term unless the combination includes it, then RD's
+//! per-room baseline. Traversal cost
 //! (`path_cost`) is subtracted separately — see [`StrategyProfile::path_penalty`].
 //!
 //! Combinations price joint outcomes that per-room sums cannot express.
-//! The Cradle-plus-Apex base profile has no combination; the Apex connection
-//! is scored by its own term.
+//! The Cradle-plus-Apex base profile prices the reached pair as one outcome.
 //!
 //! # Partial credit is essentially none
 //!
@@ -244,6 +244,13 @@ pub enum ModeRule {
 
 // ------------------------------------------------------------- combination --
 
+// The Apex is a non-tiered objective, never a room in the draw pool.
+const APEX_OBJECTIVE_KEY: &str = "apex";
+
+fn is_apex_requirement((line, tier): &(Line, Tier)) -> bool {
+    line.key() == APEX_OBJECTIVE_KEY && *tier == Tier::T0
+}
+
 /// A whole-temple outcome that is worth more (or less) than the sum of its
 /// rooms.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -251,19 +258,31 @@ pub struct Combination {
     /// Every `(line, tier)` that must be reachable. A reached room satisfies a
     /// requirement when its line matches and its tier is **at least** the
     /// required one — a higher tier of the same line is strictly better, so it
-    /// can never fail a lower-tier requirement.
+    /// can never fail a lower-tier requirement. The reserved `(apex, T0)`
+    /// requirement instead denotes Apex reachability, not a room.
     pub requires: Vec<(Line, Tier)>,
     /// The score of the whole outcome. Replaces the per-room sum entirely.
     pub score: f64,
 }
 
 impl Combination {
-    fn matches(&self, reached: &BTreeMap<Line, Tier>) -> bool {
-        self.requires.iter().all(|(line, tier)| {
-            reached
-                .get(line)
-                .is_some_and(|reached_tier| *reached_tier >= *tier)
-        })
+    pub(crate) fn room_requirements(&self) -> impl Iterator<Item = &(Line, Tier)> {
+        self.requires
+            .iter()
+            .filter(|requirement| !is_apex_requirement(requirement))
+    }
+
+    fn requires_apex(&self) -> bool {
+        self.requires.iter().any(is_apex_requirement)
+    }
+
+    fn matches(&self, reached: &BTreeMap<Line, Tier>, apex_reached: bool) -> bool {
+        (!self.requires_apex() || apex_reached)
+            && self.room_requirements().all(|(line, tier)| {
+                reached
+                    .get(line)
+                    .is_some_and(|reached_tier| *reached_tier >= *tier)
+            })
     }
 }
 
@@ -286,7 +305,8 @@ pub struct StrategyProfile {
     #[serde(default)]
     pub grade_fallback: BTreeMap<Line, [bool; 3]>,
     /// What the Apex is worth **on its own**. On a board that already carries
-    /// value the Apex instead adds [`Self::apex_mixed_increment`].
+    /// value the Apex instead adds [`Self::apex_mixed_increment`], unless the
+    /// winning combination already includes the Apex.
     pub apex_score: f64,
     /// What the Apex adds to a board that *already* carries value, as opposed
     /// to the full [`Self::apex_score`] paid when the Apex is all there is.
@@ -411,7 +431,7 @@ impl StrategyProfile {
     }
 
     /// Cradle of Creation plus an Apex connection (Desk poe-temple-targets-1124).
-    /// The Cradle carries the reference room value; the Apex uses its own term.
+    /// The reached pair is one whole outcome; a bare Apex uses its own term.
     pub fn cradle_apex() -> StrategyProfile {
         let mut room_values = BTreeMap::new();
         room_values.insert(
@@ -431,7 +451,13 @@ impl StrategyProfile {
             grade_fallback: BTreeMap::new(),
             apex_score: 2.0,
             apex_mixed_increment: 0.5,
-            combinations: vec![],
+            combinations: vec![Combination {
+                requires: vec![
+                    (Line::named(super::rooms::CRADLE_LINE_KEY), Tier::T3),
+                    (Line::named(APEX_OBJECTIVE_KEY), Tier::T0),
+                ],
+                score: 14.0,
+            }],
             // Free parameters, both carried over from the prototype and both
             // still untuned against real outcomes.
             room_baseline: 0.05,
@@ -466,8 +492,8 @@ impl StrategyProfile {
     ) -> f64 {
         let best: BTreeMap<Line, Tier> = highest_tier_per_line(reached);
 
-        let combination = self.best_combination(&best);
-        let core = combination.unwrap_or_else(|| self.sum_room_values(&best));
+        let combination = self.best_combination(&best, apex_reached);
+        let core = combination.map_or_else(|| self.sum_room_values(&best), |winner| winner.score);
 
         // "The board already carries value" is a question about what was
         // *matched*, not about the sign of the number: a profile is free to
@@ -475,7 +501,7 @@ impl StrategyProfile {
         // bare Apex.
         let carries_value = combination.is_some() || core > 0.0;
 
-        let apex = if !apex_reached {
+        let apex = if !apex_reached || combination.is_some_and(Combination::requires_apex) {
             0.0
         } else if carries_value {
             self.apex_mixed_increment
@@ -551,14 +577,17 @@ impl StrategyProfile {
         }
     }
 
-    fn best_combination(&self, reached: &BTreeMap<Line, Tier>) -> Option<f64> {
+    fn best_combination(
+        &self,
+        reached: &BTreeMap<Line, Tier>,
+        apex_reached: bool,
+    ) -> Option<&Combination> {
         self.combinations
             .iter()
-            .filter(|combination| combination.matches(reached))
-            .map(|combination| combination.score)
-            .fold(None, |best: Option<f64>, score| match best {
-                Some(current) if current >= score => Some(current),
-                _ => Some(score),
+            .filter(|combination| combination.matches(reached, apex_reached))
+            .fold(None, |best: Option<&Combination>, candidate| match best {
+                Some(current) if current.score >= candidate.score => Some(current),
+                _ => Some(candidate),
             })
     }
 

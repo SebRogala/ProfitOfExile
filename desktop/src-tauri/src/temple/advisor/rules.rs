@@ -28,8 +28,8 @@
 //!
 //! # The chain
 //!
-//! `RV > RU > R1-apex-reaches > R1-apex-adjacent > RD > R2 > RA > R1-gradient >
-//! RS`, and generic cluster-merging ranked below R2 while no cluster holds
+//! `no-Cradle Apex connection > RV > RU > R1-apex-reaches > R1-apex-adjacent >
+//! RD > R2 > RA > R1-gradient > RS`, and generic cluster-merging ranked below R2 while no cluster holds
 //! value.
 //!
 //! That order is not a description of [`DoorKey`] — it IS [`DoorKey`], read off
@@ -641,6 +641,8 @@ fn hops_to(open: &[SlotMask; 13], from: Slot, target: SlotMask) -> Option<usize>
 /// better.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DoorKey {
+    /// A newly purchased Entrance-to-Apex connection, while no Cradle T3
+    /// exists after the kill, outranks RV's room count via a 13-slot radix.
     /// RV, generalised past the room you are standing in: how many rooms of a
     /// target line the set newly connects to the Entrance.
     ///
@@ -838,10 +840,10 @@ pub fn evaluate_rules(
         scarcest = scarcest.min(lattice_degree(far));
     }
 
-    let connects_value = newly_connected_targets(board, &open, &trial, valuation);
-    if connects_value > 0 {
+    let connected_targets = newly_connected_targets(board, &open, &trial, valuation);
+    if connected_targets > 0 {
         reasons.push(Reason::RvMerge {
-            rooms: connects_value as usize,
+            rooms: connected_targets as usize,
         });
     }
     // One R1-apex reason per option, reporting the best level the set reached —
@@ -856,6 +858,16 @@ pub fn evaluate_rules(
     // The board AFTER the kill and the set, the reading RU takes below: a kill
     // that builds a wanted room in this very slot counts it.
     let after = applied(board, position, architect, doors);
+    let has_cradle = after.rooms.iter().any(|(line, tier)| {
+        *tier == Tier::T3
+            && line
+                .as_ref()
+                .is_some_and(|line| line.key() == crate::temple::rooms::CRADLE_LINE_KEY)
+    });
+    let connects_apex = !has_cradle
+        && !mask_holds(component(&open, Slot::ENTRANCE), Slot::APEX.index())
+        && mask_holds(component(&trial, Slot::ENTRANCE), Slot::APEX.index());
+    let connects_value = u8::from(connects_apex) * Slot::ALL.len() as u8 + connected_targets;
     let wanted = wanted_rooms(&after, valuation);
     let walks = Walks::measure(&after.adjacency(), &wanted);
     if !doors.is_empty() {

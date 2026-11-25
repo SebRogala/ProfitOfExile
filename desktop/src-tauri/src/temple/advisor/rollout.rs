@@ -145,7 +145,7 @@ impl Valuation {
             }
         }
         for combination in &profile.combinations {
-            for (line, _) in &combination.requires {
+            for (line, _) in combination.room_requirements() {
                 if !lines.contains(line) {
                     lines.push(line.clone());
                 }
