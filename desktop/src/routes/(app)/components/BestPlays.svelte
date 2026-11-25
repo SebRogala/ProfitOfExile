@@ -181,25 +181,30 @@
 										{#if gem.confidence === 'NO_BASE'}<span class="amt muted">not listed</span>{:else}{@render currency(gem.basePrice, 18)}{/if}
 										{#if gem.name.includes(' of ')}
 											{@const url = baseGemTradeUrl(gem.name, gem.variant, ssot.league)}
-											<span class="btn-cell"><Tooltip text={url ? `Buy ${baseGemName(gem.name)} (${gem.variant})` : 'League not detected'}><BuyButton label="BUY BASE" href={url} colour="blue" width="auto" /></Tooltip></span>
+											<span class="btn-cell"><Tooltip text={url ? `Buy ${baseGemName(gem.name)} (${gem.variant})` : 'League not detected'}><BuyButton label="BUY" href={url} width="fixed" name={url ? `Buy ${baseGemName(gem.name)} (${gem.variant})` : 'League not detected'} /></Tooltip></span>
 										{/if}
 									</div>
 									{#if gem.gcpRecipeCost > 0}
 										<div class="sub">
 											<div class="fact" class:two={!gem.name.includes(' of ')}>
-												<span class="fact-label gcp-label">GCP recipe</span>
+												<span class="fact-label recipe-label"><span class="gcp-label">GCP recipe</span>
+													<span class="delta" class:delta-good={gem.gcpRecipeSaves >= 0} class:delta-bad={gem.gcpRecipeSaves < 0}>
+														{gem.gcpRecipeSaves >= 0 ? 'saves' : 'costs'} {@render currency(Math.abs(gem.gcpRecipeSaves), 16)}{#if gem.gcpRecipeSaves < 0} more{/if}
+													</span>
+												</span>
 												{@render currency(gem.gcpRecipeCost, 18)}
+											</div>
+											<div class="fact" class:two={!gem.name.includes(' of ')}>
+												<span class="fact-label">20/0 base</span>
+												{@render currency(gem.gcpRecipeBase, 18)}
 												{#if gem.name.includes(' of ')}
 													{@const url = baseGemTradeUrl(gem.name, '20/0', ssot.league)}
-													<span class="btn-cell"><Tooltip text={url ? `Buy ${baseGemName(gem.name)} (20/0)` : 'League not detected'}><BuyButton label="BUY 20/0" href={url} colour="blue" width="auto" /></Tooltip></span>
+													<span class="btn-cell"><Tooltip text={url ? `Buy ${baseGemName(gem.name)} (20/0)` : 'League not detected'}><BuyButton label="BUY" href={url} width="fixed" name={url ? `Buy ${baseGemName(gem.name)} (20/0)` : 'League not detected'} /></Tooltip></span>
 												{/if}
 											</div>
-											<div class="gcp-sum">
-												<span class="term">20/0 base {@render currency(gem.gcpRecipeBase, 18)}</span>
-												<span class="term">+ <ItemIcon src={iconSrc(getApiBase(), currencyIconPath('Metadata/Items/Currency/CurrencyGemQuality'))} alt="Gemcutter's Prism" size={18} /> GCPs {@render currency(gem.gcpRecipeCost - gem.gcpRecipeBase, 18)}</span>
-												<span class="delta" class:delta-good={gem.gcpRecipeSaves >= 0} class:delta-bad={gem.gcpRecipeSaves < 0}>
-													{gem.gcpRecipeSaves >= 0 ? 'saves' : 'costs'} {@render currency(Math.abs(gem.gcpRecipeSaves), 16)}{#if gem.gcpRecipeSaves < 0} more{/if}
-												</span>
+											<div class="fact" class:two={!gem.name.includes(' of ')}>
+												<span class="fact-label term">+ <ItemIcon src={iconSrc(getApiBase(), currencyIconPath('Metadata/Items/Currency/CurrencyGemQuality'))} alt="Gemcutter's Prism" size={18} /> GCPs</span>
+												{@render currency(gem.gcpRecipeCost - gem.gcpRecipeBase, 18)}
 											</div>
 										</div>
 									{/if}
@@ -435,17 +440,18 @@
 	.detail-card { background: var(--color-lab-surface); border: 1px solid var(--color-lab-border); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 	.eyebrow { font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-lab-text-secondary); display: flex; align-items: center; gap: 6px; }
 	.step { color: var(--color-lab-text); background: var(--color-lab-border); width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.625rem; }
-	.fact { display: grid; grid-template-columns: minmax(0, 1fr) auto 76px; align-items: center; column-gap: 8px; min-height: 26px; }
+	.fact { display: grid; grid-template-columns: minmax(0, 1fr) auto 56px; align-items: center; column-gap: 8px; min-height: 26px; }
 	.fact.two { grid-template-columns: minmax(0, 1fr) auto; }
 	.btn-cell { justify-self: end; }
 	.fact-label { min-width: 0; }
+	.fact > .amt { justify-self: end; }
+	.recipe-label { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 	.var { color: var(--color-lab-text-secondary); font-size: 0.75rem; margin-left: 4px; }
 	.amt { display: inline-flex; align-items: center; gap: 3px; color: var(--color-lab-text); font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
 	.amt.big { font-size: 1rem; font-weight: 700; }
 	.amt.muted { color: var(--color-lab-text-secondary); }
 	.sub { border-top: 1px dashed var(--color-lab-border); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 	.gcp-label { color: #fbbf24; font-weight: 600; font-size: 0.8125rem; white-space: nowrap; }
-	.gcp-sum { display: flex; align-items: center; column-gap: 8px; row-gap: 4px; flex-wrap: wrap; font-size: 0.8125rem; }
 	.term { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 	.delta { font-size: 0.75rem; font-weight: 700; padding: 1px 6px; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 	.delta .amt { color: inherit; font-weight: inherit; }

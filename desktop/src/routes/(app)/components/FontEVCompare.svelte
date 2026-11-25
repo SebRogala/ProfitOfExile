@@ -278,11 +278,11 @@
 				<Tooltip text={feeder.source === 'trade' ? 'Buy the cheapest Exceptional Support Gem lv 3+' : `Buy ${feeder.name} · any corruption`}><BuyButton
 					label="BUY"
 					href={url}
-					colour="blue"
+					name={feeder.source === 'trade' ? 'Buy the cheapest Exceptional Support Gem lv 3+' : `Buy ${feeder.name} · any corruption`}
 					width="fixed"
 				/></Tooltip>
 			{:else if feeder.source === 'trade'}
-				<BuyButton label="BUY" href={null} colour="blue" width="fixed" title="League not detected — trade link unavailable" />
+				<BuyButton label="BUY" href={null} width="fixed" title="League not detected — trade link unavailable" name="League not detected — trade link unavailable" />
 			{/if}
 		{/snippet}
 		{#snippet lensBuy()}
@@ -290,7 +290,7 @@
 				<Tooltip text="Buy Facetor's Lens · stored experience ≥ 999,627,000"><BuyButton
 					label="BUY"
 					href={lens.lensUrl}
-					colour="blue"
+					name="Buy Facetor's Lens · stored experience ≥ 999,627,000"
 					width="fixed"
 				/></Tooltip>
 			{/if}

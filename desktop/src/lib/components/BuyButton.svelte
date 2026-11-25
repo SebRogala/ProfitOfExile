@@ -1,17 +1,18 @@
 <script lang="ts">
-	let { label, href, colour, width = 'fixed', title }: {
+	let { label, href, colour, width = 'fixed', title, name }: {
 		label: string;
 		href: string | null;
-		colour: 'red' | 'green' | 'blue';
+		colour?: 'red' | 'green' | 'blue';
 		width?: 'fixed' | 'auto';
 		title?: string;
+		name?: string;
 	} = $props();
 </script>
 
 {#if href !== null}
-	<a class="buy-btn buy-{colour}" class:buy-auto={width === 'auto'} {href} target="_blank" {title}>{label}</a>
+	<a class="buy-btn buy-{colour ?? 'action'}" class:buy-auto={width === 'auto'} {href} target="_blank" {title} aria-label={name}>{label}</a>
 {:else}
-	<span class="buy-btn buy-{colour} buy-disabled" class:buy-auto={width === 'auto'} aria-disabled="true" {title}>{label}</span>
+	<span class="buy-btn buy-{colour ?? 'action'} buy-disabled" class:buy-auto={width === 'auto'} aria-disabled="true" {title} aria-label={name}>{label}</span>
 {/if}
 
 <style>
@@ -42,17 +43,30 @@
 		border-color: rgba(239, 68, 68, 0.4);
 		background: rgba(239, 68, 68, 0.08);
 	}
-	.buy-red:hover { background: rgba(239, 68, 68, 0.2); }
+	a.buy-red:hover { background: rgba(239, 68, 68, 0.2); }
 	.buy-green {
 		color: var(--color-lab-green);
 		border-color: rgba(34, 197, 94, 0.4);
 		background: rgba(34, 197, 94, 0.08);
 	}
-	.buy-green:hover { background: rgba(34, 197, 94, 0.2); }
+	a.buy-green:hover { background: rgba(34, 197, 94, 0.2); }
 	.buy-blue {
 		color: var(--color-lab-blue, #3b82f6);
 		border-color: rgba(59, 130, 246, 0.4);
 		background: rgba(59, 130, 246, 0.08);
 	}
-	.buy-blue:hover { background: rgba(59, 130, 246, 0.2); }
+	a.buy-blue:hover { background: rgba(59, 130, 246, 0.2); }
+	.buy-action {
+		color: var(--color-lab-buy);
+		border-color: color-mix(in srgb, var(--color-lab-buy) 45%, transparent);
+		background: color-mix(in srgb, var(--color-lab-buy) 6%, transparent);
+	}
+	a.buy-action:hover {
+		border-color: var(--color-lab-buy);
+		background: color-mix(in srgb, var(--color-lab-buy) 14%, transparent);
+	}
+	.buy-btn:focus-visible {
+		outline: 2px solid currentColor;
+		outline-offset: 2px;
+	}
 </style>

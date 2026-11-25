@@ -28,6 +28,7 @@
 	--color-lab-surface: #1a1d27;
 	--color-lab-border: #2a2d37;
 	--color-lab-text: #e4e4e7;
+	--color-lab-buy: var(--color-lab-text);
 	--color-lab-text-secondary: #9ca3af;
 	--color-lab-text-muted: #888;
 	--color-lab-green: #22c55e;
