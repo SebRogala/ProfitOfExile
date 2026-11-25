@@ -173,6 +173,35 @@ fn client_in_capture(game_client: Option<[i32; 4]>, origin: (i32, i32), size: (u
     }
 }
 
+#[allow(dead_code)]
+fn rendered_area(_image: &image::RgbaImage) -> Option<[i32; 4]> {
+    None
+}
+
+#[derive(Default)]
+#[allow(dead_code)]
+struct RenderedClientLatch;
+
+#[allow(dead_code)]
+impl RenderedClientLatch {
+    fn select(&self, raw: Option<[i32; 4]>, origin: (i32, i32), size: (u32, u32)) -> [i32; 4] {
+        client_in_capture(raw, origin, size)
+    }
+
+    fn observe(
+        &mut self,
+        raw: Option<[i32; 4]>,
+        origin: (i32, i32),
+        size: (u32, u32),
+        probe: impl FnOnce() -> Option<[i32; 4]>,
+    ) -> [i32; 4] {
+        if client_in_capture(raw, origin, size) == [0, 0, size.0 as i32, size.1 as i32] {
+            let _ = probe();
+        }
+        self.select(raw, origin, size)
+    }
+}
+
 /// The Recalibrate log line naming the raw game client read, the captured
 /// monitor's origin and size, and the client the measurement actually used.
 pub(crate) fn recalibrate_client_diagnostic(
@@ -807,8 +836,43 @@ mod tests {
     use super::{ocr_upscale_factor, ocr_upscaled_size, preprocess_for_ocr, preprocess_for_ocr_fast};
     use image::{DynamicImage, ImageBuffer, Luma};
 
+    fn bordered_frame(size: (u32, u32), bars: [u32; 4], dark: u8) -> image::RgbaImage {
+        let [left, top, right, bottom] = bars;
+        image::RgbaImage::from_fn(size.0, size.1, |x, y| {
+            if x < left || x >= size.0 - right || y < top || y >= size.1 - bottom {
+                image::Rgba([dark, dark, dark, 255])
+            } else {
+                image::Rgba([48, 96, 144, 255])
+            }
+        })
+    }
+
     mod keep_happy {
-        use super::super::{client_in_capture, recalibrate_client_diagnostic};
+        use super::super::{client_in_capture, recalibrate_client_diagnostic, rendered_area, RenderedClientLatch};
+        use super::bordered_frame;
+
+        #[test]
+        fn a_pillarboxed_fullscreen_frame_trims_the_client_to_the_rendered_area() {
+            let mut latch = RenderedClientLatch::default();
+            let windowed = Some([2080, 90, 1600, 900]);
+            assert_eq!(
+                latch.observe(windowed, (1920, 0), (1920, 1080), || panic!("windowed clients must skip the pixel probe")),
+                [160, 90, 1600, 900]
+            );
+            let frame = bordered_frame((3840, 1080), [640, 0, 640, 0], 0);
+            let raw = Some([0, 0, 3840, 1080]);
+            assert_eq!(latch.observe(raw, (0, 0), frame.dimensions(), || rendered_area(&frame)), [0, 0, 3840, 1080]);
+            assert_eq!(latch.observe(raw, (0, 0), frame.dimensions(), || rendered_area(&frame)), [640, 0, 2560, 1080]);
+        }
+
+        #[test]
+        fn a_letterboxed_frame_trims_rows() {
+            let mut latch = RenderedClientLatch::default();
+            let frame = bordered_frame((2560, 1440), [0, 180, 0, 180], 12);
+            let raw = Some([0, 0, 2560, 1440]);
+            assert_eq!(latch.observe(raw, (0, 0), frame.dimensions(), || rendered_area(&frame)), [0, 0, 2560, 1440]);
+            assert_eq!(latch.observe(raw, (0, 0), frame.dimensions(), || rendered_area(&frame)), [0, 180, 2560, 1080]);
+        }
 
         #[test]
         fn a_windowed_client_is_carried_capture_relative() {
@@ -828,11 +892,92 @@ mod tests {
                 line,
                 "Recalibrate: game client Some([0, 0, 2560, 1080]) (desktop px), monitor origin (0, 0) size 2560x1440 -> client used [0, 0, 2560, 1080] (client inside the capture)"
             );
+            let line = recalibrate_client_diagnostic(
+                Some([0, 0, 3840, 1080]), (0, 0), (3840, 1080), [640, 0, 2560, 1080],
+            );
+            assert!(line.contains("client used [640, 0, 2560, 1080]"), "line: {line:?}");
+            assert!(line.contains("trim"), "active trim must be named: {line:?}");
         }
     }
 
     mod keep_critical {
-        use super::super::{client_in_capture, recalibrate_client_diagnostic};
+        use super::super::{client_in_capture, recalibrate_client_diagnostic, rendered_area, RenderedClientLatch};
+        use super::bordered_frame;
+
+        /// Silent consequence: trusted crops move into black bars or reuse another display's geometry.
+        #[test]
+        fn an_all_black_frame_keeps_the_latched_client() {
+            let mut latch = RenderedClientLatch::default();
+            let size = (3840, 1080);
+            let raw = Some([0, 0, 3840, 1080]);
+            let frame = bordered_frame(size, [640, 0, 640, 0], 0);
+            let black = image::RgbaImage::from_pixel(size.0, size.1, image::Rgba([0, 0, 0, 255]));
+            assert_eq!(latch.observe(raw, (0, 0), size, || rendered_area(&frame)), [0, 0, 3840, 1080]);
+            assert_eq!(latch.observe(raw, (0, 0), size, || rendered_area(&black)), [0, 0, 3840, 1080]);
+            assert_eq!(latch.observe(raw, (0, 0), size, || rendered_area(&frame)), [0, 0, 3840, 1080]);
+            assert_eq!(latch.observe(raw, (0, 0), size, || rendered_area(&frame)), [640, 0, 2560, 1080]);
+            assert_eq!(latch.observe(raw, (0, 0), size, || rendered_area(&black)), [640, 0, 2560, 1080]);
+
+            let other = bordered_frame(size, [960, 0, 960, 0], 0);
+            assert_eq!(latch.observe(raw, (0, 0), size, || rendered_area(&other)), [640, 0, 2560, 1080]);
+            assert_eq!(latch.observe(raw, (0, 0), size, || rendered_area(&black)), [640, 0, 2560, 1080]);
+            assert_eq!(latch.observe(raw, (0, 0), size, || rendered_area(&other)), [640, 0, 2560, 1080]);
+            assert_eq!(latch.observe(raw, (0, 0), size, || rendered_area(&other)), [960, 0, 1920, 1080]);
+
+            let changed_raw = Some([0, 0, 4000, 1080]);
+            assert_eq!(latch.observe(changed_raw, (0, 0), size, || rendered_area(&frame)), [0, 0, 3840, 1080]);
+            assert_eq!(latch.observe(changed_raw, (0, 0), size, || rendered_area(&frame)), [640, 0, 2560, 1080]);
+            assert_eq!(latch.observe(changed_raw, (-3840, 0), size, || rendered_area(&frame)), [0, 0, 3840, 1080]);
+            assert_eq!(latch.observe(changed_raw, (-3840, 0), size, || rendered_area(&frame)), [640, 0, 2560, 1080]);
+            assert_eq!(latch.select(changed_raw, (-3840, 0), (1920, 1080)), [0, 0, 1920, 1080]);
+        }
+
+        /// Silent consequence: a false trim supplies plausible wrong reader geometry.
+        #[test]
+        fn asymmetric_dark_edges_are_not_trimmed() {
+            let cases = [
+                ("asymmetric columns", (3840, 1080), [640, 0, 630, 0]),
+                ("asymmetric rows", (2560, 1440), [0, 180, 0, 170]),
+                ("tiny columns", (3840, 1080), [20, 0, 20, 0]),
+                ("tiny rows", (2560, 1440), [0, 10, 0, 10]),
+                ("pillar aspect", (3840, 1080), [1300, 0, 1300, 0]),
+                ("letter aspect", (3840, 2160), [0, 600, 0, 600]),
+                ("width floor", (1200, 768), [100, 0, 100, 0]),
+                ("height floor", (1600, 900), [0, 100, 0, 100]),
+                ("both axes", (3840, 1440), [640, 180, 640, 180]),
+            ];
+            for (name, size, bars) in cases {
+                let frame = bordered_frame(size, bars, 0);
+                let whole = [0, 0, size.0 as i32, size.1 as i32];
+                let mut latch = RenderedClientLatch::default();
+                let probe = rendered_area(&frame);
+                assert_eq!(probe, None, "{name}: unsupported border must not produce a trim");
+                assert_eq!(latch.observe(Some(whole), (0, 0), size, || rendered_area(&frame)), whole, "{name}: first frame");
+                assert_eq!(latch.observe(Some(whole), (0, 0), size, || rendered_area(&frame)), whole, "{name}: second frame");
+            }
+        }
+
+        /// Silent consequence: the recheck drops a matching screen slot and forgets its settings.
+        #[test]
+        fn the_client_change_recheck_uses_the_latched_trim() {
+            let mut latch = RenderedClientLatch::default();
+            let size = (3840, 1080);
+            let origin = (1920, -1080);
+            let raw = Some([1920, -1080, 3840, 1080]);
+            let frame = bordered_frame(size, [640, 0, 640, 0], 0);
+            latch.observe(raw, origin, size, || rendered_area(&frame));
+            latch.observe(raw, origin, size, || rendered_area(&frame));
+            let rechecked_client = latch.select(raw, origin, size);
+            assert_eq!(rechecked_client, [640, 0, 2560, 1080]);
+            let mut slot = Some(crate::ssot::screen_from_geometry(
+                size.0, size.1, 7, origin, [640, 0, 2560, 1080], 123,
+            ));
+            let outcome = crate::ssot::reconcile_screen(&mut slot, size, origin, rechecked_client);
+            assert!(matches!(outcome, crate::ssot::ScreenReconcile::Kept), "recheck: {outcome:?}");
+            let kept = slot.expect("the matching screen slot must survive the client recheck");
+            assert_eq!(kept.client, [640, 0, 2560, 1080]);
+            assert_eq!(kept.measured_at_ms, 123);
+        }
 
         const WHOLE: [i32; 4] = [0, 0, 1920, 1080];
 
