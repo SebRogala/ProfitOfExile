@@ -526,7 +526,7 @@ func (r *Repository) MarketAvgBaseListings(ctx context.Context, scope league.Sco
 }
 
 // GemPriceHistoryByVariant returns time-series gem data for transfigured, non-corrupted gems
-// within the given number of hours, grouped by (name, variant).
+// within the inclusive [since, asOf] interval, grouped by (name, variant).
 // Only includes variants "1", "1/20", "20", "20/20", chaos > 5, and applies
 // sqlNotHeistOnly (eligibility.go).
 //
@@ -535,7 +535,6 @@ func (r *Repository) MarketAvgBaseListings(ctx context.Context, scope league.Sco
 // to the latest snapshot. Narrowing here would only move the same filter
 // earlier, at the cost of a colour join the history query does not need.
 func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, scope league.Scope, variant string, since, asOf time.Time) ([]GemPriceHistory, error) {
-	const hours = 168 // red-phase scaffold: today's window; since/asOf not yet applied
 	if err := scope.Validate(); err != nil {
 		return nil, fmt.Errorf("lab repo: gem price history by variant: %w", err)
 	}
@@ -543,16 +542,16 @@ func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, scope league.
 		SELECT name, variant, COALESCE(gem_color, ''), time, COALESCE(chaos, 0), COALESCE(listings, 0)
 		FROM gem_snapshots
 		WHERE league = $1
-		  AND time > NOW() - make_interval(hours => $2)
+		  AND time >= $2 AND time <= $3
 		  AND is_transfigured = true
 		  AND is_corrupted = false
 		  AND ` + sqlNotHeistOnly + `
 		  AND COALESCE(chaos, 0) > 5
-		  AND variant = ANY($3)`
-	args := []any{scope.ID(), hours, sparklineVariants}
+		  AND variant = ANY($4)`
+	args := []any{scope.ID(), since, asOf, sparklineVariants}
 
 	if variant != "" {
-		query += ` AND variant = $4`
+		query += ` AND variant = $5`
 		args = append(args, variant)
 	}
 

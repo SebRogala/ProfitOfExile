@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"profitofexile/internal/db"
 	"profitofexile/internal/gemrule"
@@ -102,7 +101,7 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 		}
 
 		// Load history up to this snapshot time (168h lookback from this point).
-		history, err := loadHistoryUpTo(ctx, pool, scope, snapTime, 168)
+		history, err := repo.GemPriceHistoryByVariant(ctx, scope, "", snapTime.Add(-168*time.Hour), snapTime)
 		if err != nil {
 			return fmt.Errorf("snapshot %s: %w", snapTime.Format(time.RFC3339), err)
 		}
@@ -143,55 +142,6 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 
 	fmt.Fprintf(os.Stderr, "Backfill complete: %d snapshots processed\n", len(times))
 	return nil
-}
-
-// querier is the slice of *pgxpool.Pool the snapshot loaders use.
-type querier interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-}
-
-func loadHistoryUpTo(ctx context.Context, pool querier, scope league.Scope, upTo time.Time, hours int) ([]lab.GemPriceHistory, error) {
-	cutoff := upTo.Add(-time.Duration(hours) * time.Hour)
-	q := `SELECT name, variant, COALESCE(gem_color, '') as gem_color, time, chaos, listings
-	      FROM gem_snapshots
-	      WHERE league = $1 AND is_transfigured = true AND NOT is_corrupted AND chaos > 5
-	        AND time >= $2 AND time <= $3
-	        AND ` + gemrule.SQLNotHeistOnly + `
-	      ORDER BY name, variant, time
-	      LIMIT 500000`
-	rows, err := pool.Query(ctx, q, scope.ID(), cutoff, upTo)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	histMap := make(map[string]*lab.GemPriceHistory)
-	for rows.Next() {
-		var name, variant, color string
-		var t time.Time
-		var chaos float64
-		var listings int
-		if err := rows.Scan(&name, &variant, &color, &t, &chaos, &listings); err != nil {
-			return nil, fmt.Errorf("loadHistoryUpTo: scan row: %w", err)
-		}
-		key := name + "|" + variant
-		h, ok := histMap[key]
-		if !ok {
-			h = &lab.GemPriceHistory{Name: name, Variant: variant, GemColor: color}
-			histMap[key] = h
-		}
-		h.Points = append(h.Points, lab.PricePoint{Time: t, Chaos: chaos, Listings: listings})
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("loadHistoryUpTo: iterate rows: %w", err)
-	}
-
-	result := make([]lab.GemPriceHistory, 0, len(histMap))
-	for _, h := range histMap {
-		result = append(result, *h)
-	}
-	return result, nil
 }
 
 func loadBaseHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, upTo time.Time, hours int) map[string][]lab.PricePoint {

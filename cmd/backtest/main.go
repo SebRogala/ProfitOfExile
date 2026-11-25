@@ -162,46 +162,6 @@ func loadSnapshotTimes(ctx context.Context, pool *pgxpool.Pool, scope league.Sco
 	return times, rows.Err()
 }
 
-func loadHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, upTo time.Time, hours int) ([]lab.GemPriceHistory, error) {
-	cutoff := upTo.Add(-time.Duration(hours) * time.Hour)
-	rows, err := pool.Query(ctx,
-		`SELECT name, variant, COALESCE(gem_color, '') as gem_color, time, chaos, listings
-		 FROM gem_snapshots
-		 WHERE league = $1 AND is_transfigured = true AND NOT is_corrupted AND chaos > 5
-		   AND time >= $2 AND time <= $3
-		   AND `+gemrule.SQLNotHeistOnly+`
-		 ORDER BY name, variant, time
-		 LIMIT 500000`, scope.ID(), cutoff, upTo)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	histMap := make(map[string]*lab.GemPriceHistory)
-	for rows.Next() {
-		var name, variant, color string
-		var t time.Time
-		var chaos float64
-		var listings int
-		if err := rows.Scan(&name, &variant, &color, &t, &chaos, &listings); err != nil {
-			continue
-		}
-		key := name + "|" + variant
-		h, ok := histMap[key]
-		if !ok {
-			h = &lab.GemPriceHistory{Name: name, Variant: variant, GemColor: color}
-			histMap[key] = h
-		}
-		h.Points = append(h.Points, lab.PricePoint{Time: t, Chaos: chaos, Listings: listings})
-	}
-
-	result := make([]lab.GemPriceHistory, 0, len(histMap))
-	for _, h := range histMap {
-		result = append(result, *h)
-	}
-	return result, rows.Err()
-}
-
 func loadBaseHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, upTo time.Time, hours int) map[string][]lab.PricePoint {
 	cutoff := upTo.Add(-time.Duration(hours) * time.Hour)
 	rows, err := pool.Query(ctx,
@@ -394,7 +354,7 @@ func processSnapshot(ctx context.Context, pool *pgxpool.Pool, scope league.Scope
 		return nil, fmt.Errorf("no gems at %s", snapTime)
 	}
 
-	history, err := loadHistoryUpTo(ctx, pool, scope, snapTime, 168)
+	history, err := lab.NewRepository(pool).GemPriceHistoryByVariant(ctx, scope, "", snapTime.Add(-168*time.Hour), snapTime)
 	if err != nil {
 		return nil, fmt.Errorf("load history: %w", err)
 	}
