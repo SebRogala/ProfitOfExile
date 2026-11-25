@@ -270,7 +270,9 @@ pub fn resolve(screen: Option<&ScreenSlice>, setting: &OcrRegionsSetting, captur
             crate::GEM_SLOT_PITCH_REF,
             scale,
         );
-        if !contained(strip, capture) {
+        if !contained(strip, capture)
+            || resolved.placements.lab.gem_slots.iter().any(|&slot| !contained(slot, capture))
+        {
             resolved.unread.push(RegionKey::LabGemSlots);
         }
     } else {
