@@ -3,7 +3,46 @@
 //! Sources, dates and validation status live in `docs/GAME-FACTS.md` (POE-415).
 
 use super::rooms::{CRADLE_LINE_KEY, OfferKind};
-use super::strategy::{Consolidation, Tier};
+use super::strategy::{Consolidation, TempleConfig, Tier};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsolidationGlosses {
+    pub non_resident_extra_tier: String,
+    pub resident_carry: String,
+    pub not_taken: String,
+    pub cradle: String,
+    pub unset_plays: Consolidation,
+}
+
+pub fn consolidation_glosses() -> ConsolidationGlosses {
+    let option_gloss = |option| {
+        let tier = |kind| {
+            landing_tier(option, Some(Tier::T1), kind, None)
+                .expect("a known current tier resolves every option")
+                .get()
+        };
+        format!(
+            "T1 room: upgrade → T{}, change → T{}",
+            tier(OfferKind::Upgrade),
+            tier(OfferKind::Change),
+        )
+    };
+    let unset_plays = TempleConfig::default().played_consolidation();
+    ConsolidationGlosses {
+        non_resident_extra_tier: option_gloss(Consolidation::NonResidentExtraTier),
+        resident_carry: option_gloss(Consolidation::ResidentCarry),
+        not_taken: option_gloss(Consolidation::NotTaken),
+        cradle: format!(
+            "always built at tier {}",
+            landing_tier(unset_plays, Some(Tier::T1), OfferKind::Change, Some(CRADLE_LINE_KEY))
+                .expect("the Cradle line always resolves")
+                .get(),
+        ),
+        unset_plays,
+    }
+}
 
 /// Operator note 6 (POE-415); validation record: `docs/GAME-FACTS.md`.
 pub fn always_tier_three(line_key: &str) -> bool {
@@ -47,6 +86,17 @@ mod tests {
 
     mod keep_happy {
         use super::*;
+
+        #[test]
+        fn consolidation_glosses_render_the_ruled_landing_tiers() {
+            assert_eq!(consolidation_glosses(), ConsolidationGlosses {
+                non_resident_extra_tier: "T1 room: upgrade → T3, change → T1".into(),
+                resident_carry: "T1 room: upgrade → T2, change → T2".into(),
+                not_taken: "T1 room: upgrade → T2, change → T1".into(),
+                cradle: "always built at tier 3".into(),
+                unset_plays: Consolidation::NonResidentExtraTier,
+            });
+        }
 
         #[test]
         fn consolidation_lands_each_kill_at_its_ruled_tier() {

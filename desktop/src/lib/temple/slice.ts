@@ -611,6 +611,14 @@ export interface AnchorCalibration {
 
 export type Consolidation = 'nonResidentExtraTier' | 'residentCarry' | 'notTaken';
 
+export interface ConsolidationGlosses {
+	nonResidentExtraTier: string;
+	residentCarry: string;
+	notTaken: string;
+	cradle: string;
+	unsetPlays: Consolidation;
+}
+
 /** The temple config. camelCase, from `TempleConfig`'s own `rename_all`. */
 export interface TempleConfig {
 	/** Atlas passive: *"Your Maps with Incursions always have four Incursions"*. */
@@ -805,6 +813,7 @@ export interface TempleSlice {
 	/** The config flags in force. Settings, not a reading: they survive the
 	 *  module being off. */
 	config: TempleConfig;
+	consolidationGlosses: ConsolidationGlosses | null;
 	/** The four tunable profile fields in force. Same ownership as `config`. */
 	profile: TempleProfile;
 	/** Which valuation preset is in force. Same ownership as `config`. */
@@ -868,6 +877,7 @@ export function templeSliceDefault(): TempleSlice {
 		advice: null,
 		mode: null,
 		config: { artefactsOfTheVaal: true, scarabOfTimelines: false, consolidation: null },
+		consolidationGlosses: null,
 		profile: {
 			apexScore: 2.0,
 			pathCost: 0.0,

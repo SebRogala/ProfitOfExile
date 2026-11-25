@@ -55,6 +55,7 @@
 		type KnobSpec
 	} from '$lib/temple/values';
 	import type {
+		Consolidation,
 		TempleConfig,
 		TempleCustom,
 		TemplePreset,
@@ -73,6 +74,25 @@
 	import { shortcutLabel } from '$lib/boss-loot/native-adapters';
 
 	const temple = $derived(ssot.temple);
+	const consolidationHelp = 'Atlas passive — the Consolidation of Power option you took.';
+	const consolidationOptions: { value: Consolidation; label: string }[] = [
+		{ value: 'nonResidentExtraTier', label: 'Option 1' },
+		{ value: 'residentCarry', label: 'Option 2' },
+		{ value: 'notTaken', label: 'Not taken' }
+	];
+	const consolidationTooltip = $derived.by(() => {
+		const g = temple.consolidationGlosses;
+		const lines = consolidationOptions.map(({ value, label }) =>
+			g ? `${label} — ${g[value]}` : label
+		);
+		const unset = "<span style='color:var(--color-lab-yellow)'>not set</span>";
+		lines.push(g
+			? `${unset} — advisor plays ${consolidationOptions.find((o) => o.value === g.unsetPlays)!.label} until you pick`
+			: unset);
+		return '<b>Consolidation of Power</b><br><br><b>Options</b> (the atlas choice the advisor plays):<br>'
+			+ lines.join('<br>')
+			+ (g ? `<br><br><b>Cradle</b> (every build):<br>Cradle of Creation — ${g.cradle}` : '');
+	});
 	const statusBadge = $derived(
 		temple.status === 'idle' && ssot.readHotkey
 			? shortcutLabel(ssot.readHotkey.shortcut)
@@ -152,8 +172,13 @@
 	// --- settings controls ----------------------------------------------------
 
 	/** Write one config flag, carrying the other one through unchanged. */
-	function setConfigFlag(field: keyof TempleConfig, value: boolean): void {
+	function setConfigFlag(field: Exclude<keyof TempleConfig, 'consolidation'>, value: boolean): void {
 		void apply(() => setTempleConfig({ ...temple.config, [field]: value }));
+	}
+
+	function setConsolidation(value: string): void {
+		const option = consolidationOptions.find((o) => o.value === value);
+		if (option) void apply(() => setTempleConfig({ ...temple.config, consolidation: option.value }));
 	}
 
 	/** Write one profile field, carrying the other three through unchanged. */
@@ -633,6 +658,18 @@
 				/>
 				<span class="meta">Atlas passive — four incursions per map instead of three.</span>
 			</div>
+			<div class="choice">
+				<span>Consolidation of Power</span>
+				<SegmentedButtons
+					value={temple.config.consolidation ?? ''}
+					options={consolidationOptions}
+					onselect={setConsolidation}
+					title={consolidationHelp}
+				/>
+				<InfoTooltip text={consolidationTooltip} />
+				{#if temple.config.consolidation === null}<span class="unset">not set</span>{/if}
+				<span class="meta">{consolidationHelp}</span>
+			</div>
 		</div>
 
 		<div class="setting">
@@ -966,7 +1003,13 @@
 		font-weight: 600;
 	}
 
+	.unset {
+		font-size: 0.7rem;
+		color: var(--color-lab-yellow);
+	}
+
 	.check,
+	.choice,
 	.number {
 		display: flex;
 		align-items: baseline;

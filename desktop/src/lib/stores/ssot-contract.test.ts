@@ -126,6 +126,7 @@ const templeKeys: Record<keyof TempleSlice, true> = {
 	advice: true,
 	mode: true,
 	config: true,
+	consolidationGlosses: true,
 	profile: true,
 	preset: true,
 	custom: true,

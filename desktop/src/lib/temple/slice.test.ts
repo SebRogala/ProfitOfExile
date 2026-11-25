@@ -58,6 +58,7 @@ describe('the Rust sample decodes into this mirror', () => {
 			advice: slice.advice,
 			mode: slice.mode,
 			config: slice.config,
+			consolidationGlosses: slice.consolidationGlosses,
 			profile: slice.profile,
 			preset: slice.preset,
 			custom: slice.custom,

@@ -1,5 +1,5 @@
 //! The `temple` SSOT slice and the pure projection that fills it (POE-171).
-//! size-gate: intrinsic — One public Temple projection owns its private serializers; POE-415 threads config through existing offer resolution without adding projection logic.
+//! size-gate: intrinsic — One public Temple projection owns its private serializers; POE-415 threads config through offer resolution and carries facts-generated Consolidation glosses on the same slice.
 //!
 //! Everything in this file is a **wire type plus the pure function that builds
 //! it**: a [`reader::TempleLayout`], the per-plate [`panel::RoomReading`]s, the
@@ -42,6 +42,7 @@ use super::advisor::{self, Advice, MapAction, Warning};
 use super::anchor::AnchorCalibration;
 use super::doors::Confidence;
 use super::drops::{self, LineKind};
+use super::facts::{self, ConsolidationGlosses};
 use super::lattice::{Edge, Lattice, Slot};
 use super::markers;
 use super::market::MarketInput;
@@ -892,6 +893,8 @@ pub struct TempleSlice {
     /// survives [`TempleSlice::force_off`], because a switched-off module's settings are
     /// still the settings the next read will use.
     pub config: TempleConfig,
+    #[serde(default)]
+    pub consolidation_glosses: Option<ConsolidationGlosses>,
     /// The four tunable profile fields in force. Same ownership and same
     /// survival rule as [`Self::config`].
     pub profile: TempleProfileSettings,
@@ -1622,6 +1625,7 @@ pub fn project(read: &ReadResult<'_>, calibration: Option<AnchorCalibration>) ->
         }),
         mode: read.advice.map(|a| mode_label(a.mode)),
         config: read.config.clone(),
+        consolidation_glosses: Some(facts::consolidation_glosses()),
         profile: read.profile.clone(),
         preset: read.preset,
         custom: read.custom.clone(),
@@ -4731,6 +4735,7 @@ mod tests {
             }),
             mode: Some("chase".to_string()),
             config: TempleConfig { artefacts_of_the_vaal: false, scarab_of_timelines: true, consolidation: None },
+            consolidation_glosses: Some(crate::temple::facts::consolidation_glosses()),
             profile: TempleProfileSettings {
                 apex_score: 3.5,
                 path_cost: 1.25,

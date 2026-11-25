@@ -754,6 +754,7 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 		advice: incoming.advice ?? null,
 		mode: incoming.mode ?? null,
 		config: incoming.config ?? fresh.config,
+		consolidationGlosses: incoming.consolidationGlosses ?? fresh.consolidationGlosses,
 		profile: incoming.profile ?? fresh.profile,
 		// The settings echo, same rule as `config` and `profile`: a payload
 		// from a build before POE-257 carries neither, and a control rendered

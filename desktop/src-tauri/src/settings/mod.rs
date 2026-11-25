@@ -1291,6 +1291,7 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     {
         let mut slice = state.temple.lock().unwrap_or_else(|e| e.into_inner());
         slice.config = temple.config;
+        slice.consolidation_glosses = Some(crate::temple::facts::consolidation_glosses());
         slice.profile = temple.profile;
     }
 

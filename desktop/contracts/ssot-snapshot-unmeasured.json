@@ -310,6 +310,7 @@
       "scarabOfTimelines": false,
       "consolidation": null
     },
+    "consolidationGlosses": null,
     "profile": {
       "apexScore": 2.0,
       "pathCost": 0.0,
