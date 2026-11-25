@@ -2732,8 +2732,8 @@ describe('routeSlots', () => {
 		const title = routeSlots(chaosOvershoot(), DIVINE_RATE)?.buy.rateTitle;
 
 		expect(title).toContain('Market posts 1,000 for 20c');
-		expect(title).toContain('Posts 1,000 at a time, above the ×167 run');
-		expect(title).toContain('at a time, above the ×');
+		expect(title).toContain('Posts 1,000 at a time, more than the ×167 run');
+		expect(title).toContain('at a time, more than the ×');
 	});
 
 	it('says the same on a DIVINE buy step that posts past its run', () => {
@@ -2764,8 +2764,8 @@ describe('routeSlots', () => {
 		const title = routeSlots(posted, DIVINE_RATE)?.buy.rateTitle;
 
 		expect(title).toContain('Market posts 100 for 1 div');
-		expect(title).toContain('Posts 100 at a time, above the ×50 run');
-		expect(title).toContain('at a time, above the ×');
+		expect(title).toContain('Posts 100 at a time, more than the ×50 run');
+		expect(title).toContain('at a time, more than the ×');
 	});
 
 	it('claims no overshoot on a buy step whose posting sits inside the run', () => {
@@ -2776,7 +2776,7 @@ describe('routeSlots', () => {
 		const title = routeSlots(chaosLot(), DIVINE_RATE)?.buy.rateTitle;
 
 		expect(title).toContain('Market posts');
-		expect(title).not.toContain('above the ×');
+		expect(title).not.toContain('more than the ×');
 	});
 
 	it('claims no overshoot on a posting that is exactly the run', () => {
@@ -2786,7 +2786,7 @@ describe('routeSlots', () => {
 		const title = routeSlots(chaosOvershoot({ expectedRoi: 0.1 }), DIVINE_RATE)?.buy.rateTitle;
 
 		expect(title).toContain('Market posts');
-		expect(title).not.toContain('above the ×');
+		expect(title).not.toContain('more than the ×');
 	});
 
 	it('claims no overshoot on a buy step of a play with no run to be past', () => {
@@ -2796,7 +2796,7 @@ describe('routeSlots', () => {
 		const title = routeSlots(chaosOvershoot({ expectedRoi: -1 }), DIVINE_RATE)?.buy.rateTitle;
 
 		expect(title).toContain('Market posts');
-		expect(title).not.toContain('above the ×');
+		expect(title).not.toContain('more than the ×');
 	});
 
 	it('leaves the overshoot off the sell step, whose lot has no claim on the run', () => {
@@ -2807,7 +2807,7 @@ describe('routeSlots', () => {
 		const title = routeSlots(chaosOvershoot(), DIVINE_RATE)?.sell.rateTitle;
 
 		expect(title).toContain('Market posts 1,000 for 30c');
-		expect(title).not.toContain('above the ×');
+		expect(title).not.toContain('more than the ×');
 	});
 
 	it('totals a step whose market posted no pair at all', () => {

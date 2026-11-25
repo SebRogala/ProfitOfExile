@@ -991,7 +991,7 @@ function marketPair(
 	// anywhere else on the row.
 	const overshoot =
 		runFlips !== null && units > runFlips
-			? ` Posts ${formatChaos(units)} at a time, above the ×${formatChaos(runFlips)} run.`
+			? ` Posts ${formatChaos(units)} at a time, more than the ×${formatChaos(runFlips)} run.`
 			: '';
 
 	// A count under a single lot has no order beneath it at all, which is a
