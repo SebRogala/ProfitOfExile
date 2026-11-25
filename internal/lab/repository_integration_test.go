@@ -258,10 +258,15 @@ func TestGemPriceHistoryByVariant_returnsOnlyScopedLeague(t *testing.T) {
 	seedGemSnapshot(t, pool, leagueB, tm, name, "20/20", true, false, 222, 20, "BLUE")
 
 	since, asOf := tm, tm.Add(time.Hour)
+	beforeSince := since.Add(-time.Hour)
 	afterAsOf := asOf.Add(time.Hour)
+	cleanupAtTime(t, pool, beforeSince, "gem_snapshots")
+	cleanupAtTime(t, pool, asOf, "gem_snapshots")
 	cleanupAtTime(t, pool, afterAsOf, "gem_snapshots")
 	const boundedName = "POE404 Bounded History Gem"
+	seedGemSnapshot(t, pool, leagueA, beforeSince, boundedName, "20/20", true, false, 777, 10, "BLUE")
 	seedGemSnapshot(t, pool, leagueA, since, boundedName, "20/20", true, false, 333, 10, "BLUE")
+	seedGemSnapshot(t, pool, leagueA, asOf, boundedName, "20/20", true, false, 444, 10, "BLUE")
 	seedGemSnapshot(t, pool, leagueA, afterAsOf, boundedName, "20/20", true, false, 999, 10, "BLUE")
 
 	hist, err := repo.GemPriceHistoryByVariant(ctx, league.Historical(leagueA), "", since, asOf)
@@ -281,9 +286,15 @@ func TestGemPriceHistoryByVariant_returnsOnlyScopedLeague(t *testing.T) {
 		if bounded == nil {
 			t.Fatalf("no history entry for %q; the point at exactly since must be present", boundedName)
 		}
-		want := []PricePoint{{Time: since, Chaos: 333, Listings: 10}}
+		t.Logf("selected points for %q in league %q, since=%v asOf=%v: %+v", boundedName, leagueA, since, asOf, bounded.Points)
+		want := []PricePoint{{Time: since, Chaos: 333, Listings: 10}, {Time: asOf, Chaos: 444, Listings: 10}}
 		if len(bounded.Points) != len(want) || !bounded.Points[0].Time.Equal(since) || !valuesClose(bounded.Points[0].Chaos, 333) {
-			t.Errorf("points = %+v, want %+v (the point at since kept, the point after asOf %v dropped)", bounded.Points, want, asOf)
+			t.Fatalf("points = %+v, want %+v (inclusive bounds; points before since and after asOf dropped)", bounded.Points, want)
+		}
+		for i, point := range bounded.Points {
+			if !point.Time.Equal(want[i].Time) || !valuesClose(point.Chaos, want[i].Chaos) || point.Listings != want[i].Listings {
+				t.Errorf("point %d = %+v, want %+v", i, point, want[i])
+			}
 		}
 	})
 
