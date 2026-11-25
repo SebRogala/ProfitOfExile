@@ -91,11 +91,6 @@ impl Rng {
         (self.next_u64() % n as u64) as usize
     }
 
-    /// True with probability `p`.
-    pub fn chance(&mut self, p: f64) -> bool {
-        let unit = (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64;
-        unit < p
-    }
 }
 
 // ------------------------------------------------------------- valuation ----

@@ -420,7 +420,7 @@ pub const LINES: [RoomLine; 25] = [
         },
     },
     RoomLine {
-key: CRADLE_LINE_KEY,
+        key: CRADLE_LINE_KEY,
         tiers: ["Royal Meeting Room", "Hall of Lords", "Cradle of Creation"],
         rank: RoomRank {
             tier: RankingTier::D,
