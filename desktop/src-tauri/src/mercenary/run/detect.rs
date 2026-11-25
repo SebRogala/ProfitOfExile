@@ -36,6 +36,7 @@ pub(crate) struct CaptureLocation {
     key: FallbackKey,
     took: u128,
     how: &'static str,
+    regions_manual: bool,
 }
 
 impl CaptureLocation {
@@ -360,6 +361,32 @@ pub(super) fn probe_frame(
         merc_placement(app, grab), &mut crate::ocr::recognize_lines)
 }
 
+/// The press's merc placement and whether it came from Manual regions.
+#[cfg_attr(not(test), allow(dead_code))]
+fn press_placement(state: &AppState, grab: &crate::capture::Capture) -> (Option<([i32; 4], f32)>, bool) {
+    let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(slice) = screen else { return (None, false) };
+    if !crate::ssot::screen_matches(&screen, (grab.image.width(), grab.image.height()), grab.origin, grab.client) {
+        return (None, false);
+    }
+    let placement = crate::ssot::placements_for(Some(&slice)).merc.map(|merc| (merc.panel, slice.ui_scale));
+    (placement, false)
+}
+
+/// One press's probe under the placement [`press_placement`] decided.
+#[cfg_attr(not(test), allow(dead_code))]
+fn probe_press(
+    session: &mut Session,
+    cursor: Option<(i32, i32)>,
+    grab: &crate::capture::Capture,
+    key: FallbackKey,
+    placement: Option<([i32; 4], f32)>,
+    _regions_manual: bool,
+    recognize: &mut impl FnMut(&image::DynamicImage) -> Result<Vec<OcrLineBox>, String>,
+) -> Result<Option<MercProbe>, String> {
+    probe_frame_with(session, cursor, grab, key, placement, recognize)
+}
+
 fn probe_frame_with(
     session: &Session,
     cursor: Option<(i32, i32)>,
@@ -434,6 +461,7 @@ fn probe_frame_with(
     let decision = locate_decision(
         placed_read.as_ref().map(|(placed, _, layout)| (*placed, PlacedRead::of(layout))),
         manual,
+        false,
         &mut budget,
         key,
     );
@@ -459,7 +487,7 @@ fn probe_frame_with(
         // No placement and no locate: this key's cold start is spent, and a
         // counted miss costs no OCR. (`locate_decision` answers the two trust
         // arms only for a placed read, so `(_, None)` is this same case.)
-        (LocateDecision::ColdStartSpent, _) | (_, None) => {
+        (LocateDecision::ColdStartSpent | LocateDecision::ManualUnset, _) | (_, None) => {
             return Ok(None);
         }
     };
@@ -504,6 +532,7 @@ fn probe_frame_with(
         key,
         took,
         how,
+        regions_manual: false,
     }))))
 }
 
@@ -1332,6 +1361,7 @@ mod tests {
             key: FallbackKey { refit: 0, press: 0 },
             took: 4,
             how: "full",
+            regions_manual: false,
         }
     }
 
@@ -1673,5 +1703,285 @@ mod tests {
         publish_settled(&mut publication, test_capture([3840, 2160]), true, None);
         assert_eq!(publication.events, vec!["publish"]);
         assert_eq!(publication.origin, None);
+    }
+
+    // ------------------------------------------------- Manual merc panel --
+
+    /// The WI-6 acceptance panel: Manual `merc_panel` at scale 1.0 on 2560x1440.
+    const MANUAL_PANEL: [i32; 4] = [1450, 615, 555, 477];
+    /// A Manual `merc_panel` at scale 1.2 (666 / `MERC_PANEL_REF` width 555).
+    const MANUAL_PANEL_1_2: [i32; 4] = [1406, 738, 666, 572];
+    const MANUAL_SCALE_1_2: f32 = 1.2;
+    const SCREEN_2560: [u32; 2] = [2560, 1440];
+
+    /// An `AppState` in Manual whose only set region is `merc_panel`, holding
+    /// `screen` as its Auto slice.
+    fn manual_merc_state(panel: [i32; 4], screen: Option<crate::ssot::ScreenSlice>) -> crate::AppState {
+        let state = crate::settings::tests::test_app_state();
+        *state.screen.lock().unwrap() = screen;
+        *state.ocr_regions.lock().unwrap() = crate::ssot::OcrRegionsSetting {
+            mode: crate::ssot::OcrRegionsMode::Manual,
+            manual: Some(crate::ssot::ManualRegions {
+                set_on: crate::ssot::ScreenRef { width: 2560, height: 1440, origin: [0, 0], at_ms: 1_732_400_000_000 },
+                edited: true,
+                lab_gem: None,
+                lab_font: None,
+                lab_gem_slots: None,
+                temple_panel: None,
+                merc_panel: Some(panel),
+            }),
+        };
+        state
+    }
+
+    /// A black 2560x1440 grab of monitor 1 at (0, 0).
+    fn capture_2560() -> crate::capture::Capture {
+        crate::capture::Capture {
+            image: image::DynamicImage::new_rgb8(SCREEN_2560[0], SCREEN_2560[1]),
+            monitor_id: 1, origin: (0, 0), client: [0, 0, 2560, 1440], timing: Default::default(),
+        }
+    }
+
+    /// [`capture_2560`] with a distinct pixel at each corner of `rect`, so the
+    /// crop the probe OCRs can be told from any other rect of the same size.
+    fn marked_capture_2560(rect: [i32; 4]) -> crate::capture::Capture {
+        let mut grab = capture_2560();
+        let rgb = grab.image.as_mut_rgb8().expect("an rgb8 grab");
+        let [x, y, w, h] = rect.map(|v| v as u32);
+        rgb.put_pixel(x, y, image::Rgb([255, 0, 0]));
+        rgb.put_pixel(x + w - 1, y, image::Rgb([0, 255, 0]));
+        rgb.put_pixel(x, y + h - 1, image::Rgb([0, 0, 255]));
+        rgb.put_pixel(x + w - 1, y + h - 1, image::Rgb([255, 255, 0]));
+        grab
+    }
+
+    /// The PC panel's OCR lines (`[724,554,500,430]` at ui 0.90) carried onto
+    /// `panel` at `scale`, so a placed read at that panel and scale hits.
+    fn pc_lines_at(panel: [i32; 4], scale: f32) -> Vec<OcrLineBox> {
+        let ratio = scale / 0.90;
+        cellfit::pc_lines()
+            .into_iter()
+            .map(|line| {
+                let centre_y = line.y + line.h / 2;
+                geometry::test_line(
+                    &line.text,
+                    panel[0] + ((line.x - 724) as f32 * ratio).round() as i32,
+                    panel[1] + ((centre_y - 554) as f32 * ratio).round() as i32,
+                )
+            })
+            .collect()
+    }
+
+    /// The Auto fit a session held before the player switched to Manual.
+    fn held_fit_0_9() -> FittedScale {
+        FittedScale { scale: 0.9, cell_px: 36, x0_offset: 0.0, pitch: 43.8, source: FitSource::Grid, pending: None }
+    }
+
+    /// Probe one press of `grab` under `state`'s placement, recording every
+    /// image handed to OCR; OCR answers `lines` for the first image and
+    /// nothing after.
+    fn probe_under(
+        state: &crate::AppState,
+        session: &mut Session,
+        grab: &crate::capture::Capture,
+        key: FallbackKey,
+        lines: Vec<OcrLineBox>,
+    ) -> (Option<MercProbe>, Vec<image::DynamicImage>) {
+        let (placement, regions_manual) = press_placement(state, grab);
+        let mut seen = Vec::new();
+        let mut first = Some(lines);
+        let probe = probe_press(session, None, grab, key, placement, regions_manual, &mut |image| {
+            seen.push(image.clone());
+            Ok(first.take().unwrap_or_default())
+        })
+        .expect("the probe's fake OCR does not fail");
+        (probe, seen)
+    }
+
+    /// The first OCR'd image is exactly `grab` cut at `rect`.
+    fn assert_ocr_read_crop(seen: &[image::DynamicImage], grab: &crate::capture::Capture, rect: [i32; 4]) {
+        let first = seen.first().expect("the press ran OCR");
+        assert_eq!(
+            (first.width(), first.height()),
+            (rect[2] as u32, rect[3] as u32),
+            "the first OCR image is not the Manual panel crop {rect:?}"
+        );
+        let want = grab.image.crop_imm(rect[0] as u32, rect[1] as u32, rect[2] as u32, rect[3] as u32);
+        assert!(first.as_bytes() == want.as_bytes(), "the first OCR image is not cut at {rect:?}");
+    }
+
+    fn publish_calls(effects: &RecordingDetection) -> usize {
+        effects.registration.events.iter().filter(|&&event| event == "publish").count()
+    }
+
+    mod keep_happy {
+        use super::*;
+
+        /// WI-6 example: a Manual merc panel on a 2560x1440 capture with no
+        /// screen slice is read through `placed_panel_crop` of that panel at
+        /// its own scale 1.0.
+        #[test]
+        fn a_manual_merc_panel_on_a_null_slice_is_read_through_its_placed_crop() {
+            let crop = geometry::placed_panel_crop(MANUAL_PANEL, 1.0, SCREEN_2560);
+            let state = manual_merc_state(MANUAL_PANEL, None);
+            let grab = marked_capture_2560(crop);
+            let mut session = test_session();
+
+            let (_probe, seen) = probe_under(&state, &mut session, &grab, FallbackKey { refit: 0, press: 1 }, Vec::new());
+
+            assert_ocr_read_crop(&seen, &grab, crop);
+        }
+    }
+
+    mod keep_critical {
+        use super::*;
+
+        /// A panel held from an earlier read does not move a Manual crop.
+        /// Consequence if it fails: rows are read from a panel the player moved
+        /// away from — a silently wrong verdict.
+        #[test]
+        fn a_stale_session_panel_does_not_override_the_manual_merc_panel() {
+            let crop = geometry::placed_panel_crop(MANUAL_PANEL, 1.0, SCREEN_2560);
+            let state = manual_merc_state(MANUAL_PANEL, None);
+            let grab = marked_capture_2560(crop);
+            let mut session = test_session();
+            session.panel = Some([698, 615, 555, 477]);
+
+            let (_probe, seen) = probe_under(&state, &mut session, &grab, FallbackKey { refit: 0, press: 1 }, Vec::new());
+
+            assert_ocr_read_crop(&seen, &grab, crop);
+        }
+
+        /// R-A: a Recalibrate pressed while in Auto and not yet acted on buys
+        /// no locate in Manual, and is marked seen so it cannot fire after a
+        /// later switch back to Auto. Consequence if it fails: a full-screen
+        /// locate moves the panel off the player's manual rect and banks it
+        /// through `remember_anchor` — a silently wrong read that also rewrites
+        /// the Auto geometry (irreversible for the stored slice).
+        #[test]
+        fn a_pending_recalibrate_does_not_locate_a_manual_placed_miss() {
+            let grab = capture_2560();
+            let mut session = test_session();
+            session.refit_located = 0;
+            let key = FallbackKey { refit: 1, press: 1 };
+            let mut ocrs = 0;
+
+            let probe = probe_press(&mut session, None, &grab, key, Some((MANUAL_PANEL, 1.0)), true, &mut |_| {
+                ocrs += 1;
+                Ok(Vec::new())
+            })
+            .expect("the probe's fake OCR does not fail");
+
+            assert!(probe.is_none(), "an empty placed read is a miss");
+            assert_eq!(ocrs, 1, "only the placed crop is read: no full-screen locate (TrustPlacement, not ManualMiss)");
+            assert!(session.fallback.clone().take(key), "the key's locate budget is untaken");
+            assert_eq!(session.refit_located, 1, "the pending Recalibrate is marked seen");
+        }
+
+        /// R-B: a Manual panel's own scale wins over the Auto fit the session
+        /// still holds, and the held fit is left as it was. Consequence if it
+        /// fails: rows and cells are cut at the Auto fit's scale — a silently
+        /// wrong verdict.
+        #[test]
+        fn a_manual_merc_scale_wins_over_a_held_auto_fit() {
+            let grab = capture_2560();
+            let mut session = test_session();
+            session.fitted = Some(held_fit_0_9());
+            let key = FallbackKey { refit: 0, press: 1 };
+            let mut lines = Some(pc_lines_at(MANUAL_PANEL_1_2, MANUAL_SCALE_1_2));
+
+            let probe = probe_press(&mut session, None, &grab, key, Some((MANUAL_PANEL_1_2, MANUAL_SCALE_1_2)), true,
+                &mut |_| Ok(lines.take().unwrap_or_default()))
+                .expect("the probe's fake OCR does not fail");
+            let Some(MercProbe::Panel(location)) = probe else {
+                panic!("the Manual panel's placed read at scale 1.2 must hit");
+            };
+            let mut effects = RecordingDetection::default();
+            let registered = register_geometry(&mut effects, &mut session, *location);
+
+            let layout = &registered.location.layout;
+            assert!((layout.scale - MANUAL_SCALE_1_2).abs() < 1e-4, "layout scale {} is not the Manual 1.2", layout.scale);
+            assert!(
+                (layout.row_pitch - 49.3 * MANUAL_SCALE_1_2).abs() < 1e-3,
+                "row pitch {} is not 49.3 x 1.2",
+                layout.row_pitch
+            );
+            assert_eq!(session.fitted, Some(held_fit_0_9()), "the held Auto fit is unchanged");
+        }
+
+        /// A Manual press publishes no screen measurement over the Auto slice.
+        /// Consequence if it fails: the manual scale silently overwrites the
+        /// Auto measurement — and with it the Auto ghost, "Reset to Auto" and
+        /// every read after a switch back to Auto — and is persisted to
+        /// settings.json (irreversible for the stored slice).
+        #[test]
+        fn a_manual_merc_press_does_not_publish_the_screen() {
+            let mut slice = crate::ssot::screen_from_geometry(2560, 1440, 1, (0, 0), [0, 0, 2560, 1440], 0);
+            slice.ui_scale = 0.9;
+            let state = manual_merc_state(MANUAL_PANEL_1_2, Some(slice));
+            let grab = capture_2560();
+            let mut session = test_session();
+
+            let (probe, _seen) = probe_under(&state, &mut session, &grab, FallbackKey { refit: 0, press: 1 },
+                pc_lines_at(MANUAL_PANEL_1_2, MANUAL_SCALE_1_2));
+            let Some(MercProbe::Panel(location)) = probe else {
+                panic!("the Manual panel's placed read at scale 1.2 must hit");
+            };
+            let mut effects = RecordingDetection::default();
+            register_geometry(&mut effects, &mut session, *location);
+
+            assert_eq!(publish_calls(&effects), 0, "registration events {:?}", effects.registration.events);
+        }
+
+        /// R-B round 5: registration obeys the mode the probe carried on
+        /// `CaptureLocation`, never the mode at registration time. The location
+        /// is the one a Manual probe builds (`regions_manual: true`, placement
+        /// scale 1.2); the fake effects stand for an app already switched back
+        /// to Auto. Consequence if it fails: one press measured at the manual
+        /// scale is published as a `MercOcr` slice and persisted, silently
+        /// overwriting the Auto measurement in settings.json (irreversible for
+        /// the stored slice).
+        #[test]
+        fn a_mode_flip_after_a_manual_probe_does_not_publish_the_screen() {
+            let g = MercGeometry::default();
+            let pitch = g.row_pitch * MANUAL_SCALE_1_2;
+            let layout = geometry::placed_layout(
+                &pc_lines_at(MANUAL_PANEL_1_2, MANUAL_SCALE_1_2),
+                MANUAL_PANEL_1_2,
+                &g,
+                MANUAL_SCALE_1_2,
+                pitch,
+            )
+            .expect("the Manual panel's placed layout at scale 1.2");
+            let crop = geometry::placed_panel_crop(MANUAL_PANEL_1_2, MANUAL_SCALE_1_2, SCREEN_2560);
+            let image = image::DynamicImage::new_rgb8(SCREEN_2560[0], SCREEN_2560[1]);
+            let cropped = image.crop_imm(crop[0] as u32, crop[1] as u32, crop[2] as u32, crop[3] as u32);
+            let location = CaptureLocation {
+                image,
+                cropped: Some(cropped),
+                screen: SCREEN_2560,
+                grabbed_on: (1, (0, 0), [0, 0, 2560, 1440]),
+                crop: Some(crop),
+                placement: Some((MANUAL_PANEL_1_2, MANUAL_SCALE_1_2)),
+                full_frame: false,
+                frame: geometry::Frame::cropped((crop[0], crop[1]), SCREEN_2560),
+                layout,
+                regions_manual: true,
+                ..test_location()
+            };
+            let mut session = test_session();
+            session.fitted = Some(held_fit_0_9());
+            let mut effects = RecordingDetection::default();
+
+            let registered = register_geometry(&mut effects, &mut session, location);
+
+            assert_eq!(publish_calls(&effects), 0, "registration events {:?}", effects.registration.events);
+            assert_eq!(session.fitted, Some(held_fit_0_9()), "the held Auto fit is unchanged");
+            assert!(
+                (registered.location.layout.scale - MANUAL_SCALE_1_2).abs() < 1e-4,
+                "layout scale {} is not the Manual 1.2",
+                registered.location.layout.scale
+            );
+        }
     }
 }

@@ -1251,6 +1251,8 @@ enum LocateDecision {
     /// person asked for. The caller says so, once per key
     /// ([`column_trusted_line`]).
     TrustPlacementOverColumn,
+    /// Manual regions with no merc panel set: no locate, nothing read.
+    ManualUnset,
 }
 
 /// Whether this detect tick may run the full-screen locate (POE-278). The whole
@@ -1282,6 +1284,7 @@ enum LocateDecision {
 fn locate_decision(
     placed: Option<(([i32; 4], f32), PlacedRead)>,
     manual: bool,
+    _regions_manual: bool,
     budget: &mut FallbackBudget,
     key: FallbackKey,
 ) -> LocateDecision {
@@ -2508,7 +2511,7 @@ mod tests {
         let mut budget = FallbackBudget::default();
 
         assert_eq!(
-            locate_decision(None, unasked(), &mut budget, LOCATE_KEY),
+            locate_decision(None, unasked(), false, &mut budget, LOCATE_KEY),
             LocateDecision::Locate(LocateReason::ColdStart),
         );
     }
@@ -2516,10 +2519,10 @@ mod tests {
     #[test]
     fn a_spent_cold_start_is_a_miss_without_a_locate() {
         let mut budget = FallbackBudget::default();
-        locate_decision(None, unasked(), &mut budget, LOCATE_KEY);
+        locate_decision(None, unasked(), false, &mut budget, LOCATE_KEY);
 
         assert_eq!(
-            locate_decision(None, unasked(), &mut budget, LOCATE_KEY),
+            locate_decision(None, unasked(), false, &mut budget, LOCATE_KEY),
             LocateDecision::ColdStartSpent,
         );
     }
@@ -2530,7 +2533,7 @@ mod tests {
         let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Missed));
 
         assert_eq!(
-            locate_decision(placed, recalibrate_pending(), &mut budget, LOCATE_KEY),
+            locate_decision(placed, recalibrate_pending(), false, &mut budget, LOCATE_KEY),
             LocateDecision::Locate(LocateReason::ManualMiss { placed: INCIDENT_PLACEMENT }),
         );
     }
@@ -2542,7 +2545,7 @@ mod tests {
         let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Missed));
 
         assert_eq!(
-            locate_decision(placed, unasked(), &mut budget, LOCATE_KEY),
+            locate_decision(placed, unasked(), false, &mut budget, LOCATE_KEY),
             LocateDecision::TrustPlacement,
         );
     }
@@ -2554,12 +2557,12 @@ mod tests {
         let press = |n| FallbackKey { refit: 4, press: n };
 
         assert_eq!(
-            locate_decision(None, unasked(), &mut budget, press(1)),
+            locate_decision(None, unasked(), false, &mut budget, press(1)),
             LocateDecision::Locate(LocateReason::ColdStart),
         );
-        assert_eq!(locate_decision(None, unasked(), &mut budget, press(1)), LocateDecision::ColdStartSpent);
+        assert_eq!(locate_decision(None, unasked(), false, &mut budget, press(1)), LocateDecision::ColdStartSpent);
         assert_eq!(
-            locate_decision(None, unasked(), &mut budget, press(2)),
+            locate_decision(None, unasked(), false, &mut budget, press(2)),
             LocateDecision::Locate(LocateReason::ColdStart),
         );
     }
@@ -2573,7 +2576,7 @@ mod tests {
         let placed = Some((INCIDENT_PLACEMENT, PlacedRead::ColumnMoved));
 
         assert_eq!(
-            locate_decision(placed, unasked(), &mut budget, LOCATE_KEY),
+            locate_decision(placed, unasked(), false, &mut budget, LOCATE_KEY),
             LocateDecision::TrustPlacementOverColumn,
         );
     }
@@ -2582,10 +2585,10 @@ mod tests {
     fn a_trusted_column_contradiction_leaves_the_key_for_a_manual_locate() {
         let mut budget = FallbackBudget::default();
         let moved = Some((INCIDENT_PLACEMENT, PlacedRead::ColumnMoved));
-        locate_decision(moved, unasked(), &mut budget, LOCATE_KEY);
+        locate_decision(moved, unasked(), false, &mut budget, LOCATE_KEY);
 
         assert_eq!(
-            locate_decision(moved, recalibrate_pending(), &mut budget, LOCATE_KEY),
+            locate_decision(moved, recalibrate_pending(), false, &mut budget, LOCATE_KEY),
             LocateDecision::Locate(LocateReason::ManualMiss { placed: INCIDENT_PLACEMENT }),
         );
     }
@@ -2595,7 +2598,7 @@ mod tests {
         let mut budget = FallbackBudget::default();
         let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Hit));
         assert_eq!(
-            locate_decision(placed, recalibrate_pending(), &mut budget, LOCATE_KEY),
+            locate_decision(placed, recalibrate_pending(), false, &mut budget, LOCATE_KEY),
             LocateDecision::TrustPlacement,
         );
     }
@@ -2604,10 +2607,10 @@ mod tests {
     fn a_manual_miss_locates_once_per_key() {
         let mut budget = FallbackBudget::default();
         let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Missed));
-        locate_decision(placed, recalibrate_pending(), &mut budget, LOCATE_KEY);
+        locate_decision(placed, recalibrate_pending(), false, &mut budget, LOCATE_KEY);
 
         assert_eq!(
-            locate_decision(placed, recalibrate_pending(), &mut budget, LOCATE_KEY),
+            locate_decision(placed, recalibrate_pending(), false, &mut budget, LOCATE_KEY),
             LocateDecision::TrustPlacement,
             "the key's one locate is spent; the tick keeps its own placed miss",
         );
@@ -2627,7 +2630,7 @@ mod tests {
         let found = Ok(layout);
         let origin_for = |placed: Option<(([i32; 4], f32), PlacedRead)>, manual: bool| {
             let mut budget = FallbackBudget::default();
-            match locate_decision(placed, manual, &mut budget, LOCATE_KEY) {
+            match locate_decision(placed, manual, false, &mut budget, LOCATE_KEY) {
                 LocateDecision::Locate(reason) => fallback_panel(reason, &found, &g).1,
                 _ => None,
             }
@@ -6034,5 +6037,24 @@ mod tests {
         assert!(session.retained.is_some());
         assert!(session.panel.is_none());
         assert!(tooltips.is_empty());
+    }
+
+    mod keep_critical {
+        use super::*;
+
+        /// R-A: a Manual set with no merc panel never cold-start locates.
+        /// Consequence if it fails: Manual silently runs a full-screen locate
+        /// (about 4.5 s of OCR, ADR-024 Finding) and reads a panel the player
+        /// never placed.
+        #[test]
+        fn a_null_manual_merc_panel_does_not_cold_start_locate() {
+            let mut budget = FallbackBudget::default();
+
+            assert_eq!(
+                locate_decision(None, false, true, &mut budget, LOCATE_KEY),
+                LocateDecision::ManualUnset,
+            );
+            assert!(budget.take(LOCATE_KEY), "the key's locate budget is still available");
+        }
     }
 }
