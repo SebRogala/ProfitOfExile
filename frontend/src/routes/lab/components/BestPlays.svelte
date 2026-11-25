@@ -434,6 +434,7 @@
 	.fact { display: grid; grid-template-columns: minmax(0, 1fr) auto 56px; align-items: center; column-gap: 8px; min-height: 26px; }
 	.fact.two { grid-template-columns: minmax(0, 1fr) auto; }
 	.btn-cell { justify-self: end; }
+	.fact .btn-cell :global(.buy-btn) { width: 56px; }
 	.fact-label { min-width: 0; }
 	.fact > .amt { justify-self: end; }
 	.recipe-label { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
