@@ -289,10 +289,15 @@ func loadFutureSnapshots(ctx context.Context, pool *pgxpool.Pool, scope league.S
 		if !found {
 			continue
 		}
-		gems, _, err := lab.NewRepository(pool).GemPricesAsOf(ctx, scope, snapTime)
+		repo := lab.NewRepository(pool)
+		gems, priceTime, err := repo.GemPricesAsOf(ctx, scope, snapTime)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  WARN: load gems at %v failed: %v\n", snapTime, err)
 			continue
+		}
+		gems, err = lab.LoadEvidenceHolds(ctx, repo, scope, gems, priceTime)
+		if err != nil {
+			return nil, fmt.Errorf("load future evidence holds: %w", err)
 		}
 		result[key] = gems
 	}
@@ -349,8 +354,16 @@ type snapshotResult struct {
 
 func processSnapshot(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, snapTime time.Time) (*snapshotResult, error) {
 	// Load data at T.
-	gems, _, err := lab.NewRepository(pool).GemPricesAsOf(ctx, scope, snapTime)
-	if err != nil || len(gems) == 0 {
+	repo := lab.NewRepository(pool)
+	gems, priceTime, err := repo.GemPricesAsOf(ctx, scope, snapTime)
+	if err != nil {
+		return nil, fmt.Errorf("load gems at %s: %w", snapTime, err)
+	}
+	gems, err = lab.LoadEvidenceHolds(ctx, repo, scope, gems, priceTime)
+	if err != nil {
+		return nil, fmt.Errorf("load evidence holds: %w", err)
+	}
+	if len(gems) == 0 {
 		return nil, fmt.Errorf("no gems at %s", snapTime)
 	}
 

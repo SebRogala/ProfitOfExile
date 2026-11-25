@@ -597,9 +597,40 @@ func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, scope league.
 }
 
 // gemEvidenceHistory reads the keys' gem_snapshots points inside the hold
-// window ending at asOf. Red-phase scaffold: it reads nothing.
+// window ending at asOf.
 func (r *Repository) gemEvidenceHistory(ctx context.Context, scope league.Scope, keys []GemClassificationKey, asOf time.Time) ([]evidencePoint, error) {
-	return nil, nil
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: gem evidence history: %w", err)
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	names, variants := make([]string, len(keys)), make([]string, len(keys))
+	for i, key := range keys {
+		names[i], variants[i] = key.Name, key.Variant
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT name, variant, time, chaos, COALESCE(listings, 0), sample_count
+		FROM gem_snapshots
+		JOIN unnest($2::text[], $3::text[]) AS k(name, variant) USING (name, variant)
+		WHERE league = $1 AND time >= $4::timestamptz - $5 * interval '1 second' AND time <= $4
+		  AND COALESCE(chaos, 0) > 0`, scope.ID(), names, variants, asOf, GemEvidencePolicy().HoldWindow.Seconds())
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query gem evidence history: %w", err)
+	}
+	defer rows.Close()
+	var points []evidencePoint
+	for rows.Next() {
+		var point evidencePoint
+		if err := rows.Scan(&point.Name, &point.Variant, &point.Time, &point.Chaos, &point.Listings, &point.SampleCount); err != nil {
+			return nil, fmt.Errorf("lab repo: scan gem evidence history: %w", err)
+		}
+		points = append(points, point)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: iterate gem evidence history: %w", err)
+	}
+	return points, nil
 }
 
 // LatestTransfigureResults returns the most recent analysis results, optionally filtered by variant.

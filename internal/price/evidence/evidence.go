@@ -63,6 +63,10 @@ func Grade(d Depth, p Policy) Evidence {
 		if d.NinjaSample != nil && *d.NinjaSample > p.NinjaSampleAbove && d.NinjaListings >= p.NinjaListings {
 			return Solid
 		}
+		if d.Hold != nil && p.HoldWindow > 0 && d.Hold.LastSolidPrice > 0 &&
+			d.Hold.LastSolidAge >= 0 && d.Hold.LastSolidAge <= p.HoldWindow {
+			return Solid
+		}
 	default:
 		return None
 	}

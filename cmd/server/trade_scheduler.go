@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -30,6 +31,9 @@ type tradeScheduler struct {
 	gems       tradeDemandReader
 	checks     tradeCheckReader
 	holds      evidenceHolds
+	heldStamp  time.Time
+	heldGems   []lab.GemPrice
+	hasHeld    bool
 	rate       func() resolve.Rate
 	now        func() time.Time
 }
@@ -49,6 +53,17 @@ func (s *tradeScheduler) reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if !s.hasHeld || !s.heldStamp.Equal(stamp) {
+		held, err := s.holds(readCtx, s.scope, gems, stamp)
+		if err != nil {
+			return fmt.Errorf("trade scheduler: evidence holds: %w", err)
+		}
+		if err := readCtx.Err(); err != nil {
+			return fmt.Errorf("trade scheduler: evidence holds: %w", err)
+		}
+		s.heldGems, s.heldStamp, s.hasHeld = held, stamp, true
+	}
+	gems = s.heldGems
 	rows, err := s.checks.LookupsAsOf(readCtx, s.scope, s.now())
 	if err != nil {
 		return err

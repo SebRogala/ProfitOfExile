@@ -23,7 +23,7 @@ func gemDepth(g GemPrice) evidence.Depth {
 	if g.Chaos > 0 {
 		source = evidence.SourceNinja
 	}
-	return evidence.Depth{PricedBy: source, NinjaListings: g.Listings, NinjaSample: g.SampleCount}
+	return evidence.Depth{PricedBy: source, NinjaListings: g.Listings, NinjaSample: g.SampleCount, Hold: g.hold}
 }
 
 // tierItems maps the gems that pass filter to tier items: the market is the

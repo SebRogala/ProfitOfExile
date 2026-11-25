@@ -41,6 +41,18 @@ func NewAnalyzer(repo *Repository, throttler *Throttler, cache *Cache, tradeCach
 	}
 }
 
+func (a *Analyzer) heldLatestGemPrices(ctx context.Context, scope league.Scope) ([]GemPrice, time.Time, error) {
+	gems, snapTime, err := a.repo.LatestGemPrices(ctx, scope)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	held, err := LoadEvidenceHolds(ctx, a.repo, scope, gems, snapTime)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return held, snapTime, nil
+}
+
 // gemNamePoolLimit caps every autocomplete name pool a tick loads into the
 // cache. Measured 2026-08-05 on the latest local Allflame snapshot, the largest
 // of the three holds 335 names, so the cap is headroom rather than a policy the
@@ -186,7 +198,7 @@ func (a *Analyzer) RunDoubleCorrupt(ctx context.Context, scope league.Scope) err
 	a.muDoubleCrpt.Lock()
 	defer a.muDoubleCrpt.Unlock()
 
-	gems, snapTime, err := a.repo.LatestGemPrices(ctx, scope)
+	gems, snapTime, err := a.heldLatestGemPrices(ctx, scope)
 	if err != nil {
 		a.logger.Error("double corrupt: failed to load gem prices", "error", err)
 		return err
@@ -243,7 +255,7 @@ func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error 
 	a.muDedication.Lock()
 	defer a.muDedication.Unlock()
 
-	gems, snapTime, err := a.repo.LatestGemPrices(ctx, scope)
+	gems, snapTime, err := a.heldLatestGemPrices(ctx, scope)
 	if err != nil {
 		a.logger.Error("dedication: failed to load gem prices", "error", err)
 		return err
@@ -382,7 +394,7 @@ func (a *Analyzer) RunV2(ctx context.Context, scope league.Scope) error {
 	a.muV2.Lock()
 	defer a.muV2.Unlock()
 
-	gems, snapTime, err := a.repo.LatestGemPrices(ctx, scope)
+	gems, snapTime, err := a.heldLatestGemPrices(ctx, scope)
 	if err != nil {
 		a.logger.Error("v2: failed to load gem prices", "error", err)
 		return err

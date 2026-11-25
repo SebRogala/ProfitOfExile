@@ -92,7 +92,11 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 		}
 
 		// Load gems at this exact snapshot time.
-		gems, _, err := repo.GemPricesAsOf(ctx, scope, snapTime)
+		gems, priceTime, err := repo.GemPricesAsOf(ctx, scope, snapTime)
+		if err != nil {
+			return fmt.Errorf("snapshot %s: %w", snapTime.Format(time.RFC3339), err)
+		}
+		gems, err = lab.LoadEvidenceHolds(ctx, repo, scope, gems, priceTime)
 		if err != nil {
 			return fmt.Errorf("snapshot %s: %w", snapTime.Format(time.RFC3339), err)
 		}
