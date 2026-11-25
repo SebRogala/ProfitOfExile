@@ -131,6 +131,13 @@ fixture "$work/ac6" lanepoe414
 INTEGRATION_DB=$foreign run "$work/ac6" scripts/league-rollover-e2e.sh
 check "rollover with generated config refuses a foreign caller database with one FAIL: line before Docker" refused
 
+# keep:happy — AC-8: a lane config written before the generated marker existed
+# still selects its lane database.
+fixture "$work/ac8" ""
+printf '# lane configuration\nCOMPOSE_FILE=docker-compose.lane.yml\nINTEGRATION_DB=%s\n' "$lease" >"$work/ac8/.env"
+run "$work/ac8" "$runner" ./internal/exchange
+check "with an unmarked lane config and no caller database the targeted runner gets that config's database" stub_db_is "$lease"
+
 # keep:happy — AC-7: the replacement exists, the retired wrappers are gone and
 # no tracked file names either retired lane.
 retired=(lane"second" lane"third")
