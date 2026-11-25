@@ -755,6 +755,68 @@ mod tests {
         Sim::from_board(&board, &valuation())
     }
 
+    mod keep_happy {
+        use super::*;
+
+        // Whole-map no-revisit: every slot an incursion used stays out of the
+        // drop pool until the map's last entrance is spent, then all of them
+        // return together. Tabled over the map index, so the second map starts
+        // from a clean mask rather than one the first map left behind.
+        #[test]
+        fn the_last_incursion_of_a_map_clears_the_no_repeat_guarantee() {
+            let entrances = TempleConfig::default().entrances_per_map();
+            let maps: [[Slot; 4]; 2] = [[D1, D2, D3, C1], [D2, C0, D1, C2]];
+            let mut sim = sim(&[], &[]);
+            sim.remaining = 9;
+            for (map, visits) in maps.iter().enumerate() {
+                let visits = &visits[..entrances as usize];
+                for (k, slot) in visits[..visits.len() - 1].iter().enumerate() {
+                    sim.spend_incursion(slot.index(), entrances);
+                    let pool = sim.drop_pool();
+                    for visited in &visits[..=k] {
+                        assert!(
+                            !pool.contains(&visited.index()),
+                            "map {map}, after incursion {k}: {visited:?} must stay blocked, pool {pool:?}"
+                        );
+                    }
+                }
+                sim.spend_incursion(visits[visits.len() - 1].index(), entrances);
+                let pool = sim.drop_pool();
+                for visited in visits {
+                    assert!(
+                        pool.contains(&visited.index()),
+                        "map {map} rolled over: {visited:?} must return, pool {pool:?}"
+                    );
+                }
+            }
+            assert_eq!(sim.remaining, 9 - 2 * entrances);
+        }
+
+        // Both architects of a tier-0 room offer a change, so the policy kills
+        // for a target line that only the second offer names. Seed 46 draws D1
+        // (the only drop slot), then a junk change line, then Corruption.
+        #[test]
+        fn a_tier_zero_room_kills_for_a_target_line_only_its_second_architect_offers() {
+            let mut profile = rush();
+            profile.room_values.insert(Line::Corruption, [5.0, 0.0, 9.0]);
+            let valuation = Valuation::for_profile(&profile);
+            let others: Vec<(Slot, &str, u8)> = Slot::ALL
+                .iter()
+                .filter(|s| ![Slot::APEX, Slot::ENTRANCE, D1].contains(*s))
+                .map(|s| (*s, "junk", 3))
+                .collect();
+            let mut board = sim(&others, &[(D1, E1)]);
+            board.remaining = 1;
+            assert_eq!(board.drop_pool(), vec![D1.index()], "D1 is the only draw");
+
+            let score = board.rollout(&profile, &valuation, &TempleConfig::default(), &mut Rng::seeded(46));
+
+            // Corruption at T1 on D1 pays 5.0; D1 and the junk room the policy
+            // door connects pay 0.05 each. A junk kill on D1 would score 0.1.
+            assert!((score - 5.1).abs() < 1e-9, "D1 must hold Corruption T1, score {score}");
+        }
+    }
+
     mod keep_critical {
         use super::*;
         use crate::temple::rooms::CRADLE_LINE_KEY;
@@ -857,38 +919,17 @@ mod tests {
         assert!(pool.contains(&D3.index()), "tier 2 is still drawable");
     }
 
-    // Only the *immediately next* incursion is guaranteed to differ. The
-    // prototype modelled whole-map no-revisit, which is a stronger claim than
-    // the game makes.
+    // The slot an incursion used leaves the drop pool for the next draw of the
+    // same map.
     #[test]
     fn the_slot_the_previous_incursion_used_is_not_drawn_next() {
-        let mut sim = sim(&[], &[]);
-        sim.last_visited = Some(D2.index());
-        let pool = sim.drop_pool();
-        assert!(!pool.contains(&D2.index()));
-        assert!(pool.contains(&D3.index()));
-    }
-
-    // The guarantee is scoped to a map: the last incursion of a map clears it,
-    // so the slot is drawable again in the next one.
-    #[test]
-    fn the_last_incursion_of_a_map_clears_the_no_repeat_guarantee() {
         let entrances = TempleConfig::default().entrances_per_map();
         let mut sim = sim(&[], &[]);
         sim.remaining = 9;
-        for _ in 0..entrances - 1 {
-            sim.spend_incursion(D2.index(), entrances);
-            assert_eq!(
-                sim.last_visited,
-                Some(D2.index()),
-                "mid-map, the slot stays blocked"
-            );
-            assert!(!sim.drop_pool().contains(&D2.index()));
-        }
         sim.spend_incursion(D2.index(), entrances);
-        assert_eq!(sim.last_visited, None, "the map rolled over");
-        assert!(sim.drop_pool().contains(&D2.index()));
-        assert_eq!(sim.remaining, 9 - entrances);
+        let pool = sim.drop_pool();
+        assert!(!pool.contains(&D2.index()));
+        assert!(pool.contains(&D3.index()));
     }
 
     // Without Artefacts of the Vaal a map is three entrances, so the boundary
@@ -901,14 +942,22 @@ mod tests {
             consolidation: None,
         }
         .entrances_per_map();
+        let visits = [D1.index(), D2.index(), D3.index()];
         let mut sim = sim(&[], &[]);
         sim.remaining = 9;
-        for _ in 0..three - 1 {
-            sim.spend_incursion(D2.index(), three);
+        for slot in &visits[..2] {
+            sim.spend_incursion(*slot, three);
         }
-        assert_eq!(sim.last_visited, Some(D2.index()));
-        sim.spend_incursion(D2.index(), three);
-        assert_eq!(sim.last_visited, None);
+        let pool = sim.drop_pool();
+        assert!(
+            !pool.contains(&visits[0]) && !pool.contains(&visits[1]),
+            "mid-map both visited slots stay out of the pool: {pool:?}"
+        );
+        sim.spend_incursion(visits[2], three);
+        let pool = sim.drop_pool();
+        for slot in visits {
+            assert!(pool.contains(&slot), "slot {slot} returns after the third incursion: {pool:?}");
+        }
     }
 
     // ------------------------------------------------- upgrade resolution --

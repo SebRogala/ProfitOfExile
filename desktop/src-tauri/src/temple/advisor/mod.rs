@@ -3891,6 +3891,8 @@ mod tests {
     /// The kill on every walked board at the capture's prices, under
     /// Consolidation option 1, the played default. These are the valuation's
     /// current answers, including the C1 instrumental rung for Temple Nexus.
+    /// Board 1 kills the Museum change once future tier-0 rooms offer both
+    /// architects' change lines (POE-415).
     /// Board 3 kills Xopec's Cradle-line change, the POE-465 priority, which
     /// builds tier 3 (POE-415). An upgrade from tier 1 builds tier 3 and a
     /// change tier 1, so board 7 takes the Chamber of Iron upgrade here; its
@@ -3909,7 +3911,7 @@ mod tests {
         assert_eq!(
             killed,
             vec![
-                ("1 Tombs", Some((Change, "hall_of_champions".to_string(), 1))),
+                ("1 Tombs", Some((Change, "museum_of_artefacts".to_string(), 1))),
                 ("2 CorruptionChamber", Some((Upgrade, "corruption".to_string(), 3))),
                 ("3 Chasm-late", Some((Change, "throne_of_atziri".to_string(), 3))),
                 ("4 Chasm-merge", Some((Change, "hybridisation_chamber".to_string(), 1))),
