@@ -3225,11 +3225,13 @@ mod tests {
         /// Recorded on HEAD 326256a2. The board is `unclean` on its own: the
         /// engine's `OMNITECT REACTOR PLANT` is not in the room vocabulary, so
         /// Hayoxi's offer stays unresolved and the panel is owed a re-read.
+        /// The headline follows Consolidation option 1, the played default
+        /// (POE-415): Xopec's change builds Explosives Room at tier 1.
         fn recorded_full_read() -> Verdict {
             Verdict {
                 status: TempleStatus::Read,
                 unread: 0,
-                headline: Some("change → Demolition Lab".to_string()),
+                headline: Some("change → Explosives Room".to_string()),
                 architect_index: Some(1),
                 doors: vec!["B0-C1".to_string()],
                 secondary_door: Some("B1-C1".to_string()),
