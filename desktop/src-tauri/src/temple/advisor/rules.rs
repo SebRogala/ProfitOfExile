@@ -106,7 +106,7 @@ use super::state::{
 /// 0.001, both far under any sampling error.
 ///
 /// **Stated against [`crate::temple::strategy::REFERENCE_TOP_ROOM_VALUE`]**,
-/// which is the scale `locus_doryani_rush` scores on. It is an EV gap in SCORE
+/// which is the scale `cradle_apex` scores on. It is an EV gap in SCORE
 /// units, so a chaos-denominated profile (POE-257) reads it through
 /// [`StrategyProfile::value_scale`] — 0.05 out of 9 stays 0.05 out of 9,
 /// whatever 9 has become.
@@ -1220,7 +1220,7 @@ mod tests {
     use super::super::state::BoardState;
 
     fn rush() -> StrategyProfile {
-        StrategyProfile::locus_doryani_rush()
+        StrategyProfile::cradle_apex()
     }
 
     /// The Rush with R4's carve-out on — it ships off, so a test of the carve-out

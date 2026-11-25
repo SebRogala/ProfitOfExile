@@ -4856,7 +4856,7 @@ mod tests {
             reroll_until_favourable: true,
             r4_keep_upgrade_targets: false,
         };
-        let rush = StrategyProfile::locus_doryani_rush();
+        let rush = StrategyProfile::cradle_apex();
 
         let profile = settings.to_profile(&reference_scale_valuation());
 
@@ -5482,7 +5482,7 @@ mod tests {
         // ranking the constants were written for.
         let scale = LOCUS_T3 / 9.0;
         let settings = TempleProfileSettings { path_cost: 1.5, ..Default::default() };
-        let rush = StrategyProfile::locus_doryani_rush();
+        let rush = StrategyProfile::cradle_apex();
 
         let profile = settings.to_profile(&valuation);
 
@@ -5590,7 +5590,7 @@ mod tests {
     #[test]
     fn the_bridge_leaves_the_pinned_fixture_profile_alone() {
         let after = TempleProfileSettings::default().to_profile(&allflame_valuation());
-        let rush = StrategyProfile::locus_doryani_rush();
+        let rush = StrategyProfile::cradle_apex();
 
         // The fixture still states the Cradle-only ranking, not today's
         // market, and the bridge's own answer is a different object.
@@ -6102,7 +6102,7 @@ mod tests {
         let parsed: TempleProfileSettings =
             serde_json::from_str("{}").expect("an empty object is a valid partial profile");
 
-        let rush = StrategyProfile::locus_doryani_rush();
+        let rush = StrategyProfile::cradle_apex();
         assert_eq!(parsed.apex_score, rush.apex_score);
         assert_eq!(parsed.path_cost, rush.path_cost);
         assert_eq!(parsed.reroll_until_favourable, rush.reroll_until_favourable);

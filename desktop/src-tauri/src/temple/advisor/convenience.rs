@@ -240,7 +240,7 @@ mod tests {
     use crate::temple::strategy::{Line, Tier};
 
     fn rush() -> Valuation {
-        Valuation::for_profile(&StrategyProfile::locus_doryani_rush())
+        Valuation::for_profile(&StrategyProfile::cradle_apex())
     }
 
     fn edge(a: Slot, b: Slot) -> Edge {

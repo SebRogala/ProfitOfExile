@@ -13,15 +13,14 @@
 //! of that sits the Apex term, then RD's per-room baseline. Traversal cost
 //! (`path_cost`) is subtracted separately — see [`StrategyProfile::path_penalty`].
 //!
-//! Combinations exist because the ranking is **not additive**: Sebastian's
-//! measured outcome ranking is Locus 9, Doryani 7, both 10. No per-room weights
-//! reproduce that, so the joint outcome carries its own number.
+//! Combinations price joint outcomes that per-room sums cannot express.
+//! The Cradle-plus-Apex base profile has no combination; the Apex connection
+//! is scored by its own term.
 //!
 //! # Partial credit is essentially none
 //!
-//! Only the tier-3 room of a line pays. A finished temple holding Catalyst of
-//! Corruption II is worth its RD baseline and nothing else — which is why
-//! `room_values` for the Locus/Doryani Rush is zero at tiers 1 and 2.
+//! Only the Cradle's tier-3 room pays on [`StrategyProfile::cradle_apex`].
+//! Lower tiers are worth their RD baseline and nothing else.
 //!
 //! # What this module deliberately does not do
 //!
@@ -218,7 +217,7 @@ pub enum Mode {
     /// A target line is still missing. R5 applies: leave the map once the
     /// target room has been used, because staying risks a guaranteed-zero draw.
     Chase,
-    /// Both target lines exist, so tiers stop mattering — the Incursion Scarab
+    /// All target lines exist, so tiers stop mattering — the Incursion Scarab
     /// of Timelines re-rolls them in the itemised copy. Complete every entrance
     /// and farm the itemised re-rolls. Held inactive in 3.30 by
     /// [`SCARAB_OF_TIMELINES_ACTIVE`]: the advisor never enters this mode.
@@ -317,7 +316,7 @@ pub struct StrategyProfile {
     /// Which trigger flips [`Mode::Chase`] to [`Mode::Scarab`].
     pub mode_rule: ModeRule,
     /// Run-time traversal weight, charged per BFS hop from the Entrance. Zero
-    /// for the Locus/Doryani Rush (rush in, grab the room, leave); high for
+    /// for the Cradle-plus-Apex Rush (rush in, grab the room, leave); high for
     /// Vertolka, who builds a straight rushable path to the Apex and routes the
     /// rest around the farming run.
     pub path_cost: f64,
@@ -348,10 +347,9 @@ pub struct StrategyProfile {
 /// The top tier-3 room value the abstract constants around
 /// [`StrategyProfile`] are stated against.
 ///
-/// [`StrategyProfile::locus_doryani_rush`] prices its best room-tier — Locus of
-/// Corruption III — at 9 on Sebastian's 1–10 outcome ranking, and every other
-/// magnitude in the engine was chosen next to that 9. POE-257 re-denominates
-/// `room_values` in CHAOS, where the same room is worth 846, so each of them
+/// [`StrategyProfile::cradle_apex`] prices Cradle of Creation at the reference
+/// value, and every other magnitude in the engine is stated against it.
+/// POE-257 re-denominates `room_values` in CHAOS, so each of them
 /// has to move with it or become dust. [`StrategyProfile::value_scale`] is the
 /// multiplier, and these are ALL FIVE magnitudes it is applied to — a sixth
 /// added to the engine without a row here is a constant that will quietly stop
@@ -387,7 +385,7 @@ impl StrategyProfile {
     /// How many of THIS profile's value units one unit of the reference 1–10
     /// ranking is worth (POE-257 D5).
     ///
-    /// `1.0` for [`Self::locus_doryani_rush`] by construction, so every
+    /// `1.0` for [`Self::cradle_apex`] by construction, so every
     /// constant expressed as a multiple of it is bit-identical to the number
     /// it replaced on the profile the pinned suites rank with. For a
     /// chaos-denominated profile it is `top tier-3 value / 9`, which is what
@@ -412,20 +410,16 @@ impl StrategyProfile {
         }
     }
 
-    /// Sebastian's Locus / Doryani Rush.
-    ///
-    /// The numbers are his measured outcome ranking (1–10): Locus of Corruption
-    /// plus Doryani's Institute 10, Locus alone 9, Doryani alone 7, Apex alone
-    /// 2 — *"very nice to have, totally not needed"*. Tiers 1 and 2 score zero
-    /// because partial credit is essentially none.
-    ///
-    /// Note the split: the two single-line outcomes are plain `room_values`, so
-    /// the joint outcome needs exactly one combination — the one number no per-
-    /// room weighting can reproduce, since 9 + 7 must yield 10.
-    pub fn locus_doryani_rush() -> StrategyProfile {
+    /// Cradle of Creation plus an Apex connection (Desk poe-temple-targets-1124).
+    /// The Cradle carries the reference room value; the Apex uses its own term.
+    pub fn cradle_apex() -> StrategyProfile {
         let mut room_values = BTreeMap::new();
-        room_values.insert(Line::Corruption, [0.0, 0.0, 9.0]);
-        room_values.insert(Line::Gem, [0.0, 0.0, 7.0]);
+        room_values.insert(
+            Line::named(super::rooms::CRADLE_LINE_KEY),
+            [0.0, 0.0, REFERENCE_TOP_ROOM_VALUE],
+        );
+        room_values.insert(Line::Corruption, [0.0, 0.0, 0.0]);
+        room_values.insert(Line::Gem, [0.0, 0.0, 0.0]);
         // The upgrade and explosive lines are instrumental — they move tiers
         // and reachability, which the score already sees through the resulting
         // rooms. Valuing them again here would double-count.
@@ -437,15 +431,12 @@ impl StrategyProfile {
             grade_fallback: BTreeMap::new(),
             apex_score: 2.0,
             apex_mixed_increment: 0.5,
-            combinations: vec![Combination {
-                requires: vec![(Line::Corruption, Tier::T3), (Line::Gem, Tier::T3)],
-                score: 10.0,
-            }],
+            combinations: vec![],
             // Free parameters, both carried over from the prototype and both
             // still untuned against real outcomes.
             room_baseline: 0.05,
             blast_discount: 0.5,
-            mode_rule: ModeRule::LinesConnected(vec![Line::Corruption, Line::Gem]),
+            mode_rule: ModeRule::LinesConnected(vec![Line::named(super::rooms::CRADLE_LINE_KEY)]),
             path_cost: 0.0,
             reroll_until_favourable: false,
             // Off until the carve-out is confirmed (owner, 2026-09-14).
@@ -463,9 +454,8 @@ impl StrategyProfile {
     /// have tier ≥ 1, junk included — **excluding the Entrance slot, which pays
     /// no baseline** (prototype `temple_model.py:179`, `s != ENTRANCE`).
     ///
-    /// The two inputs are independent on purpose. Sebastian's 10/9/7/2 ranking
-    /// is an *outcome* ranking with no board attached, so it is reproduced by
-    /// passing a tally of zero; a real board adds its baseline on top.
+    /// The two inputs are independent: an outcome with no board attached uses
+    /// a tally of zero; a real board adds its baseline on top.
     ///
     /// Traversal cost is **not** applied here — see [`Self::aggregate_with_path`].
     pub fn aggregate(
@@ -721,7 +711,7 @@ mod tests {
     }
 
     fn rush() -> StrategyProfile {
-        StrategyProfile::locus_doryani_rush()
+        StrategyProfile::cradle_apex()
     }
 
     /// The Cradle line, the Rush's one target line.

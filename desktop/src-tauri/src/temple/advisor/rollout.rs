@@ -399,7 +399,7 @@ impl Sim {
     /// they came for.
     ///
     /// **ASSUMED, and inert in every shipped profile** — `path_cost` is 0 in
-    /// the Locus/Doryani Rush, so nothing here has ever been measured against
+    /// the Cradle-plus-Apex Rush, so nothing here has ever been measured against
     /// an outcome. The definition follows Vertolka's rationale (*"connect the
     /// rest with the farming route in mind — better to spend time building than
     /// running to dead ends"*): the cost of a temple is the walk to the
@@ -775,7 +775,7 @@ mod tests {
     use super::super::state::{mask_of, BoardState};
 
     fn rush() -> StrategyProfile {
-        StrategyProfile::locus_doryani_rush()
+        StrategyProfile::cradle_apex()
     }
 
     fn valuation() -> Valuation {

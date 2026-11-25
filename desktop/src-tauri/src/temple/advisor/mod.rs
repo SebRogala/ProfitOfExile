@@ -1024,7 +1024,7 @@ mod tests {
     const SEED: u64 = 7;
 
     fn rush() -> StrategyProfile {
-        StrategyProfile::locus_doryani_rush()
+        StrategyProfile::cradle_apex()
     }
 
     /// The default config with the Consolidation of Power option set to

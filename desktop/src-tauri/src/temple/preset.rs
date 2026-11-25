@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 
 use super::market::MarketInput;
 use super::rooms::LINES;
-use super::strategy::Line;
+use super::strategy::{ModeRule, StrategyProfile};
 use super::valuation::{RoomOverrides, Valued};
 
 pub use super::valuation::Knobs;
@@ -150,8 +150,8 @@ impl TempleCustomSettings {
     ///
     /// # One warning that refuses nothing
     ///
-    /// Both target lines priced at zero. `mode_rule` and RV name `corruption`
-    /// and `gem` structurally, not by their value, so zeroing both stops them
+    /// The profile's target set priced at zero. `mode_rule` and RV name the
+    /// targets structurally, not by their value, so zeroing them stops them
     /// scoring without stopping the advisor protecting them — a number that
     /// will be HONOURED and will not do what the player expects, which is
     /// worse than one that is refused.
@@ -179,13 +179,14 @@ impl TempleCustomSettings {
             }
         }
 
-        if self.both_target_lines_priced_at_zero() {
-            warnings.push(
-                "temple custom: \"corruption\" and \"gem\" are both priced 0 at tier 3 — \
-                 RV still protects those two lines, so zeroing them \
-                 stops them scoring but does not stop the advisor chasing them"
-                    .to_string(),
-            );
+        if self.target_lines_priced_at_zero() {
+            let ModeRule::LinesConnected(targets) = StrategyProfile::cradle_apex().mode_rule;
+            let keys: Vec<_> = targets.iter().map(|line| line.key()).collect();
+            warnings.push(format!(
+                "temple custom: target line(s) {} priced 0 at tier 3 — RV still \
+                 protects them, so zeroing them stops them scoring but does not stop the advisor chasing them",
+                keys.join(", "),
+            ));
         }
 
         (out, warnings)
@@ -279,10 +280,10 @@ impl TempleCustomSettings {
     /// never replaced anything. [`EntryRefusal`] owns the shared substance and
     /// hands each caller its own disposition.
     ///
-    /// Deliberately NOT refused: a table that prices both target lines at
+    /// Deliberately NOT refused: a table that prices the target set at
     /// zero. That is [`Self::overrides`]'s one warning that refuses nothing —
     /// it is a position a player can hold, and the sentence exists so they
-    /// know the advisor still protects the pair.
+    /// know the advisor still protects those lines.
     pub fn validate(&self) -> Result<(), String> {
         // `tier_fraction` first, and it is the one knob with a ceiling — see
         // `KnobRule`, which owns that and every other thing this build refuses
@@ -305,13 +306,14 @@ impl TempleCustomSettings {
         Ok(())
     }
 
-    /// Whether the table states an explicit zero for BOTH target lines'
+    /// Whether the table states an explicit zero for every target line's
     /// tier-3 rooms.
     ///
     /// A stated zero only — a line the table does not name is on the formula
     /// and is not the player claiming anything about it.
-    fn both_target_lines_priced_at_zero(&self) -> bool {
-        [Line::Corruption, Line::Gem].iter().all(|line| {
+    fn target_lines_priced_at_zero(&self) -> bool {
+        let ModeRule::LinesConnected(targets) = &StrategyProfile::cradle_apex().mode_rule;
+        targets.iter().all(|line| {
             self.rooms
                 .get(line.key())
                 .is_some_and(|values| values.len() == OVERRIDE_TIERS && values[2] == Some(0.0))

@@ -20,7 +20,7 @@ use super::super::valuation::Valued;
 /// preset's own override table and `combo_premium`
 /// ([`Self::to_profile`], `temple/preset.rs`, ADR-022). What used to read
 /// "those arrive as a second shipped profile, not as settings JSON" holds for
-/// `mode_rule` alone — it names the two lines the build chases, and a user
+/// `mode_rule` alone — it names the target lines the build chases, and a user
 /// editing it is choosing a different strategy rather than tuning this one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -49,11 +49,11 @@ pub struct TempleProfileSettings {
 }
 
 impl Default for TempleProfileSettings {
-    /// The Rush's own values, read off [`StrategyProfile::locus_doryani_rush`]
+    /// The Rush's own values, read off [`StrategyProfile::cradle_apex`]
     /// rather than typed in — a defaults table that can drift from the profile
     /// it defaults to is a defaults table that will.
     fn default() -> Self {
-        let rush = StrategyProfile::locus_doryani_rush();
+        let rush = StrategyProfile::cradle_apex();
         TempleProfileSettings {
             apex_score: rush.apex_score,
             path_cost: rush.path_cost,
@@ -130,23 +130,24 @@ impl TempleProfileSettings {
     ///
     /// # `mode_rule` is not a valuation and does not become one
     ///
-    /// It stays [`ModeRule::LinesConnected`](super::strategy::ModeRule)
-    /// `[Corruption, Gem]` whatever the player prices those two lines at. The
+    /// It stays [`StrategyProfile::cradle_apex`]'s
+    /// [`ModeRule::LinesConnected`](super::strategy::ModeRule) target set
+    /// whatever the player prices those lines at. The
     /// rule decides when the build flips from chasing to scarab-farming (a flip
     /// held inactive in 3.30, POE-377), and
     /// RV — the hard constraint that refuses to bank an unreachable target —
-    /// reads the same two lines. A Custom table that prices both of them at
+    /// reads that same set. A Custom table that prices its targets at
     /// zero therefore does NOT stop the advisor protecting them; it only stops
     /// them scoring. That is a real gap between what the table says and what
     /// the advisor does, so
     /// [`TempleCustomSettings::overrides`](super::preset::TempleCustomSettings::overrides)
-    /// warns about exactly that pair rather than letting the player discover
+    /// warns about that target set rather than letting the player discover
     /// it on a board.
     ///
-    /// [`StrategyProfile::locus_doryani_rush`] is untouched and stays the
-    /// fixture the pinned 10/9/7/2 suites rank with.
+    /// [`StrategyProfile::cradle_apex`] also supplies the abstract fixture
+    /// profile used by the pinned suites.
     pub fn to_profile(&self, valuation: &Valued) -> StrategyProfile {
-        let rush = StrategyProfile::locus_doryani_rush();
+        let rush = StrategyProfile::cradle_apex();
 
         let mut room_values = BTreeMap::new();
         let mut grade_fallback = BTreeMap::new();

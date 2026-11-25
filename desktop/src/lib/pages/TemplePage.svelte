@@ -672,7 +672,7 @@
 				/>
 				<span class="meta">
 					Traversal weight per corridor from the Entrance, same units — top tier-3 room = 9. 0 for
-					the Doryani rush.
+					the Cradle and Apex connection rush.
 				</span>
 			</label>
 			<BetaGate>

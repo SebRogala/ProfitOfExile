@@ -139,7 +139,7 @@
 //! branch**. POE-257 widened what counts as such a field — the whole 25 x 3
 //! room-value table, in chaos, now reaches the profile from a market read plus
 //! the player's own overrides ([`preset`], [`valuation`], ADR-022) — and added
-//! no branch: `strategy::StrategyProfile::locus_doryani_rush` is still the one
+//! no branch: `strategy::StrategyProfile::cradle_apex` is the one
 //! structure every profile is built on.
 
 // POE-171 (this module's overlay loop and SSOT slice) is the live caller every
