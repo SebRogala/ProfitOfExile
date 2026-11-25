@@ -74,16 +74,20 @@ afterEach(async () => {
 for (const league of [undefined, ' \t ', 'New League']) {
 	const resolved = league === 'New League';
 	describe(`trade links with status league ${JSON.stringify(league)}`, () => {
-		it('renders BestPlays base and GCP labels with the resolved availability', async () => {
+		it('renders BestPlays base and 20/0 BUY controls named for their gem with the resolved availability', async () => {
 			serve(league);
 			const status = await fetchStatus();
 			const root = attach(BestPlays, { plays: [gem as GemPlay], league: status.league });
 			click(root.querySelector('tbody tr'));
 			await settle();
-			expect(root.textContent).toContain('BUY BASE');
-			expect(root.textContent).toContain('BUY 20/0');
+			const controls = [...root.querySelectorAll('a[href], [aria-disabled="true"]')].map(el => ({
+				label: el.textContent?.trim(),
+				name: el.getAttribute('aria-label')
+			}));
+			expect(controls).toEqual(resolved
+				? [{ label: 'BUY', name: 'Buy Kinetic Blast (20/20)' }, { label: 'BUY', name: 'Buy Kinetic Blast (20/0)' }]
+				: [{ label: 'BUY', name: 'League not detected' }, { label: 'BUY', name: 'League not detected' }]);
 			checkLinks(root, resolved, 2);
-			if (!resolved) expect(root.querySelectorAll('[aria-disabled="true"]')).toHaveLength(2);
 		});
 		it('renders Comparator base availability after selecting a gem', async () => {
 			serve(league);

@@ -242,18 +242,24 @@ function historyShows(historyText: string, rows: SignalTransition[]): boolean {
 /** The text a player reads when pointing at `el`: its title. */
 const tooltipOf = (el: HTMLElement) => el.getAttribute('title') ?? '';
 
-/** The row's BUY controls in display order: links, and controls announced as disabled. */
+/**
+ * The row's BUY controls in display order, links and controls announced as
+ * disabled: the label shown, the accessible name a screen reader announces, the
+ * destination and the tooltip.
+ */
 function buyControls(expanded: HTMLElement) {
 	return [...expanded.querySelectorAll<HTMLElement>('a[href], [aria-disabled="true"]')].map((el) => ({
 		label: el.textContent?.trim(),
+		name: el.getAttribute('aria-label'),
 		href: el.getAttribute('href'),
 		disabled: el.getAttribute('aria-disabled') === 'true',
-		tooltip: el.getAttribute('aria-disabled') === 'true' ? tooltipOf(el) : undefined
+		tooltip: tooltipOf(el)
 	}));
 }
 
-function buyControl(expanded: HTMLElement, label: string): HTMLElement | undefined {
-	return [...expanded.querySelectorAll<HTMLElement>('a, [aria-disabled="true"]')].find((el) => el.textContent?.trim() === label);
+/** The control a screen reader announces as `name`; every BUY now reads the same label. */
+function buyNamed(expanded: HTMLElement, name: string): HTMLElement | undefined {
+	return [...expanded.querySelectorAll<HTMLElement>('a, [aria-disabled="true"]')].find((el) => el.getAttribute('aria-label') === name);
 }
 
 // Web prices are text with their unit suffix.
@@ -261,13 +267,12 @@ const c = (amount: string | number) => `${amount}c`;
 const d = (amount: string) => `${amount}d`;
 
 describe('BestPlays expanded row (web)', () => {
-	// keep:happy
 	it.each([
 		{
 			example: 'typical UNDERCUT',
 			gem: TYPICAL,
 			rows: TYPICAL_HISTORY,
-			buy: seq('Base', '20/20', c(94), 'BUY BASE', 'GCP recipe', c(72), 'BUY 20/0', '20/0 base', c(28), '+', 'GCPs', c(44), `saves ${c(22)}`),
+			buy: seq('Base', '20/20', c(94), 'BUY', 'GCP recipe', `saves ${c(22)}`, c(72), '20/0 base', c(28), 'BUY', '+', 'GCPs', c(44)),
 			sell: seq(
 				'Transfigured', '20/20', c(412), 'UNDERCUT', 'HERD at historical peak — undercut 10-15% NOW before crash',
 				'Tier', 'HIGH', 'UNDERCUT — herd arrived, sell into pressure'
@@ -278,7 +283,7 @@ describe('BestPlays expanded row (web)', () => {
 			example: 'HOLD',
 			gem: HOLD,
 			rows: HOLD_HISTORY,
-			buy: seq('Base', '20/20', c(110), 'BUY BASE', 'GCP recipe', c(79), 'BUY 20/0', '20/0 base', c(35), '+', 'GCPs', c(44), `saves ${c(31)}`),
+			buy: seq('Base', '20/20', c(110), 'BUY', 'GCP recipe', `saves ${c(31)}`, c(79), '20/0 base', c(35), 'BUY', '+', 'GCPs', c(44)),
 			sell: seq('Transfigured', '20/20', d('5.1'), 'HOLD', 'No strong sell signal — hold and monitor'),
 			market: seq('Liquidity', 'HIGH', 'Color', 'GREEN', 'Sellability', 'GOOD · 65')
 		},
@@ -286,14 +291,14 @@ describe('BestPlays expanded row (web)', () => {
 			example: 'SELL NOW',
 			gem: SELL_NOW,
 			rows: SELL_NOW_HISTORY,
-			buy: seq('Base', '20/20', c(96), 'BUY BASE', 'GCP recipe', c(74), 'BUY 20/0', '20/0 base', c(30), '+', 'GCPs', c(44), `saves ${c(22)}`),
+			buy: seq('Base', '20/20', c(96), 'BUY', 'GCP recipe', `saves ${c(22)}`, c(74), '20/0 base', c(30), 'BUY', '+', 'GCPs', c(44)),
 			sell: seq(
 				'Transfigured', '20/20', d('3.4'), 'SELL NOW', 'Price dropping with rising supply — undercut hard',
 				'Tier', 'TOP', 'SELL IMMEDIATELY'
 			),
 			market: seq('Liquidity', 'MED', 'Color', 'GREEN', 'Sellability', 'SLOW · 31')
 		}
-	])('$example: Buy, Sell and Market cards show the gem facts and the history lists each signal change', async ({ gem, rows, buy, sell, market }) => {
+	])('keep:happy: $example: Buy, Sell and Market cards show the gem facts and the history lists each signal change', async ({ gem, rows, buy, sell, market }) => {
 		history.fetch.mockResolvedValue(rows);
 		const expanded = await expand(gem);
 
@@ -304,97 +309,96 @@ describe('BestPlays expanded row (web)', () => {
 		).toEqual({ buy, sell, market, historyListed: true });
 	});
 
-	// keep:happy
-	it('a GCP recipe dearer than the base reads costs N more', async () => {
+	it('keep:happy: a GCP recipe dearer than the base reads costs N more', async () => {
 		history.fetch.mockResolvedValue(TYPICAL_HISTORY);
 		const expanded = await expand(COSTS_MORE);
 
 		expect(cardsOf(expanded)?.buy, flat(expanded.textContent)).toBe(
-			seq('Base', '20/20', c(60), 'BUY BASE', 'GCP recipe', c(72), 'BUY 20/0', '20/0 base', c(28), '+', 'GCPs', c(44), `costs ${c(12)}`, 'more')
+			seq('Base', '20/20', c(60), 'BUY', 'GCP recipe', `costs ${c(12)}`, 'more', c(72), '20/0 base', c(28), 'BUY', '+', 'GCPs', c(44))
 		);
 	});
 
-	// keep:happy
-	it('with no urgency, tier action or recipe the Sell card shows the Transfigured price alone', async () => {
+	it('keep:happy: with no urgency, tier action or recipe the Sell card shows the Transfigured price alone', async () => {
 		history.fetch.mockResolvedValue([hist('14:05', 'UNCERTAIN', 'STABLE', '+4c', 61)]);
 		const expanded = await expand(NO_VERDICT);
 
 		const cards = cardsOf(expanded);
 		expect(cards && { buy: cards.buy, sell: cards.sell }, flat(expanded.textContent)).toEqual({
-			buy: seq('Base', '20/20', c(42), 'BUY BASE'),
+			buy: seq('Base', '20/20', c(42), 'BUY'),
 			sell: seq('Transfigured', '20/20', c(148))
 		});
 	});
 
-	// keep:happy
-	it('a gem name without " of " shows no BUY controls and keeps its prices', async () => {
+	it('keep:happy: a gem name without " of " shows no BUY controls and keeps its prices', async () => {
 		history.fetch.mockResolvedValue([hist('13:35', 'UNCERTAIN', 'STABLE', '-3c', 40)]);
 		const expanded = await expand(NO_BUY_LINKS);
 
 		expect({ buy: cardsOf(expanded)?.buy, controls: buyControls(expanded) }, flat(expanded.textContent)).toEqual({
-			buy: seq('Base', '20/20', c(85), 'GCP recipe', c(74), '20/0 base', c(30), '+', 'GCPs', c(44), `saves ${c(11)}`),
+			buy: seq('Base', '20/20', c(85), 'GCP recipe', `saves ${c(11)}`, c(74), '20/0 base', c(30), '+', 'GCPs', c(44)),
 			controls: []
 		});
 	});
 
-	// keep:happy
-	it('an unlisted base with no recipe and no history reads not listed and No signal changes', async () => {
+	it('keep:happy: an unlisted base with no recipe and no history reads not listed and No signal changes', async () => {
 		history.fetch.mockResolvedValue([]);
 		const expanded = await expand(SPARSE);
 
 		const cards = cardsOf(expanded);
 		expect(cards && { buy: cards.buy, history: cards.history }, flat(expanded.textContent)).toEqual({
-			buy: seq('Base', '20/20', 'not listed', 'BUY BASE'),
+			buy: seq('Base', '20/20', 'not listed', 'BUY'),
 			history: seq('No signal changes')
 		});
 	});
 
-	// keep:happy
-	it('with no league detected both BUY controls are disabled with League not detected, and a failed history reads History unavailable', async () => {
+	it('keep:happy: with no league detected both BUY controls are disabled and named League not detected, and a failed history reads History unavailable', async () => {
 		history.fetch.mockRejectedValue(new Error('API /analysis/history: 502 Bad Gateway'));
 		const expanded = await expand(HOLD, '');
 
 		expect({ controls: buyControls(expanded), history: cardsOf(expanded)?.history }, flat(expanded.textContent)).toEqual({
 			controls: [
-				{ label: 'BUY BASE', href: null, disabled: true, tooltip: 'League not detected' },
-				{ label: 'BUY 20/0', href: null, disabled: true, tooltip: 'League not detected' }
+				{ label: 'BUY', name: 'League not detected', href: null, disabled: true, tooltip: 'League not detected' },
+				{ label: 'BUY', name: 'League not detected', href: null, disabled: true, tooltip: 'League not detected' }
 			],
 			history: seq('History unavailable')
 		});
 	});
 
-	// keep:happy
-	it('while the history request is pending the history card reads Loading…', async () => {
+	it('keep:happy: while the history request is pending the history card reads Loading…', async () => {
 		history.fetch.mockReturnValue(new Promise((resolve) => (releaseHistory = () => resolve([]))));
 		const expanded = await expand(HOLD);
 
 		expect(cardsOf(expanded)?.history, flat(expanded.textContent)).toBe(seq('Loading…'));
 	});
 
-	// keep:critical — silent: a plausible wrong variant in either trade URL sends the
-	// player to buy the wrong gem (a 20/20 base for the recipe, or a 20/0 for the base).
-	it('BUY BASE opens the trade search for the gem variant and BUY 20/0 the search for the 20/0 base', async () => {
+	// keep:critical — silent: both controls read BUY, so a name or variant crossed
+	// between them sends the player to buy the wrong gem (a 20/20 base for the
+	// recipe, or a 20/0 for the base) with nothing on screen to tell them apart.
+	it('keep:critical: the BUY named for the gem variant opens its trade search and the one named for the 20/0 base the 20/0 search', async () => {
 		history.fetch.mockResolvedValue(TYPICAL_HISTORY);
 		const expanded = await expand(TYPICAL);
 
 		expect({
-			base: buyControl(expanded, 'BUY BASE')?.getAttribute('href'),
-			recipe: buyControl(expanded, 'BUY 20/0')?.getAttribute('href')
+			controls: buyControls(expanded).map(({ label, name, tooltip }) => ({ label, name, tooltip })),
+			base: buyNamed(expanded, 'Buy Cleave (20/20)')?.getAttribute('href'),
+			recipe: buyNamed(expanded, 'Buy Cleave (20/0)')?.getAttribute('href')
 		}).toEqual({
+			controls: [
+				{ label: 'BUY', name: 'Buy Cleave (20/20)', tooltip: 'Buy Cleave (20/20)' },
+				{ label: 'BUY', name: 'Buy Cleave (20/0)', tooltip: 'Buy Cleave (20/0)' }
+			],
 			base: baseGemTradeUrl('Cleave of Rage', '20/20', LEAGUE),
 			recipe: baseGemTradeUrl('Cleave of Rage', '20/0', LEAGUE)
 		});
 	});
 
-	// keep:happy
-	it('prices read as text amounts with their c or d unit and no currency images', async () => {
+	it('keep:happy: prices read as text amounts with their c or d unit and no currency images', async () => {
 		history.fetch.mockResolvedValue(HOLD_HISTORY);
 		const expanded = await expand(HOLD);
 
 		const cards = cardsOf(expanded);
 		expect({ images: expanded.querySelectorAll('img').length, buy: cards?.buy, sell: cards?.sell }, flat(expanded.textContent)).toEqual({
 			images: 0,
-			buy: expect.stringMatching(/^Base20\/20110cBUYBASEGCPrecipe79c/),
+			buy: expect.stringMatching(/^Base20\/20110cBUYGCPrecipesaves31c79c/),
 			sell: expect.stringMatching(/^Transfigured20\/205\.1d/)
 		});
 	});
