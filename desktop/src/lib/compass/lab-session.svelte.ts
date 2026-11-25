@@ -1,5 +1,5 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
-import { listen as tauriListen } from '@tauri-apps/api/event';
+import { emit as tauriEmit, listen as tauriListen } from '@tauri-apps/api/event';
 import { fetchLabLayout } from './layout-loader';
 import {
 	createNavState,
@@ -35,9 +35,23 @@ type LayoutUpdatedPayload = { action?: string; difficulty?: string } | null | un
 
 type Unlisten = () => void;
 
+export const LAB_LAYOUT_NOTICE_EVENT = 'lab-layout-notice';
+export const LAB_LAYOUT_NOTICE_REQUEST = 'lab-layout-notice-request';
+
+export type MissingLayoutNotice = { id: number; difficulty: string };
+export type LabLayoutNoticeSnapshot = { revision: number; notice: MissingLayoutNotice | null };
+
+// Keep revisions ordered across session reacquisition and lab-window recreation,
+// so an old queued snapshot cannot overwrite the replacement owner's state.
+let layoutNoticeClock = Date.now();
+function nextLayoutNoticeRevision(): number {
+	return layoutNoticeClock = Math.max(Date.now(), layoutNoticeClock + 1);
+}
+
 export type LabSessionPorts = {
 	invoke: <T = unknown>(command: string, args?: Record<string, unknown>) => Promise<T>;
 	listen: <T>(event: string, handler: (event: { payload: T }) => void) => Promise<Unlisten>;
+	emit: (event: string, payload: LabLayoutNoticeSnapshot) => Promise<void>;
 	fetchLayout: typeof fetchLabLayout;
 	setInterval: (callback: () => void, ms: number) => ReturnType<typeof setInterval>;
 	clearInterval: (id: ReturnType<typeof setInterval>) => void;
@@ -60,6 +74,7 @@ const POLL_MS = 2000;
 const productionPorts: LabSessionPorts = {
 	invoke: (command, args) => tauriInvoke(command, args),
 	listen: (event, handler) => tauriListen(event, handler),
+	emit: async (event, payload) => tauriEmit(event, payload),
 	fetchLayout: fetchLabLayout,
 	setInterval: (callback, ms) => setInterval(callback, ms),
 	clearInterval: (id) => clearInterval(id),
@@ -106,13 +121,27 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 	let interval: ReturnType<typeof setInterval> | null = null;
 	let registrations: Promise<Unlisten>[] = [];
 	let pollErrorLogged = false;
+	let layoutNotice: LabLayoutNoticeSnapshot = { revision: nextLayoutNoticeRevision(), notice: null };
 
 	function log(msg: string): void {
 		ports.log(`[lab-session] ${msg}`);
 	}
 
+	function publishLayoutNotice(): void {
+		void ports.emit(LAB_LAYOUT_NOTICE_EVENT, layoutNotice).catch((e) =>
+			log(`layout notice delivery failed: ${e}`)
+		);
+	}
+
+	function setMissingLayout(difficulty: string | null): void {
+		if ((layoutNotice.notice?.difficulty ?? null) === difficulty) return;
+		const revision = nextLayoutNoticeRevision();
+		layoutNotice = { revision, notice: difficulty ? { id: revision, difficulty } : null };
+		publishLayoutNotice();
+	}
+
 	function fetchLayoutFromServer(preferred?: string): Promise<void> {
-		layoutCompletion = loadSelectedLayout(preferred);
+		layoutCompletion = loadSelectedLayout(preferred === 'Eternal' ? 'Uber' : preferred);
 		return layoutCompletion;
 	}
 
@@ -132,6 +161,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 		if (!layout || g !== generation || request !== layoutRequest) return;
 		if ('missing' in layout) {
 			if (!selected) return;
+			setMissingLayout(selected);
 			navState = {
 				...createNavState(),
 				strategy: navState.strategy,
@@ -142,6 +172,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 			history = [];
 			return;
 		}
+		setMissingLayout(null);
 		navState = loadLayout(navState, layout);
 		if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
 		layoutLoaded = true;
@@ -157,6 +188,10 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 			navState = setStrategy(navState, event.strategy);
 			return;
 		}
+		if (event.type === 'LabExited') {
+			layoutRequest++;
+			setMissingLayout(null);
+		}
 		const next = handleNavEvent(navState, event as NavEvent);
 		navState = next;
 		history.push({ event, navAfter: next });
@@ -165,6 +200,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 	}
 
 	function applyLayoutReset(): void {
+		setMissingLayout(null);
 		navState = createNavState();
 		layoutLoaded = false;
 		pendingLayoutReset = false;
@@ -188,7 +224,9 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 		if (initial && g === generation && request > acceptedSettingsRequest) {
 			acceptedSettingsRequest = request;
 			settings = initial;
-			if (initial.difficulty && !lockedDifficulty) lockedDifficulty = initial.difficulty;
+			if (initial.difficulty && !lockedDifficulty) {
+				lockedDifficulty = initial.difficulty === 'Eternal' ? 'Uber' : initial.difficulty;
+			}
 			if (initial.strategy) navState = setStrategy(navState, initial.strategy);
 			for (const hooks of [...subscribers]) hooks.onSettings?.(initial);
 		}
@@ -238,7 +276,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 				}
 				if (next?.difficulty && next.difficulty !== previousDifficulty) {
 					if (hadSettings) void fetchLayoutFromServer(next.difficulty);
-					else if (!lockedDifficulty) lockedDifficulty = next.difficulty;
+					else if (!lockedDifficulty) lockedDifficulty = next.difficulty === 'Eternal' ? 'Uber' : next.difficulty;
 				}
 				for (const hooks of [...subscribers]) hooks.onSettings?.(next);
 			},
@@ -274,8 +312,15 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 			ports.listen<LayoutUpdatedPayload>('lab-layout-updated', (event) => {
 				if (l !== lifetime) return;
 				onLayoutUpdated(event.payload);
+			}),
+			ports.listen(LAB_LAYOUT_NOTICE_REQUEST, () => {
+				if (l !== lifetime) return;
+				publishLayoutNotice();
 			})
 		];
+		for (const registration of registrations) {
+			void registration.catch((e) => log(`event registration failed: ${e}`));
+		}
 		poll();
 		interval = ports.setInterval(poll, POLL_MS);
 		void init();
@@ -287,6 +332,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 		lifetime++;
 		generation++;
 		catchupLifecycle++;
+		setMissingLayout(null);
 		for (const registration of registrations) {
 			registration.then((unlisten) => unlisten()).catch(() => {});
 		}

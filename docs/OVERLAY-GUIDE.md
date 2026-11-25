@@ -125,7 +125,26 @@ this table describes that registry and the existing lifecycle owners:
 | `lab.comparator` | Client.txt gem clear/area change | Neither |
 | `lab.compass`, `lab.pathstrip`, `lab.timer` | Lab context | Neither |
 | `loot.confirmation`, `loot.capture` | Loot capture/confirmation lifecycle | Neither |
-| `prompt.read` | Read result or prompt context end | No-match only; global values |
+| `prompt.read` read slot | Read result or prompt context end | No-match key only; native expiry |
+| `prompt.read` layout slot | Layout load, LabExited or lab-session teardown | Both; global values |
+
+**Current missing-layout notices (POE-483, 2026-11-25).** The lab window's
+`createLabSession` owns the selected-difficulty 404 snapshot and identity;
+network/server failures and an unavailable server URL never mean missing layout.
+Eternal maps to the Planner value Uber. The session publishes `lab-layout-notice`
+and answers `lab-layout-notice-request`; the prompt subscribes before requesting
+catch-up and accepts only newer revisions. Replayed snapshots preserve identity,
+so they cannot restore dismissed content. Generation/request fences prevent stale
+fetches from restoring or clearing a newer notice, including after lab exit.
+
+The one `prompt.read` placement holds a top-aligned stack: missing-layout notice
+first, read notice second, with a 4px gap only while both exist. N1 uses the
+global timeout and shortcut, with no per-widget override; read-slot lifetimes
+remain native-owned. One dismiss-key press hides both eligible slots through one
+`ack: false` host. A timeout removes only its own slot and space. A new read
+sequence restores only the read slot; a different missing difficulty gives N1 a
+fresh identity. The prompt holds only the received replica and view dismissal
+state; it never fetches a layout or derives missing state from navigation.
 
 Settings → Game Integration places **Overlay dismissal** beside **Read screen**.
 Global timeout options are Off, 5, 10, 20 and 30 seconds; the Rust default is
@@ -296,7 +315,8 @@ The read prompt (`prompt`, POE-388) is the one APP-LEVEL widget window
 ([ADR-021](adr/021-a-module-draws-one-window-on-the-game-monitor-and-widgets-inside-it.md)
 amendment): no module flag governs it, so its `createModuleWindows` row is
 always granted and enabled, and its route draws the single `prompt.read`
-widget through `createReadPromptPresentation`: a compact header/body notice while
+widget through `createReadPromptPresentation`: the two-slot notice area described
+in [Dismissal](#dismissal), including a compact header/body read notice while
 `ssot.readPrompt.mechanic` is set, or the no-match result described in
 [Screen reading](#screen-reading-ggg-policy). Divine Font (POE-438) and
 Incursion (POE-460) arms are kept for read-key routing but not presented, so
