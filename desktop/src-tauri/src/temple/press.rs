@@ -44,6 +44,10 @@ pub trait PressContext {
     fn reconcile_screen(&self, _frame: &Capture) -> Option<crate::ssot::ScreenSlice> {
         self.screen()
     }
+    /// The pressed frame's read geometry under the live OCR regions mode.
+    fn geometry(&self, _frame: &Capture) -> super::run::TempleGeometry {
+        super::run::TempleGeometry::Auto(self.screen())
+    }
     /// Banks a calibration's Entrance origin into the screen it was found on;
     /// `Some(false)` when nothing was written, `None` when Recalibrate moved
     /// the generation off `rearm` before the write.
@@ -798,6 +802,137 @@ mod tests {
             let live = world.slot.lock().unwrap().unwrap();
             assert_eq!(live.width, 2560);
             assert!(live.anchors.and_then(|a| a.temple_entrance).is_none());
+        }
+    }
+
+    // ------------------------------------------------ Manual temple panel --
+
+    mod manual {
+        use super::*;
+        use crate::read_hotkey::{DispatchOutcome, ReaderId};
+        use crate::temple::run::TempleGeometry;
+
+        /// A fake app in Manual: its geometry is the resolver's Manual temple
+        /// value, and it counts the sweeps it spends and the Entrances banked.
+        struct ManualWorld {
+            sender: Mutex<Option<Sender<PressedFrame>>>,
+            slot: Mutex<Option<crate::ssot::ScreenSlice>>,
+            geometry: TempleGeometry,
+            sweeps: Mutex<u32>,
+            banks: Mutex<u32>,
+        }
+        impl PressContext for ManualWorld {
+            fn screen(&self) -> Option<crate::ssot::ScreenSlice> {
+                *self.slot.lock().unwrap()
+            }
+            fn press_sender(&self) -> Option<Sender<PressedFrame>> {
+                self.sender.lock().unwrap().clone()
+            }
+            fn arm_state(&self) -> ArmState {
+                ArmState::default()
+            }
+            fn geometry(&self, _frame: &Capture) -> TempleGeometry {
+                self.geometry
+            }
+            /// Mirrors `AppHandle`'s: a null slot is published from the frame.
+            fn reconcile_screen(&self, frame: &Capture) -> Option<crate::ssot::ScreenSlice> {
+                let mut slot = self.slot.lock().unwrap();
+                crate::ssot::reconcile_screen(&mut slot, (frame.image.width(), frame.image.height()), frame.origin, frame.client);
+                if slot.is_none() { *slot = Some(crate::ssot::screen_from_capture(frame)); }
+                *slot
+            }
+            fn bank_entrance(&self, _origin: [i32; 2], _frame: &Capture, _ui_scale: f32, _rearm: u64) -> Option<bool> {
+                *self.banks.lock().unwrap() += 1;
+                Some(true)
+            }
+            fn spend_sweep(&self, _key: SweepKey) {
+                *self.sweeps.lock().unwrap() += 1;
+            }
+        }
+
+        /// A world with a null screen slice whose Manual temple value is
+        /// `geometry`, and the worker's inbox.
+        fn manual_world(geometry: TempleGeometry) -> (ManualWorld, Receiver<PressedFrame>) {
+            let (tx, rx) = mpsc::channel();
+            (ManualWorld { sender: Mutex::new(Some(tx)), slot: Mutex::new(None), geometry, sweeps: Mutex::new(0), banks: Mutex::new(0) }, rx)
+        }
+
+        /// The resolver's Manual temple value for a panel placed at
+        /// `panel_rect(origin, 1.0)`.
+        fn manual_panel_at(origin: (i32, i32)) -> TempleGeometry {
+            TempleGeometry::Manual(Some(crate::ssot::origin_scale_for_panel(crate::ssot::panel_rect(origin, 1.0))))
+        }
+
+        /// The live 1920x1080 sheet on a 2560x1440 capture, moved 320 px right
+        /// so its Entrance sits at (1280, 713) at temple scale 1.0.
+        fn capture_2560x1440() -> Capture {
+            let live = capture(1);
+            let mut screen = image::DynamicImage::new_rgb8(2560, 1440);
+            image::imageops::overlay(&mut screen, &live.image, 320, 0);
+            Capture { image: screen, client: [0, 0, 2560, 1440], ..live }
+        }
+
+        /// One confirming press through `dispatch_press` with only the temple
+        /// reader; returns the outcome and the press's log lines.
+        fn press_manual(world: &ManualWorld) -> (DispatchOutcome, Vec<String>) {
+            let lines = Arc::new(Mutex::new(Vec::new()));
+            let mut armed = crate::read_hotkey::prepare_press(Press { cursor: None }, Default::default(), &[&TEMPLE_READER], world);
+            armed.sweep = confirming().sweep;
+            let sink = Arc::clone(&lines);
+            armed.log = Some(Box::new(move |line| sink.lock().unwrap().push(line)));
+            let outcome = crate::read_hotkey::dispatch_press(armed, world, &mut |_| {}, &mut || Ok(capture_2560x1440()), &mut |_| true);
+            let lines = lines.lock().unwrap().clone();
+            (outcome, lines)
+        }
+
+        mod keep_happy {
+            use super::*;
+
+            /// AC-5 / WI-5 example: Manual temple_panel = panel_rect((1280,713), 1.0)
+            /// on a 2560x1440 capture with a null slice.
+            #[test]
+            fn a_manual_panel_on_an_unplaced_screen_is_probed_at_the_manual_placement() {
+                let (world, rx) = manual_world(manual_panel_at((1280, 713)));
+
+                let (outcome, lines) = press_manual(&world);
+
+                assert_eq!(outcome, DispatchOutcome::Selected(ReaderId::Temple), "{lines:?}");
+                assert_eq!(calibrations(&lines), 0, "no calibration runs in Manual: {lines:?}");
+                assert_eq!(*world.sweeps.lock().unwrap(), 0, "calibrate_frame spent a sweep");
+                assert_eq!(*world.banks.lock().unwrap(), 0, "an Entrance was banked in Manual");
+                let probe = rx.try_recv().expect("the selected frame reaches the worker").probe.expect("probe evidence");
+                assert!(!probe.located(), "the probe, not a sweep, found the Entrance");
+                let tol = crate::temple::slice::FRAME_ORIGIN_TOLERANCE;
+                let (x, y) = probe.origin();
+                assert!((x - 1280).abs() <= tol && (y - 713).abs() <= tol, "probed at ({x}, {y})");
+                assert!((probe.scale() - 1.0).abs() <= 0.02, "temple scale {}", probe.scale());
+            }
+        }
+
+        mod keep_critical {
+            use super::*;
+
+            /// Silent consequence: a Manual press that sweeps reads the board
+            /// at a located origin the player never set, a silently wrong read
+            /// the overlay then trusts. Neither an unset panel nor a set panel
+            /// the probe misses may sweep, even with the sheet on the frame.
+            #[test]
+            fn a_manual_press_never_sweeps_for_the_sheet() {
+                for (case, geometry) in [
+                    ("unset or unreadable panel", TempleGeometry::Manual(None)),
+                    ("panel set away from the sheet", manual_panel_at((600, 713))),
+                ] {
+                    let (world, rx) = manual_world(geometry);
+
+                    let (outcome, lines) = press_manual(&world);
+
+                    assert_eq!(outcome, DispatchOutcome::NoMatch, "{case}: {lines:?}");
+                    assert!(!lines.iter().any(|l| l.contains("running a recalibration sweep")), "{case}: needs_calibration said yes: {lines:?}");
+                    assert_eq!(calibrations(&lines), 0, "{case}: {lines:?}");
+                    assert_eq!(*world.sweeps.lock().unwrap(), 0, "{case}: a sweep was spent");
+                    assert!(rx.try_recv().is_err(), "{case}: a frame reached the worker");
+                }
+            }
         }
     }
 }

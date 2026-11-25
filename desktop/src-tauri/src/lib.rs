@@ -2189,6 +2189,41 @@ mod tests {
         }
     }
 
+    mod keep_happy {
+        use super::*;
+
+        /// WI-5 example: the Manual temple panel's preview row is the rect the
+        /// player placed, its ui_scale converted to temple units exactly once.
+        #[test]
+        fn a_manual_temple_panel_preview_row_is_the_placed_rect() {
+            let panel = crate::ssot::panel_rect((1280, 713), 1.0);
+            let state = crate::settings::tests::test_app_state();
+            *state.game_monitor.lock().unwrap() =
+                Some(crate::capture::GameMonitor { id: 1, x: 0, y: 0, width: 2560, height: 1440 });
+            *state.ocr_regions.lock().unwrap() = crate::ssot::OcrRegionsSetting {
+                mode: crate::ssot::OcrRegionsMode::Manual,
+                manual: Some(crate::ssot::ManualRegions {
+                    set_on: crate::ssot::ScreenRef { width: 2560, height: 1440, origin: [0, 0], at_ms: 1_732_400_000_000 },
+                    edited: true,
+                    lab_gem: None,
+                    lab_font: None,
+                    lab_gem_slots: None,
+                    temple_panel: Some(panel),
+                    merc_panel: None,
+                }),
+            };
+
+            let rects = crate::ocr_rects_for(&state);
+
+            let row = rects.iter().find(|rect| rect.key == "temple.panel").expect("temple panel preview row");
+            let drawn = row.rect.expect("a placed Manual temple panel is drawn");
+            assert!(
+                drawn.iter().zip(panel).all(|(got, want)| (got - want).abs() <= 1),
+                "preview {drawn:?} vs placed {panel:?}"
+            );
+        }
+    }
+
     #[test]
     fn a_remembered_temple_anchor_drives_preview_origin_and_source() {
         let anchors = Some(crate::ssot::Anchors {

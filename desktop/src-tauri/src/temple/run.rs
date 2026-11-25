@@ -1092,6 +1092,17 @@ impl TempleProbe {
     /// Whether the Entrance was located by calibration's sweep.
     #[cfg(test)]
     pub fn located(&self) -> bool { self.located }
+    /// The Entrance's temple scale (image px per reference px).
+    #[cfg(test)]
+    pub fn scale(&self) -> f32 { self.found.scale }
+}
+
+/// Where a press reads the temple: Auto's screen slice, or Manual's origin and
+/// ui_scale (`None` when the temple panel is unset or unreadable).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TempleGeometry {
+    Auto(Option<crate::ssot::ScreenSlice>),
+    Manual(Option<((i32, i32), f32)>),
 }
 
 /// The press's presence test: one windowed recheck at the placed Entrance
