@@ -307,7 +307,8 @@
     "mode": "advice",
     "config": {
       "artefactsOfTheVaal": true,
-      "scarabOfTimelines": false
+      "scarabOfTimelines": false,
+      "consolidation": null
     },
     "profile": {
       "apexScore": 2.0,

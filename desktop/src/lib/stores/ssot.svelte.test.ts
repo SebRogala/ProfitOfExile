@@ -1413,7 +1413,7 @@ describe('temple slice', () => {
 
 	describe('the settings commands', () => {
 		it('sends the config flags as one nested object', async () => {
-			const config = { artefactsOfTheVaal: false, scarabOfTimelines: true };
+			const config = { artefactsOfTheVaal: false, scarabOfTimelines: true, consolidation: null };
 			expect(await mod.setTempleConfig(config)).toBeNull();
 			expect(callsOf('temple_set_config')).toEqual([{ config }]);
 		});
@@ -1569,7 +1569,7 @@ describe('temple slice', () => {
 			// updates when a snapshot comes back. Without this the checkbox
 			// would sit at its old value for up to a poll interval.
 			const before = callsOf('get_ssot').length;
-			await mod.setTempleConfig({ artefactsOfTheVaal: false, scarabOfTimelines: true });
+			await mod.setTempleConfig({ artefactsOfTheVaal: false, scarabOfTimelines: true, consolidation: null });
 			expect(callsOf('get_ssot').length).toBe(before + 1);
 		});
 
@@ -1581,7 +1581,7 @@ describe('temple slice', () => {
 				return command === 'get_ssot' ? { league } : undefined;
 			});
 			const before = callsOf('get_ssot').length;
-			await mod.setTempleConfig({ artefactsOfTheVaal: false, scarabOfTimelines: true });
+			await mod.setTempleConfig({ artefactsOfTheVaal: false, scarabOfTimelines: true, consolidation: null });
 			expect(callsOf('get_ssot').length).toBe(before);
 		});
 	});
@@ -1634,7 +1634,7 @@ describe('temple slice', () => {
 		});
 
 		it('says nothing to the log when the command is accepted', async () => {
-			await mod.setTempleConfig({ artefactsOfTheVaal: true, scarabOfTimelines: false });
+			await mod.setTempleConfig({ artefactsOfTheVaal: true, scarabOfTimelines: false, consolidation: null });
 			expect(callsOf('app_log_from_frontend')).toHaveLength(0);
 		});
 	});

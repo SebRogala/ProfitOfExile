@@ -627,11 +627,25 @@ fn highest_tier_per_line(rooms: &[(Line, Tier)]) -> BTreeMap<Line, Tier> {
 
 // ----------------------------------------------------------------- config ---
 
-/// The only two things the user configures.
-///
-/// The three tier-modifying Atlas nodes (Contested Development, Resource
-/// Reallocation, Incursion Upgrade Chance) are **assumed taken and are not
-/// surfaced** — see [`DOUBLE_TIER_CHANCE`].
+/// Whether the Incursion Scarab of Timelines exists in the current league.
+/// 3.30 removed it ("Scarabs have been removed from the game"), so both its
+/// halves are held inactive: the advisor never enters [`Mode::Scarab`] and the
+/// persisted [`TempleConfig::scarab_of_timelines`] flag no longer takes R5
+/// away. The mode may return via Incursion Threads; flip this to re-enable
+/// (POE-377). The selector, the flag and the wire stay, so re-enabling needs no
+/// migration.
+pub(crate) const SCARAB_OF_TIMELINES_ACTIVE: bool = false;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Consolidation {
+    NonResidentExtraTier,
+    ResidentCarry,
+    NotTaken,
+}
+
+/// The three things the user configures: Artefacts of the Vaal, the retained
+/// Scarab of Timelines flag, and the Consolidation of Power option.
 ///
 /// # Wire shape
 ///
@@ -648,15 +662,6 @@ fn highest_tier_per_line(rooms: &[(Line, Tier)]) -> BTreeMap<Line, Tier> {
 /// partial `temple_config` object then fills the missing key from
 /// [`TempleConfig::default`] instead of failing the WHOLE `Settings` parse,
 /// which would silently reset every unrelated preference.
-/// Whether the Incursion Scarab of Timelines exists in the current league.
-/// 3.30 removed it ("Scarabs have been removed from the game"), so both its
-/// halves are held inactive: the advisor never enters [`Mode::Scarab`] and the
-/// persisted [`TempleConfig::scarab_of_timelines`] flag no longer takes R5
-/// away. The mode may return via Incursion Threads; flip this to re-enable
-/// (POE-377). The selector, the flag and the wire stay, so re-enabling needs no
-/// migration.
-pub(crate) const SCARAB_OF_TIMELINES_ACTIVE: bool = false;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TempleConfig {
@@ -672,6 +677,7 @@ pub struct TempleConfig {
     /// persisted, but ignored in 3.30 while [`SCARAB_OF_TIMELINES_ACTIVE`] is
     /// false.
     pub scarab_of_timelines: bool,
+    pub consolidation: Option<Consolidation>,
 }
 
 impl Default for TempleConfig {
@@ -679,11 +685,17 @@ impl Default for TempleConfig {
         TempleConfig {
             artefacts_of_the_vaal: true,
             scarab_of_timelines: false,
+            consolidation: None,
         }
     }
 }
 
 impl TempleConfig {
+    /// Unset plays option 1 (Desk poe486-plan-1125); the saved choice stays unset.
+    pub fn played_consolidation(&self) -> Consolidation {
+        self.consolidation.unwrap_or(Consolidation::NonResidentExtraTier)
+    }
+
     /// Incursion entrances per map — how many incursions share one map, i.e.
     /// where the rollout's next-incursion slot block resets. The temple budget
     /// drops by one per incursion either way. The 4 / 3 values are confirmed

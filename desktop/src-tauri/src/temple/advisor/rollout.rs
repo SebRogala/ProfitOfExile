@@ -802,6 +802,7 @@ mod tests {
         let three = TempleConfig {
             artefacts_of_the_vaal: false,
             scarab_of_timelines: false,
+            consolidation: None,
         }
         .entrances_per_map();
         let mut sim = sim(&[], &[]);

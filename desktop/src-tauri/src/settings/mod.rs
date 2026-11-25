@@ -2383,6 +2383,7 @@ pub(crate) mod tests {
             config: crate::temple::strategy::TempleConfig {
                 artefacts_of_the_vaal: false,
                 scarab_of_timelines: true,
+                consolidation: None,
             },
             // POE-257: the preset and its table ride the same cycle. Custom
             // with a real override, so a field dropped from `from_state` or
@@ -2425,6 +2426,7 @@ pub(crate) mod tests {
             temple_config: crate::temple::strategy::TempleConfig {
                 artefacts_of_the_vaal: false,
                 scarab_of_timelines: true,
+                consolidation: None,
             },
             temple_profile: crate::temple::slice::TempleProfileSettings {
                 apex_score: 6.5,

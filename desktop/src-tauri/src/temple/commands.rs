@@ -43,7 +43,7 @@ use super::panel::{self, SystemOcr};
 use super::preset::{Preset, TempleCustomSettings};
 use super::reader;
 use super::slice::{self, TempleProfileSettings};
-use super::strategy::TempleConfig;
+use super::strategy::{Consolidation, TempleConfig};
 use crate::AppState;
 
 /// Where a debug dump lands under the app data directory.
@@ -77,9 +77,15 @@ pub fn temple_set_config(config: TempleConfig, app: AppHandle) -> Result<(), Str
     crate::app_log(
         &app,
         format!(
-            "Temple: config — {} incursions per map, R5 {}",
+            "Temple: config — {} incursions per map, R5 {}, consolidation {}",
             config.entrances_per_map(),
-            if config.r5_applies() { "available" } else { "off (scarab)" }
+            if config.r5_applies() { "available" } else { "off (scarab)" },
+            match config.consolidation {
+                Some(Consolidation::NonResidentExtraTier) => "nonResidentExtraTier",
+                Some(Consolidation::ResidentCarry) => "residentCarry",
+                Some(Consolidation::NotTaken) => "notTaken",
+                None => "unset",
+            }
         ),
     );
     Ok(())

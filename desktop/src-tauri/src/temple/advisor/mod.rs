@@ -2980,6 +2980,7 @@ mod tests {
         let config = TempleConfig {
             artefacts_of_the_vaal: true,
             scarab_of_timelines: true,
+            consolidation: None,
         };
         let advice = advise(&state, &offers, 0, &rush(), &config, N, SEED);
         assert_eq!(advice.map_action, MapAction::LeaveMap);
@@ -3020,6 +3021,7 @@ mod tests {
         let config = TempleConfig {
             artefacts_of_the_vaal: true,
             scarab_of_timelines: true,
+            consolidation: None,
         };
         let advice = advise(&both_lines_board(), &offers, 0, &rush(), &config, N, SEED);
         assert_eq!(advice.mode, Mode::Chase);

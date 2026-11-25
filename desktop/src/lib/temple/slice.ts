@@ -610,7 +610,9 @@ export interface AnchorCalibration {
 	scale: number;
 }
 
-/** The two config flags. camelCase, from `TempleConfig`'s own `rename_all`. */
+export type Consolidation = 'nonResidentExtraTier' | 'residentCarry' | 'notTaken';
+
+/** The temple config. camelCase, from `TempleConfig`'s own `rename_all`. */
 export interface TempleConfig {
 	/** Atlas passive: *"Your Maps with Incursions always have four Incursions"*. */
 	artefactsOfTheVaal: boolean;
@@ -618,6 +620,7 @@ export interface TempleConfig {
 	 *  the map, which takes R5 (leave the map) away. Kept on the wire and in
 	 *  settings but inactive in 3.30 (POE-377), and no control draws it. */
 	scarabOfTimelines: boolean;
+	consolidation: Consolidation | null;
 }
 
 /** Which room valuation is in force (POE-257). `snake_case` wire strings, like
@@ -865,7 +868,7 @@ export function templeSliceDefault(): TempleSlice {
 		panel: null,
 		advice: null,
 		mode: null,
-		config: { artefactsOfTheVaal: true, scarabOfTimelines: false },
+		config: { artefactsOfTheVaal: true, scarabOfTimelines: false, consolidation: null },
 		profile: {
 			apexScore: 2.0,
 			pathCost: 0.0,
