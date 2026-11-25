@@ -177,11 +177,10 @@ func checkStoredNinjaSamples(t *testing.T, day int, corrupted bool,
 		name           string
 		sampleCount    *int
 		sparklineEmpty *bool
-		thin           bool
 	}{
-		{"twoSamples", &countTwo, &nonempty, true},
-		{"emptySparkline", &countOne, &empty, true},
-		{"unknownSample", nil, nil, false},
+		{"twoSamples", &countTwo, &nonempty},
+		{"emptySparkline", &countOne, &empty},
+		{"unknownSample", nil, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -235,11 +234,6 @@ func checkStoredNinjaSamples(t *testing.T, day int, corrupted bool,
 					t.Errorf("SparklineEmpty = nil, want %v", *tc.sparklineEmpty)
 				} else if *got.SparklineEmpty != *tc.sparklineEmpty {
 					t.Errorf("SparklineEmpty = %v, want %v", *got.SparklineEmpty, *tc.sparklineEmpty)
-				}
-			})
-			t.Run("thinSample", func(t *testing.T) {
-				if thin := got.ThinSample(); thin != tc.thin {
-					t.Errorf("ThinSample() = %v, want %v for %s", thin, tc.thin, tc.name)
 				}
 			})
 		})

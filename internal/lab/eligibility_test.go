@@ -146,6 +146,7 @@ func makeFontGem(name, color string, chaos float64) GemPrice {
 		Listings:       50,
 		IsTransfigured: true,
 		GemColor:       color,
+		SampleCount:    solidSample(),
 	}
 }
 

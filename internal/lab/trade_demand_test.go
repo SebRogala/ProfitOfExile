@@ -159,7 +159,9 @@ func TestBuildTradeDemand_ThinChaoticGemRetainsRawExposure(t *testing.T) {
 	one := 1
 	gems[0].SampleCount = &one
 	for i, name := range []string{"A", "B", "C", "D", "E", "F", "G", "H", "I"} {
-		gems = append(gems, demandGem(name, "20/20", float64(200-i*15)))
+		g := demandGem(name, "20/20", float64(200-i*15))
+		g.SampleCount = solidSample()
+		gems = append(gems, g)
 	}
 	classification := ComputeGemClassification(gems)
 	spike := classification.Gems[GemClassificationKey{Name: "Spike", Variant: "20/20"}]
@@ -224,11 +226,15 @@ func TestBuildTradeDemand_VariantsRankIndependently(t *testing.T) {
 }
 
 func demandFloorPool() []GemPrice {
-	return []GemPrice{
+	gems := []GemPrice{
 		demandGem("A", "20/20", 1000), demandGem("B", "20/20", 800),
 		demandGem("C", "20/20", 600), demandGem("D", "20/20", 400),
 		demandGem("Floor", "20/20", 10),
 	}
+	for i := range gems {
+		gems[i].SampleCount = solidSample()
+	}
+	return gems
 }
 
 func TestBuildTradeDemand_NamedFloorExcluded(t *testing.T) {
@@ -313,4 +319,21 @@ func TestKeepHappy_BuildTradeDemandKeepsLowConfidenceFloorKey(t *testing.T) {
 		keys = append(keys, d.Key)
 	}
 	t.Fatalf("demand keys = %+v, want %+v (low-confidence FLOOR key stays eligible)", keys, want)
+}
+
+// keep:happy — WI-4's Covens clause: every gated Covens 20/20 key stays in
+// trade demand.
+func TestKeepHappy_BuildTradeDemandKeepsEveryGatedCovens2020Key(t *testing.T) {
+	gems := covens2020Gems()
+
+	got := make(map[resolve.Key]bool)
+	for _, d := range BuildTradeDemand(league.Historical("Temp-demand"), demandSnapshot, gems) {
+		got[d.Key] = true
+	}
+
+	for _, g := range gems {
+		if key := resolve.GemKey("Temp-demand", g.Name, g.Variant); !got[key] {
+			t.Errorf("%s (%.0fc) missing from trade demand", key, g.Chaos)
+		}
+	}
 }

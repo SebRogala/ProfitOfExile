@@ -129,6 +129,8 @@ func TestTradeScheduler_ChaoticSelectable(t *testing.T) {
 		g := schedulerGem(name, "20")
 		g.Chaos = float64(200 - i*15)
 		g.Listings = 20
+		solid := 6
+		g.SampleCount = &solid
 		input.gems = append(input.gems, g)
 	}
 	if got := lab.ComputeGemClassification(input.gems).Gems[lab.GemClassificationKey{Name: input.gems[0].Name, Variant: "20"}].Tier; got != "CHAOTIC" {

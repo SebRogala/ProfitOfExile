@@ -36,6 +36,7 @@ func makeDCInput(name, color string, chaos float64, listings int) GemPrice {
 		IsTransfigured: strings.Contains(name, " of "),
 		IsCorrupted:    false,
 		GemColor:       color,
+		SampleCount:    solidSample(),
 	}
 }
 
@@ -57,6 +58,7 @@ func makeDCCorrupted(name, variant string, chaos float64, listings int) GemPrice
 		IsTransfigured: strings.Contains(name, " of "),
 		IsCorrupted:    true,
 		GemColor:       "BLUE",
+		SampleCount:    solidSample(),
 	}
 }
 
@@ -312,14 +314,14 @@ func TestAnalyzeDoubleCorrupt_UnpricedCellsReportTheirMassInsteadOfSilentlyZeroi
 func TestAnalyzeDoubleCorrupt_ThinOutcomeCellIsDownWeighted(t *testing.T) {
 	gems := []GemPrice{
 		makeDCInput("Rolling Magma of Nothing", "BLUE", 50, 30),
-		makeDCCorrupted("Rolling Magma of Nothing", "20/20c", 100, 2),
+		makeDCCorrupted("Rolling Magma of Nothing", "20/20c", 100, 3),
 	}
 
 	results := AnalyzeDoubleCorrupt(time.Now(), gems, nil, DefaultTempleOverheadChaos)
 	r := singleDCResult(t, results, "Rolling Magma of Nothing")
 
 	// EVRaw takes the listed price at face value; EV applies the thin-market
-	// sell-probability floor (0.3 at 2 listings, no feature data).
+	// sell-probability floor (0.3 at 3 listings, no feature data).
 	if math.Abs(r.EVRaw-24.52392578125) > dcEps {
 		t.Errorf("EVRaw = %v, want 41/128·100·49/64 = 24.52392578125", r.EVRaw)
 	}
@@ -328,7 +330,7 @@ func TestAnalyzeDoubleCorrupt_ThinOutcomeCellIsDownWeighted(t *testing.T) {
 	}
 	cell := outcomeCell(t, r, "Rolling Magma of Nothing", "20/20c")
 	if !cell.Thin {
-		t.Error("a 2-listing cell must be flagged thin")
+		t.Error("a 3-listing cell must be flagged thin")
 	}
 	if r.ThinOutcomeCells != 1 {
 		t.Errorf("ThinOutcomeCells = %d, want 1", r.ThinOutcomeCells)
@@ -345,7 +347,7 @@ func TestAnalyzeDoubleCorrupt_ProfitIsMeasuredOffTheRiskAdjustedEV(t *testing.T)
 	// into a headline profit larger than the estimate printed beside it.
 	gems := []GemPrice{
 		makeDCInput("Rolling Magma of Nothing", "BLUE", 50, 30),
-		makeDCCorrupted("Rolling Magma of Nothing", "20/20c", 100, 2),
+		makeDCCorrupted("Rolling Magma of Nothing", "20/20c", 100, 3),
 	}
 
 	results := AnalyzeDoubleCorrupt(time.Now(), gems, nil, DefaultTempleOverheadChaos)
@@ -769,4 +771,77 @@ func TestAnalyzeDoubleCorrupt_ResultCarriesTheProvisionalDestroyModelMarker(t *t
 		t.Errorf("Model = %q, want %q — the UI flags the unverified destroy rate off this field",
 			r.Model, "estimated-provisional-destroy")
 	}
+}
+
+// keep:critical — silent: Dedication or Double-corrupt EV would count an
+// unverified ask that Font gates, or Double-corrupt would drop its cheap-row
+// pricing.
+func TestKeepCritical_EveryLabConsumerHonoursTheGate(t *testing.T) {
+	thinSample := 2
+	now := time.Date(2026, 11, 16, 20, 0, 0, 0, time.UTC)
+
+	t.Run("Dedication THIN 21/20c outcome is listed and out of EV", func(t *testing.T) {
+		gems := []GemPrice{
+			makeDedicationGemVariant("Arc", "21/20c", "BLUE", 200, 30),
+			makeDedicationGemVariant("Spark", "21/20c", "BLUE", 150, 30),
+			makeDedicationGemVariant("Ball Lightning", "21/20c", "BLUE", 100, 30),
+			makeDedicationGemVariant("Firestorm", "21/20c", "BLUE", 60, 30),
+			makeDedicationGemVariant("Freezing Pulse", "21/20c", "BLUE", 30, 30),
+			makeDedicationGemVariant("Storm Call", "21/20c", "BLUE", 900, 30),
+		}
+		thinIdx := len(gems) - 1
+		gems[thinIdx].SampleCount = &thinSample
+		unpriced := append([]GemPrice{}, gems...)
+		unpriced[thinIdx].Chaos = 0
+
+		got := blueSkillSafe(t, AnalyzeDedication(now, gems, nil), "21/20c")
+		baseline := blueSkillSafe(t, AnalyzeDedication(now, unpriced, nil), "21/20c")
+
+		listed := false
+		for _, g := range got.LowConfidenceGems {
+			listed = listed || g.Name == "Storm Call"
+		}
+		if !listed {
+			t.Errorf("LowConfidenceGems = %+v, want Storm Call listed", got.LowConfidenceGems)
+		}
+		if got.EV != baseline.EV || got.EVRaw != baseline.EVRaw {
+			t.Errorf("EV/EVRaw = %v/%v, want %v/%v (the THIN gem priced at zero)", got.EV, got.EVRaw, baseline.EV, baseline.EVRaw)
+		}
+	})
+
+	for _, tc := range []struct {
+		name       string
+		chaos      float64
+		wantPriced bool
+	}{
+		{"Double-corrupt THIN corrupted 40c outcome is unpriced", 40, false},
+		{"Double-corrupt THIN corrupted 4c outcome stays priced under the cutoff", 4, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outcome := makeDCCorrupted("Rolling Magma of Nothing", "20/20c", tc.chaos, 30)
+			outcome.SampleCount = &thinSample
+			gems := []GemPrice{makeDCInput("Rolling Magma of Nothing", "BLUE", 50, 30), outcome}
+
+			r := singleDCResult(t, AnalyzeDoubleCorrupt(now, gems, nil, DefaultTempleOverheadChaos), "Rolling Magma of Nothing")
+			cell := outcomeCell(t, r, "Rolling Magma of Nothing", "20/20c")
+
+			if cell.Priced != tc.wantPriced || cell.LowConfidence == tc.wantPriced {
+				t.Errorf("cell Priced=%v LowConfidence=%v, want Priced=%v LowConfidence=%v", cell.Priced, cell.LowConfidence, tc.wantPriced, !tc.wantPriced)
+			}
+			if tc.wantPriced && cell.Chaos != tc.chaos {
+				t.Errorf("cell Chaos = %v, want %v", cell.Chaos, tc.chaos)
+			}
+		})
+	}
+}
+
+func blueSkillSafe(t *testing.T, analysis DedicationAnalysis, variant string) DedicationResult {
+	t.Helper()
+	for _, r := range analysis.Skills {
+		if r.Color == "BLUE" && r.Mode == "safe" && r.Variant == variant {
+			return r
+		}
+	}
+	t.Fatalf("no BLUE skill safe result for %s", variant)
+	return DedicationResult{}
 }

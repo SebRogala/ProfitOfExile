@@ -1,48 +1,18 @@
 package lab
 
-import "testing"
+import (
+	"fmt"
+	"reflect"
+	"testing"
 
-func TestGemPriceThinSample(t *testing.T) {
-	zero, two, three, five, six := 0, 2, 3, 5, 6
-	empty, populated := true, false
-	tests := []struct {
-		name string
-		gem  GemPrice
-		want bool
-	}{
-		{"count_two_with_populated_sparkline_is_thin", GemPrice{Name: "Ice Crash of Cadence", Variant: "20/20", SampleCount: &two, SparklineEmpty: &populated}, true},
-		{"zero_count_is_thin", GemPrice{SampleCount: &zero}, true},
-		{"count_five_is_thin", GemPrice{SampleCount: &five}, true},
-		{"count_six_is_not_thin", GemPrice{SampleCount: &six}, false},
-		{"count_three_with_empty_sparkline_is_thin", GemPrice{SampleCount: &three, SparklineEmpty: &empty}, true},
-		{"unknown_count_is_not_thin", GemPrice{}, false},
-		{"unknown_count_with_empty_sparkline_is_not_thin", GemPrice{SparklineEmpty: &empty}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.gem.ThinSample(); got != tt.want {
-				t.Errorf("ThinSample() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
+	"profitofexile/internal/price/tier"
+)
 
-func TestGemPriceThinSample_UsesEachVariantsSample(t *testing.T) {
-	thinCount, deepCount := 2, 40
-	tests := []struct {
-		gem  GemPrice
-		want bool
-	}{
-		{GemPrice{Name: "Ice Crash of Cadence", Variant: "20/20", SampleCount: &thinCount}, true},
-		{GemPrice{Name: "Ice Crash of Cadence", Variant: "1", SampleCount: &deepCount}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.gem.Variant, func(t *testing.T) {
-			if got := tt.gem.ThinSample(); got != tt.want {
-				t.Errorf("%s variant %s: ThinSample() = %v, want %v", tt.gem.Name, tt.gem.Variant, got, tt.want)
-			}
-		})
-	}
+// solidSample is a poe.ninja sample above Lab's thin threshold, so a fixture
+// graded on it is gated only by its listings.
+func solidSample() *int {
+	n := labThinSampleCount + 1
+	return &n
 }
 
 func TestComputeGemClassification_LeavesOutCorruptedUntransfiguredAndLabCutoffGems(t *testing.T) {
@@ -68,22 +38,22 @@ func TestComputeGemClassification_LeavesOutCorruptedUntransfiguredAndLabCutoffGe
 func TestComputeGemClassification_Integration(t *testing.T) {
 	gems := []GemPrice{
 		// TOP: clear gap above the rest (1300, 1200 → gap ~800 → next at 400)
-		{Name: "KB of Clustering", Variant: "20/20", Chaos: 1300, Listings: 260, IsTransfigured: true, GemColor: "BLUE"},
-		{Name: "Cyclone of Tumult", Variant: "20/20", Chaos: 1200, Listings: 135, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "KB of Clustering", Variant: "20/20", Chaos: 1300, Listings: 260, IsTransfigured: true, GemColor: "BLUE", SampleCount: solidSample()},
+		{Name: "Cyclone of Tumult", Variant: "20/20", Chaos: 1200, Listings: 135, IsTransfigured: true, GemColor: "GREEN", SampleCount: solidSample()},
 		// Low confidence: thin market spike (4500c with 3 listings — CASCADE-like)
-		{Name: "Lightning Strike", Variant: "20/20", Chaos: 4500, Listings: 3, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Lightning Strike", Variant: "20/20", Chaos: 4500, Listings: 3, IsTransfigured: true, GemColor: "GREEN", SampleCount: solidSample()},
 		// Normal gems — tightly spaced to keep avg gap low
-		{Name: "Spark of Nova", Variant: "20/20", Chaos: 400, Listings: 74, IsTransfigured: true, GemColor: "BLUE"},
-		{Name: "AG of Smiting", Variant: "20/20", Chaos: 380, Listings: 68, IsTransfigured: true, GemColor: "RED"},
-		{Name: "Lacerate", Variant: "20/20", Chaos: 350, Listings: 80, IsTransfigured: true, GemColor: "GREEN"},
-		{Name: "Ground Slam", Variant: "20/20", Chaos: 300, Listings: 90, IsTransfigured: true, GemColor: "RED"},
-		{Name: "Frostbolt", Variant: "20/20", Chaos: 250, Listings: 85, IsTransfigured: true, GemColor: "BLUE"},
-		{Name: "Fireball", Variant: "20/20", Chaos: 200, Listings: 70, IsTransfigured: true, GemColor: "RED"},
-		{Name: "Ice Shot", Variant: "20/20", Chaos: 150, Listings: 60, IsTransfigured: true, GemColor: "GREEN"},
-		{Name: "Cleave", Variant: "20/20", Chaos: 100, Listings: 90, IsTransfigured: true, GemColor: "RED"},
-		{Name: "Some Floor", Variant: "20/20", Chaos: 50, Listings: 100, IsTransfigured: true, GemColor: "RED"},
-		{Name: "Cheap Gem", Variant: "20/20", Chaos: 30, Listings: 120, IsTransfigured: true, GemColor: "BLUE"},
-		{Name: "Another", Variant: "20/20", Chaos: 60, Listings: 80, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 400, Listings: 74, IsTransfigured: true, GemColor: "BLUE", SampleCount: solidSample()},
+		{Name: "AG of Smiting", Variant: "20/20", Chaos: 380, Listings: 68, IsTransfigured: true, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Lacerate", Variant: "20/20", Chaos: 350, Listings: 80, IsTransfigured: true, GemColor: "GREEN", SampleCount: solidSample()},
+		{Name: "Ground Slam", Variant: "20/20", Chaos: 300, Listings: 90, IsTransfigured: true, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Frostbolt", Variant: "20/20", Chaos: 250, Listings: 85, IsTransfigured: true, GemColor: "BLUE", SampleCount: solidSample()},
+		{Name: "Fireball", Variant: "20/20", Chaos: 200, Listings: 70, IsTransfigured: true, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Ice Shot", Variant: "20/20", Chaos: 150, Listings: 60, IsTransfigured: true, GemColor: "GREEN", SampleCount: solidSample()},
+		{Name: "Cleave", Variant: "20/20", Chaos: 100, Listings: 90, IsTransfigured: true, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Some Floor", Variant: "20/20", Chaos: 50, Listings: 100, IsTransfigured: true, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Cheap Gem", Variant: "20/20", Chaos: 30, Listings: 120, IsTransfigured: true, GemColor: "BLUE", SampleCount: solidSample()},
+		{Name: "Another", Variant: "20/20", Chaos: 60, Listings: 80, IsTransfigured: true, GemColor: "GREEN", SampleCount: solidSample()},
 	}
 
 	cls := ComputeGemClassification(gems)
@@ -161,15 +131,15 @@ func TestComputeGemClassification_Integration(t *testing.T) {
 func TestComputeDedicationClassification_SkillPool(t *testing.T) {
 	// Build a pool of corrupted non-transfigured 21/23c skill gems.
 	gems := []GemPrice{
-		{Name: "Expensive Gem", Variant: "21/23c", Chaos: 1500, Listings: 40, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "High Gem", Variant: "21/23c", Chaos: 800, Listings: 50, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Mid Gem 1", Variant: "21/23c", Chaos: 300, Listings: 60, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Mid Gem 2", Variant: "21/23c", Chaos: 250, Listings: 55, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Mid Gem 3", Variant: "21/23c", Chaos: 200, Listings: 70, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Low Gem 1", Variant: "21/23c", Chaos: 100, Listings: 80, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Low Gem 2", Variant: "21/23c", Chaos: 50, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Floor Gem 1", Variant: "21/23c", Chaos: 20, Listings: 100, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Floor Gem 2", Variant: "21/23c", Chaos: 10, Listings: 120, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Expensive Gem", Variant: "21/23c", Chaos: 1500, Listings: 40, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "High Gem", Variant: "21/23c", Chaos: 800, Listings: 50, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Mid Gem 1", Variant: "21/23c", Chaos: 300, Listings: 60, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Mid Gem 2", Variant: "21/23c", Chaos: 250, Listings: 55, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Mid Gem 3", Variant: "21/23c", Chaos: 200, Listings: 70, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Low Gem 1", Variant: "21/23c", Chaos: 100, Listings: 80, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Low Gem 2", Variant: "21/23c", Chaos: 50, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Floor Gem 1", Variant: "21/23c", Chaos: 20, Listings: 100, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Floor Gem 2", Variant: "21/23c", Chaos: 10, Listings: 120, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
 	}
 
 	cls := ComputeDedicationClassification(gems, false, "21/23c")
@@ -325,18 +295,18 @@ func TestComputeDedicationClassification_PoolIsolation(t *testing.T) {
 func TestComputeDedicationClassification_TierDistribution(t *testing.T) {
 	// Create a pool with clear tier separation.
 	gems := []GemPrice{
-		{Name: "Top 1", Variant: "21/23c", Chaos: 3000, Listings: 40, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Top 2", Variant: "21/23c", Chaos: 2500, Listings: 35, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "High 1", Variant: "21/23c", Chaos: 800, Listings: 60, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "High 2", Variant: "21/23c", Chaos: 700, Listings: 55, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Mid 1", Variant: "21/23c", Chaos: 300, Listings: 70, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Mid 2", Variant: "21/23c", Chaos: 250, Listings: 65, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Mid 3", Variant: "21/23c", Chaos: 200, Listings: 80, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Low 1", Variant: "21/23c", Chaos: 100, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Low 2", Variant: "21/23c", Chaos: 80, Listings: 85, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Floor 1", Variant: "21/23c", Chaos: 20, Listings: 100, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Floor 2", Variant: "21/23c", Chaos: 15, Listings: 110, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
-		{Name: "Floor 3", Variant: "21/23c", Chaos: 10, Listings: 120, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Top 1", Variant: "21/23c", Chaos: 3000, Listings: 40, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Top 2", Variant: "21/23c", Chaos: 2500, Listings: 35, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "High 1", Variant: "21/23c", Chaos: 800, Listings: 60, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "High 2", Variant: "21/23c", Chaos: 700, Listings: 55, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Mid 1", Variant: "21/23c", Chaos: 300, Listings: 70, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Mid 2", Variant: "21/23c", Chaos: 250, Listings: 65, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Mid 3", Variant: "21/23c", Chaos: 200, Listings: 80, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Low 1", Variant: "21/23c", Chaos: 100, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Low 2", Variant: "21/23c", Chaos: 80, Listings: 85, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Floor 1", Variant: "21/23c", Chaos: 20, Listings: 100, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Floor 2", Variant: "21/23c", Chaos: 15, Listings: 110, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
+		{Name: "Floor 3", Variant: "21/23c", Chaos: 10, Listings: 120, IsCorrupted: true, IsTransfigured: false, GemColor: "RED", SampleCount: solidSample()},
 	}
 
 	cls := ComputeDedicationClassification(gems, false, "21/23c")
@@ -378,15 +348,15 @@ func TestComputeDedicationClassification_TierDistribution(t *testing.T) {
 // fallback, which would pass whether or not the variants were kept apart.
 func TestComputeDedicationClassification_ClassifiesEachVariantAgainstItsOwnPool(t *testing.T) {
 	gems := []GemPrice{
-		{Name: "Arc", Variant: "21/23c", Chaos: 5000, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
-		{Name: "Spark", Variant: "21/23c", Chaos: 4000, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
-		{Name: "Ball Lightning", Variant: "21/23c", Chaos: 3000, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
-		{Name: "Firestorm", Variant: "21/23c", Chaos: 2000, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
-		{Name: "Arc", Variant: "21/20c", Chaos: 200, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
-		{Name: "Spark", Variant: "21/20c", Chaos: 120, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
-		{Name: "Ball Lightning", Variant: "21/20c", Chaos: 60, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
-		{Name: "Firestorm", Variant: "21/20c", Chaos: 30, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
-		{Name: "Freezing Pulse", Variant: "21/20c", Chaos: 12, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
+		{Name: "Arc", Variant: "21/23c", Chaos: 5000, Listings: 30, IsCorrupted: true, GemColor: "BLUE", SampleCount: solidSample()},
+		{Name: "Spark", Variant: "21/23c", Chaos: 4000, Listings: 30, IsCorrupted: true, GemColor: "BLUE", SampleCount: solidSample()},
+		{Name: "Ball Lightning", Variant: "21/23c", Chaos: 3000, Listings: 30, IsCorrupted: true, GemColor: "BLUE", SampleCount: solidSample()},
+		{Name: "Firestorm", Variant: "21/23c", Chaos: 2000, Listings: 30, IsCorrupted: true, GemColor: "BLUE", SampleCount: solidSample()},
+		{Name: "Arc", Variant: "21/20c", Chaos: 200, Listings: 30, IsCorrupted: true, GemColor: "BLUE", SampleCount: solidSample()},
+		{Name: "Spark", Variant: "21/20c", Chaos: 120, Listings: 30, IsCorrupted: true, GemColor: "BLUE", SampleCount: solidSample()},
+		{Name: "Ball Lightning", Variant: "21/20c", Chaos: 60, Listings: 30, IsCorrupted: true, GemColor: "BLUE", SampleCount: solidSample()},
+		{Name: "Firestorm", Variant: "21/20c", Chaos: 30, Listings: 30, IsCorrupted: true, GemColor: "BLUE", SampleCount: solidSample()},
+		{Name: "Freezing Pulse", Variant: "21/20c", Chaos: 12, Listings: 30, IsCorrupted: true, GemColor: "BLUE", SampleCount: solidSample()},
 	}
 
 	cls := ComputeDedicationClassification(gems, false, "21/20c")
@@ -415,5 +385,93 @@ func TestComputeDedicationClassification_ClassifiesEachVariantAgainstItsOwnPool(
 	}
 	if arc.LowConfidence {
 		t.Error("Arc 21/20c came back low-confidence — it is the top of a fully priced pool")
+	}
+}
+
+// covens2020Gems is shaped like the Covens BLUE 20/20 market: 11 transfigured
+// gems, 10 with 1 listing and 1 with 2, poe.ninja samples of 1-2.
+func covens2020Gems() []GemPrice {
+	prices := []float64{527, 264, 170, 88, 64, 45, 33, 24, 17, 12, 8}
+	gems := make([]GemPrice, len(prices))
+	for i, price := range prices {
+		listings, sample := 1, 1+i%2
+		if i == 2 {
+			listings = 2
+		}
+		gems[i] = GemPrice{Name: fmt.Sprintf("Covens Gem %d of Test", i), Variant: "20/20", Chaos: price,
+			Listings: listings, SampleCount: &sample, IsTransfigured: true, GemColor: "BLUE"}
+	}
+	return gems
+}
+
+// keep:happy — AC 2: every row of a Covens-shaped 20/20 market is flagged.
+func TestKeepHappy_ComputeGemClassificationFlagsEveryCovens2020Row(t *testing.T) {
+	gems := covens2020Gems()
+
+	cls := ComputeGemClassification(gems)
+
+	for _, g := range gems {
+		got, ok := cls.Gems[GemClassificationKey{g.Name, g.Variant}]
+		if !ok {
+			t.Errorf("%s (%.0fc) missing from the classification", g.Name, g.Chaos)
+			continue
+		}
+		if !got.LowConfidence {
+			t.Errorf("%s (%.0fc, %d listings) LowConfidence = false, want true", g.Name, g.Chaos, g.Listings)
+		}
+	}
+	if b, ok := cls.Boundaries["20/20"]; ok {
+		t.Errorf("Boundaries[20/20] = %+v, want no 20/20 boundary", b)
+	}
+}
+
+// keep:happy — AC 3: in a deep market the relative 0.4 × median rule flags the
+// same gems as today. Green before the gate by design (characterisation).
+func TestKeepHappy_ComputeGemClassificationDeepMarketFlagsSameGemsAsToday(t *testing.T) {
+	sample := 50
+	depths := []int{30, 35, 38, 40, 40, 40, 42, 45, 50, 60, 10} // median 40
+	var gems []GemPrice
+	var todayItems []tier.Item
+	for i, depth := range depths {
+		g := GemPrice{Name: fmt.Sprintf("Deep Gem %d of Test", i), Variant: "20/20", Chaos: float64(400 - i*30),
+			Listings: depth, SampleCount: &sample, IsTransfigured: true, GemColor: "BLUE"}
+		gems = append(gems, g)
+		todayItems = append(todayItems, tier.Item{Group: g.Variant, Key: g.Name, Price: g.Chaos, Depth: g.Listings})
+	}
+	thin := gems[len(gems)-1].Name
+
+	want := tier.LowConfidence(todayItems, labPolicy)
+	if !reflect.DeepEqual(want, map[tier.Key]bool{{Group: "20/20", Key: thin}: true}) {
+		t.Fatalf("fixture: today's relative rule flags %v, want only %s", want, thin)
+	}
+
+	got := make(map[tier.Key]bool)
+	for key, c := range ComputeGemClassification(gems).Gems {
+		if c.LowConfidence {
+			got[tier.Key{Group: key.Variant, Key: key.Name}] = true
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("flagged = %v, want %v (today's relative-rule set)", got, want)
+	}
+}
+
+// keep:critical — silent: one variant's deep sample would certify another
+// market's ask.
+func TestKeepCritical_TierItemsGradesEachVariantOnItsOwnSample(t *testing.T) {
+	deep, thin := 40, 2
+	gems := []GemPrice{
+		{Name: "Ice Crash of Cadence", Variant: "1/20", Chaos: 100, Listings: 30, SampleCount: &deep, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Ice Crash of Cadence", Variant: "20/20", Chaos: 100, Listings: 30, SampleCount: &thin, IsTransfigured: true, GemColor: "RED"},
+	}
+
+	gated := make(map[string]bool)
+	for _, it := range tierItems(gems, isFontOutcome) {
+		gated[it.Group] = it.Gated
+	}
+
+	want := map[string]bool{"1/20": false, "20/20": true}
+	if !reflect.DeepEqual(gated, want) {
+		t.Errorf("Gated by variant = %v, want %v (each variant graded on its own sample)", gated, want)
 	}
 }

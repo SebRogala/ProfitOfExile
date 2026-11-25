@@ -392,6 +392,7 @@ func TestComputeMarketContext_TierBoundaries(t *testing.T) {
 			Chaos:          p,
 			Listings:       10,
 			IsTransfigured: true,
+			SampleCount:    solidSample(),
 		})
 	}
 

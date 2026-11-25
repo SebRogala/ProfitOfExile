@@ -16,6 +16,7 @@ func makeDedicationGem(name, color string, chaos float64, listings int, isTransf
 		IsTransfigured: isTransfigured,
 		IsCorrupted:    true,
 		GemColor:       color,
+		SampleCount:    solidSample(),
 	}
 }
 

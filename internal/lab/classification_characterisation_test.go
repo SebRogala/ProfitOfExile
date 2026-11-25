@@ -51,6 +51,15 @@ func loadClassificationCorpus(t *testing.T) []classificationCase {
 	if len(cases) == 0 {
 		t.Fatal("corpus is empty")
 	}
+	// The corpus characterises the tier algorithm and carries no poe.ninja
+	// samples; the evidence gate has its own keep tests.
+	for i := range cases {
+		for j := range cases[i].Gems {
+			if cases[i].Gems[j].SampleCount == nil {
+				cases[i].Gems[j].SampleCount = solidSample()
+			}
+		}
+	}
 	return cases
 }
 

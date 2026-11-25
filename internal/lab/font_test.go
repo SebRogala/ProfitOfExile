@@ -3,6 +3,7 @@ package lab
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -832,5 +833,66 @@ func TestAnalyzeFont_SnapshotEligibility(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func blueFontSafe2020(t *testing.T, analysis FontAnalysis) FontResult {
+	t.Helper()
+	for _, r := range analysis.Safe {
+		if r.Color == "BLUE" && r.Variant == "20/20" {
+			return r
+		}
+	}
+	t.Fatalf("no BLUE 20/20 safe result in %+v", analysis.Safe)
+	return FontResult{}
+}
+
+// keep:happy — AC 1: a gem with a thin poe.ninja sample is flagged, kept out
+// of tier boundaries and Font EV, and still listed with its flag.
+func TestKeepHappy_AnalyzeFontExcludesGatedGemFromEVAndListsIt(t *testing.T) {
+	now := time.Date(2026, 11, 16, 20, 0, 0, 0, time.UTC)
+	prices := []float64{300, 250, 200, 150, 120, 100, 80, 60, 40, 20}
+	depths := []int{10, 12, 15, 18, 20, 20, 25, 30, 35, 40} // with the gated gem: odd-sized, median 20
+	var peers []GemPrice
+	for i := range prices {
+		peers = append(peers, GemPrice{Name: fmt.Sprintf("Blue Gem %d of Test", i), Variant: "20/20", Chaos: prices[i],
+			Listings: depths[i], SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"})
+	}
+	three := 3
+	gated := GemPrice{Name: "Gated Gem of Test", Variant: "20/20", Chaos: 90, Listings: 20, SampleCount: &three, IsTransfigured: true, GemColor: "BLUE"}
+	gems := append(append([]GemPrice{}, peers...), gated)
+
+	cls := ComputeGemClassification(gems)
+	features := ComputeGemFeatures(now, gems, nil, MarketContext{}, cls.Gems, nil)
+	got := blueFontSafe2020(t, AnalyzeFont(now, gems, features))
+
+	// Baseline: the gated gem is a pool member with no priced feature.
+	peerCls := ComputeGemClassification(peers)
+	baseline := blueFontSafe2020(t, AnalyzeFont(now, gems, ComputeGemFeatures(now, peers, nil, MarketContext{}, peerCls.Gems, nil)))
+	if baseline.EVRaw <= 0 {
+		t.Fatalf("fixture: baseline EVRaw = %v, want a priced pool", baseline.EVRaw)
+	}
+
+	wantListed := []LowConfidenceGemInfo{{Name: gated.Name, Chaos: 90, Listings: 20}}
+	if !reflect.DeepEqual(got.LowConfidenceGems, wantListed) {
+		t.Errorf("LowConfidenceGems = %+v, want %+v", got.LowConfidenceGems, wantListed)
+	}
+	if got.EV != baseline.EV || got.EVRaw != baseline.EVRaw {
+		t.Errorf("EV/EVRaw = %v/%v, want %v/%v (the gated gem adds nothing)", got.EV, got.EVRaw, baseline.EV, baseline.EVRaw)
+	}
+	if got.Pool != len(gems) {
+		t.Errorf("Pool = %d, want %d (the gated gem still counts)", got.Pool, len(gems))
+	}
+	if !reflect.DeepEqual(cls.Boundaries["20/20"], peerCls.Boundaries["20/20"]) {
+		t.Errorf("Boundaries[20/20] = %+v, want %+v (as without the gated gem)", cls.Boundaries["20/20"], peerCls.Boundaries["20/20"])
+	}
+	var flagged, found bool
+	for _, f := range features {
+		if f.Name == gated.Name && f.Variant == gated.Variant {
+			found, flagged = true, f.LowConfidence
+		}
+	}
+	if !found || !flagged {
+		t.Errorf("gated GemFeature present=%v LowConfidence=%v, want present and true", found, flagged)
 	}
 }
