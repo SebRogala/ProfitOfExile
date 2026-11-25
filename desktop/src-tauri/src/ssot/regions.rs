@@ -464,6 +464,32 @@ mod tests {
                 }
             }
         }
+
+        /// Silent consequence: a contained strip whose width-derived square
+        /// slots run past the capture's bottom edge would have each slot crop
+        /// read past the image on every press, yielding silently wrong gem
+        /// icons. Without a known capture nothing is clipped, so it stays read.
+        #[test]
+        fn a_contained_slot_strip_whose_derived_slots_end_past_the_capture_is_not_read() {
+            let slice = whole_capture_2560x1440();
+            let set_on = ScreenRef { width: 2560, height: 1440, origin: [0, 0], at_ms: 1_732_400_000_000 };
+            let setting = manual(ManualRegions { lab_gem_slots: Some([100, 1400, 273, 30]), ..unset_on(set_on) });
+            let cases = [
+                ("2560x1440 capture: slots end at y = 1453 > 1440", Some((2560, 1440)), true),
+                ("no capture: resolution stays unclipped", None, false),
+            ];
+
+            for (case, capture, want_unread) in cases {
+                let resolved = resolve(Some(&slice), &setting, capture);
+                assert_eq!(
+                    resolved.unread.contains(&RegionKey::LabGemSlots),
+                    want_unread,
+                    "{case}: unread {:?}, slots {:?}",
+                    resolved.unread,
+                    resolved.placements.lab.gem_slots,
+                );
+            }
+        }
     }
 
     mod keep_regression {
