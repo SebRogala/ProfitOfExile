@@ -1259,7 +1259,10 @@ mod tests {
         architect: Option<&ArchitectChoice>,
         doors: &[(Slot, Slot)],
     ) -> RuleVerdict {
-        verdict_with(state, position, architect, doors, 1, &rush())
+        let paired_upgrade = architect
+            .filter(|a| a.kind == OfferKind::Upgrade)
+            .map(|a| a.built_tier);
+        verdict_with(state, position, architect, doors, 1, &rush(), paired_upgrade)
     }
 
     fn verdict_with(
@@ -1269,6 +1272,7 @@ mod tests {
         doors: &[(Slot, Slot)],
         keys: u8,
         profile: &StrategyProfile,
+        paired_upgrade: Option<Tier>,
     ) -> RuleVerdict {
         let doors: BTreeSet<Edge> = doors.iter().map(|(a, b)| Edge::new(*a, *b)).collect();
         evaluate_rules(
@@ -1279,7 +1283,7 @@ mod tests {
             keys,
             profile,
             &Valuation::for_profile(&rush()),
-            architect.map(|a| a.built_tier),
+            paired_upgrade,
         )
     }
 
@@ -1986,13 +1990,13 @@ mod tests {
     fn no_key_dropped_is_told_apart_from_a_key_with_nowhere_to_spend_it() {
         // Every closed corridor from B1 leads back into B1's own cluster.
         let boxed_in = board(&[], &[(B1, C1), (C1, C2), (B0, C1), (A0, B0)]);
-        let none = verdict_with(&boxed_in, B1, None, &[], 0, &rush());
+        let none = verdict_with(&boxed_in, B1, None, &[], 0, &rush(), None);
         assert!(
             none.reasons.contains(&Reason::ZeroKey),
             "no key dropped: {:?}",
             none.reasons
         );
-        let one = verdict_with(&boxed_in, B1, None, &[], 1, &rush());
+        let one = verdict_with(&boxed_in, B1, None, &[], 1, &rush(), None);
         assert!(
             one.reasons.contains(&Reason::NoUsableDoor),
             "a key fell but every corridor is pointless: {:?}",
@@ -2012,7 +2016,7 @@ mod tests {
             &[(C0, C1), (C0, D0)],
         );
         let sanctum = choice(OfferKind::Change, "upgrade", 2);
-        let verdict = verdict_with(&state, C0, Some(&sanctum), &[], 1, &rush());
+        let verdict = verdict_with(&state, C0, Some(&sanctum), &[], 1, &rush(), None);
         assert!(
             verdict.reasons.contains(&Reason::RuDeclined { slot: C0 }),
             "RU declined the key: {:?}",
@@ -2023,7 +2027,7 @@ mod tests {
         // The same board with a junk kill has nothing to protect, so opening
         // nothing carries no reason of its own — RD is what ranks it last.
         let junk = choice(OfferKind::Change, "museum_of_artefacts", 2);
-        let unprotected = verdict_with(&state, C0, Some(&junk), &[], 1, &rush());
+        let unprotected = verdict_with(&state, C0, Some(&junk), &[], 1, &rush(), None);
         assert!(
             !unprotected
                 .reasons
@@ -2054,6 +2058,7 @@ mod tests {
             &[],
             1,
             &profile,
+            Some(Tier::T3),
         );
         let upgrade = verdict_with(
             &state,
@@ -2062,6 +2067,7 @@ mod tests {
             &[],
             1,
             &profile,
+            Some(Tier::T3),
         );
         assert!(
             change.architect > upgrade.architect,
@@ -2105,6 +2111,7 @@ mod tests {
             &[],
             1,
             &profile,
+            Some(Tier::T3),
         );
         let change = verdict_with(
             &state,
@@ -2113,6 +2120,7 @@ mod tests {
             &[],
             1,
             &profile,
+            Some(Tier::T3),
         );
         assert!(!upgrade.architect.vetoed());
         assert!(upgrade.reasons.iter().any(|r| matches!(r, Reason::R4)));
@@ -2124,9 +2132,8 @@ mod tests {
             "the carve-out must be silent on both sides when it is off: {:?}",
             change.reasons
         );
-        // RC still points at `change` on this board — the carve-out is not what
-        // orders the two kills here, the veto is what removes `upgrade` from
-        // contention, and only the veto is under test.
+        // RC is silent under option 1; this test checks that disabling the
+        // carve-out removes the veto and preserves R4's pool preference.
     }
 
     // A kill that builds a target line is never vetoed — an upgrade toward
@@ -2182,6 +2189,7 @@ mod tests {
             &[],
             1,
             &with_carve_out(),
+            Some(Tier::T3),
         );
         assert!(!upgrade.architect.vetoed(), "{:?}", upgrade.reasons);
         assert!(
@@ -2197,7 +2205,7 @@ mod tests {
     #[test]
     fn r4_ranks_upgrade_above_change_when_no_shrine_can_still_hit_the_slot() {
         let state = board(&[(D1, "factory", 1), (C2, "corruption", 1)], &[(D1, E1)]);
-        let change = verdict(&state, D1, Some(&choice(OfferKind::Change, "museum_of_artefacts", 1)), &[]);
+        let change = verdict_with(&state, D1, Some(&choice(OfferKind::Change, "museum_of_artefacts", 1)), &[], 1, &rush(), Some(Tier::T3));
         let upgrade = verdict(&state, D1, Some(&choice(OfferKind::Upgrade, "factory", 3)), &[]);
         assert!(
             upgrade.architect > change.architect,
@@ -2218,7 +2226,7 @@ mod tests {
             let line = if kind == OfferKind::Upgrade { "factory" } else { "museum_of_artefacts" };
             // Option 1's landing from tier 1: the upgrade builds 3, the change 1.
             let built = if kind == OfferKind::Upgrade { 3 } else { 1 };
-            let verdict = verdict_with(&state, D1, Some(&choice(kind, line, built)), &[], 1, &profile);
+            let verdict = verdict_with(&state, D1, Some(&choice(kind, line, built)), &[], 1, &profile, Some(Tier::T3));
             assert!(!verdict.architect.vetoed(), "no future draw can justify a pool veto");
             if remaining <= 1 {
                 assert_eq!(verdict.architect.0[4], 0, "no future draw can justify a pool preference");
@@ -2255,10 +2263,12 @@ mod tests {
         let upgrade = verdict_with(
             &state, D1, Some(&choice(OfferKind::Upgrade, "factory", 3)),
             &[], 1, &profile,
+            Some(Tier::T3),
         );
         let change = verdict_with(
             &state, D1, Some(&choice(OfferKind::Change, "museum_of_artefacts", 1)),
             &[], 1, &profile,
+            Some(Tier::T3),
         );
         assert!(upgrade.architect.vetoed());
         assert!(upgrade.reasons.contains(&Reason::R4CarveOutVeto { upgrader: C1 }));
@@ -2282,7 +2292,7 @@ mod tests {
         let upgrade = choice(OfferKind::Upgrade, "museum_of_artefacts", 2);
         let mut profile = rush();
         profile.reroll_until_favourable = true;
-        let mut verdict = verdict_with(&state, D1, Some(&change), &[], 1, &profile);
+        let mut verdict = verdict_with(&state, D1, Some(&change), &[], 1, &profile, Some(Tier::T2));
         limit_r4_by_grade(&mut verdict, &[Some(change), Some(upgrade)]);
         assert_eq!(verdict.architect.0[4], 1);
         assert!(verdict.reasons.contains(&Reason::RerollUntilFavourable));
@@ -2307,13 +2317,13 @@ mod tests {
     fn rc_needs_an_open_corridor_to_a_shrine_but_not_to_a_nexus() {
         let unconnected = board(&[(D1, "toxic_grove", 1), (C1, "upgrade", 1)], &[(D1, E1)]);
         let change = choice(OfferKind::Change, "museum_of_artefacts", 2);
-        assert!(!verdict(&unconnected, D1, Some(&change), &[])
+        assert!(!verdict_with(&unconnected, D1, Some(&change), &[], 1, &rush(), Some(Tier::T2))
             .reasons
             .iter()
             .any(|r| matches!(r, Reason::Rc { .. })));
 
         let nexus = board(&[(D1, "toxic_grove", 1), (C1, "upgrade", 3)], &[(D1, E1)]);
-        assert!(verdict(&nexus, D1, Some(&change), &[])
+        assert!(verdict_with(&nexus, D1, Some(&change), &[], 1, &rush(), Some(Tier::T2))
             .reasons
             .iter()
             .any(|r| matches!(r, Reason::Rc { upgrader: C1 })));
