@@ -817,6 +817,7 @@ mod tests {
             let offer = crate::temple::panel::ArchitectOffer {
                 architect_name: "Quipolatl".into(),
                 printed_target: "Armoury".into(),
+                target: crate::temple::rooms::match_room_name("Armoury"),
                 kind: OfferKind::Upgrade,
                 rect: None,
             };
