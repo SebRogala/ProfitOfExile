@@ -18,14 +18,16 @@
 //! # Prototype bugs deliberately not ported
 //!
 //! - `drop_pool()` included the Entrance. It is not a drop room.
-//! - `visited_this_map` modelled whole-map no-revisit. Only the **next**
-//!   incursion is guaranteed to differ.
 //! - `_offer()` excluded the current line from the 25-line draw by value, so on
 //!   a tier-0 room (line `None`) it excluded all 21 unnamed lines and offered
 //!   one of the four mechanical lines with certainty. That inflated valuable-
 //!   line acquisition on exactly the slots rollouts land on most.
+//!
+//! Draw scheduling follows `docs/GAME-FACTS.md`: whole-map no-revisit, two
+//! changes at tier 0, and completion-time pending rooms carried across maps.
 
 use crate::temple::facts;
+use crate::temple::panel::ARCHITECTS_PER_PANEL;
 use crate::temple::rooms::OfferKind;
 use crate::temple::lattice::Slot;
 use crate::temple::strategy::{
@@ -223,8 +225,9 @@ pub struct Sim {
     pub open: [SlotMask; 13],
     /// Incursions left in the whole temple budget.
     pub remaining: u8,
-    /// The slot the previous incursion of this map used, if any.
-    pub last_visited: Option<usize>,
+    /// Slots already visited in the current map.
+    pub visited_this_map: SlotMask,
+    pending: Option<usize>,
     /// How many entrances of the current map have been spent.
     pub incursion_in_map: u8,
 }
@@ -262,7 +265,8 @@ impl Sim {
             tier,
             open: board.adjacency(),
             remaining: board.remaining,
-            last_visited: board.last_visited.map(|s| s.index()),
+            visited_this_map: board.last_visited.map(mask_of).unwrap_or(0),
+            pending: None,
             incursion_in_map: 0,
         }
     }
@@ -444,13 +448,12 @@ impl Sim {
     /// The slots the next incursion can drop the player into.
     ///
     /// Never the Apex, never the Entrance, never a tier-3 room (it has left the
-    /// pool for good), and never the slot the previous incursion of this map
-    /// used.
+    /// pool for good), and never a slot already visited in the current map.
     pub fn drop_pool(&self) -> Vec<usize> {
         (0..13)
             .filter(|s| *s != APEX && *s != ENTRANCE)
             .filter(|s| self.tier[*s] < 3)
-            .filter(|s| Some(*s) != self.last_visited)
+            .filter(|s| !mask_holds(self.visited_this_map, *s))
             .collect()
     }
 
@@ -541,21 +544,39 @@ impl Sim {
         best
     }
 
-    /// Book one incursion: spend a point of the temple budget, remember the
-    /// slot so the next draw differs, and roll the map over once its entrances
-    /// are used up.
-    ///
-    /// The map boundary is what clears [`Self::last_visited`]: the "next
-    /// incursion differs" guarantee is scoped to a map, so a new map makes the
-    /// slot drawable again.
+    /// Book one incursion and release the visited slots at the map boundary.
     pub fn spend_incursion(&mut self, slot: usize, entrances: u8) {
         self.remaining = self.remaining.saturating_sub(1);
-        self.last_visited = Some(slot);
+        self.visited_this_map |= 1 << slot;
         self.incursion_in_map += 1;
         if self.incursion_in_map >= entrances {
-            self.incursion_in_map = 0;
-            self.last_visited = None;
+            self.leave_map();
         }
+    }
+
+    fn pending_slot(&self) -> Option<usize> {
+        self.pending
+    }
+
+    /// Resume on a fresh map without rerolling the room completion selected.
+    fn leave_map(&mut self) {
+        self.incursion_in_map = 0;
+        self.visited_this_map = 0;
+    }
+
+    fn draw_slot(&self, rng: &mut Rng) -> Option<usize> {
+        let pool = self.drop_pool();
+        (!pool.is_empty()).then(|| pool[rng.below(pool.len())])
+    }
+
+    fn complete_incursion(&mut self, slot: usize, entrances: u8, rng: &mut Rng) {
+        self.spend_incursion(slot, entrances);
+        // No pending draw at the final entrance is Not validated; see GAME-FACTS.
+        self.pending = if self.remaining > 0 && self.incursion_in_map > 0 {
+            self.draw_slot(rng)
+        } else {
+            None
+        };
     }
 
     /// Apply the resolved opening, then simulate the rest of the temple.
@@ -574,7 +595,7 @@ impl Sim {
         // rollout's map boundaries sit up to `entrances - 1` incursions late,
         // which only shifts when a slot becomes drawable again.
         self.incursion_in_map = 0;
-        self.spend_incursion(opening.slot, config.entrances_per_map());
+        self.complete_incursion(opening.slot, config.entrances_per_map(), rng);
         self.rollout(profile, valuation, config, rng)
     }
 
@@ -586,65 +607,81 @@ impl Sim {
         config: &TempleConfig,
         rng: &mut Rng,
     ) -> f64 {
-        let entrances = config.entrances_per_map();
-        while self.remaining > 0 {
-            let pool = self.drop_pool();
-            if pool.is_empty() {
-                break;
-            }
-            let slot = pool[rng.below(pool.len())];
-
-            let upgrade_line = (self.tier[slot] > 0).then_some(self.line[slot]);
-            let change_line = self.offered_change(slot, valuation, rng);
-
-            // Prefer whichever offer advances a target line. The upgrade
-            // wins a tie: facts::landing_tier never lands it below the change.
-            let target = [upgrade_line, Some(change_line)]
-                .into_iter()
-                .flatten()
-                .find(|tag| valuation.is_target(*tag));
-            let near_shrine = bits(neighbour_masks()[slot]).any(|n| {
-                self.line[n] == Valuation::UPGRADE && self.tier[n] > 0 && self.has_door(slot, n)
-            });
-
-            let current = Tier::new(self.tier[slot]).expect("sim tiers are bounded");
-            let change_tier = facts::landing_tier(
-                config.played_consolidation(), Some(current), OfferKind::Change,
-                valuation.line(change_line).map(Line::key),
-            ).expect("the sim knows the current tier");
-            let paired_upgrade = upgrade_line.and_then(|line| facts::landing_tier(
-                config.played_consolidation(), Some(current), OfferKind::Upgrade,
-                valuation.line(line).map(Line::key),
-            ));
-            let rc = near_shrine && paired_upgrade.is_some_and(|upgrade| {
-                (change_tier.get() + 1).min(Tier::MAX_VALUE) >= upgrade.get()
-            });
-
-            if let Some(target) = target {
-                let kind = if upgrade_line == Some(target) {
-                    OfferKind::Upgrade
-                } else {
-                    OfferKind::Change
-                };
-                self.apply_kill(slot, target, kind, valuation, config);
-            } else if rc {
-                // RC — spend the architect on the line and let the shrine
-                // supply the tier, so the shrine's scarce pick is not wasted.
-                self.apply_kill(slot, change_line, OfferKind::Change, valuation, config);
-            } else if let Some(line) = upgrade_line {
-                // R4 — max the junk room, so it leaves the drop pool.
-                self.apply_kill(slot, line, OfferKind::Upgrade, valuation, config);
-            } else {
-                self.apply_kill(slot, change_line, OfferKind::Change, valuation, config);
-            }
-
-            if let Some(door) = self.default_policy_door(slot) {
-                self.open_door(slot, door);
-            }
-
-            self.spend_incursion(slot, entrances);
-        }
+        while self.play_next_incursion(valuation, config, rng).is_some() {}
         self.score(rng, profile, valuation)
+    }
+
+    fn play_next_incursion(
+        &mut self,
+        valuation: &Valuation,
+        config: &TempleConfig,
+        rng: &mut Rng,
+    ) -> Option<usize> {
+        if self.remaining == 0 {
+            return None;
+        }
+        let slot = match self.pending_slot() {
+            Some(slot) => {
+                self.pending = None;
+                slot
+            }
+            None => self.draw_slot(rng)?,
+        };
+
+        let upgrade_line = (self.tier[slot] > 0).then_some(self.line[slot]);
+        let mut changes = [Valuation::JUNK; ARCHITECTS_PER_PANEL];
+        let change_count = if upgrade_line.is_none() { ARCHITECTS_PER_PANEL } else { 1 };
+        for change in &mut changes[..change_count] {
+            *change = self.offered_change(slot, valuation, rng);
+        }
+        let change_line = changes[0];
+
+        // Prefer whichever offer advances a target line. The upgrade
+        // wins a tie: facts::landing_tier never lands it below the change.
+        let target = upgrade_line.into_iter()
+            .chain(changes[..change_count].iter().copied())
+            .find(|tag| valuation.is_target(*tag));
+        let near_shrine = bits(neighbour_masks()[slot]).any(|n| {
+            self.line[n] == Valuation::UPGRADE && self.tier[n] > 0 && self.has_door(slot, n)
+        });
+
+        let current = Tier::new(self.tier[slot]).expect("sim tiers are bounded");
+        let change_tier = facts::landing_tier(
+            config.played_consolidation(), Some(current), OfferKind::Change,
+            valuation.line(change_line).map(Line::key),
+        ).expect("the sim knows the current tier");
+        let paired_upgrade = upgrade_line.and_then(|line| facts::landing_tier(
+            config.played_consolidation(), Some(current), OfferKind::Upgrade,
+            valuation.line(line).map(Line::key),
+        ));
+        let rc = near_shrine && paired_upgrade.is_some_and(|upgrade| {
+            (change_tier.get() + 1).min(Tier::MAX_VALUE) >= upgrade.get()
+        });
+
+        if let Some(target) = target {
+            let kind = if upgrade_line == Some(target) {
+                OfferKind::Upgrade
+            } else {
+                OfferKind::Change
+            };
+            self.apply_kill(slot, target, kind, valuation, config);
+        } else if rc {
+            // RC — spend the architect on the line and let the shrine
+            // supply the tier, so the shrine's scarce pick is not wasted.
+            self.apply_kill(slot, change_line, OfferKind::Change, valuation, config);
+        } else if let Some(line) = upgrade_line {
+            // R4 — max the junk room, so it leaves the drop pool.
+            self.apply_kill(slot, line, OfferKind::Upgrade, valuation, config);
+        } else {
+            self.apply_kill(slot, change_line, OfferKind::Change, valuation, config);
+        }
+
+        if let Some(door) = self.default_policy_door(slot) {
+            self.open_door(slot, door);
+        }
+
+        self.complete_incursion(slot, config.entrances_per_map(), rng);
+        Some(slot)
     }
 }
 
@@ -821,6 +858,58 @@ mod tests {
         use super::*;
         use crate::temple::rooms::CRADLE_LINE_KEY;
         use crate::temple::strategy::Consolidation;
+
+        // Silent consequence: rerolling a pending room changes the distribution
+        // used to rank recommendations while still producing plausible advice.
+        #[test]
+        fn a_resumed_map_plays_the_room_selected_by_completion() {
+            let mut profile = rush();
+            profile.mode_rule = ModeRule::LinesConnected(vec![]);
+            let valuation = Valuation::for_profile(&profile);
+            let rooms: Vec<_> = Slot::ALL.iter()
+                .filter(|slot| ![Slot::APEX, Slot::ENTRANCE].contains(slot))
+                .map(|slot| (*slot, "junk", 1))
+                .collect();
+            for artefacts_of_the_vaal in [false, true] {
+                let config = TempleConfig { artefacts_of_the_vaal, ..TempleConfig::default() };
+                let entrances = config.entrances_per_map();
+                for leave_after in [1, entrances] {
+                    let mut sim = sim(&rooms, &[]);
+                    sim.remaining = 12;
+                    assert!(sim.remaining > entrances);
+                    let mut rng = Rng::seeded(46);
+                    for _ in 0..leave_after {
+                        let played = sim.play_next_incursion(&valuation, &config, &mut rng)
+                            .expect("the map has another room");
+                        assert_eq!(sim.tier[played], 3, "completion upgrades the played room");
+                    }
+                    let pending = sim.pending_slot();
+                    if leave_after < entrances {
+                        let pending = pending.expect("non-final completion selects the next room");
+                        assert!(sim.drop_pool().contains(&pending));
+                    } else {
+                        assert_eq!(pending, None, "the final entrance generates no pending room");
+                    }
+
+                    sim.leave_map();
+                    assert_eq!(sim.pending_slot(), pending, "leaving preserves the pending room");
+                    let pool = sim.drop_pool();
+                    let fresh = pool[rng.clone().below(pool.len())];
+                    let expected = if let Some(pending) = pending {
+                        assert_ne!(fresh, pending, "the seed must detect a fresh reroll");
+                        pending
+                    } else {
+                        fresh
+                    };
+                    assert_eq!(sim.tier[expected], 1);
+                    let remaining = sim.remaining;
+                    let played = sim.play_next_incursion(&valuation, &config, &mut rng);
+                    assert_eq!(played, Some(expected), "AoV {artefacts_of_the_vaal}, leave after {leave_after}");
+                    assert_eq!(sim.tier[expected], 3, "the resumed incursion plays the selected room");
+                    assert_eq!(sim.remaining, remaining - 1);
+                }
+            }
+        }
 
         // Silent consequence: rollout prices tiers the panel never shows.
         #[test]
