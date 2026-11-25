@@ -2194,14 +2194,14 @@ func TestKeepCritical_GemEvidenceHistoryUsesScopedWindowAndCorruptedVariant(t *t
 	sort.Slice(points, func(i, j int) bool { return points[i].Time.Before(points[j].Time) })
 	type seen struct {
 		variant string
-		at      time.Time
+		at      string
 		chaos   float64
 	}
 	got := make([]seen, 0, len(points))
 	for _, p := range points {
-		got = append(got, seen{p.Variant, p.Time.UTC(), p.Chaos})
+		got = append(got, seen{p.Variant, p.Time.UTC().Format(time.RFC3339), p.Chaos})
 	}
-	want := []seen{{"21/20c", windowStart, 100}, {"21/20c", asOf, 110}}
+	want := []seen{{"21/20c", windowStart.Format(time.RFC3339), 100}, {"21/20c", asOf.Format(time.RFC3339), 110}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("points = %+v, want %+v (league %s, 21/20c, inside [asOf-24h, asOf] only)", got, want, leagueA)
 	}
