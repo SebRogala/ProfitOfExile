@@ -6,7 +6,7 @@
  * on the clipboard, and every exchange press reaches the page through the real
  * exchange-read store's registered listener, as the app layout starts it.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Component } from 'svelte';
 
 const mocks = vi.hoisted(() => ({
@@ -29,20 +29,24 @@ let stopStore: (() => void) | null = null;
 let writeText: ReturnType<typeof vi.fn>;
 let svelte: typeof import('svelte');
 let ChaosDivPage: Component;
+let store: typeof import('$lib/tools/exchange-read.svelte');
 
-// A module reset gives each case an empty exchange-read store; the page, the store and
-// mount/flushSync are then loaded from that same fresh graph so they share one Svelte runtime.
-// `svelte` is re-mocked after each reset because a hoisted `vi.mock` factory result outlives
-// the reset, which would leave the page's `onDestroy` and mount on the previous runtime.
-beforeEach(async () => {
+// The page, the store and mount/flushSync are loaded once, after one module reset, from the
+// same graph so they share one Svelte runtime; `svelte` is re-mocked after that reset because a
+// hoisted `vi.mock` factory result outlives it, which would leave the page's `onDestroy` and mount
+// on another runtime. Each case still starts from a null read: the store's stop clears it.
+beforeAll(async () => {
 	vi.resetModules();
 	// The `unit` project resolves no browser condition, and vite-plugin-svelte inlines `svelte`,
 	// so NODE_OPTIONS conditions never reach it: bare `svelte` is the server entry, whose `mount` throws.
 	vi.doMock('svelte', () => vi.importActual<typeof import('svelte')>('../../../node_modules/svelte/src/index-client.js'));
-	mocks.handlers = {};
 	svelte = await import('svelte');
-	const store = await import('$lib/tools/exchange-read.svelte');
+	store = await import('$lib/tools/exchange-read.svelte');
 	ChaosDivPage = (await import('./ChaosDivPage.svelte')).default as Component;
+});
+
+beforeEach(() => {
+	mocks.handlers = {};
 	stopStore = store.startExchangeReadStore();
 	writeText = vi.fn(async () => {});
 	Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
