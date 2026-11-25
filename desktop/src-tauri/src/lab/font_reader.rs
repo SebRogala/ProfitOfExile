@@ -61,8 +61,9 @@ impl PendingFontRead {
         recognize: impl FnOnce(&image::DynamicImage) -> Result<Vec<String>, String>) -> Result<bool, String> {
         if armed_token(&state.lab_scan) != Some(self.token)
             || !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return Ok(false); }
-        let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
-        self.recognition = probe_font_frame(frame, crate::ssot::placements_for(screen.as_ref()).lab.font, recognize)?;
+        let resolved = crate::ssot::regions::current(state, Some((frame.image.width(), frame.image.height())));
+        if resolved.unread.contains(&crate::ssot::regions::RegionKey::LabFont) { return Ok(false); }
+        self.recognition = probe_font_frame(frame, resolved.placements.lab.font, recognize)?;
         Ok(self.recognition.is_some())
     }
 }

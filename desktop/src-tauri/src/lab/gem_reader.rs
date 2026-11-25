@@ -56,9 +56,13 @@ struct PendingGemRead {
 impl PendingGemRead {
     fn probe_in(&mut self, frame: &Capture, state: &AppState) -> bool {
         if !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return false; }
-        let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
-        let lab = crate::ssot::placements_for(screen.as_ref()).lab;
+        let resolved = crate::ssot::regions::current(state, Some((frame.image.width(), frame.image.height())));
+        if resolved.unread.contains(&crate::ssot::regions::RegionKey::LabGemSlots) { return false; }
+        let lab = resolved.placements.lab;
         if super::panel_probe::probe(frame, &lab).is_none() { return false; }
+        // An unread tooltip band suppresses hover OCR while preserving the
+        // selected frame's icon read through consume and read_gem_frame_with_vocab.
+        if resolved.unread.contains(&crate::ssot::regions::RegionKey::LabGem) { self.cursor = None; }
         self.lab = Some(lab);
         true
     }
