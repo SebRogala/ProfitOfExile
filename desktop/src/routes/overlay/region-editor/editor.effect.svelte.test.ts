@@ -220,11 +220,33 @@ function drag(target: HTMLElement, dx: number, handle?: string): void {
 	pointer(window, 'pointerup', 300 + dx, 300);
 }
 
-function typeInto(target: HTMLElement, field: string, value: string): void {
-	const input = target.querySelector<HTMLInputElement>(`input[aria-label="${field}"]`)!;
+function field(target: HTMLElement, name: string): HTMLInputElement {
+	return target.querySelector<HTMLInputElement>(`input[aria-label="${name}"]`)!;
+}
+
+/** One input event per typed character, as a keyboard delivers them; nothing is pressed after the last one. */
+function typeKeys(target: HTMLElement, name: string, text: string, afterEach: () => void): void {
+	const input = field(target, name);
+	for (let end = 1; end <= text.length; end++) {
+		input.value = text.slice(0, end);
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+		afterEach();
+	}
+}
+
+function pressEnter(target: HTMLElement, name: string): void {
+	field(target, name).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+	flushSync();
+}
+
+/** Types the whole value in one input event, then applies it with Enter. */
+function typeInto(target: HTMLElement, name: string, value: string): void {
+	const input = field(target, name);
 	input.value = value;
 	input.dispatchEvent(new Event('input', { bubbles: true }));
 	flushSync();
+	pressEnter(target, name);
 }
 
 function key(name: string): void {
@@ -259,6 +281,7 @@ function visible(target: HTMLElement) {
 		reset: reset ? { enabled: !reset.disabled, title: reset.title } : null,
 		handles: target.querySelectorAll('.region.selected .handle').length,
 		frames: [...target.querySelectorAll('.region')].map((r) => r.querySelector('.rname')?.textContent),
+		carried: panel.querySelector('.ep-carried .r')?.textContent ?? null,
 		actions: [...panel.querySelectorAll('.ep-actions button')].map((b) => b.textContent?.trim())
 	};
 }
@@ -427,6 +450,54 @@ describe('region editor route opened on the Font panel', () => {
 			expected: { panel: 'Region picker', readout: null, actions: ['Close'] }
 		}
 	];
+
+	type TypedRow = {
+		name: string;
+		scene?: Partial<Scene>;
+		field: string;
+		keys: string;
+		whileTyping: Partial<ReturnType<typeof visible>>;
+		afterEnter: Partial<ReturnType<typeof visible>>;
+	};
+
+	const typedRows: TypedRow[] = [
+		{
+			name: 'Font x typed 3000 keeps the frame and carried strip at 837 until Enter rejects it',
+			field: 'x',
+			keys: '3000',
+			whileTyping: { invalid: [], readout: '[837, 293, 888, 908]', carried: '[1100, 734, 328, 64]' },
+			afterEnter: {
+				invalid: ['x'],
+				hint: 'x: max 2552',
+				saveEnabled: false,
+				readout: '[837, 293, 888, 908]',
+				carried: '[1100, 734, 328, 64]'
+			}
+		},
+		{
+			name: 'shape-locked Merc w typed 700 derives h from the stored 666x572 on Enter',
+			scene: { region: 'mercPanel', scaleFactor: 1 },
+			field: 'w',
+			keys: '700',
+			whileTyping: { invalid: [], readout: '[1406, 738, 666, 572]' },
+			afterEnter: { invalid: [], saveEnabled: true, readout: '[1406, 738, 700, 601]' }
+		}
+	];
+
+	// keep:critical — applying each keystroke moves the region and its carried strip
+	// to a half-typed value, and shape-locked rounding compounds over the prefixes,
+	// so the saved rect is silently wrong (x left at 300, Merc h 600 instead of 601).
+	it.each(typedRows)(
+		'a typed value applies only on Enter: $name',
+		async ({ scene: overrides = {}, field: name, keys, whileTyping, afterEnter }) => {
+			const { target } = await render(scene(overrides));
+
+			typeKeys(target, name, keys, () => expect(visible(target)).toMatchObject(whileTyping));
+			pressEnter(target, name);
+
+			expect(visible(target)).toMatchObject(afterEnter);
+		}
+	);
 
 	// keep:happy
 	it.each(rows)('validation and transitions: $name', async ({ scene: overrides = {}, act, expected }) => {
