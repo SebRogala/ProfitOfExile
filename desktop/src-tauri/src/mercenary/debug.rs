@@ -356,14 +356,18 @@ fn debug_capture_blocking(
     };
     timings.push(timing("capture", started));
     let (iw, ih) = img.dimensions();
-    let placement = {
+    let (placed, regions_manual) = {
         let state = app.state::<AppState>();
+        let resolved = crate::ssot::regions::current(&state, Some((iw, ih)));
         let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
-        screen
-            .filter(|screen| screen.width == iw && screen.height == ih)
-            .and_then(|screen| crate::ssot::placements_for(Some(&screen)).merc)
-            .map(|merc| merc.panel)
+        let placed = if resolved.manual { resolved.merc } else {
+            screen
+                .filter(|screen| screen.width == iw && screen.height == ih)
+                .and_then(|screen| crate::ssot::placements_for(Some(&screen)).merc.map(|merc| (merc.panel, screen.ui_scale)))
+        };
+        (placed, resolved.manual)
     };
+    let placement = placed.map(|(panel, _)| panel);
 
     let mut report = MercDebugReport {
         dump_dir: dir.display().to_string(),
@@ -438,17 +442,15 @@ fn debug_capture_blocking(
     let started = Instant::now();
     // Replay the same placed geometry when the report carries an SSOT panel;
     // otherwise retain the full-screen locator for older/unmeasured dumps.
-    let layout = match report.placement {
-        Some(panel) => {
-            let scale = {
-                let state = app.state::<AppState>();
-                let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
-                screen
-                    .filter(|screen| screen.width == iw && screen.height == ih)
-                    .map_or(crate::ASSUMED_UI_SCALE, |screen| screen.ui_scale)
-            };
+    let layout = match placed {
+        Some((panel, scale)) => {
             geometry::placed_layout(&lines, panel, &g, scale, g.row_pitch * scale)
         }
+        None if regions_manual => Err(geometry::DetectMiss {
+            candidates: 0,
+            column_x0: None,
+            stage: geometry::DetectStage::NoRowClusters,
+        }),
         None => geometry::detect_reason(&lines, &g, &vocab, None),
     };
     report.timings.push(timing("detect", started));
@@ -457,6 +459,7 @@ fn debug_capture_blocking(
     // the loop would have read rather than the OCR's un-registered guess of
     // them — the cell PNGs below are cut from these.
     let layout = layout.map(|layout| {
+        if regions_manual { return layout; }
         let started = Instant::now();
         // The dump still reads the whole image for cell crops, but its row
         // geometry follows the placed replay when one is available.

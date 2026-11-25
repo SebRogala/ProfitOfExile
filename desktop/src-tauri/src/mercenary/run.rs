@@ -53,6 +53,7 @@
 //! sends input. Injecting input into the PoE client is against GGG's ToS, and
 //! this module is the one place in the app that would be tempted.
 
+// size-gate: intrinsic — Manual locate guard and mutable probe call stay with the worker; placement resolution lives in detect.
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -1268,6 +1269,7 @@ enum LocateDecision {
 /// `placed` is the SSOT placement with what the crop read against it, `None` on
 /// a cold start. `manual` is a Recalibrate this session has not acted on yet
 /// ([`refit_requested`], ruling 2).
+/// Manual OCR regions bypass this Auto table: no locate or budget spend.
 ///
 /// Every other press trusts the placement and proceeds on the placed read, so its miss goes
 /// through the ordinary occlusion handling and [`miss`]. Before POE-278 a
@@ -1284,10 +1286,13 @@ enum LocateDecision {
 fn locate_decision(
     placed: Option<(([i32; 4], f32), PlacedRead)>,
     manual: bool,
-    _regions_manual: bool,
+    regions_manual: bool,
     budget: &mut FallbackBudget,
     key: FallbackKey,
 ) -> LocateDecision {
+    if regions_manual {
+        return if placed.is_some() { LocateDecision::TrustPlacement } else { LocateDecision::ManualUnset };
+    }
     let Some((placement, read)) = placed else {
         return if budget.take(key) {
             LocateDecision::Locate(LocateReason::ColdStart)
@@ -1528,7 +1533,7 @@ fn run_worker(app: AppHandle, cancel: watch::Receiver<bool>) {
         WorkerEvent::Message(MercInbox::Identity(reply)) => { let _ = reply.send(identity); }
         WorkerEvent::Message(MercInbox::Probe { identity: expected, frame, cursor, reply }) => {
             if expected != identity { let _ = reply.send(Ok(None)); return; }
-            let evidence = detect::probe_frame(&app, &session, cursor, &frame, press_seq + 1);
+            let evidence = detect::probe_frame(&app, &mut session, cursor, &frame, press_seq + 1);
             if !*cancel.borrow() { let _ = reply.send(evidence); }
         }
         WorkerEvent::Message(MercInbox::Press(pressed)) => {
@@ -1771,19 +1776,6 @@ pub(super) fn debug_mode(app: &AppHandle) -> bool {
     let state = app.state::<AppState>();
     let debug = *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
     debug
-}
-
-/// The current SSOT placement and scale, copied before capture work starts.
-/// A null slice is the cold-start case; no session rectangle fills that gap.
-fn merc_placement(app: &AppHandle, grab: &crate::capture::Capture) -> Option<([i32; 4], f32)> {
-    let screen = {
-        let state = app.state::<AppState>();
-        let screen = state.screen.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        screen
-    }?;
-    if !crate::ssot::screen_matches(&Some(screen), (grab.image.width(), grab.image.height()), grab.origin, grab.client) { return None; }
-    let merc = crate::ssot::placements_for(Some(&screen)).merc?;
-    Some((merc.panel, screen.ui_scale))
 }
 
 fn grow_rect(held: Option<[i32; 4]>, fresh: Option<[i32; 4]>) -> Option<[i32; 4]> {

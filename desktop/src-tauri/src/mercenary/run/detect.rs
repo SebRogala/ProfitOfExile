@@ -351,48 +351,65 @@ pub(crate) enum MercProbe {
 
 pub(super) fn probe_frame(
     app: &AppHandle,
-    session: &Session,
+    session: &mut Session,
     cursor: Option<(i32, i32)>,
     grab: &crate::capture::Capture,
     press_seq: u64,
 ) -> Result<Option<MercProbe>, String> {
-    probe_frame_with(session, cursor, grab,
+    let (placement, regions_manual) = merc_placement(app, grab);
+    probe_press(session, cursor, grab,
         FallbackKey { refit: refit_counter(app), press: press_seq },
-        merc_placement(app, grab), &mut crate::ocr::recognize_lines)
+        placement, regions_manual, &mut crate::ocr::recognize_lines)
+}
+
+fn merc_placement(app: &AppHandle, grab: &crate::capture::Capture) -> (Option<([i32; 4], f32)>, bool) {
+    press_placement(&app.state::<AppState>(), grab)
 }
 
 /// The press's merc placement and whether it came from Manual regions.
-#[cfg_attr(not(test), allow(dead_code))]
 fn press_placement(state: &AppState, grab: &crate::capture::Capture) -> (Option<([i32; 4], f32)>, bool) {
+    let resolved = crate::ssot::regions::current(state, Some((grab.image.width(), grab.image.height())));
+    if resolved.manual { return (resolved.merc, true); }
     let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(slice) = screen else { return (None, false) };
     if !crate::ssot::screen_matches(&screen, (grab.image.width(), grab.image.height()), grab.origin, grab.client) {
         return (None, false);
     }
-    let placement = crate::ssot::placements_for(Some(&slice)).merc.map(|merc| (merc.panel, slice.ui_scale));
-    (placement, false)
+    (resolved.merc, false)
 }
 
 /// One press's probe under the placement [`press_placement`] decided.
-#[cfg_attr(not(test), allow(dead_code))]
 fn probe_press(
     session: &mut Session,
     cursor: Option<(i32, i32)>,
     grab: &crate::capture::Capture,
     key: FallbackKey,
     placement: Option<([i32; 4], f32)>,
-    _regions_manual: bool,
+    regions_manual: bool,
     recognize: &mut impl FnMut(&image::DynamicImage) -> Result<Vec<OcrLineBox>, String>,
 ) -> Result<Option<MercProbe>, String> {
-    probe_frame_with(session, cursor, grab, key, placement, recognize)
+    if regions_manual { session.refit_located = key.refit; }
+    probe_regions_with(session, cursor, grab, key, placement, regions_manual, recognize)
 }
 
+#[cfg(test)]
 fn probe_frame_with(
     session: &Session,
     cursor: Option<(i32, i32)>,
     grab: &crate::capture::Capture,
     key: FallbackKey,
     placement: Option<([i32; 4], f32)>,
+    recognize: &mut impl FnMut(&image::DynamicImage) -> Result<Vec<OcrLineBox>, String>,
+) -> Result<Option<MercProbe>, String> {
+    probe_regions_with(session, cursor, grab, key, placement, false, recognize)
+}
+
+fn probe_regions_with(
+    session: &Session,
+    cursor: Option<(i32, i32)>,
+    grab: &crate::capture::Capture,
+    key: FallbackKey,
+    placement: Option<([i32; 4], f32)>,
+    regions_manual: bool,
     recognize: &mut impl FnMut(&image::DynamicImage) -> Result<Vec<OcrLineBox>, String>,
 ) -> Result<Option<MercProbe>, String> {
     let started = Instant::now();
@@ -413,7 +430,7 @@ fn probe_frame_with(
     // Off the key's own counter read, so the verdict and the budget it may
     // spend are about the same Recalibrate. A pending Recalibrate is the only
     // thing that makes a placed miss manual (ruling 2).
-    let manual = refit_requested(session.refit_located, key.refit);
+    let manual = !regions_manual && refit_requested(session.refit_located, key.refit);
 
     let cropped = crop.map(|r| img.crop_imm(r[0] as u32, r[1] as u32, r[2] as u32, r[3] as u32));
     let mut view: &image::DynamicImage = cropped.as_ref().unwrap_or(&img);
@@ -421,15 +438,16 @@ fn probe_frame_with(
         Some(r) => geometry::Frame::cropped((r[0], r[1]), screen),
         None => geometry::Frame::full(screen),
     };
-    let known_panel = session.panel.or_else(|| placement.map(|(panel, _)| panel));
+    let known_panel = if regions_manual { placement.map(|(panel, _)| panel) }
+        else { session.panel.or_else(|| placement.map(|(panel, _)| panel)) };
 
     // A held fit's pitch is the frame's horizontal slot pitch, reused as the
     // vertical proxy because it is the only frame-verified length the session
     // holds: the slot pitch it holds is `REF_PITCH · scale` in screen px, and
     // 48.67 in reference space is closer to the fixture's 48.4 vertical row
     // pitch than 49.3 is. POE-216 resolves this axis crossing.
-    let fitted_pitch = session
-        .fitted
+    let fitted = if regions_manual { None } else { session.fitted };
+    let fitted_pitch = fitted
         .map(|fit| fit.pitch)
         .unwrap_or_else(|| placement.map_or(session.geometry.row_pitch, |(_, scale)| session.geometry.row_pitch * scale));
     // THE PLACED READ, on the crop. `None` on a cold start, which has no rect
@@ -444,7 +462,7 @@ fn probe_frame_with(
         view,
         frame,
         &session.geometry,
-        session.fitted.map(|fit| fit.scale),
+        fitted.map(|fit| fit.scale),
         fitted_pitch,
         &mut *recognize,
     ) {
@@ -461,7 +479,7 @@ fn probe_frame_with(
     let decision = locate_decision(
         placed_read.as_ref().map(|(placed, _, layout)| (*placed, PlacedRead::of(layout))),
         manual,
-        false,
+        regions_manual,
         &mut budget,
         key,
     );
@@ -532,7 +550,7 @@ fn probe_frame_with(
         key,
         took,
         how,
-        regions_manual: false,
+        regions_manual,
     }))))
 }
 
@@ -561,6 +579,12 @@ fn register_geometry<E: DetectionEffects>(
     let frame = location.frame;
     let key = location.key;
     let layout = location.layout.clone();
+    // A Manual probe owns its scale even if the mode changed before registration.
+    if location.regions_manual {
+        session.refit_located = key.refit;
+        record_registration(session, &layout, false);
+        return RegisteredDetection { location, refit: Refit::NotRequested, fit_ms: 0 };
+    }
     let view = location.view();
     // Read BEFORE the fit rewrites `layout.scale`: the log line's whole job is
     // to show the two cues side by side.
@@ -658,12 +682,7 @@ fn register_geometry<E: DetectionEffects>(
         let source = if refined.fit.is_some() { ScaleSource::Frame } else { ScaleSource::Held };
         cellfit::apply_held(&mut layout, &settled, source);
     }
-    // Armed, never cleared here: the merge that consumes it clears it, and a
-    // second change landing before then would only re-arm what is already
-    // armed.
-    session.geometry_changed |=
-        registration_changed(session.scale_source, layout.scale_source, adopted);
-    session.scale_source = layout.scale_source;
+    record_registration(session, &layout, adopted);
     // POE-214 WI-B1: the settled scale is not merc-only knowledge. It is the
     // GAME UI's scale on this screen, and the Lab capture regions want it (as
     // fractions of the slice) exactly as much as the grid rects here do. So it
@@ -739,6 +758,15 @@ fn register_geometry<E: DetectionEffects>(
         refit,
         fit_ms,
     }
+}
+
+fn record_registration(session: &mut Session, layout: &geometry::MercLayout, adopted: bool) {
+    // Armed, never cleared here: the merge that consumes it clears it, and a
+    // second change landing before then would only re-arm what is already
+    // armed.
+    session.geometry_changed |=
+        registration_changed(session.scale_source, layout.scale_source, adopted);
+    session.scale_source = layout.scale_source;
 }
 
 fn execute_read_plan<E: DetectionEffects>(
