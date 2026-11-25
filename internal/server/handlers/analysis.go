@@ -312,48 +312,50 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 		}
 
 		type row struct {
-			Time          string               `json:"time"`
-			Color         string               `json:"color"`
-			Variant       string               `json:"variant"`
-			Pool          int                  `json:"pool"`
-			PricedGems    int                  `json:"pricedGems"`
-			Winners       int                  `json:"winners"`
-			PWin          float64              `json:"pWin"`
-			AvgWin        float64              `json:"avgWin"`
-			AvgWinRaw     float64              `json:"avgWinRaw"`
-			EV            float64              `json:"ev"`
-			EVRaw         float64              `json:"evRaw"`
-			InputCost     float64              `json:"inputCost"`
-			Profit        float64              `json:"profit"`
-			FontsToHit    float64              `json:"fontsToHit"`
-			JackpotGems   []lab.JackpotGemInfo `json:"jackpotGems,omitempty"`
-			ThinPoolGems  int                  `json:"thinPoolGems"`
-			LiquidityRisk string               `json:"liquidityRisk"`
-			PoolBreakdown []lab.TierPoolInfo   `json:"poolBreakdown,omitempty"`
+			Time              string                     `json:"time"`
+			Color             string                     `json:"color"`
+			Variant           string                     `json:"variant"`
+			Pool              int                        `json:"pool"`
+			PricedGems        int                        `json:"pricedGems"`
+			Winners           int                        `json:"winners"`
+			PWin              float64                    `json:"pWin"`
+			AvgWin            float64                    `json:"avgWin"`
+			AvgWinRaw         float64                    `json:"avgWinRaw"`
+			EV                float64                    `json:"ev"`
+			EVRaw             float64                    `json:"evRaw"`
+			InputCost         float64                    `json:"inputCost"`
+			Profit            float64                    `json:"profit"`
+			FontsToHit        float64                    `json:"fontsToHit"`
+			JackpotGems       []lab.JackpotGemInfo       `json:"jackpotGems,omitempty"`
+			LowConfidenceGems []lab.LowConfidenceGemInfo `json:"lowConfidenceGems,omitempty"`
+			ThinPoolGems      int                        `json:"thinPoolGems"`
+			LiquidityRisk     string                     `json:"liquidityRisk"`
+			PoolBreakdown     []lab.TierPoolInfo         `json:"poolBreakdown,omitempty"`
 		}
 
 		toRows := func(results []lab.FontResult) []row {
 			rows := make([]row, 0, len(results))
 			for _, r := range results {
 				rows = append(rows, row{
-					Time:          r.Time.UTC().Format(time.RFC3339),
-					Color:         r.Color,
-					Variant:       r.Variant,
-					Pool:          r.Pool,
-					PricedGems:    r.PricedGems,
-					Winners:       r.Winners,
-					PWin:          r.PWin,
-					AvgWin:        r.AvgWin,
-					AvgWinRaw:     r.AvgWinRaw,
-					EV:            r.EV,
-					EVRaw:         r.EVRaw,
-					InputCost:     r.InputCost,
-					Profit:        r.Profit,
-					FontsToHit:    r.FontsToHit,
-					JackpotGems:   r.JackpotGems,
-					ThinPoolGems:  r.ThinPoolGems,
-					LiquidityRisk: r.LiquidityRisk,
-					PoolBreakdown: r.PoolBreakdown,
+					Time:              r.Time.UTC().Format(time.RFC3339),
+					Color:             r.Color,
+					Variant:           r.Variant,
+					Pool:              r.Pool,
+					PricedGems:        r.PricedGems,
+					Winners:           r.Winners,
+					PWin:              r.PWin,
+					AvgWin:            r.AvgWin,
+					AvgWinRaw:         r.AvgWinRaw,
+					EV:                r.EV,
+					EVRaw:             r.EVRaw,
+					InputCost:         r.InputCost,
+					Profit:            r.Profit,
+					FontsToHit:        r.FontsToHit,
+					JackpotGems:       r.JackpotGems,
+					LowConfidenceGems: r.LowConfidenceGems,
+					ThinPoolGems:      r.ThinPoolGems,
+					LiquidityRisk:     r.LiquidityRisk,
+					PoolBreakdown:     r.PoolBreakdown,
 				})
 			}
 			return rows
