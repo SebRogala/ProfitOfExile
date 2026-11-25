@@ -792,6 +792,43 @@ mod tests {
         Sim::from_board(&board, &valuation())
     }
 
+    mod keep_regression {
+        use super::*;
+        use crate::temple::strategy::Consolidation;
+
+        // POE-415 review F-1: a map whose drop pool runs out before its
+        // entrances are spent must hand the remaining budget to the next map,
+        // not end the temple. Under Consolidation option 2 an upgrade lifts the
+        // T1 Corruption room on D1 one tier per visit, so it needs a visit in
+        // each of two maps to reach T3; every other drop slot is already T3.
+        #[test]
+        fn a_map_whose_drop_pool_runs_out_hands_the_budget_to_the_next_map() {
+            let profile = rush();
+            let valuation = Valuation::for_profile(&profile);
+            let config = TempleConfig {
+                consolidation: Some(Consolidation::ResidentCarry),
+                ..TempleConfig::default()
+            };
+            let mut rooms: Vec<(Slot, &str, u8)> = Slot::ALL
+                .iter()
+                .filter(|s| ![Slot::APEX, Slot::ENTRANCE, D1].contains(*s))
+                .map(|s| (*s, "junk", 3))
+                .collect();
+            rooms.push((D1, "corruption", 1));
+            let mut board = sim(&rooms, &[(D1, E1)]);
+            board.remaining = 2;
+            assert_eq!(board.drop_pool(), vec![D1.index()], "D1 is the only drop slot");
+            assert!(config.entrances_per_map() > 1, "the first map has entrances left after D1");
+
+            let score = board.rollout(&profile, &valuation, &config, &mut Rng::seeded(1));
+
+            // Corruption pays only at T3 (9.0); at T2 it pays nothing, so a
+            // rollout that stops after the first map scores the 0.05 room
+            // baselines alone.
+            assert!(score >= 9.0, "D1 must reach Corruption T3 in the second map, score {score}");
+        }
+    }
+
     mod keep_happy {
         use super::*;
 
