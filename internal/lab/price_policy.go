@@ -11,6 +11,12 @@ import (
 const GemTradeMaxRevisitAge = 6 * time.Hour
 const FontTradeVariantSet = "1,1/20,20,20/20"
 
+const (
+	gemEvidenceTradeListings = 3
+	gemEvidenceTradeSellers  = 2
+	gemEvidenceNinjaListings = 3
+)
+
 // FontTradeVariants returns an independently owned interim market set.
 func FontTradeVariants() []string {
 	return strings.Split(FontTradeVariantSet, ",")
@@ -30,5 +36,10 @@ func GemPricePolicy() resolve.Policy {
 
 // GemEvidencePolicy is the Lab evidence floor for gem prices.
 func GemEvidencePolicy() evidence.Policy {
-	return evidence.Policy{}
+	return evidence.Policy{
+		TradeListings:    gemEvidenceTradeListings,
+		TradeSellers:     gemEvidenceTradeSellers,
+		NinjaSampleAbove: labThinSampleCount,
+		NinjaListings:    gemEvidenceNinjaListings,
+	}
 }

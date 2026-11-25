@@ -12,9 +12,6 @@ const (
 	Solid
 )
 
-// unknown is a red-phase placeholder that matches no grade.
-const unknown Evidence = -1
-
 // Source is the market that produced the price.
 type Source int
 
@@ -44,5 +41,17 @@ type Policy struct {
 
 // Grade grades the evidence behind a price under the given policy.
 func Grade(d Depth, p Policy) Evidence {
-	return unknown
+	switch d.PricedBy {
+	case SourceTrade:
+		if d.TradeListings >= p.TradeListings && d.TradeSellers >= p.TradeSellers {
+			return Solid
+		}
+	case SourceNinja:
+		if d.NinjaSample != nil && *d.NinjaSample > p.NinjaSampleAbove && d.NinjaListings >= p.NinjaListings {
+			return Solid
+		}
+	default:
+		return None
+	}
+	return Thin
 }
