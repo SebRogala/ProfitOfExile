@@ -1,6 +1,9 @@
 package lab
 
-import "profitofexile/internal/price/tier"
+import (
+	"profitofexile/internal/price/evidence"
+	"profitofexile/internal/price/tier"
+)
 
 // labTierCutoffChaos is Lab's price cutoff: gems priced at or below it take no
 // part in tiering or low-confidence detection; double-corrupt applies it to
@@ -15,10 +18,12 @@ const labThinSampleCount = 5
 // labPolicy is the tier policy every Lab pool classifies under.
 var labPolicy = tier.Policy{CutoffChaos: labTierCutoffChaos, HasCutoff: true}
 
-// ThinSample reports whether this variant's known poe.ninja sample is thin.
-// Unknown counts are not thin; sparkline emptiness does not decide it.
-func (g GemPrice) ThinSample() bool {
-	return g.SampleCount != nil && *g.SampleCount <= labThinSampleCount
+func gemDepth(g GemPrice) evidence.Depth {
+	source := evidence.SourceNone
+	if g.Chaos > 0 {
+		source = evidence.SourceNinja
+	}
+	return evidence.Depth{PricedBy: source, NinjaListings: g.Listings, NinjaSample: g.SampleCount}
 }
 
 // tierItems maps the gems that pass filter to tier items: the market is the
@@ -29,7 +34,10 @@ func tierItems(gems []GemPrice, filter func(GemPrice) bool) []tier.Item {
 		if !filter(g) {
 			continue
 		}
-		items = append(items, tier.Item{Group: g.Variant, Key: g.Name, Price: g.Chaos, Depth: g.Listings})
+		items = append(items, tier.Item{
+			Group: g.Variant, Key: g.Name, Price: g.Chaos, Depth: g.Listings,
+			Gated: evidence.Grade(gemDepth(g), GemEvidencePolicy()) != evidence.Solid,
+		})
 	}
 	return items
 }

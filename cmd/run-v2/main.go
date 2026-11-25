@@ -93,7 +93,7 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 		}
 
 		// Load gems at this exact snapshot time.
-		gems, err := loadGemsAtTime(ctx, pool, scope, snapTime)
+		gems, _, err := repo.GemPricesAsOf(ctx, scope, snapTime)
 		if err != nil {
 			return fmt.Errorf("snapshot %s: %w", snapTime.Format(time.RFC3339), err)
 		}
@@ -148,29 +148,6 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 // querier is the slice of *pgxpool.Pool the snapshot loaders use.
 type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-}
-
-func loadGemsAtTime(ctx context.Context, pool querier, scope league.Scope, t time.Time) ([]lab.GemPrice, error) {
-	q := `SELECT name, variant, chaos, listings, is_transfigured, COALESCE(gem_color, '') as gem_color, is_corrupted
-	      FROM gem_snapshots WHERE league = $1 AND time = $2`
-	rows, err := pool.Query(ctx, q, scope.ID(), t)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var gems []lab.GemPrice
-	for rows.Next() {
-		var g lab.GemPrice
-		if err := rows.Scan(&g.Name, &g.Variant, &g.Chaos, &g.Listings, &g.IsTransfigured, &g.GemColor, &g.IsCorrupted); err != nil {
-			return nil, fmt.Errorf("loadGemsAtTime: scan row: %w", err)
-		}
-		gems = append(gems, g)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("loadGemsAtTime: iterate rows: %w", err)
-	}
-	return gems, nil
 }
 
 func loadHistoryUpTo(ctx context.Context, pool querier, scope league.Scope, upTo time.Time, hours int) ([]lab.GemPriceHistory, error) {

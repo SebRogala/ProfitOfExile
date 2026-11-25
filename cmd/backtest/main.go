@@ -162,26 +162,6 @@ func loadSnapshotTimes(ctx context.Context, pool *pgxpool.Pool, scope league.Sco
 	return times, rows.Err()
 }
 
-func loadGemsAtTime(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, t time.Time) ([]lab.GemPrice, error) {
-	rows, err := pool.Query(ctx,
-		`SELECT name, variant, chaos, listings, is_transfigured, COALESCE(gem_color, '') as gem_color, is_corrupted
-		 FROM gem_snapshots WHERE league = $1 AND time = $2`, scope.ID(), t)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var gems []lab.GemPrice
-	for rows.Next() {
-		var g lab.GemPrice
-		if err := rows.Scan(&g.Name, &g.Variant, &g.Chaos, &g.Listings, &g.IsTransfigured, &g.GemColor, &g.IsCorrupted); err != nil {
-			continue
-		}
-		gems = append(gems, g)
-	}
-	return gems, rows.Err()
-}
-
 func loadHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, upTo time.Time, hours int) ([]lab.GemPriceHistory, error) {
 	cutoff := upTo.Add(-time.Duration(hours) * time.Hour)
 	rows, err := pool.Query(ctx,
@@ -349,7 +329,7 @@ func loadFutureSnapshots(ctx context.Context, pool *pgxpool.Pool, scope league.S
 		if !found {
 			continue
 		}
-		gems, err := loadGemsAtTime(ctx, pool, scope, snapTime)
+		gems, _, err := lab.NewRepository(pool).GemPricesAsOf(ctx, scope, snapTime)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  WARN: load gems at %v failed: %v\n", snapTime, err)
 			continue
@@ -409,7 +389,7 @@ type snapshotResult struct {
 
 func processSnapshot(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, snapTime time.Time) (*snapshotResult, error) {
 	// Load data at T.
-	gems, err := loadGemsAtTime(ctx, pool, scope, snapTime)
+	gems, _, err := lab.NewRepository(pool).GemPricesAsOf(ctx, scope, snapTime)
 	if err != nil || len(gems) == 0 {
 		return nil, fmt.Errorf("no gems at %s", snapTime)
 	}
@@ -509,7 +489,7 @@ func buildOutcomes(currentGems []lab.GemPrice, futureGems map[int][]lab.GemPrice
 	futureIndex := make(map[string]map[int]futurePrice) // key -> offset -> price
 	for offset, fGems := range futureGems {
 		for _, g := range fGems {
-			if !g.IsTransfigured || g.IsCorrupted {
+			if !g.IsTransfigured || g.IsCorrupted || g.Chaos <= 0 || g.Listings <= 0 {
 				continue
 			}
 			key := g.Name + "|" + g.Variant
