@@ -427,4 +427,43 @@ mod tests {
             }
         }
     }
+
+    mod keep_regression {
+        use super::*;
+
+        // keep:regression — POE-495, player-reported: with no screen measured yet the
+        // font read placed its crop on the assumed 1080p client, so a 3840x1080 capture
+        // read the panel 960 px left of where the game centres it.
+        #[test]
+        fn an_unmeasured_wide_capture_reads_the_font_panel_centred_on_its_own_client() {
+            const PANEL: [u32; 4] = [1258, 220, 666, 681];
+            let state = test_app_state();
+            assert!(state.screen.lock().unwrap().is_none(), "the slot starts unmeasured");
+            let token = font_context::arm_font_context(&state).token;
+            let [px, py, pw, ph] = PANEL;
+            let image = image::RgbImage::from_fn(3840, 1080, |x, y| {
+                let inside = (px..px + pw).contains(&x) && (py..py + ph).contains(&y);
+                image::Rgb(if inside { [255, 255, 255] } else { [0, 0, 0] })
+            });
+            let frame = Capture {
+                image: image::DynamicImage::ImageRgb8(image),
+                monitor_id: 7,
+                origin: (0, 0),
+                client: [0, 0, 3840, 1080],
+                timing: Default::default(),
+            };
+            let mut read = PendingFontRead { token, prompt: None, recognition: None };
+            let mut crop_luma = None;
+
+            let found = read.probe_in(&frame, &state, |crop| {
+                let luma = crop.to_luma8();
+                crop_luma = Some((luma.pixels().map(|p| p.0[0]).min(), luma.pixels().map(|p| p.0[0]).max()));
+                Ok(if crop_luma == Some((Some(255), Some(255))) { options_panel() } else { lines(&["Inventory"]) })
+            });
+
+            assert_eq!(crop_luma, Some((Some(255), Some(255))),
+                "the font crop must cover exactly the panel at {PANEL:?} (min, max luma of the crop)");
+            assert_eq!(found, Ok(true));
+        }
+    }
 }
