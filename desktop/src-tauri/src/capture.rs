@@ -161,6 +161,13 @@ impl AffinityLedger {
 /// past the image would read the wrong ones.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn client_in_capture(game_client: Option<[i32; 4]>, origin: (i32, i32), size: (u32, u32)) -> [i32; 4] {
+    #[cfg(windows)]
+    return platform::selected_client(game_client, origin, size);
+    #[cfg(not(windows))]
+    untrimmed_client_in_capture(game_client, origin, size)
+}
+
+fn untrimmed_client_in_capture(game_client: Option<[i32; 4]>, origin: (i32, i32), size: (u32, u32)) -> [i32; 4] {
     let (cw, ch) = (size.0 as i64, size.1 as i64);
     let whole = [0, 0, size.0 as i32, size.1 as i32];
     let Some([x, y, w, h]) = game_client else { return whole };
@@ -173,19 +180,57 @@ fn client_in_capture(game_client: Option<[i32; 4]>, origin: (i32, i32), size: (u
     }
 }
 
-#[allow(dead_code)]
-fn rendered_area(_image: &image::RgbaImage) -> Option<[i32; 4]> {
-    None
+#[cfg_attr(not(windows), allow(dead_code))]
+fn rendered_area(image: &image::RgbaImage) -> Option<[i32; 4]> {
+    let (width, height) = image.dimensions();
+    if width < 1024 || height < 768 || width > i32::MAX as u32 || height > i32::MAX as u32 {
+        return None;
+    }
+    let dark = |x, y| image.get_pixel(x, y).0[..3].iter().all(|&v| v <= 12);
+    let column = |x| (0..32).all(|n| dark(x, (u64::from(height - 1) * n / 31) as u32));
+    let row = |y| (0..32).all(|n| dark((u64::from(width - 1) * n / 31) as u32, y));
+    let left = (0..width).find(|&x| !column(x))?;
+    let right = (0..width).find(|&x| !column(width - 1 - x))?;
+    let top = (0..height).find(|&y| !row(y))?;
+    let bottom = (0..height).find(|&y| !row(height - 1 - y))?;
+    let w = width.checked_sub(left + right)?;
+    let h = height.checked_sub(top + bottom)?;
+    if w < 1024 || h < 768 {
+        return None;
+    }
+    let (w64, h64) = (u64::from(w), u64::from(h));
+    let supported = match (left > 0 || right > 0, top > 0 || bottom > 0) {
+        (true, false) => left.abs_diff(right) <= 2
+            && u64::from(left.min(right)) * 100 >= u64::from(width)
+            && w64 * 3 >= h64 * 4 && w64 * u64::from(height) <= h64 * u64::from(width),
+        (false, true) => top.abs_diff(bottom) <= 2
+            && u64::from(top.min(bottom)) * 100 >= u64::from(height)
+            && w64 * u64::from(height) >= h64 * u64::from(width) && w64 * 9 <= h64 * 32,
+        _ => false,
+    };
+    supported.then_some([left as i32, top as i32, w as i32, h as i32])
 }
 
 #[derive(Default)]
-#[allow(dead_code)]
-struct RenderedClientLatch;
+#[cfg_attr(not(windows), allow(dead_code))]
+struct RenderedClientLatch {
+    key: Option<((i32, i32), Option<[i32; 4]>)>,
+    accepted: Option<([i32; 4], (u32, u32))>,
+    pending: Option<([i32; 4], (u32, u32))>,
+}
 
-#[allow(dead_code)]
+#[cfg_attr(not(windows), allow(dead_code))]
 impl RenderedClientLatch {
     fn select(&self, raw: Option<[i32; 4]>, origin: (i32, i32), size: (u32, u32)) -> [i32; 4] {
-        client_in_capture(raw, origin, size)
+        let untrimmed = untrimmed_client_in_capture(raw, origin, size);
+        if self.key == Some((origin, raw)) && untrimmed == [0, 0, size.0 as i32, size.1 as i32] {
+            if let Some((rect, captured_size)) = self.accepted {
+                if captured_size == size {
+                    return rect;
+                }
+            }
+        }
+        untrimmed
     }
 
     fn observe(
@@ -195,8 +240,17 @@ impl RenderedClientLatch {
         size: (u32, u32),
         probe: impl FnOnce() -> Option<[i32; 4]>,
     ) -> [i32; 4] {
-        if client_in_capture(raw, origin, size) == [0, 0, size.0 as i32, size.1 as i32] {
-            let _ = probe();
+        if self.key != Some((origin, raw)) {
+            *self = Self { key: Some((origin, raw)), ..Self::default() };
+        }
+        if untrimmed_client_in_capture(raw, origin, size) == [0, 0, size.0 as i32, size.1 as i32] {
+            let candidate = probe().map(|rect| (rect, size));
+            if candidate.is_some() && candidate == self.pending {
+                self.accepted = candidate;
+            }
+            self.pending = candidate;
+        } else {
+            self.pending = None;
         }
         self.select(raw, origin, size)
     }
@@ -210,7 +264,7 @@ pub(crate) fn recalibrate_client_diagnostic(
     size: (u32, u32),
     client: [i32; 4],
 ) -> String {
-    let selected = client_in_capture(raw, origin, size);
+    let selected = untrimmed_client_in_capture(raw, origin, size);
     let why = match raw {
         None => "no client read",
         Some([x, y, w, h]) => {
@@ -227,15 +281,20 @@ pub(crate) fn recalibrate_client_diagnostic(
             }
         }
     };
+    let trim = if selected == [0, 0, size.0 as i32, size.1 as i32] && client != selected {
+        "; rendered-area trim"
+    } else {
+        ""
+    };
     format!(
-        "Recalibrate: game client {raw:?} (desktop px), monitor origin {origin:?} size {}x{} -> client used {client:?} ({why})",
+        "Recalibrate: game client {raw:?} (desktop px), monitor origin {origin:?} size {}x{} -> client used {client:?} ({why}{trim})",
         size.0, size.1
     )
 }
 
 #[cfg(windows)]
 mod platform {
-    use super::{client_in_capture, AffinityLedger, Capture, GameMonitor, GrabTiming};
+    use super::{client_in_capture, rendered_area, untrimmed_client_in_capture, AffinityLedger, Capture, GameMonitor, GrabTiming, RenderedClientLatch};
     use std::sync::Mutex;
     use windows::Win32::Foundation::{POINT, RECT};
     use windows::Win32::Graphics::Gdi::ClientToScreen;
@@ -300,10 +359,18 @@ mod platform {
     /// The game window's client rect, virtual-desktop physical px
     /// `[x, y, w, h]`, as [`remember_game_client`] last read it. Read and
     /// written only in this module.
-    static GAME_CLIENT: Mutex<Option<[i32; 4]>> = Mutex::new(None);
+    // The revision rejects a grab spanning a raw-client or display change,
+    // including a change away and back to the same rectangle.
+    static GAME_CLIENT: Mutex<(Option<[i32; 4]>, u64)> = Mutex::new((None, 0));
+    static RENDERED_CLIENT: LazyLock<Mutex<RenderedClientLatch>> =
+        LazyLock::new(|| Mutex::new(RenderedClientLatch::default()));
+
+    pub(super) fn selected_client(raw: Option<[i32; 4]>, origin: (i32, i32), size: (u32, u32)) -> [i32; 4] {
+        RENDERED_CLIENT.lock().unwrap_or_else(|e| e.into_inner()).select(raw, origin, size)
+    }
 
     pub(crate) fn raw_game_client() -> Option<[i32; 4]> {
-        *GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner())
+        GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner()).0
     }
 
     pub(crate) fn refresh_game_client(app: &AppHandle) {
@@ -454,17 +521,28 @@ mod platform {
         let phase = Instant::now();
         let excluded = ExcludedFromCapture::hold(app);
         timing.exclude_ms = ms(phase);
+        let (game_client, revision) = *GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
         let phase = Instant::now();
         let grabbed = monitor.capture_image();
         timing.grab_ms = ms(phase);
         let phase = Instant::now();
         drop(excluded);
         timing.restore_ms = ms(phase);
-        timing.call_ms = ms(call_started);
         let img = grabbed.map_err(|e| format!("Screen capture failed: {}", e))?;
 
-        let game_client = *GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
-        let client = client_in_capture(game_client, origin, (img.width(), img.height()));
+        let size = img.dimensions();
+        // Lock order is monitor, raw client, rendered client. No lock spans an
+        // overlay event-loop round trip in ExcludedFromCapture.
+        let state = app.state::<crate::AppState>();
+        let current_monitor = state.game_monitor.lock().unwrap_or_else(|e| e.into_inner());
+        let current_client = GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
+        let client = if *current_monitor == target && *current_client == (game_client, revision) {
+            RENDERED_CLIENT.lock().unwrap_or_else(|e| e.into_inner())
+                .observe(game_client, origin, size, || rendered_area(&img))
+        } else {
+            untrimmed_client_in_capture(game_client, origin, size)
+        };
+        timing.call_ms = ms(call_started);
         Ok(Capture { image: DynamicImage::ImageRgba8(img), monitor_id, origin, client, timing })
     }
 
@@ -521,6 +599,11 @@ mod platform {
             if *current == Some(next) {
                 false
             } else {
+                if current.map(|mon| (mon.x, mon.y)) != Some((next.x, next.y)) {
+                    let mut client = GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
+                    client.1 = client.1.wrapping_add(1);
+                    *RENDERED_CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = RenderedClientLatch::default();
+                }
                 *current = Some(next);
                 true
             }
@@ -576,10 +659,11 @@ mod platform {
         let abs = [corner.x, corner.y, w, h];
         {
             let mut held = GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
-            if *held == Some(abs) {
+            if held.0 == Some(abs) {
                 return;
             }
-            *held = Some(abs);
+            *held = (Some(abs), held.1.wrapping_add(1));
+            *RENDERED_CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = RenderedClientLatch::default();
         }
         let monitor = *app
             .state::<crate::AppState>()
