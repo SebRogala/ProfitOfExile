@@ -8,7 +8,7 @@ uid: 2975e9d8-38b2-463e-85bf-a9a95531f6b4
 
 Accepted 2026-11-13 (POE-307; epic POE-295). Last verified 2026-11-13.
 
-Amended 2026-11-25 (POE-403), provisional: re-checked at the next league start under POE-498
+Amended 2026-11-25 (POE-403), provisional: re-checked at the next league start under POE-498.
 
 Supersedes [ADR-027](027-trade-is-the-primary-gem-price-poe-ninja-is-the-fallback.md)
 Decision 1 (one shared loader) and Decision 3 (trade usable for 24 h), and the
@@ -102,8 +102,7 @@ Grade each market key on the source that priced it:
   re-check the seller basis at league start (Desk poe403-seller-basis-1125).
   Ninja requires `sample_count > 5` and at least 3 listings. An unknown
   sample fails the floor. `resolve.isThin` reads an unknown sample as not
-  thin on purpose; the gate reads it as not SOLID (POE-404 plan
-  Coordinator item 1a).
+  thin on purpose; the gate reads it as not SOLID (POE-404).
 - **THIN** — priced but not SOLID.
 - **NONE** — no price.
 
@@ -111,9 +110,7 @@ Adopt the sold-through hold (Desk poe403-smite-hold-1125): a ninja key
 that failed the floor stays SOLID when it was SOLID by the floor (never
 by a hold) within 24 h, and its price is within 2x of that observation.
 The hold covers every ninja-priced key and reads `gem_snapshots` over
-`[asOf-24h, asOf]` (POE-404 plan Coordinator item 1b). Holds do not chain.
-The prod-to-local backfill test is a POE-404 pre-landing gate, outside
-this amendment's documentation work.
+`[asOf-24h, asOf]` (POE-404). Holds do not chain.
 
 A non-SOLID key is gated out of tier boundaries, TOP detection and Font
 EV, including Dedication and Double-corrupt (Desk poe403-gate-scope-1125).
