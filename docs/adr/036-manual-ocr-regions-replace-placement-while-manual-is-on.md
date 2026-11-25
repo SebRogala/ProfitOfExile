@@ -17,10 +17,10 @@ Tier: required
 
 Scope: Manual OCR geometry, region readers, the region editor and Recalibrate.
 
-Summary: Proposed Manual-only exception to the accepted placement contract: readers use the stored manual set, only the region editor moves its rectangles, Recalibrate is refused, and screen mismatches are informational.
+Summary: Manual-only exception to the accepted placement contract: readers use the stored manual set, only the region editor moves its rectangles, Recalibrate is refused, and screen mismatches are informational.
 
-The tier identifies the proposed system contract; it does not accept the
-proposal. The decisions below describe proposed behavior.
+The decisions below define the accepted system contract; implementation and
+delivery remain separate from acceptance.
 
 ## Context
 
@@ -36,7 +36,7 @@ brief replaces the original tracker approach's controller profile and
 client-relative, drop-on-resolution-change fallback with exclusive Auto and
 Manual modes and capture-relative storage.
 
-## Proposed decision
+## Decision
 
 ### Geometry source and coordinate space
 
@@ -83,7 +83,7 @@ itself is not a read gate.
 
 ### Region editor
 
-Under Operator decision 8 (Desk `poe411-plan-1124`, RULED 2026-11-24), the
+Under Operator decision 8 (RULED 2026-11-24), the
 player first selects one region in the region picker. The editor draws only
 that selected region and its Auto reference when available, and moves or
 resizes that region alone. There is no all-regions view. When no Auto
@@ -95,15 +95,23 @@ including the gem-slot strip when the Font panel is selected. This ruling
 controls over the contextual plan's older all-region wording and Font/slot
 move coupling.
 
+### Amendment: Font-save exception (2026-11-24)
+
+Approved design r3.1 supersedes the preceding prohibition on Font/strip
+coupling only for a Font panel Save: that Save writes `lab_font` and
+`lab_gem_slots` together in one `set_manual_ocr_regions` call. The editor
+still displays and edits one selected region at a time. Other saves keep
+every unselected rectangle unchanged.
+
 ## Consequences
 
 Manual provides a geometry fallback for layouts the Auto rules do not cover.
 The player owns placement and must edit rectangles when a screen change makes
 them unsuitable. Auto arithmetic, seeds and remembered-anchor behavior remain
-under the accepted ADRs. Implementation and in-game acceptance are subsequent
-work gated on Operator acceptance of this proposal.
+under the accepted ADRs. Implementation and in-game acceptance remain subsequent
+work under this accepted decision.
 
 ## References
 
 - POE-411 — Controller UI layout and manual OCR region fallback; WI-1 drafts this ADR only.
-- Operator Desk `poe411-plan-1124`, 2026-11-24 — approved draft scope and decision 8's single-region editor ruling.
+- Operator ruling, 2026-11-24 — approved draft scope and decision 8's single-region editor ruling.

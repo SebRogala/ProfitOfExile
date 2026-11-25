@@ -44,10 +44,14 @@ pub(super) fn gem_slot_rects(client: [i32; 4], scale: f32) -> [[i32; 4]; 3] {
     let space_w = client[2] - scale_value(crate::INVENTORY_PANEL_W_REF, scale);
     let anchor_x = client[0] + space_w / 2;
     let y = client[1] + scale_value(crate::GEM_SLOT_Y_REF, scale);
+    gem_slot_rects_at((anchor_x, y), crate::GEM_SLOT_CENTRE_DX_REF, scale)
+}
+
+pub(super) fn gem_slot_rects_at(anchor: (i32, i32), centre_dx: i32, scale: f32) -> [[i32; 4]; 3] {
     let size = scale_value(crate::GEM_SLOT_ICON_REF, scale).max(0);
     [-1, 0, 1].map(|i| {
-        let x = anchor_x + scale_value(crate::GEM_SLOT_CENTRE_DX_REF + i * crate::GEM_SLOT_PITCH_REF, scale);
-        [x - size / 2, y - size / 2, size, size]
+        let x = anchor.0 + scale_value(centre_dx + i * crate::GEM_SLOT_PITCH_REF, scale);
+        [x - size / 2, anchor.1 - size / 2, size, size]
     })
 }
 

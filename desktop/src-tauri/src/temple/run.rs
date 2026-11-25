@@ -300,95 +300,7 @@ pub fn apply_status(slice: &mut TempleSlice, outcome: TickOutcome) {
 
 // ------------------------------------------------------------ text ROIs --
 
-/// The side panel's own border box, in reference px relative to the Entrance
-/// plate centre ([`TempleLayout::origin`]): `[left, top, right, bottom]`, `+x`
-/// right and `+y` down. The panel is drawn above and to the right of the
-/// Entrance, so both vertical figures are negative.
-///
-/// **Measured** as the panel's border rectangle on the three captures whose
-/// origin AND scale are both recorded — the committed full frame and the two
-/// board fixtures' source screenshots:
-///
-/// | capture | size | scale | origin | panel border box | in ref px from the origin |
-/// |---|---|---|---|---|---|
-/// | `screen-live-1920x1080.png` | 1920x1080 | 1.0000 | (960, 713) | x 1171–1655, y 44–418 | +211, −669, +695, −295 |
-/// | `2026-08-02_22-22-38` | 1374x862 | 1.0000 | (673, 682) | x 884–1368, y 13–387 | +211, −669, +695, −295 |
-/// | `2026-08-07_19-28-36` | 1539x968 | 1.13 recorded | (745, 768) | x 980–1517, y 24–440 | +208, −658, +683, −290 |
-/// | …the same capture at the 1.111 its own border implies | | | | | +212, −670, +695, −295 |
-///
-/// The two scale-1.0 captures agree **to the pixel on all four edges**, a month
-/// apart and 546 px of capture width apart. That agreement is the constant.
-///
-/// The third row does NOT disagree with them — its ANCHOR does. Its panel
-/// border measures 537 x 416 px, and `537 / 484 = 1.1095`, `416 / 374 = 1.1123`:
-/// at scale **1.111** the box above reproduces that capture to under a pixel on
-/// every edge. The 1.13 it is recorded at is an anchor error of ~1.7%, which is
-/// [`DIAMOND_DX_REF`]'s anchor-accuracy note and POE-247's subject. So there is
-/// no board-to-board spread here — there is one error, the anchor's, and it is
-/// what [`PANEL_MARGIN_REF`] absorbs.
-///
-/// # Why the origin and not the capture's right edge
-///
-/// Until POE-230 this region was `540 × 430` ref px hung off the capture's
-/// top-RIGHT corner. Measured 2026-09-03 on the laptop (dump
-/// `temple-debug/1788438639673`, the frame committed as the fixture above): that
-/// put the crop at `[1380, 0, 540, 430]`, which cuts the panel in half. The
-/// title read `NG WORKSHOP`, and the lower-left architect block — Xopec, whose
-/// box on that frame is x 1189–1347 — was **entirely** outside the crop, so the
-/// dump reported one architect on a board that has two. The panel is drawn
-/// against the LAYOUT, not against the screen; the table above is that fact
-/// measured, and the third row is what a screen-edge offset was really tracking.
-pub const PANEL_BOX_REF: [f32; 4] = [211.0, -669.0, 695.0, -295.0];
-
-/// How far past [`PANEL_BOX_REF`] the OCR crop reaches on the left, top and
-/// bottom — in reference px. The right side is [`PANEL_RIGHT_MARGIN_REF`], which
-/// is smaller and says why.
-///
-/// What a margin has to absorb is **anchor error**, since the box itself is the
-/// same on every capture that reproduces its own scale. The recorded band is
-/// −4% (POE-247's hint chain answering 0.96 where the peak is 1.00) to +1.7%
-/// (the 1539 row of [`PANEL_BOX_REF`]'s table). Against a −669 ref px top offset
-/// −4% is 27 px, so 40 clears the worst recorded case on the axis where the
-/// offsets are largest, and it is also what the retired screen-edge constants
-/// documented (~46 horizontal, ~42 vertical), carried across.
-///
-/// Nothing sits outside the panel on those three sides on the committed fixture,
-/// so the only cost of 40 there is buffer size.
-pub const PANEL_MARGIN_REF: f32 = 40.0;
-
-/// The RIGHT margin, in reference px — smaller than [`PANEL_MARGIN_REF`] because
-/// it is the one side where the crop reaches into somebody else's text.
-///
-/// **Measured on the committed fixture.** The map's own info block is drawn
-/// BEHIND the panel; its leftmost glyph column sits **4 ref px** past the panel
-/// border (+699 against the border's +695), so *every* positive right margin
-/// admits a strip of it, and the volume is what the constant buys:
-///
-/// Offsets below are from the origin like everything else here, so the title's
-/// own band — absolute y 70–112 on the fixture — is **−643 … −601**. A "run" is
-/// a group of glyph rows merged across gaps of two rows or fewer; counting rows
-/// strictly adjacent gives a higher figure for the same ink.
-///
-/// | right margin | ink px admitted | row runs | runs inside the title's band |
-/// |---|---|---|---|
-/// | 40 | 1250 | 14 | −652 … −641 |
-/// | 20 | 622 | 12 | −643 … −641 |
-/// | 16 | 456 | 12 | −643 … −641 |
-///
-/// The band matters because a run overlapping the title's rows can be grouped
-/// into the title LINE, and `rooms::match_room_name` rejects a run-together read
-/// by [`super::rooms::RATIO_MAX`] (1.45) — a short name like `Chasm` has the
-/// least room for an appended fragment. 40 was the worst case for that: its run
-/// starts 9 rows higher (−652 against −643), so it overlaps the band by more
-/// than the 3-row fragment the other two admit.
-///
-/// **20, not 16.** The floor is not the ink, it is the Hayoxi block, whose own
-/// right edge is at +681: a −4% anchor puts the crop's right edge at
-/// `(695 + m) × 0.96`, so `m = 16` retains that text by **1.6 ref px** and
-/// `m = 20` by **5.4**. 16 is inside the rounding of the thing it has to
-/// protect. 20 halves 40's admitted ink, keeps the title-band overlap to the
-/// same 3-row fragment 16 does, and still clears the recorded anchor band.
-pub const PANEL_RIGHT_MARGIN_REF: f32 = 20.0;
+pub use crate::ssot::{PANEL_BOX_REF, PANEL_MARGIN_REF, PANEL_RIGHT_MARGIN_REF};
 
 /// The `N Incursions Remaining` line's OCR region, relative to the Entrance
 /// plate centre ([`TempleLayout::origin`]), in reference px.
@@ -409,23 +321,7 @@ pub const REMAINING_TOP_REF: f32 = 58.0;
 /// Bottom of the budget line's region — see [`REMAINING_HALF_W_REF`].
 pub const REMAINING_BOTTOM_REF: f32 = 104.0;
 
-/// The side panel's region, given the Entrance centre and the anchor's scale.
-///
-/// `[x, y, w, h]`. Keyed on the anchor, like [`remaining_rect`] and
-/// [`diamond_rect`] and for the reason [`PANEL_BOX_REF`] measures: the game
-/// draws this panel against the layout. A crop that still misses — the panel is
-/// only partly captured — degrades to "the panel's text is not read" rather than
-/// to a wrong answer: [`crop_clipped`] hands back the readable part,
-/// [`panel::read_panel`] returns an unread title and whichever offers survived,
-/// and the advisor warns rather than inventing one.
-pub fn panel_rect(origin: (i32, i32), scale: f32) -> [i32; 4] {
-    let [left, top, right, bottom] = PANEL_BOX_REF;
-    let x0 = origin.0 + ((left - PANEL_MARGIN_REF) * scale).round() as i32;
-    let y0 = origin.1 + ((top - PANEL_MARGIN_REF) * scale).round() as i32;
-    let x1 = origin.0 + ((right + PANEL_RIGHT_MARGIN_REF) * scale).round() as i32;
-    let y1 = origin.1 + ((bottom + PANEL_MARGIN_REF) * scale).round() as i32;
-    [x0, y0, x1 - x0, y1 - y0]
-}
+pub use crate::ssot::panel_rect;
 
 /// The `N Incursions Remaining` region, given the Entrance centre and the
 /// anchor's scale. `[x, y, w, h]` — see [`REMAINING_HALF_W_REF`].

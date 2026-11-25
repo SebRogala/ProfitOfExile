@@ -998,6 +998,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     let trade = state.trade_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let compass = state.compass_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let lab = state.lab_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let ocr_regions = *state.ocr_regions.lock().unwrap_or_else(|e| e.into_inner());
     Settings {
         boss_loot,
         read_hotkey: Salvaged::new(read_hotkey),
@@ -1054,7 +1055,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         // forward by `persist_overlay_settings` — the owner is what
         // `set_widget_geometry` just wrote to, and the file is the stale copy.
         widgets: state.widgets.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        ocr_regions: Default::default(),
+        ocr_regions,
         webview_gpu_disabled: false, // File-owned, carried by persist_overlay_settings
         proxy_url: String::new(),    // File-owned, carried by persist_overlay_settings
         proxy_trade: default_proxy_trade(), // File-owned, carried by persist_overlay_settings
@@ -1131,6 +1132,7 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     // shipped CSS default the frontend registry holds, and an entry for a
     // widget this build does not declare is simply never looked up.
     *state.widgets.lock().unwrap_or_else(|e| e.into_inner()) = settings.widgets.clone();
+    *state.ocr_regions.lock().unwrap_or_else(|e| e.into_inner()) = settings.ocr_regions;
     // The owner map holds the EFFECTIVE state, not the persisted delta:
     // registry defaults overlaid with what the user chose (see modules.rs).
     *state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()) =

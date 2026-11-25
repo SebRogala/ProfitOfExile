@@ -62,50 +62,7 @@ const ENTRANCE_PLATE_PNG: &[u8] = include_bytes!("assets/entrance-plate.png");
 /// a guess about where the scale is.
 pub const REFERENCE_SCREEN_WIDTH: u32 = 1374;
 
-/// Temple scale ÷ shared `ui_scale` — the coefficient between this module's
-/// scale unit and [`crate::ssot::ScreenSlice`]'s.
-///
-/// # Exactly what was measured, and what was not
-///
-/// **Numerator, measured** (2026-09-03, laptop debug dump
-/// `temple-debug/1788438639673`): a 1920x1080 capture anchors at temple scale
-/// **1.000**, NCC 0.99999.
-///
-/// **Denominator, NOMINAL**: `1080 / 1200 = 0.90`, the shared unit's own
-/// DEFINITION on a 1080 px screen, giving `k = 1.000 / 0.90 = 1.1111`.
-///
-/// # Why it is still the nominal denominator after POE-234 WI-2
-///
-/// WI-2 was to recompute this against a merc-MEASURED `ui_scale` at 1920x1080
-/// if the repo held one. It does: `tests/fixtures/merc-recruit-pc-1080p.png` is
-/// a 1920x1080 capture whose gold-frame fit lands at **0.8985**
-/// (`mercenary::cellfit`'s `GridPoint::beats` and `fit_cell_size` both name that
-/// number; the fixture's own test asserts it to ±0.01 of 0.90). That would give
-/// `k = 1.000 / 0.8985 = 1.1130`, **0.17% above** the nominal value.
-///
-/// It is not adopted, because that 0.17% is inside the measurement's own
-/// quantisation and so is not evidence: the fit searches pitch on a grid, and
-/// the PC fixture's two best grid points are one `P_STEP` apart at pitch 43.729
-/// and 43.879 — 0.8985 and 0.9016, i.e. **0.0031 of `ui_scale`, or 0.34% of
-/// k**, twice the correction it would make. Both numbers are recorded here so
-/// the next reading can be compared against both. Two further caveats stand:
-/// the two halves come from DIFFERENT machines (the temple's from the laptop,
-/// the fit from the PC fixture), which composes only if both ran the game's
-/// default UI-scale slider, and the whole coefficient rests on both units being
-/// linear in the capture height, which is what each is documented to be.
-///
-/// **Good to about 1%, and no better.** `crate::ssot::accepts` tolerates 0.01
-/// of `ui_scale` drift, which on a 0.90 denominator is that same ~1%, and it is
-/// why a `TempleAnchor` reading gets the band-limited acceptance rule rather
-/// than `MercFrame`'s unconditional one. One per cent is one [`SCALE_STEP`] at
-/// scale 1.0, and a hint one step off the truth still anchors well clear of
-/// [`NCC_FLOOR`] (measured on `board-ref-1374.png`: the peak 1.00 scores 0.9936
-/// and its neighbour 0.99 scores 0.9603), which is what makes converting
-/// through it cheaper than searching.
-///
-/// `super::run` converts in both directions through [`scale_for_ui_scale`] and
-/// [`ui_scale_for_scale`], so the arithmetic has one home each way.
-pub const TEMPLE_SCALE_PER_UI_SCALE: f32 = 1.1111;
+pub use crate::ssot::TEMPLE_SCALE_PER_UI_SCALE;
 
 /// The temple scale a shared `ui_scale` implies — the slice → hint direction of
 /// [`TEMPLE_SCALE_PER_UI_SCALE`] (POE-234 WI-2).

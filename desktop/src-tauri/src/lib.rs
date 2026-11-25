@@ -1,4 +1,4 @@
-// size-gate: intrinsic — native command registration stays in the existing application entrypoint
+// size-gate: intrinsic — native registration and AppState ownership stay in the application entrypoint; OCR region behavior lives in ssot/regions.rs (POE-411)
 mod capture;
 mod clock;
 mod exchange_read;

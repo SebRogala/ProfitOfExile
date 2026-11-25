@@ -13,7 +13,7 @@
 //! publish, debug and release builds alike. The poll is the backstop the note
 //! above describes, not the path a read travels on. The stale-data observation
 //! behind that note was about JS-to-JS cross-window events, not Rust emits.
-//! size-gate: intrinsic — cross-window screen lifecycle and publication remain in their existing owner; additive LabSettings projection stays in the existing snapshot composer
+//! size-gate: intrinsic — cross-window lifecycle and snapshot composition stay here; OCR region resolution and geometry constants live in ssot/regions.rs (POE-411)
 //!
 //! Chunk 1 built the core types + the poll-target command. Chunk 3 adds the
 //! league resolution service: startup, write 409, Mercure hints, Refresh and
@@ -31,9 +31,10 @@ use crate::AppState;
 
 mod lab;
 mod league;
-mod regions;
+pub mod regions;
 
 pub use regions::{origin_scale_for_panel, resolve, ManualRegions, OcrRegionsMode, OcrRegionsSetting, RegionKey, Resolved, ScreenRef};
+pub use regions::{panel_rect, PANEL_BOX_REF, PANEL_MARGIN_REF, PANEL_RIGHT_MARGIN_REF, TEMPLE_SCALE_PER_UI_SCALE};
 
 pub use league::{__cmd__refresh_league, __cmd__set_league, league_command, refresh_league, set_league, spawn_league_fetch};
 pub(crate) use league::{note_server_league, parse_league_from_status, rearm_league, supersede_league_fetches, LeagueResolver};
@@ -537,7 +538,29 @@ pub struct AppSsotSnapshot {
 ///
 /// Pure so the composition is unit-testable without an `AppHandle` or a full
 /// `AppState` — same reason `should_flag_unreachable` is extracted.
+#[cfg(test)]
 fn compose_snapshot(
+    base: AppSsotSnapshot,
+    normal_variant: String,
+    dedication_variant: String,
+    dedication_pool: String,
+    modules: std::collections::HashMap<String, bool>,
+    mercenary: crate::mercenary::MercenarySlice,
+    merc_sources_off: Vec<String>,
+    merc_sync: crate::mercenary::sync::MercSyncStatus,
+    merc_trade_auto: bool,
+    merc_tier_floor: u8,
+    temple: crate::temple::slice::TempleSlice,
+    screen: Option<ScreenSlice>,
+) -> AppSsotSnapshot {
+    compose_snapshot_regions(
+        base, normal_variant, dedication_variant, dedication_pool, modules,
+        mercenary, merc_sources_off, merc_sync, merc_trade_auto, merc_tier_floor,
+        temple, screen, &OcrRegionsSetting::default(), None,
+    )
+}
+
+fn compose_snapshot_regions(
     base: AppSsotSnapshot,
     normal_variant: String,
     dedication_variant: String,
@@ -550,6 +573,8 @@ fn compose_snapshot(
     merc_tier_floor: u8,
     mut temple: crate::temple::slice::TempleSlice,
     screen: Option<ScreenSlice>,
+    setting: &OcrRegionsSetting,
+    capture: Option<(u32, u32)>,
 ) -> AppSsotSnapshot {
     if modules.get(MERCENARY_MODULE_ID) != Some(&true) {
         mercenary.force_off();
@@ -573,7 +598,9 @@ fn compose_snapshot(
     if modules.get(TEMPLE_MODULE_ID) != Some(&true) {
         temple.force_off();
     }
-    let placements = placements_for(screen.as_ref());
+    let resolved = regions::resolve(screen.as_ref(), setting, capture);
+    regions::log_edges(setting, capture, &resolved);
+    let placements = resolved.placements;
     AppSsotSnapshot {
         normal_variant,
         dedication_variant,
@@ -649,7 +676,10 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     let read_hotkey = state.read_hotkey.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let exchange_read = state.exchange_read.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let read_prompt = state.read_prompt.lock().unwrap_or_else(|e| e.into_inner()).snapshot();
-    let mut snapshot = compose_snapshot(
+    let setting = *state.ocr_regions.lock().unwrap_or_else(|e| e.into_inner());
+    let capture = state.game_monitor.lock().unwrap_or_else(|e| e.into_inner())
+        .as_ref().map(|monitor| (monitor.width, monitor.height));
+    let mut snapshot = compose_snapshot_regions(
         base,
         normal_variant,
         dedication_variant,
@@ -662,6 +692,8 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         merc_tier_floor,
         temple,
         screen,
+        &setting,
+        capture,
     );
     snapshot.server = server;
     snapshot.read_hotkey = read_hotkey;

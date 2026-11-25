@@ -6,6 +6,159 @@ use serde::{Deserialize, Serialize};
 
 use super::{placements_for, Placements, ScreenSlice};
 
+/// The side panel's own border box, in reference px relative to the Entrance
+/// plate centre (`TempleLayout::origin`): `[left, top, right, bottom]`, `+x`
+/// right and `+y` down. The panel is drawn above and to the right of the
+/// Entrance, so both vertical figures are negative.
+///
+/// **Measured** as the panel's border rectangle on the three captures whose
+/// origin AND scale are both recorded — the committed full frame and the two
+/// board fixtures' source screenshots:
+///
+/// | capture | size | scale | origin | panel border box | in ref px from the origin |
+/// |---|---|---|---|---|---|
+/// | `screen-live-1920x1080.png` | 1920x1080 | 1.0000 | (960, 713) | x 1171–1655, y 44–418 | +211, −669, +695, −295 |
+/// | `2026-08-02_22-22-38` | 1374x862 | 1.0000 | (673, 682) | x 884–1368, y 13–387 | +211, −669, +695, −295 |
+/// | `2026-08-07_19-28-36` | 1539x968 | 1.13 recorded | (745, 768) | x 980–1517, y 24–440 | +208, −658, +683, −290 |
+/// | …the same capture at the 1.111 its own border implies | | | | | +212, −670, +695, −295 |
+///
+/// The two scale-1.0 captures agree **to the pixel on all four edges**, a month
+/// apart and 546 px of capture width apart. That agreement is the constant.
+///
+/// The third row does NOT disagree with them — its ANCHOR does. Its panel
+/// border measures 537 x 416 px, and `537 / 484 = 1.1095`, `416 / 374 = 1.1123`:
+/// at scale **1.111** the box above reproduces that capture to under a pixel on
+/// every edge. The 1.13 it is recorded at is an anchor error of ~1.7%, which is
+/// `temple::run::DIAMOND_DX_REF`'s anchor-accuracy note and POE-247's subject. So there is
+/// no board-to-board spread here — there is one error, the anchor's, and it is
+/// what [`PANEL_MARGIN_REF`] absorbs.
+///
+/// # Why the origin and not the capture's right edge
+///
+/// Until POE-230 this region was `540 × 430` ref px hung off the capture's
+/// top-RIGHT corner. Measured 2026-09-03 on the laptop (dump
+/// `temple-debug/1788438639673`, the frame committed as the fixture above): that
+/// put the crop at `[1380, 0, 540, 430]`, which cuts the panel in half. The
+/// title read `NG WORKSHOP`, and the lower-left architect block — Xopec, whose
+/// box on that frame is x 1189–1347 — was **entirely** outside the crop, so the
+/// dump reported one architect on a board that has two. The panel is drawn
+/// against the LAYOUT, not against the screen; the table above is that fact
+/// measured, and the third row is what a screen-edge offset was really tracking.
+pub const PANEL_BOX_REF: [f32; 4] = [211.0, -669.0, 695.0, -295.0];
+
+/// How far past [`PANEL_BOX_REF`] the OCR crop reaches on the left, top and
+/// bottom — in reference px. The right side is [`PANEL_RIGHT_MARGIN_REF`], which
+/// is smaller and says why.
+///
+/// What a margin has to absorb is **anchor error**, since the box itself is the
+/// same on every capture that reproduces its own scale. The recorded band is
+/// −4% (POE-247's hint chain answering 0.96 where the peak is 1.00) to +1.7%
+/// (the 1539 row of [`PANEL_BOX_REF`]'s table). Against a −669 ref px top offset
+/// −4% is 27 px, so 40 clears the worst recorded case on the axis where the
+/// offsets are largest, and it is also what the retired screen-edge constants
+/// documented (~46 horizontal, ~42 vertical), carried across.
+///
+/// Nothing sits outside the panel on those three sides on the committed fixture,
+/// so the only cost of 40 there is buffer size.
+pub const PANEL_MARGIN_REF: f32 = 40.0;
+
+/// The RIGHT margin, in reference px — smaller than [`PANEL_MARGIN_REF`] because
+/// it is the one side where the crop reaches into somebody else's text.
+///
+/// **Measured on the committed fixture.** The map's own info block is drawn
+/// BEHIND the panel; its leftmost glyph column sits **4 ref px** past the panel
+/// border (+699 against the border's +695), so *every* positive right margin
+/// admits a strip of it, and the volume is what the constant buys:
+///
+/// Offsets below are from the origin like everything else here, so the title's
+/// own band — absolute y 70–112 on the fixture — is **−643 … −601**. A "run" is
+/// a group of glyph rows merged across gaps of two rows or fewer; counting rows
+/// strictly adjacent gives a higher figure for the same ink.
+///
+/// | right margin | ink px admitted | row runs | runs inside the title's band |
+/// |---|---|---|---|
+/// | 40 | 1250 | 14 | −652 … −641 |
+/// | 20 | 622 | 12 | −643 … −641 |
+/// | 16 | 456 | 12 | −643 … −641 |
+///
+/// The band matters because a run overlapping the title's rows can be grouped
+/// into the title LINE, and `rooms::match_room_name` rejects a run-together read
+/// by `temple::rooms::RATIO_MAX` (1.45) — a short name like `Chasm` has the
+/// least room for an appended fragment. 40 was the worst case for that: its run
+/// starts 9 rows higher (−652 against −643), so it overlaps the band by more
+/// than the 3-row fragment the other two admit.
+///
+/// **20, not 16.** The floor is not the ink, it is the Hayoxi block, whose own
+/// right edge is at +681: a −4% anchor puts the crop's right edge at
+/// `(695 + m) × 0.96`, so `m = 16` retains that text by **1.6 ref px** and
+/// `m = 20` by **5.4**. 16 is inside the rounding of the thing it has to
+/// protect. 20 halves 40's admitted ink, keeps the title-band overlap to the
+/// same 3-row fragment 16 does, and still clears the recorded anchor band.
+pub const PANEL_RIGHT_MARGIN_REF: f32 = 20.0;
+
+/// Temple scale ÷ shared `ui_scale` — the coefficient between this module's
+/// scale unit and [`crate::ssot::ScreenSlice`]'s.
+///
+/// # Exactly what was measured, and what was not
+///
+/// **Numerator, measured** (2026-09-03, laptop debug dump
+/// `temple-debug/1788438639673`): a 1920x1080 capture anchors at temple scale
+/// **1.000**, NCC 0.99999.
+///
+/// **Denominator, NOMINAL**: `1080 / 1200 = 0.90`, the shared unit's own
+/// DEFINITION on a 1080 px screen, giving `k = 1.000 / 0.90 = 1.1111`.
+///
+/// # Why it is still the nominal denominator after POE-234 WI-2
+///
+/// WI-2 was to recompute this against a merc-MEASURED `ui_scale` at 1920x1080
+/// if the repo held one. It does: `tests/fixtures/merc-recruit-pc-1080p.png` is
+/// a 1920x1080 capture whose gold-frame fit lands at **0.8985**
+/// (`mercenary::cellfit`'s `GridPoint::beats` and `fit_cell_size` both name that
+/// number; the fixture's own test asserts it to ±0.01 of 0.90). That would give
+/// `k = 1.000 / 0.8985 = 1.1130`, **0.17% above** the nominal value.
+///
+/// It is not adopted, because that 0.17% is inside the measurement's own
+/// quantisation and so is not evidence: the fit searches pitch on a grid, and
+/// the PC fixture's two best grid points are one `P_STEP` apart at pitch 43.729
+/// and 43.879 — 0.8985 and 0.9016, i.e. **0.0031 of `ui_scale`, or 0.34% of
+/// k**, twice the correction it would make. Both numbers are recorded here so
+/// the next reading can be compared against both. Two further caveats stand:
+/// the two halves come from DIFFERENT machines (the temple's from the laptop,
+/// the fit from the PC fixture), which composes only if both ran the game's
+/// default UI-scale slider, and the whole coefficient rests on both units being
+/// linear in the capture height, which is what each is documented to be.
+///
+/// **Good to about 1%, and no better.** `crate::ssot::accepts` tolerates 0.01
+/// of `ui_scale` drift, which on a 0.90 denominator is that same ~1%, and it is
+/// why a `TempleAnchor` reading gets the band-limited acceptance rule rather
+/// than `MercFrame`'s unconditional one. One per cent is one `temple::anchor::SCALE_STEP` at
+/// scale 1.0, and a hint one step off the truth still anchors well clear of
+/// `temple::anchor::NCC_FLOOR` (measured on `board-ref-1374.png`: the peak 1.00 scores 0.9936
+/// and its neighbour 0.99 scores 0.9603), which is what makes converting
+/// through it cheaper than searching.
+///
+/// `temple::run` converts in both directions through `temple::anchor::scale_for_ui_scale` and
+/// `temple::anchor::ui_scale_for_scale`, so the arithmetic has one home each way.
+pub const TEMPLE_SCALE_PER_UI_SCALE: f32 = 1.1111;
+
+/// The side panel's region, given the Entrance centre and the anchor's scale.
+///
+/// `[x, y, w, h]`. Keyed on the anchor, like `temple::run::remaining_rect` and
+/// `temple::run::diamond_rect` and for the reason [`PANEL_BOX_REF`] measures: the game
+/// draws this panel against the layout. A crop that still misses — the panel is
+/// only partly captured — degrades to "the panel's text is not read" rather than
+/// to a wrong answer: `temple::run::crop_clipped` hands back the readable part,
+/// `temple::panel::read_panel` returns an unread title and whichever offers survived,
+/// and the advisor warns rather than inventing one.
+pub fn panel_rect(origin: (i32, i32), scale: f32) -> [i32; 4] {
+    let [left, top, right, bottom] = PANEL_BOX_REF;
+    let x0 = origin.0 + ((left - PANEL_MARGIN_REF) * scale).round() as i32;
+    let y0 = origin.1 + ((top - PANEL_MARGIN_REF) * scale).round() as i32;
+    let x1 = origin.0 + ((right + PANEL_RIGHT_MARGIN_REF) * scale).round() as i32;
+    let y1 = origin.1 + ((bottom + PANEL_MARGIN_REF) * scale).round() as i32;
+    [x0, y0, x1 - x0, y1 - y0]
+}
+
 /// Which geometry the readers use. Auto keeps the placement contract; Manual
 /// replaces it with the stored set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -53,7 +206,7 @@ pub struct ManualRegions {
 }
 
 /// One Manual region, as `Resolved::unread` names it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RegionKey {
     LabGem,
     LabFont,
@@ -76,21 +229,129 @@ pub struct Resolved {
 /// Resolve every region for `screen` under `setting`, clipped against the
 /// capture dimensions when they are known.
 pub fn resolve(screen: Option<&ScreenSlice>, setting: &OcrRegionsSetting, capture: Option<(u32, u32)>) -> Resolved {
-    let _ = (setting, capture);
-    Resolved {
+    let manual = setting.mode == OcrRegionsMode::Manual;
+    let mut resolved = Resolved {
         placements: placements_for(screen),
         temple: None,
         merc: None,
-        manual: false,
+        manual,
         unread: Vec::new(),
+    };
+    if !manual {
+        resolved.temple = resolved.placements.temple.zip(screen)
+            .map(|(placed, screen)| (placed.entrance_origin, screen.ui_scale));
+        resolved.merc = resolved.placements.merc.zip(screen)
+            .map(|(placed, screen)| (placed.panel, screen.ui_scale));
+        return resolved;
+    }
+    resolved.placements.temple = None;
+    resolved.placements.merc = None;
+    let regions = setting.manual;
+    for (key, rect, target) in [
+        (RegionKey::LabGem, regions.and_then(|r| r.lab_gem), &mut resolved.placements.lab.gem),
+        (RegionKey::LabFont, regions.and_then(|r| r.lab_font), &mut resolved.placements.lab.font),
+    ] {
+        if let Some(rect) = rect {
+            *target = rect;
+            if let Some(clipped) = clip(rect, capture) {
+                *target = clipped;
+            } else {
+                resolved.unread.push(key);
+            }
+        } else {
+            resolved.unread.push(key);
+        }
+    }
+    if let Some(strip) = regions.and_then(|r| r.lab_gem_slots).filter(|r| r[2] > 0 && r[3] > 0) {
+        let scale = strip[2] as f32 / (2 * crate::GEM_SLOT_PITCH_REF + crate::GEM_SLOT_ICON_REF) as f32;
+        let half_icon = super::scale_value(crate::GEM_SLOT_ICON_REF, scale) / 2;
+        resolved.placements.lab.gem_slots = super::lab::gem_slot_rects_at(
+            (strip[0].saturating_add(half_icon), strip[1].saturating_add(half_icon)),
+            crate::GEM_SLOT_PITCH_REF,
+            scale,
+        );
+        if !contained(strip, capture) {
+            resolved.unread.push(RegionKey::LabGemSlots);
+        }
+    } else {
+        resolved.unread.push(RegionKey::LabGemSlots);
+    }
+    if let Some(panel) = regions.and_then(|r| r.temple_panel) {
+        let (origin, scale) = origin_scale_for_panel(panel);
+        resolved.placements.temple = Some(super::TemplePlacements { entrance_origin: origin });
+        if contained(panel, capture) {
+            resolved.temple = Some((origin, scale));
+        } else {
+            resolved.unread.push(RegionKey::TemplePanel);
+        }
+    }
+    if let Some(panel) = regions.and_then(|r| r.merc_panel) {
+        resolved.placements.merc = Some(super::MercPlacements { panel });
+        if contained(panel, capture) {
+            resolved.merc = Some((panel, panel[2] as f32 / super::MERC_PANEL_REF[2] as f32));
+        } else {
+            resolved.unread.push(RegionKey::MercPanel);
+        }
+    }
+    resolved
+}
+
+fn clip(rect: [i32; 4], capture: Option<(u32, u32)>) -> Option<[i32; 4]> {
+    if rect[2] <= 0 || rect[3] <= 0 {
+        return None;
+    }
+    let Some((width, height)) = capture else { return Some(rect) };
+    let [x, y, w, h] = rect.map(i64::from);
+    let left = x.max(0);
+    let top = y.max(0);
+    let right = (x + w).min(i64::from(width));
+    let bottom = (y + h).min(i64::from(height));
+    (right > left && bottom > top).then_some([left as i32, top as i32, (right - left) as i32, (bottom - top) as i32])
+}
+
+fn contained(rect: [i32; 4], capture: Option<(u32, u32)>) -> bool {
+    clip(rect, capture) == Some(rect)
+}
+
+pub fn current(state: &crate::AppState, capture: Option<(u32, u32)>) -> Resolved {
+    let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
+    let setting = *state.ocr_regions.lock().unwrap_or_else(|e| e.into_inner());
+    let resolved = resolve(screen.as_ref(), &setting, capture);
+    log_edges(&setting, capture, &resolved);
+    resolved
+}
+
+pub(super) fn log_edges(setting: &OcrRegionsSetting, capture: Option<(u32, u32)>, resolved: &Resolved) {
+    use std::collections::HashSet;
+    use std::sync::{LazyLock, Mutex};
+    static SAID: LazyLock<Mutex<HashSet<(RegionKey, [i32; 4], (u32, u32))>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+    let (Some(regions), Some(capture)) = (setting.manual, capture) else { return };
+    if !resolved.manual { return; }
+    for (key, rect, actual) in [
+        (RegionKey::LabGem, regions.lab_gem, Some(resolved.placements.lab.gem)),
+        (RegionKey::LabFont, regions.lab_font, Some(resolved.placements.lab.font)),
+        (RegionKey::LabGemSlots, regions.lab_gem_slots, regions.lab_gem_slots),
+        (RegionKey::TemplePanel, regions.temple_panel, regions.temple_panel),
+        (RegionKey::MercPanel, regions.merc_panel, regions.merc_panel),
+    ] {
+        let Some(rect) = rect else { continue };
+        let unread = resolved.unread.contains(&key);
+        if (unread || actual != Some(rect)) && SAID.lock().unwrap_or_else(|e| e.into_inner()).insert((key, rect, capture)) {
+            log::warn!("Manual OCR region {key:?} {rect:?} on {capture:?}: {}", if unread { "not read" } else { "cut at the screen edge" });
+        }
     }
 }
 
 /// The Entrance origin and shared ui_scale a temple panel rect implies — the
 /// inverse of the temple panel rule.
 pub fn origin_scale_for_panel(rect: [i32; 4]) -> ((i32, i32), f32) {
-    let _ = rect;
-    ((0, 0), 0.0)
+    let [left, top, right, _] = PANEL_BOX_REF;
+    let scale = rect[2] as f32 / (right - left + PANEL_MARGIN_REF + PANEL_RIGHT_MARGIN_REF);
+    let origin = (
+        rect[0].saturating_sub(((left - PANEL_MARGIN_REF) * scale).round() as i32),
+        rect[1].saturating_sub(((top - PANEL_MARGIN_REF) * scale).round() as i32),
+    );
+    (origin, scale / TEMPLE_SCALE_PER_UI_SCALE)
 }
 
 #[cfg(test)]
