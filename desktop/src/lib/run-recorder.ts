@@ -220,7 +220,7 @@ export function startRunRecorder(): void {
 		const buffered = liveEvents!;
 		liveEvents = null;
 		// Client.txt replay can include events already delivered by the listener.
-		// Recover the prefix before the longest matching live sequence, then use
+		// Recover the prefix before the longest live match consuming the replay tail, then use
 		// arrival timestamps for the live suffix so delayed IPC cannot zero a run.
 		let prefixLength = events.length;
 		let overlap = 0;
@@ -233,7 +233,7 @@ export function startRunRecorder(): void {
 					(replay.type === 'RoomChanged' && live.type === 'RoomChanged' && replay.name !== live.name)) break;
 				matched++;
 			}
-			if (matched > overlap) {
+			if (matched > overlap && i + matched === events.length) {
 				overlap = matched;
 				prefixLength = i;
 			}
