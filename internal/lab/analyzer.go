@@ -393,7 +393,7 @@ func (a *Analyzer) RunV2(ctx context.Context, scope league.Scope) error {
 	}
 
 	// Fetch history for velocity computation.
-	history, err := a.repo.GemPriceHistoryByVariant(ctx, scope, "", 168)
+	history, err := a.repo.GemPriceHistoryByVariant(ctx, scope, "", snapTime.Add(-168*time.Hour), snapTime)
 	if err != nil {
 		a.logger.Error("v2: failed to load gem price history", "error", err)
 		return err

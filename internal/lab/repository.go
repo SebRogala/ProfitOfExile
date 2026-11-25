@@ -534,7 +534,8 @@ func (r *Repository) MarketAvgBaseListings(ctx context.Context, scope league.Sco
 // that turns it into features (ComputeGemFeatures) applies the full Font rules
 // to the latest snapshot. Narrowing here would only move the same filter
 // earlier, at the cost of a colour join the history query does not need.
-func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, scope league.Scope, variant string, hours int) ([]GemPriceHistory, error) {
+func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, scope league.Scope, variant string, since, asOf time.Time) ([]GemPriceHistory, error) {
+	const hours = 168 // red-phase scaffold: today's window; since/asOf not yet applied
 	if err := scope.Validate(); err != nil {
 		return nil, fmt.Errorf("lab repo: gem price history by variant: %w", err)
 	}

@@ -257,10 +257,35 @@ func TestGemPriceHistoryByVariant_returnsOnlyScopedLeague(t *testing.T) {
 	seedGemSnapshot(t, pool, leagueA, tm, name, "20/20", true, false, 111, 10, "BLUE")
 	seedGemSnapshot(t, pool, leagueB, tm, name, "20/20", true, false, 222, 20, "BLUE")
 
-	hist, err := repo.GemPriceHistoryByVariant(ctx, league.Historical(leagueA), "", 24)
+	since, asOf := tm, tm.Add(time.Hour)
+	afterAsOf := asOf.Add(time.Hour)
+	cleanupAtTime(t, pool, afterAsOf, "gem_snapshots")
+	const boundedName = "POE404 Bounded History Gem"
+	seedGemSnapshot(t, pool, leagueA, since, boundedName, "20/20", true, false, 333, 10, "BLUE")
+	seedGemSnapshot(t, pool, leagueA, afterAsOf, boundedName, "20/20", true, false, 999, 10, "BLUE")
+
+	hist, err := repo.GemPriceHistoryByVariant(ctx, league.Historical(leagueA), "", since, asOf)
 	if err != nil {
 		t.Fatalf("GemPriceHistoryByVariant: %v", err)
 	}
+
+	// keep:critical — silent: velocity features would read prices from after
+	// the snapshot they describe, and a backtest would score the future.
+	t.Run("KeepCritical_PointAfterAsOfIsAbsentAndPointAtSinceIsPresent", func(t *testing.T) {
+		var bounded *GemPriceHistory
+		for i := range hist {
+			if hist[i].Name == boundedName {
+				bounded = &hist[i]
+			}
+		}
+		if bounded == nil {
+			t.Fatalf("no history entry for %q; the point at exactly since must be present", boundedName)
+		}
+		want := []PricePoint{{Time: since, Chaos: 333, Listings: 10}}
+		if len(bounded.Points) != len(want) || !bounded.Points[0].Time.Equal(since) || !valuesClose(bounded.Points[0].Chaos, 333) {
+			t.Errorf("points = %+v, want %+v (the point at since kept, the point after asOf %v dropped)", bounded.Points, want, asOf)
+		}
+	})
 
 	var got *GemPriceHistory
 	for i := range hist {
