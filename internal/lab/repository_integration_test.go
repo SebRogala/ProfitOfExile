@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -2155,5 +2156,53 @@ func TestSignalHistoryWindow_dropsAGemWhoseNewestSignalPredatesTheRetentionWindo
 	}
 	if got := rings[signalKey{name: recent, variant: variant}]; len(got) != 1 {
 		t.Fatalf("in-window gem's ring has %d entries %+v, want 1 — the seed read nothing at all", len(got), got)
+	}
+}
+
+// keep:critical — silent: holds drawn from the wrong window or the wrong
+// market would certify a price on evidence that does not belong to it.
+func TestKeepCritical_GemEvidenceHistoryUsesScopedWindowAndCorruptedVariant(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueA, leagueB := "POE-404-hold-A", "POE-404-hold-B"
+	registerLeague(t, pool, leagueA)
+	registerLeague(t, pool, leagueB)
+
+	asOf := futureTime(102)
+	windowStart := asOf.Add(-24 * time.Hour)
+	beforeWindow := windowStart.Add(-time.Second)
+	afterAsOf := asOf.Add(time.Second)
+	for _, tm := range []time.Time{windowStart, asOf, beforeWindow, afterAsOf} {
+		cleanupAtTime(t, pool, tm, "gem_snapshots")
+	}
+
+	const name = "POE404 Hold Gem"
+	seedGemSnapshot(t, pool, leagueA, windowStart, name, "21/20c", false, true, 100, 9, "BLUE")
+	seedGemSnapshot(t, pool, leagueA, asOf, name, "21/20c", false, true, 110, 1, "BLUE")
+	seedGemSnapshot(t, pool, leagueA, beforeWindow, name, "21/20c", false, true, 90, 9, "BLUE")
+	seedGemSnapshot(t, pool, leagueA, afterAsOf, name, "21/20c", false, true, 120, 9, "BLUE")
+	seedGemSnapshot(t, pool, leagueA, asOf, name, "20/20", false, false, 200, 9, "BLUE")
+	seedGemSnapshot(t, pool, leagueB, asOf, name, "21/20c", false, true, 300, 9, "BLUE")
+
+	points, err := repo.gemEvidenceHistory(ctx, league.Historical(leagueA), []GemClassificationKey{{Name: name, Variant: "21/20c"}}, asOf)
+	if err != nil {
+		t.Fatalf("gemEvidenceHistory: %v", err)
+	}
+
+	sort.Slice(points, func(i, j int) bool { return points[i].Time.Before(points[j].Time) })
+	type seen struct {
+		variant string
+		at      time.Time
+		chaos   float64
+	}
+	got := make([]seen, 0, len(points))
+	for _, p := range points {
+		got = append(got, seen{p.Variant, p.Time.UTC(), p.Chaos})
+	}
+	want := []seen{{"21/20c", windowStart, 100}, {"21/20c", asOf, 110}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("points = %+v, want %+v (league %s, 21/20c, inside [asOf-24h, asOf] only)", got, want, leagueA)
 	}
 }

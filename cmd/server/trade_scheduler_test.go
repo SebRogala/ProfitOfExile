@@ -70,7 +70,10 @@ func schedulerHarness(t *testing.T, input *schedulerInputs, responses ...http.Ha
 	done := make(chan struct{})
 	go func() { defer close(done); gate.Run(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
-	s := newTradeScheduler(scope, gate, nil, input, input, func() resolve.Rate { return resolve.Rate{Chaos: 200} })
+	identity := func(_ context.Context, _ league.Scope, gems []lab.GemPrice, _ time.Time) ([]lab.GemPrice, error) {
+		return gems, nil
+	}
+	s := newTradeScheduler(scope, gate, nil, input, input, identity, func() resolve.Rate { return resolve.Rate{Chaos: 200} })
 	return s, cache, limiter, requests
 }
 
@@ -284,5 +287,32 @@ func TestTradeScheduler_PreflightDoesNotClaimFixedTarget(t *testing.T) {
 	target, ok := s.fixed.Claim(time.Now())
 	if !ok || target.Gem != trade.FixedTargetLens60Outcome {
 		t.Fatalf("preflight consumed claim: %+v %v", target, ok)
+	}
+}
+
+// keep:critical — silent: the tick would grade without holds while Font grades
+// with them.
+func TestKeepCritical_ReconcileFeedsHeldGemsToDemand(t *testing.T) {
+	input := &schedulerInputs{stamp: time.Now()}
+	s, _, _, _ := schedulerHarness(t, input)
+	extra := schedulerGem("Held of Test", "20")
+	calls := 0
+	s.holds = func(_ context.Context, _ league.Scope, gems []lab.GemPrice, _ time.Time) ([]lab.GemPrice, error) {
+		calls++
+		return append(append([]lab.GemPrice{}, gems...), extra), nil
+	}
+
+	for range 2 {
+		if err := s.reconcile(context.Background()); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+
+	if calls != 1 {
+		t.Errorf("holds called %d times over two reconciles of one stamp, want 1", calls)
+	}
+	d, ok := s.queue.Take(time.Now(), resolve.Rate{Chaos: 200})
+	if want := resolve.GemKey(s.scope.ID(), extra.Name, extra.Variant); !ok || d.Key != want {
+		t.Errorf("demand took %+v (ok %v), want the held-only key %s", d.Key, ok, want)
 	}
 }

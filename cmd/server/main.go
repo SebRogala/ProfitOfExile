@@ -327,7 +327,11 @@ func main() {
 	}
 	if tradeGate != nil {
 		fixedTargets := trade.NewFixedTargetScheduler(tradeCache, scope)
-		tradeScheduler := newTradeScheduler(scope, tradeGate, fixedTargets, labRepo, tradeRepo, func() resolve.Rate { return bookRate(divineRate) })
+		tradeScheduler := newTradeScheduler(scope, tradeGate, fixedTargets, labRepo, tradeRepo,
+			func(ctx context.Context, scope league.Scope, gems []lab.GemPrice, asOf time.Time) ([]lab.GemPrice, error) {
+				return lab.LoadEvidenceHolds(ctx, labRepo, scope, gems, asOf)
+			},
+			func() resolve.Rate { return bookRate(divineRate) })
 		runtime.seedTrade = tradeScheduler.Seed
 		runtime.tradeTick = func(eventCtx context.Context, raw []byte) {
 			server.HandleTradeTick(eventCtx, scope, raw, tradeScheduler.Tick)

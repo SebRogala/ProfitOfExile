@@ -19,6 +19,9 @@ type tradeCheckReader interface {
 	LookupsAsOf(context.Context, league.Scope, time.Time) ([]trade.TradeLookupResult, error)
 }
 
+// evidenceHolds attaches sold-through evidence holds to a snapshot's gems.
+type evidenceHolds func(context.Context, league.Scope, []lab.GemPrice, time.Time) ([]lab.GemPrice, error)
+
 type tradeScheduler struct {
 	scope      league.Scope
 	queue      *book.Scheduler
@@ -26,16 +29,17 @@ type tradeScheduler struct {
 	fixed      *trade.FixedTargetScheduler
 	gems       tradeDemandReader
 	checks     tradeCheckReader
+	holds      evidenceHolds
 	rate       func() resolve.Rate
 	now        func() time.Time
 }
 
-func newTradeScheduler(scope league.Scope, gate *trade.Gate, fixed *trade.FixedTargetScheduler, gems tradeDemandReader, checks tradeCheckReader, rate func() resolve.Rate) *tradeScheduler {
+func newTradeScheduler(scope league.Scope, gate *trade.Gate, fixed *trade.FixedTargetScheduler, gems tradeDemandReader, checks tradeCheckReader, holds evidenceHolds, rate func() resolve.Rate) *tradeScheduler {
 	queue, err := book.NewScheduler(scope, lab.GemPricePolicy(), 5*time.Minute)
 	if err != nil {
 		panic(err)
 	}
-	return &tradeScheduler{scope: scope, queue: queue, background: trade.NewBackgroundRefresh(gate), fixed: fixed, gems: gems, checks: checks, rate: rate, now: time.Now}
+	return &tradeScheduler{scope: scope, queue: queue, background: trade.NewBackgroundRefresh(gate), fixed: fixed, gems: gems, checks: checks, holds: holds, rate: rate, now: time.Now}
 }
 
 func (s *tradeScheduler) reconcile(ctx context.Context) error {

@@ -337,3 +337,38 @@ func TestKeepHappy_BuildTradeDemandKeepsEveryGatedCovens2020Key(t *testing.T) {
 		}
 	}
 }
+
+// keep:critical — silent: Font would count a gem while demand treats it as
+// gated, or the reverse, and nothing would report it.
+func TestKeepCritical_OneSnapshotGradesTheSameInFontAndDemand(t *testing.T) {
+	asOf := time.Date(2026, 11, 16, 6, 44, 0, 0, time.UTC)
+	one := 1
+	gems := []GemPrice{
+		{Name: "Smite of Divine Judgement", Variant: "20/20", Chaos: 111, Listings: 1, SampleCount: &one, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Storm Burst of Repulsion", Variant: "20/20", Chaos: 527, Listings: 1, SampleCount: &one, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Deep Gem of Test", Variant: "20/20", Chaos: 60, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "GREEN"},
+	}
+	nine := 9
+	points := []evidencePoint{{Name: "Smite of Divine Judgement", Variant: "20/20",
+		Time: time.Date(2026, 11, 16, 4, 44, 0, 0, time.UTC), Chaos: 138, Listings: 9, SampleCount: &nine}}
+
+	held := deriveEvidenceHolds(gems, points, asOf)
+	cls := ComputeGemClassification(held)
+
+	smite := cls.Gems[GemClassificationKey{"Smite of Divine Judgement", "20/20"}]
+	if smite.LowConfidence {
+		t.Errorf("Smite classification = %+v, want not gated (held by its 04:44Z SOLID point)", smite)
+	}
+
+	inDemand := make(map[resolve.Key]bool)
+	for _, d := range BuildTradeDemand(league.Historical("Temp-demand"), demandSnapshot, held) {
+		inDemand[d.Key] = true
+	}
+	for _, g := range held {
+		c := cls.Gems[GemClassificationKey{g.Name, g.Variant}]
+		wantDemand := !(c.Tier == tier.Floor && !c.LowConfidence)
+		if key := resolve.GemKey("Temp-demand", g.Name, g.Variant); inDemand[key] != wantDemand {
+			t.Errorf("%s in demand = %v, want %v for Font classification %+v", g.Name, inDemand[key], wantDemand, c)
+		}
+	}
+}

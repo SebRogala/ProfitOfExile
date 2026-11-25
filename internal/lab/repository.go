@@ -596,6 +596,12 @@ func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, scope league.
 	return result, nil
 }
 
+// gemEvidenceHistory reads the keys' gem_snapshots points inside the hold
+// window ending at asOf. Red-phase scaffold: it reads nothing.
+func (r *Repository) gemEvidenceHistory(ctx context.Context, scope league.Scope, keys []GemClassificationKey, asOf time.Time) ([]evidencePoint, error) {
+	return nil, nil
+}
+
 // LatestTransfigureResults returns the most recent analysis results, optionally filtered by variant.
 func (r *Repository) LatestTransfigureResults(ctx context.Context, scope league.Scope, variant string, limit int) ([]TransfigureResult, error) {
 	if err := scope.Validate(); err != nil {

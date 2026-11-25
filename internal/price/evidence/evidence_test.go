@@ -1,6 +1,9 @@
 package evidence
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func intPtr(n int) *int { return &n }
 
@@ -46,5 +49,36 @@ func TestKeepCritical_GradeReadsOnlyThePricingSource(t *testing.T) {
 	d := Depth{PricedBy: SourceNinja, NinjaListings: 1, NinjaSample: intPtr(1), TradeListings: 10, TradeSellers: 5}
 	if got := Grade(d, rulingPolicy); got != Thin {
 		t.Errorf("Grade(ninja-priced 1/1 with trade depth 10/5) = %v, want Thin (%v)", got, Thin)
+	}
+}
+
+// keep:happy — ruled acceptance: a sold-through Smite holds its last SOLID
+// grade; a key that was never SOLID has no hold and stays Thin.
+func TestKeepHappy_GradeHoldsSoldThroughSmite(t *testing.T) {
+	policy := rulingPolicy
+	policy.HoldWindow = 24 * time.Hour
+	policy.HoldBand = 2
+
+	// Smite of Divine Judgement 20/20 at 2026-11-16 06:44Z: 111c with 1 listing,
+	// SOLID at 04:44Z at 138c with 9 listings.
+	smiteAt := time.Date(2026, 11, 16, 6, 44, 0, 0, time.UTC)
+	lastSolidAt := time.Date(2026, 11, 16, 4, 44, 0, 0, time.UTC)
+
+	tests := []struct {
+		name  string
+		depth Depth
+		want  Evidence
+	}{
+		{"Smite of Divine Judgement 20/20 111c 1 listing held by 138c SOLID two hours earlier",
+			Depth{PricedBy: SourceNinja, NinjaListings: 1, NinjaSample: intPtr(1), Hold: &Hold{LastSolidPrice: 138, LastSolidAge: smiteAt.Sub(lastSolidAt)}}, Solid},
+		{"never-SOLID 527c 1 listing 20/20 key",
+			Depth{PricedBy: SourceNinja, NinjaListings: 1, NinjaSample: intPtr(1)}, Thin},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Grade(tt.depth, policy); got != tt.want {
+				t.Errorf("Grade(%+v) = %v, want %v", tt.depth, got, tt.want)
+			}
+		})
 	}
 }

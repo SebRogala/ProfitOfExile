@@ -3,6 +3,8 @@
 // outside the standard library.
 package evidence
 
+import "time"
+
 // Evidence is the grade of the evidence behind one price.
 type Evidence int
 
@@ -29,6 +31,15 @@ type Depth struct {
 	TradeSellers  int
 	NinjaListings int
 	NinjaSample   *int
+	// Hold is the key's newest floor-SOLID point inside the hold window, when
+	// the caller found one.
+	Hold *Hold
+}
+
+// Hold is the last floor-SOLID evidence for a key that now fails the floor.
+type Hold struct {
+	LastSolidPrice float64
+	LastSolidAge   time.Duration
 }
 
 // Policy is the evidence floor a price must reach to grade Solid.
@@ -37,6 +48,8 @@ type Policy struct {
 	TradeSellers     int
 	NinjaSampleAbove int
 	NinjaListings    int
+	HoldWindow       time.Duration
+	HoldBand         float64
 }
 
 // Grade grades the evidence behind a price under the given policy.

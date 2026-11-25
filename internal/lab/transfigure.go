@@ -5,6 +5,8 @@ package lab
 import (
 	"strings"
 	"time"
+
+	"profitofexile/internal/price/evidence"
 )
 
 // TransfigureResult holds the computed ROI for a single base→transfigured gem pair.
@@ -46,6 +48,7 @@ type GemPrice struct {
 	GemColor       string
 	SampleCount    *int  // nil means the poe.ninja sample is unknown.
 	SparklineEmpty *bool // nil means the poe.ninja sparkline is unknown.
+	hold           *evidence.Hold
 }
 
 // AnalyzeTransfigure computes transfigure ROI for all base→transfigured pairs.
