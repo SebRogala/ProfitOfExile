@@ -3,6 +3,8 @@
 //! reader and preview takes its rects from.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use tauri::Manager;
 
 use super::{placements_for, Placements, ScreenSlice};
 
@@ -206,13 +208,23 @@ pub struct ManualRegions {
 }
 
 /// One Manual region, as `Resolved::unread` names it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RegionKey {
     LabGem,
     LabFont,
     LabGemSlots,
     TemplePanel,
     MercPanel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RegionReadState {
+    Read,
+    Clipped,
+    PastEdge,
+    Unset,
 }
 
 /// What the readers use: the placements, the per-module origin/panel and
@@ -224,6 +236,7 @@ pub struct Resolved {
     pub merc: Option<([i32; 4], f32)>,
     pub manual: bool,
     pub unread: Vec<RegionKey>,
+    pub region_states: BTreeMap<RegionKey, RegionReadState>,
 }
 
 /// Resolve every region for `screen` under `setting`, clipped against the
@@ -236,6 +249,7 @@ pub fn resolve(screen: Option<&ScreenSlice>, setting: &OcrRegionsSetting, captur
         merc: None,
         manual,
         unread: Vec::new(),
+        region_states: BTreeMap::new(),
     };
     if !manual {
         resolved.temple = resolved.placements.temple.zip(screen)
@@ -251,16 +265,9 @@ pub fn resolve(screen: Option<&ScreenSlice>, setting: &OcrRegionsSetting, captur
         (RegionKey::LabGem, regions.and_then(|r| r.lab_gem), &mut resolved.placements.lab.gem),
         (RegionKey::LabFont, regions.and_then(|r| r.lab_font), &mut resolved.placements.lab.font),
     ] {
-        if let Some(rect) = rect {
-            *target = rect;
-            if let Some(clipped) = clip(rect, capture) {
-                *target = clipped;
-            } else {
-                resolved.unread.push(key);
-            }
-        } else {
-            resolved.unread.push(key);
-        }
+        let (state, crop) = classify(rect, capture, false);
+        resolved.region_states.insert(key, state);
+        if let Some(rect) = crop.or(rect) { *target = rect; }
     }
     if let Some(strip) = regions.and_then(|r| r.lab_gem_slots).filter(|r| r[2] > 0 && r[3] > 0) {
         let scale = strip[2] as f32 / (2 * crate::GEM_SLOT_PITCH_REF + crate::GEM_SLOT_ICON_REF) as f32;
@@ -270,29 +277,34 @@ pub fn resolve(screen: Option<&ScreenSlice>, setting: &OcrRegionsSetting, captur
             crate::GEM_SLOT_PITCH_REF,
             scale,
         );
-        if !contained(strip, capture)
-            || resolved.placements.lab.gem_slots.iter().any(|&slot| !contained(slot, capture))
-        {
-            resolved.unread.push(RegionKey::LabGemSlots);
-        }
-    } else {
-        resolved.unread.push(RegionKey::LabGemSlots);
     }
+    let (mut slots_state, _) = classify(regions.and_then(|r| r.lab_gem_slots), capture, true);
+    if slots_state == RegionReadState::Read
+        && resolved.placements.lab.gem_slots.iter().any(|&slot| classify(Some(slot), capture, true).0 != RegionReadState::Read)
+    {
+        slots_state = RegionReadState::PastEdge;
+    }
+    resolved.region_states.insert(RegionKey::LabGemSlots, slots_state);
+    for (key, rect) in [
+        (RegionKey::TemplePanel, regions.and_then(|r| r.temple_panel)),
+        (RegionKey::MercPanel, regions.and_then(|r| r.merc_panel)),
+    ] {
+        resolved.region_states.insert(key, classify(rect, capture, true).0);
+    }
+    resolved.unread = resolved.region_states.iter()
+        .filter_map(|(&key, &state)| matches!(state, RegionReadState::PastEdge | RegionReadState::Unset).then_some(key))
+        .collect();
     if let Some(panel) = regions.and_then(|r| r.temple_panel) {
         let (origin, scale) = origin_scale_for_panel(panel);
         resolved.placements.temple = Some(super::TemplePlacements { entrance_origin: origin });
-        if contained(panel, capture) {
+        if !resolved.unread.contains(&RegionKey::TemplePanel) {
             resolved.temple = Some((origin, scale));
-        } else {
-            resolved.unread.push(RegionKey::TemplePanel);
         }
     }
     if let Some(panel) = regions.and_then(|r| r.merc_panel) {
         resolved.placements.merc = Some(super::MercPlacements { panel });
-        if contained(panel, capture) {
+        if !resolved.unread.contains(&RegionKey::MercPanel) {
             resolved.merc = Some((panel, panel[2] as f32 / super::MERC_PANEL_REF[2] as f32));
-        } else {
-            resolved.unread.push(RegionKey::MercPanel);
         }
     }
     resolved
@@ -311,8 +323,13 @@ fn clip(rect: [i32; 4], capture: Option<(u32, u32)>) -> Option<[i32; 4]> {
     (right > left && bottom > top).then_some([left as i32, top as i32, (right - left) as i32, (bottom - top) as i32])
 }
 
-fn contained(rect: [i32; 4], capture: Option<(u32, u32)>) -> bool {
-    clip(rect, capture) == Some(rect)
+fn classify(rect: Option<[i32; 4]>, capture: Option<(u32, u32)>, scale_bearing: bool) -> (RegionReadState, Option<[i32; 4]>) {
+    let Some(rect) = rect else { return (RegionReadState::Unset, None) };
+    match clip(rect, capture) {
+        Some(crop) if crop == rect => (RegionReadState::Read, Some(crop)),
+        Some(crop) if !scale_bearing => (RegionReadState::Clipped, Some(crop)),
+        _ => (RegionReadState::PastEdge, None),
+    }
 }
 
 pub fn current(state: &crate::AppState, capture: Option<(u32, u32)>) -> Resolved {
@@ -375,29 +392,126 @@ pub struct ScreenWarning {
     pub live: ScreenRef,
 }
 
-pub fn screen_warning(_set_on: ScreenRef, _live: ScreenRef) -> Option<ScreenWarning> {
-    None
+pub fn screen_warning(set_on: ScreenRef, live: ScreenRef) -> Option<ScreenWarning> {
+    (!super::same_capture(
+        (set_on.width, set_on.height), (set_on.origin[0], set_on.origin[1]),
+        (live.width, live.height), (live.origin[0], live.origin[1]),
+    )).then_some(ScreenWarning { set_on, live })
 }
 
-pub fn recalibrate_allowed(_state: &crate::AppState) -> Result<(), String> {
-    Ok(())
+pub fn recalibrate_allowed(state: &crate::AppState) -> Result<(), String> {
+    if state.ocr_regions.lock().unwrap_or_else(|e| e.into_inner()).mode == OcrRegionsMode::Manual {
+        Err("Recalibrate refused: OCR regions are Manual".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 pub fn set_mode_at(
-    _state: &crate::AppState,
-    _path: Option<&std::path::Path>,
-    _mode: OcrRegionsMode,
-    _live: Option<ScreenRef>,
+    state: &crate::AppState,
+    path: Option<&std::path::Path>,
+    mode: OcrRegionsMode,
+    live: Option<ScreenRef>,
 ) -> Result<(), String> {
-    Ok(())
+    if mode == OcrRegionsMode::Manual && live.is_none() {
+        return Err(UNKNOWN_MONITOR.to_string());
+    }
+    update_setting_at(state, path, |mut setting| {
+        if mode == OcrRegionsMode::Manual && setting.manual.is_none() {
+            let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
+            let auto = screen.as_ref().map(|screen| placements_for(Some(screen)));
+            setting.manual = Some(ManualRegions {
+                set_on: live.expect("Manual requires a live monitor"),
+                edited: false,
+                lab_gem: auto.map(|p| p.lab.gem),
+                lab_font: auto.map(|p| p.lab.font),
+                lab_gem_slots: auto.map(|p| {
+                    let slots = p.lab.gem_slots;
+                    let left = slots.iter().map(|r| r[0]).min().unwrap();
+                    let right = slots.iter().map(|r| r[0] + r[2]).max().unwrap();
+                    [left, slots[0][1], right - left, slots[0][3]]
+                }),
+                temple_panel: auto.and_then(|p| p.temple).zip(screen)
+                    .map(|(p, s)| panel_rect(p.entrance_origin, s.ui_scale * TEMPLE_SCALE_PER_UI_SCALE)),
+                merc_panel: auto.and_then(|p| p.merc).map(|p| p.panel),
+            });
+        }
+        setting.mode = mode;
+        setting
+    })
 }
 
 pub fn save_manual_regions_at(
-    _state: &crate::AppState,
-    _path: Option<&std::path::Path>,
-    _regions: ManualRegions,
-    _live: Option<ScreenRef>,
+    state: &crate::AppState,
+    path: Option<&std::path::Path>,
+    mut regions: ManualRegions,
+    live: Option<ScreenRef>,
 ) -> Result<(), String> {
+    let live = live.ok_or_else(|| UNKNOWN_MONITOR.to_string())?;
+    for rect in [regions.lab_gem, regions.lab_font, regions.lab_gem_slots, regions.temple_panel, regions.merc_panel].into_iter().flatten() {
+        if classify(Some(rect), Some((live.width, live.height)), true).0 != RegionReadState::Read {
+            return Err("OCR region must have positive dimensions and fit inside the game monitor".to_string());
+        }
+    }
+    regions.set_on = live;
+    regions.edited = true;
+    update_setting_at(state, path, |setting| OcrRegionsSetting { manual: Some(regions), ..setting })
+}
+
+const UNKNOWN_MONITOR: &str = "game monitor unknown: focus the game once, then save";
+
+fn update_setting_at(
+    state: &crate::AppState,
+    path: Option<&std::path::Path>,
+    change: impl FnOnce(OcrRegionsSetting) -> OcrRegionsSetting,
+) -> Result<(), String> {
+    let path = path.ok_or_else(|| "settings path unavailable".to_string())?;
+    let candidate = std::cell::Cell::new(None);
+    crate::settings::update_at_committing(path, |loaded| loaded.unwrap_or_default(), |existing| {
+        let mut target = crate::settings::from_state(state);
+        target.ocr_regions = change(target.ocr_regions);
+        candidate.set(Some(target.ocr_regions));
+        crate::settings::merge_stored_rows(existing, &mut target);
+        target
+    }, || {
+        *state.ocr_regions.lock().unwrap_or_else(|e| e.into_inner()) = candidate.get().expect("saved candidate");
+    }).map_err(|error| error.to_string())
+}
+
+pub fn live_screen(state: &crate::AppState) -> Option<ScreenRef> {
+    state.game_monitor.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|monitor| ScreenRef {
+        width: monitor.width,
+        height: monitor.height,
+        origin: [monitor.x, monitor.y],
+        at_ms: crate::clock::unix_ms(),
+    })
+}
+
+pub(super) fn snapshot(setting: &OcrRegionsSetting, screen: Option<&ScreenSlice>) -> OcrRegionsSnapshot {
+    OcrRegionsSnapshot {
+        mode: setting.mode,
+        manual: setting.manual.map(|r| ManualRegionsView {
+            set_on: r.set_on, edited: r.edited, lab_gem: r.lab_gem, lab_font: r.lab_font,
+            lab_gem_slots: r.lab_gem_slots, temple_panel: r.temple_panel, merc_panel: r.merc_panel,
+        }),
+        auto: screen.map(|s| placements_for(Some(s))),
+        screen_warning: None,
+    }
+}
+
+#[tauri::command]
+pub fn set_ocr_regions_mode(app: tauri::AppHandle, mode: OcrRegionsMode) -> Result<(), String> {
+    let state = app.state::<crate::AppState>();
+    set_mode_at(&state, crate::settings::settings_path_pub(&app).as_deref(), mode, live_screen(&state))?;
+    super::emit_ssot(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_manual_ocr_regions(app: tauri::AppHandle, regions: ManualRegions) -> Result<(), String> {
+    let state = app.state::<crate::AppState>();
+    save_manual_regions_at(&state, crate::settings::settings_path_pub(&app).as_deref(), regions, live_screen(&state))?;
+    super::emit_ssot(&app);
     Ok(())
 }
 

@@ -823,6 +823,7 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	if (snap.exchangeRead !== undefined) ssot.exchangeRead = snap.exchangeRead;
 	if (snap.overlayDismiss !== undefined) ssot.overlayDismiss = snap.overlayDismiss;
 	if (snap.readPrompt !== undefined) ssot.readPrompt = snap.readPrompt;
+	if (snap.ocrRegions !== undefined) ssot.ocrRegions = snap.ocrRegions;
 	applyMercenary(snap.mercenary);
 	applyTemple(snap.temple);
 	applyServerSlice(snap.server);

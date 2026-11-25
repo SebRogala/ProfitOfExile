@@ -1,11 +1,15 @@
 import type { OcrPreviewRequest } from '$lib/overlay/ocr-preview';
 
+export type RegionKey = 'lab_gem' | 'lab_font' | 'lab_gem_slots' | 'temple_panel' | 'merc_panel';
+export type RegionReadState = 'read' | 'clipped' | 'past-edge' | 'unset';
+
 export type OcrRectView = {
 	key: string;
 	label: string;
 	rect: [number, number, number, number] | null;
 	rows: [number, number, number, number][];
 	source: string;
+	regionStates?: Partial<Record<RegionKey, RegionReadState>>;
 };
 
 type OcrPreviewOwner = {

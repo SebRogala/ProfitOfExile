@@ -612,6 +612,7 @@ fn compose_snapshot_regions(
         temple,
         screen,
         placements,
+        ocr_regions: regions::snapshot(setting, screen.as_ref()),
         ..base
     }
 }
@@ -701,6 +702,10 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     snapshot.read_hotkey = read_hotkey;
     snapshot.exchange_read = exchange_read;
     snapshot.read_prompt = read_prompt;
+    if setting.mode == OcrRegionsMode::Manual {
+        snapshot.ocr_regions.screen_warning = setting.manual.zip(regions::live_screen(state))
+            .and_then(|(set, live)| regions::screen_warning(set.set_on, live));
+    }
     crate::overlay_dismiss::with_settings(state, snapshot)
 }
 
@@ -1094,6 +1099,15 @@ pub(crate) enum ClientChange {
     Mismatch,
 }
 
+pub(crate) fn same_capture(
+    current: (u32, u32),
+    current_origin: (i32, i32),
+    capture: (u32, u32),
+    origin: (i32, i32),
+) -> bool {
+    !different_display(current_origin, origin) && current == capture
+}
+
 /// Classify a capture against the standing slice — the same-screen rule.
 pub(crate) fn client_change(
     current: &ScreenSlice,
@@ -1101,9 +1115,7 @@ pub(crate) fn client_change(
     origin: (i32, i32),
     client: [i32; 4],
 ) -> ClientChange {
-    if different_display(current.origin, origin)
-        || current.width != capture.0
-        || current.height != capture.1
+    if !same_capture((current.width, current.height), current.origin, capture, origin)
         || current.client[2] != client[2]
         || current.client[3] != client[3]
     {
@@ -1449,6 +1461,10 @@ pub fn screen_from_capture(capture: &crate::capture::Capture) -> ScreenSlice {
 /// Recalibrate is asking for, not the one it is guarding against.
 #[tauri::command]
 pub fn geometry_recalibrate(app: AppHandle) {
+    if let Err(reason) = regions::recalibrate_allowed(&app.state::<AppState>()) {
+        crate::app_log(&app, reason);
+        return;
+    }
     {
         // The temple bump shares the clear's `screen` lock so a read-key bank
         // checking its sweep generation sees both or neither

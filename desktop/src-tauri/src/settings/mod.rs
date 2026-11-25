@@ -917,12 +917,25 @@ pub(crate) fn update_at(
     resolve: impl FnOnce(Result<Settings, LoadError>) -> Settings,
     f: impl FnOnce(&Settings) -> Settings,
 ) -> Result<(), SaveError> {
+    update_at_committing(path, resolve, f, || {})
+}
+
+/// Commit the in-memory candidate after the file write, while whole-file
+/// writers are still excluded by WRITE_LOCK.
+pub(crate) fn update_at_committing(
+    path: &Path,
+    resolve: impl FnOnce(Result<Settings, LoadError>) -> Settings,
+    f: impl FnOnce(&Settings) -> Settings,
+    on_ok: impl FnOnce(),
+) -> Result<(), SaveError> {
     let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if settings_json_at(path).is_err() {
         return Err(SaveError::Unreadable(path.to_path_buf()));
     }
     let existing = resolve(load_from(path));
-    save_to(path, &f(&existing))
+    save_to(path, &f(&existing))?;
+    on_ok();
+    Ok(())
 }
 
 /// The AppHandle layer's reading of a load result, with its log lines.

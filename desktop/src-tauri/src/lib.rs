@@ -57,6 +57,8 @@ pub struct OcrRectView {
     pub rect: Option<[i32; 4]>,
     pub rows: Vec<[i32; 4]>,
     pub source: String,
+    #[serde(rename = "regionStates", skip_serializing_if = "Option::is_none")]
+    pub region_states: Option<std::collections::BTreeMap<ssot::RegionKey, ssot::regions::RegionReadState>>,
 }
 
 /// The gem name tooltip region is a FIXED rect, not an anchor — there is
@@ -195,6 +197,7 @@ fn ocr_rect_view(
         rect,
         rows,
         source: source.into(),
+        region_states: None,
     }
 }
 
@@ -248,11 +251,22 @@ fn temple_rects_from_rois(
 /// Assemble the five display-only OCR preview rows from the derived placements.
 /// Temple rows are generated from the placement's canonical Entrance origin;
 /// they never read the last located layout. The merc row uses the same padded
-/// crop as the merc detect tick and stays unlocated without the snapshot screen.
+/// crop as the merc detect tick. Auto requires the snapshot screen; Manual
+/// uses the resolver's scale and the game monitor's capture dimensions.
+#[cfg(test)]
 fn assemble_ocr_rects(
     placements: &ssot::Placements,
     screen: Option<&ssot::ScreenSlice>,
     temple_rects: Option<(Option<[i32; 4]>, Option<[i32; 4]>)>,
+) -> Vec<OcrRectView> {
+    assemble_region_rects(placements, screen, temple_rects, None)
+}
+
+fn assemble_region_rects(
+    placements: &ssot::Placements,
+    screen: Option<&ssot::ScreenSlice>,
+    temple_rects: Option<(Option<[i32; 4]>, Option<[i32; 4]>)>,
+    manual: Option<(&ssot::Resolved, Option<[u32; 2]>)>,
 ) -> Vec<OcrRectView> {
     let (temple_panel, temple_remaining) = temple_rects.unwrap_or((None, None));
     let anchors = screen.and_then(|screen| screen.anchors);
@@ -261,23 +275,27 @@ fn assemble_ocr_rects(
     } else {
         "seed"
     };
-    let (merc_rect, merc_rows) = match (placements.merc, screen) {
-        (Some(merc), Some(screen)) => {
+    let merc_geometry = match manual {
+        Some((resolved, capture)) => resolved.merc.zip(capture).map(|((panel, scale), dims)| (panel, scale, dims)),
+        None => placements.merc.zip(screen).map(|(merc, s)| (merc.panel, s.ui_scale, [s.width, s.height])),
+    };
+    let (merc_rect, merc_rows) = match merc_geometry {
+        Some((panel, scale, capture)) => {
             // The preview draws the SEED's shipped reference row geometry. It
             // can differ from live tick geometry under a `merc-geometry.json`
             // `rowPitch` override or a held fit.
             let geometry = crate::mercenary::MercGeometry::default();
-            let pitch = geometry.row_pitch * screen.ui_scale;
+            let pitch = geometry.row_pitch * scale;
             (
                 Some(crate::mercenary::geometry::placed_panel_crop(
-                    merc.panel,
-                    screen.ui_scale,
-                    [screen.width, screen.height],
+                    panel,
+                    scale,
+                    capture,
                 )),
                 crate::mercenary::geometry::placed_row_rects(
-                    merc.panel,
+                    panel,
                     &geometry,
-                    screen.ui_scale,
+                    scale,
                     pitch,
                     None,
                 ),
@@ -295,7 +313,7 @@ fn assemble_ocr_rects(
         "unlocated"
     };
 
-    vec![
+    let mut rows = vec![
         ocr_rect_view(
             "lab.gem",
             "Gem tooltip",
@@ -331,7 +349,25 @@ fn assemble_ocr_rects(
             merc_rows,
             merc_source,
         ),
-    ]
+    ];
+    if let Some((resolved, _)) = manual {
+        use ssot::RegionKey;
+        for (row, keys) in rows.iter_mut().zip([
+            &[RegionKey::LabGem][..],
+            &[RegionKey::LabFont, RegionKey::LabGemSlots][..],
+            &[RegionKey::TemplePanel][..],
+            &[RegionKey::TemplePanel][..],
+            &[RegionKey::MercPanel][..],
+        ]) {
+            row.source = "manual".to_string();
+            row.region_states = Some(keys.iter().filter_map(|key| resolved.region_states.get(key).map(|state| (*key, *state))).collect());
+            if resolved.unread.contains(&keys[0]) { row.rect = None; }
+            if row.key == "lab.font" && resolved.unread.contains(&RegionKey::LabGemSlots) {
+                row.rows.clear();
+            }
+        }
+    }
+    rows
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -803,23 +839,24 @@ fn get_ocr_rects(state: tauri::State<AppState>) -> Vec<OcrRectView> {
 
 fn ocr_rects_for(state: &AppState) -> Vec<OcrRectView> {
     let snapshot = ssot::build_snapshot(state);
-    let temple_rects = snapshot.placements.temple.and_then(|temple| {
-        let scale = snapshot
-            .screen
-            .as_ref()
-            .map(|screen| screen.ui_scale)
+    let capture = state.game_monitor.lock().unwrap_or_else(|e| e.into_inner())
+        .as_ref().map(|m| (m.width, m.height));
+    let resolved = ssot::regions::current(state, capture);
+    let temple_rects = resolved.temple.and_then(|(origin, ui_scale)| {
+        let scale = Some(ui_scale)
             .filter(|scale| scale.is_finite() && *scale > 0.0)
             .map(crate::temple::anchor::scale_for_ui_scale)?;
         Some(temple_rects_from_rois(&crate::temple::run::read_rois(
-            temple.entrance_origin,
+            origin,
             scale,
         )))
     });
 
-    assemble_ocr_rects(
-        &snapshot.placements,
+    assemble_region_rects(
+        &resolved.placements,
         snapshot.screen.as_ref(),
         temple_rects,
+        resolved.manual.then_some((&resolved, capture.map(|(w, h)| [w, h]))),
     )
 }
 
@@ -1326,6 +1363,8 @@ pub fn run() {
             ssot::league_command::note_server_league,
             ssot::refresh_league,
             ssot::geometry_recalibrate,
+            ssot::regions::set_ocr_regions_mode,
+            ssot::regions::set_manual_ocr_regions,
             capture::get_game_monitor,
             loot_capture::loot_capture_view,
             loot_capture::boss_loot_profiles,
