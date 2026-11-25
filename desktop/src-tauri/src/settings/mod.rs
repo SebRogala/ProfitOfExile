@@ -4566,6 +4566,40 @@ pub(crate) mod tests {
                 serde_json::json!({"shortcut": {"key": 5, "shift": false, "ctrl": false, "alt": true}}),
             );
         }
+
+        // keep:happy — POE-415 WI-2: a Consolidation choice the player sets
+        // through `temple_set_config` is what the next launch reads and what
+        // the slice the page renders from echoes.
+        #[test]
+        fn a_resident_carry_consolidation_set_through_the_config_command_is_what_the_next_launch_echoes() {
+            use crate::temple::strategy::{Consolidation, TempleConfig};
+            // The command argument exactly as the webview sends it.
+            let config: TempleConfig = serde_json::from_value(serde_json::json!({
+                "artefactsOfTheVaal": true,
+                "scarabOfTimelines": false,
+                "consolidation": "residentCarry",
+            }))
+            .expect("the command argument parses");
+            let state = test_app_state();
+            // `temple_set_config`'s write, then `persist_settings`' save.
+            state.temple_state.settings.lock().unwrap().config = config;
+            let dir = fresh_test_dir("temple_consolidation_restart");
+            let path = dir.join(SETTINGS_FILENAME);
+            save_to(&path, &from_state(&state)).unwrap();
+
+            let loaded = load_from(&path).expect("the saved file parses");
+            let reloaded = test_app_state();
+            assert!(apply_to_state(&loaded, &reloaded).is_empty());
+            let _ = fs::remove_dir_all(&dir);
+
+            assert_eq!(loaded.temple_config.consolidation, Some(Consolidation::ResidentCarry));
+            assert_eq!(
+                reloaded.temple_state.settings.lock().unwrap().config.consolidation,
+                Some(Consolidation::ResidentCarry),
+            );
+            let slice = serde_json::to_value(&*reloaded.temple.lock().unwrap()).unwrap();
+            assert_eq!(slice["config"]["consolidation"], serde_json::json!("residentCarry"));
+        }
     }
 
 

@@ -5121,6 +5121,35 @@ mod tests {
     mod keep_critical {
         use super::*;
 
+        /// A `temple_config` object carrying only one of the two keys fills the
+        /// other from `Default` instead of failing.
+        ///
+        /// This is not a nicety: `Settings` deserialises as a unit, so a partial
+        /// object would abort the WHOLE file and `load` would fall back to
+        /// `Settings::default()` — silently resetting every unrelated preference.
+        /// Fails if the struct-level `#[serde(default)]` is dropped.
+        /// keep:critical — irreversible: a parse failure resets every unrelated
+        /// preference in `settings.json`.
+        #[test]
+        fn a_partial_temple_config_object_fills_the_missing_flag() {
+            let parsed: TempleConfig = serde_json::from_str(r#"{"scarabOfTimelines":true}"#)
+                .expect("a partial config must still parse");
+
+            assert!(parsed.scarab_of_timelines, "the key that was present wins");
+            assert_eq!(
+                parsed.artefacts_of_the_vaal,
+                TempleConfig::default().artefacts_of_the_vaal,
+                "the missing key comes from Default, not from `bool::default()`",
+            );
+
+            // POE-415: a file written before the Consolidation option existed.
+            let old: TempleConfig = serde_json::from_str(r#"{"artefactsOfTheVaal":false}"#)
+                .expect("a config from before `consolidation` must still parse");
+
+            assert!(!old.artefacts_of_the_vaal, "the flag the file carried is kept");
+            assert_eq!(old.consolidation, None, "an absent option reads as unset");
+        }
+
         // The mounted offer-box test reads this fixture; a stale copy would let
         // it pass on descriptions the app no longer shows.
         #[test]
@@ -5970,26 +5999,6 @@ mod tests {
             json.get("artefacts_of_the_vaal"),
             None,
             "the snake_case key must be gone, not merely joined",
-        );
-    }
-
-    /// A `temple_config` object carrying only one of the two keys fills the
-    /// other from `Default` instead of failing.
-    ///
-    /// This is not a nicety: `Settings` deserialises as a unit, so a partial
-    /// object would abort the WHOLE file and `load` would fall back to
-    /// `Settings::default()` — silently resetting every unrelated preference.
-    /// Fails if the struct-level `#[serde(default)]` is dropped.
-    #[test]
-    fn a_partial_temple_config_object_fills_the_missing_flag() {
-        let parsed: TempleConfig = serde_json::from_str(r#"{"scarabOfTimelines":true}"#)
-            .expect("a partial config must still parse");
-
-        assert!(parsed.scarab_of_timelines, "the key that was present wins");
-        assert_eq!(
-            parsed.artefacts_of_the_vaal,
-            TempleConfig::default().artefacts_of_the_vaal,
-            "the missing key comes from Default, not from `bool::default()`",
         );
     }
 
