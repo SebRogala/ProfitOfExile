@@ -988,6 +988,204 @@ mod tests {
         use super::super::{client_in_capture, recalibrate_client_diagnostic, rendered_area, RenderedClientLatch};
         use super::bordered_frame;
 
+        struct PlacementFrame {
+            name: &'static str,
+            png: &'static [u8],
+            size: (u32, u32),
+            raw: [i32; 4],
+            client: [i32; 4],
+            panel_sides: [i32; 2],
+            body_sides: [i32; 2],
+            panel_top: i32,
+            first_option: i32,
+            lowest_text: i32,
+            slots: [[i32; 4]; 3],
+        }
+
+        // Current fixture behavior and full derivation: tests/fixtures/ultrawide-placement/README.md.
+        // Observed source rasters: 3742x1076 and 2556x1440. All coordinates below
+        // were measured in those rasters, without scaling or translating pixels.
+        // Pillarbox assumes a 3840x1076 monitor: restore 98 right-bar pixels,
+        // since 3742+98=3840 and the measured right bar 526+98=624 (inferred crop).
+        // Its synthetic game top row x=624..3215, y=0 is made non-dark, expressly
+        // normalizing the source's sampled dark row; retain the 1076 height.
+        // Both reconstructions remove all text/art and overlay-preview (excluded
+        // from grabs). Removing the main app windows and letterbox taskbar is a
+        // disclosed scenario choice: these windows are not excluded by capture.
+        // Panel sides are the straight outer frame, body sides its inner column;
+        // panel_top is the outer top; first_option is the gem-choice dialog top.
+        // No Crafts Remaining is drawn: lowest_text is the CRAFT label bottom.
+        // Slots measure the black icon squares inside their rounded metallic
+        // bevels, not the surrounding 76px frames or the cyan preview boxes.
+        // Tolerance 5px is fixed from the blurred 4-6px bevel/edge bands visible
+        // on these source rasters, before evaluating the production resolver.
+        // These oracles cover the drawn three-gem dialog, not six-option text.
+        fn placement_frames() -> [PlacementFrame; 2] {
+            [
+                PlacementFrame {
+                    name: "pillarbox",
+                    png: include_bytes!("../tests/fixtures/ultrawide-placement/pillarbox.png"),
+                    size: (3840, 1076),
+                    raw: [0, 0, 3840, 1076],
+                    client: [624, 0, 2592, 1076],
+                    panel_sides: [1245, 1927],
+                    body_sides: [1255, 1917],
+                    panel_top: 161,
+                    first_option: 338,
+                    lowest_text: 642,
+                    slots: [[1463, 371, 50, 50], [1564, 371, 50, 50], [1664, 371, 50, 50]],
+                },
+                PlacementFrame {
+                    name: "letterbox",
+                    png: include_bytes!("../tests/fixtures/ultrawide-placement/letterbox.png"),
+                    size: (2556, 1440),
+                    // Observed at unobscured x=100: game through row 1079,
+                    // black from row 1080. Assume that inside raw client;
+                    // the original player's actual window rect is unknown.
+                    raw: [0, 0, 2556, 1080],
+                    client: [0, 0, 2556, 1080],
+                    panel_sides: [603, 1283],
+                    body_sides: [613, 1273],
+                    panel_top: 190,
+                    first_option: 343,
+                    lowest_text: 619,
+                    slots: [[819, 374, 50, 50], [919, 374, 50, 50], [1019, 374, 50, 50]],
+                },
+            ]
+        }
+
+        fn captured_placement(case: &PlacementFrame) -> (RenderedClientLatch, crate::ssot::regions::Resolved) {
+            let frame = image::load_from_memory(case.png).unwrap().to_rgba8();
+            assert_eq!(frame.dimensions(), case.size, "{} capture raster", case.name);
+            let mut latch = RenderedClientLatch::default();
+            latch.observe(Some(case.raw), (0, 0), case.size, || rendered_area(&frame));
+            let client = latch.observe(Some(case.raw), (0, 0), case.size, || rendered_area(&frame));
+            (latch, auto_placement(case, client))
+        }
+
+        fn auto_placement(case: &PlacementFrame, client: [i32; 4]) -> crate::ssot::regions::Resolved {
+            let slice = crate::ssot::screen_from_geometry(case.size.0, case.size.1, 7, (0, 0), client, 123);
+            crate::ssot::regions::resolve(
+                Some(&slice), &crate::ssot::regions::OcrRegionsSetting::default(), Some(case.size),
+            )
+        }
+
+        /// Silent consequence: OCR reads the wrong pixels on ultrawide and letterboxed setups.
+        #[test]
+        fn measured_capture_frames_select_the_rendered_client() {
+            for case in placement_frames() {
+                let frame = image::load_from_memory(case.png).unwrap().to_rgba8();
+                let mut latch = RenderedClientLatch::default();
+                let probe = rendered_area(&frame);
+                let expected_probe = (case.name == "pillarbox").then_some(case.client);
+                assert_eq!(probe, expected_probe, "{} measured pixel trim", case.name);
+                assert_eq!(latch.observe(Some(case.raw), (0, 0), case.size, || rendered_area(&frame)), case.raw,
+                    "{} first observation", case.name);
+                assert_eq!(latch.observe(Some(case.raw), (0, 0), case.size, || rendered_area(&frame)), case.client,
+                    "{} second observation", case.name);
+                if case.name == "letterbox" {
+                    let whole = [0, 0, 2556, 1440];
+                    let mut unsupported = RenderedClientLatch::default();
+                    for _ in 0..2 {
+                        assert_eq!(unsupported.observe(Some(whole), (0, 0), case.size, || rendered_area(&frame)), whole,
+                            "top-aligned asymmetric bars cannot trim a whole-monitor client");
+                    }
+                }
+            }
+        }
+
+        fn font_covers_content(case: &PlacementFrame, [x, y, w, h]: [i32; 4]) -> bool {
+            let tolerance = 5;
+            x >= case.panel_sides[0] - tolerance
+                && x + w <= case.panel_sides[1] + tolerance
+                && x <= case.body_sides[0] + tolerance
+                && x + w >= case.body_sides[1] - tolerance
+                && y > case.panel_top
+                && y <= case.first_option + tolerance
+                && y + h >= case.lowest_text - tolerance
+        }
+
+        /// Silent consequence: OCR reads the wrong pixels on ultrawide and letterboxed setups.
+        #[test]
+        fn measured_auto_font_covers_the_panel_body() {
+            // Read-only known-good control, independently measured at native pixels:
+            // straight outer frame x=287..968, top=214; body x=297..958;
+            // gem dialog top=343; CRAFT bottom=592 (no Crafts Remaining).
+            // Its title band ends around y=265, which is not an OCR top bound.
+            let reference = PlacementFrame {
+                name: "accepted-1080p",
+                png: include_bytes!("../tests/fixtures/lab/font-gems-1080p.png"),
+                size: (1920, 1080),
+                raw: [0, 0, 1920, 1080],
+                client: [0, 0, 1920, 1080],
+                panel_sides: [287, 968],
+                body_sides: [297, 958],
+                panel_top: 214,
+                first_option: 343,
+                lowest_text: 592,
+                // Only Font coverage is checked on the reference.
+                slots: [[0; 4]; 3],
+            };
+            for case in placement_frames().into_iter().chain([reference]) {
+                let (_, resolved) = captured_placement(&case);
+                let font = resolved.placements.lab.font;
+                // Reuse precisely the same containment oracle for real placements
+                // and a crop whose top cuts the independently measured first content.
+                let cut_top = case.first_option + 6;
+                let cut = [font[0], cut_top, font[2], font[1] + font[3] - cut_top];
+                for (label, rect, expected) in [("Auto", font, true), ("content cut", cut, false)] {
+                    assert_eq!(font_covers_content(&case, rect), expected,
+                        "PLACEMENT-BUG POE-501 {} {label} Font {rect:?}: expected coverage {expected}; panel {:?}, body {:?}, top {} < crop <= first content {} (+5px), bottom >= {} (-5px)",
+                        case.name, case.panel_sides, case.body_sides, case.panel_top, case.first_option, case.lowest_text);
+                }
+            }
+        }
+
+        /// Silent consequence: OCR reads the wrong pixels on ultrawide and letterboxed setups.
+        #[test]
+        fn measured_auto_slots_cover_the_three_icon_squares() {
+            for case in placement_frames() {
+                let (_, resolved) = captured_placement(&case);
+                for (index, (actual, measured)) in resolved.placements.lab.gem_slots.iter().zip(case.slots).enumerate() {
+                    let edges = |[x, y, w, h]: [i32; 4]| [x, y, x + w, y + h];
+                    for (edge, (actual_edge, measured_edge)) in edges(*actual).into_iter().zip(edges(measured)).enumerate() {
+                        assert!((actual_edge - measured_edge).abs() <= 5,
+                            "PLACEMENT-BUG POE-501 {} slot {index} edge {edge}: actual {actual:?}, measured {measured:?}, tolerance 5",
+                            case.name);
+                    }
+                }
+            }
+        }
+
+        /// Silent consequence: OCR reads the wrong pixels on ultrawide and letterboxed setups.
+        #[test]
+        fn recalibrate_preserves_measured_capture_placement() {
+            for case in placement_frames() {
+                let (latch, captured) = captured_placement(&case);
+                let client = latch.select(Some(case.raw), (0, 0), case.size);
+                assert_eq!(client, case.client, "{} Recalibrate selected client", case.name);
+                let recalibrated = auto_placement(&case, client);
+                assert_eq!(recalibrated.placements.lab.font, captured.placements.lab.font, "{} Font parity", case.name);
+                assert_eq!(recalibrated.placements.lab.gem_slots, captured.placements.lab.gem_slots, "{} slot parity", case.name);
+            }
+        }
+
+        /// Silent consequence: OCR reads the wrong pixels on ultrawide and letterboxed setups.
+        #[test]
+        fn recalibrate_diagnostic_identifies_the_measured_client() {
+            for case in placement_frames() {
+                let (latch, _) = captured_placement(&case);
+                let client = latch.select(Some(case.raw), (0, 0), case.size);
+                let line = recalibrate_client_diagnostic(Some(case.raw), (0, 0), case.size, client);
+                let expected = if case.name == "pillarbox" {
+                    "client used [624, 0, 2592, 1076] (client inside the capture; rendered-area trim)"
+                } else {
+                    "client used [0, 0, 2556, 1080] (client inside the capture)"
+                };
+                assert!(line.contains(expected), "{} diagnostic: {line}", case.name);
+            }
+        }
+
         /// Silent consequence: trusted crops move into black bars or reuse another display's geometry.
         #[test]
         fn an_all_black_frame_keeps_the_latched_client() {
