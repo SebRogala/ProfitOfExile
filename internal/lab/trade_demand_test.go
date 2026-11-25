@@ -283,3 +283,34 @@ func TestBuildTradeDemand_UntieredCheapUnpricedRetained(t *testing.T) {
 		})
 	}
 }
+
+// keep:happy — ruled acceptance: a low-confidence FLOOR-band gem in a deep
+// variant stays trade-demand-eligible.
+func TestKeepHappy_BuildTradeDemandKeepsLowConfidenceFloorKey(t *testing.T) {
+	gems := []GemPrice{
+		demandGem("A", "20/20", 1000), demandGem("B", "20/20", 800),
+		demandGem("C", "20/20", 600), demandGem("D", "20/20", 400),
+		demandGem("E", "20/20", 300), demandGem("F", "20/20", 200),
+	}
+	thin := demandGem("Thin", "20/20", 10)
+	thin.Listings = 2 // under 0.4 × the variant median of 20
+	gems = append(gems, thin)
+
+	fixture := ComputeGemClassification(gems).Gems[GemClassificationKey{Name: "Thin", Variant: "20/20"}]
+	if fixture.Tier != tier.Floor || !fixture.LowConfidence {
+		t.Fatalf("fixture classification = %+v, want low-confidence FLOOR", fixture)
+	}
+
+	want := resolve.GemKey("Temp-demand", "Thin", "20/20")
+	got := BuildTradeDemand(league.Historical("Temp-demand"), demandSnapshot, gems)
+	for _, d := range got {
+		if d.Key == want {
+			return
+		}
+	}
+	keys := make([]resolve.Key, 0, len(got))
+	for _, d := range got {
+		keys = append(keys, d.Key)
+	}
+	t.Fatalf("demand keys = %+v, want %+v (low-confidence FLOOR key stays eligible)", keys, want)
+}
