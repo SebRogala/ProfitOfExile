@@ -125,6 +125,35 @@ export interface Placements {
 	lab: LabPlacements;
 }
 
+type Rect = [number, number, number, number];
+
+/** The game monitor a Manual OCR set was placed on (Rust `ScreenRef`). */
+export interface OcrScreenRef {
+	width: number;
+	height: number;
+	origin: [number, number];
+	at_ms: number;
+}
+
+/** Rust `ManualRegionsView`; each region may be unset. */
+export interface ManualOcrRegions {
+	setOn: OcrScreenRef;
+	edited: boolean;
+	labGem: Rect | null;
+	labFont: Rect | null;
+	labGemSlots: Rect | null;
+	templePanel: Rect | null;
+	mercPanel: Rect | null;
+}
+
+/** Rust `OcrRegionsSnapshot` (POE-411, ADR-036). */
+export interface OcrRegionsSnapshot {
+	mode: 'auto' | 'manual';
+	manual: ManualOcrRegions | null;
+	auto: Placements | null;
+	screenWarning: { setOn: OcrScreenRef; live: OcrScreenRef } | null;
+}
+
 /**
  * The screen the game is drawn on and the game-UI scale measured on it
  * (POE-214). TypeScript mirror of Rust's `ScreenSlice`.
@@ -385,6 +414,8 @@ export interface SsotSnapshot {
 	overlayDismiss?: DismissSnapshot;
 	/** The read prompt, Rust-owned by `read_prompt.rs`. */
 	readPrompt?: ReadPromptSnapshot;
+	/** The exclusive Auto/Manual OCR regions, Rust-owned. */
+	ocrRegions?: OcrRegionsSnapshot;
 }
 
 /**
@@ -454,6 +485,8 @@ export const ssot = $state({
 	overlayDismiss: null as DismissSnapshot | null,
 	/** No prompt until Rust answers. */
 	readPrompt: { mechanic: null, noMatch: false, recalibrating: false, seq: 0, gemUncertain: [false, false, false], recalibrateOffer: false } as ReadPromptSnapshot,
+	/** Unknown until Rust answers. */
+	ocrRegions: null as OcrRegionsSnapshot | null,
 });
 
 /** The three market fields, which share the write-through + poll-guard machinery. */

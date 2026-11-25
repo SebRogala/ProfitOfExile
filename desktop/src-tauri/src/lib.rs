@@ -798,7 +798,11 @@ fn set_server_url(url: String, app: AppHandle) {
 /// This assembles owners' published geometry only; it never captures or OCRs.
 #[tauri::command]
 fn get_ocr_rects(state: tauri::State<AppState>) -> Vec<OcrRectView> {
-    let snapshot = ssot::build_snapshot(&state);
+    ocr_rects_for(&state)
+}
+
+fn ocr_rects_for(state: &AppState) -> Vec<OcrRectView> {
+    let snapshot = ssot::build_snapshot(state);
     let temple_rects = snapshot.placements.temple.and_then(|temple| {
         let scale = snapshot
             .screen
@@ -2075,6 +2079,56 @@ mod tests {
         let font_view = rects.iter().find(|rect| rect.key == "lab.font").unwrap();
 
         assert_eq!(font_view.rows, vec![[506, 373, 48, 48], [605, 373, 48, 48], [704, 373, 48, 48]]);
+    }
+
+    mod keep_critical {
+        use super::*;
+
+        /// Silent consequence: a Manual merc preview cut at the Auto
+        /// `ui_scale` shows a crop and rows the reader does not use, so the
+        /// player places the panel against a silently wrong picture.
+        #[test]
+        fn a_manual_merc_panel_preview_uses_the_manual_scale_not_the_auto_ui_scale() {
+            let panel = [1406, 738, 666, 572];
+            let manual_scale = 1.2_f32;
+            let state = crate::settings::tests::test_app_state();
+            *state.screen.lock().unwrap() = Some(measured_screen(3440, 1440, 0.9, None));
+            *state.game_monitor.lock().unwrap() =
+                Some(crate::capture::GameMonitor { id: 1, x: 0, y: 0, width: 3440, height: 1440 });
+            *state.ocr_regions.lock().unwrap() = crate::ssot::OcrRegionsSetting {
+                mode: crate::ssot::OcrRegionsMode::Manual,
+                manual: Some(crate::ssot::ManualRegions {
+                    set_on: crate::ssot::ScreenRef { width: 3440, height: 1440, origin: [0, 0], at_ms: 1_732_400_000_000 },
+                    edited: true,
+                    lab_gem: None,
+                    lab_font: None,
+                    lab_gem_slots: None,
+                    temple_panel: None,
+                    merc_panel: Some(panel),
+                }),
+            };
+            let geometry = crate::mercenary::MercGeometry::default();
+
+            let rects = crate::ocr_rects_for(&state);
+
+            let merc = rects.iter().find(|rect| rect.key == "merc.panel").expect("merc preview row");
+            assert_eq!(
+                merc.rect,
+                Some(crate::mercenary::geometry::placed_panel_crop(panel, manual_scale, [3440, 1440])),
+                "crop at scale 666/555 = 1.2"
+            );
+            assert_eq!(
+                merc.rows,
+                crate::mercenary::geometry::placed_row_rects(
+                    panel,
+                    &geometry,
+                    manual_scale,
+                    geometry.row_pitch * manual_scale,
+                    None,
+                ),
+                "rows at scale 1.2"
+            );
+        }
     }
 
     #[test]

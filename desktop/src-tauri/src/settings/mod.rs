@@ -4700,6 +4700,70 @@ pub(crate) mod tests {
                 written.as_object_mut().unwrap().remove("ocr_regions");
                 assert_eq!(written, fixture, "every pre-existing field survives load -> save -> load");
             }
+
+            /// Silent consequence: a Manual save committed to `AppState`
+            /// outside the write lock lets a concurrent whole-file save write
+            /// the old set back, so the app reads with the new set while the
+            /// file keeps the old one and the next launch loses the edits.
+            #[test]
+            fn a_manual_save_racing_whole_file_saves_leaves_the_file_and_state_on_the_saved_set() {
+                use std::sync::atomic::{AtomicBool, Ordering};
+                const N: usize = 200;
+                let live = ScreenRef { width: 3440, height: 1440, origin: [0, 0], at_ms: 1_732_500_000_000 };
+                let set = |x: i32| ManualRegions {
+                    set_on: ScreenRef { at_ms: 1, ..live },
+                    edited: false,
+                    lab_gem: None,
+                    lab_font: Some([x, 293, 888, 908]),
+                    lab_gem_slots: None,
+                    temple_panel: None,
+                    merc_panel: None,
+                };
+                let dir = fresh_test_dir("ocr_regions_commit_under_lock");
+                let path = dir.join(SETTINGS_FILENAME);
+                let state = test_app_state();
+                *state.game_monitor.lock().unwrap() =
+                    Some(crate::capture::GameMonitor { id: 1, x: 0, y: 0, width: 3440, height: 1440 });
+                *state.ocr_regions.lock().unwrap() = OcrRegionsSetting { mode: OcrRegionsMode::Manual, manual: Some(set(837)) };
+                save_to(&path, &from_state(&state)).unwrap();
+                let stop = AtomicBool::new(false);
+
+                let mismatches = std::thread::scope(|scope| {
+                    scope.spawn(|| {
+                        while !stop.load(Ordering::Relaxed) {
+                            let _ = update_at(&path, |loaded| loaded.unwrap_or_default(), |existing| {
+                                let mut target = from_state(&state);
+                                merge_stored_rows(existing, &mut target);
+                                target
+                            });
+                        }
+                    });
+                    let mut mismatches = Vec::new();
+                    for i in 0..N {
+                        let placed = set(if i % 2 == 0 { 1820 } else { 1700 });
+                        let result = crate::ssot::regions::save_manual_regions_at(&state, Some(&path), placed, Some(live));
+                        let want = OcrRegionsSetting {
+                            mode: OcrRegionsMode::Manual,
+                            manual: Some(ManualRegions { set_on: live, edited: true, ..placed }),
+                        };
+                        let file = load_from(&path).map(|s| s.ocr_regions).ok();
+                        let held = *state.ocr_regions.lock().unwrap();
+                        if result.is_err() || file != Some(want) || held != want {
+                            mismatches.push((i, result, file, held));
+                        }
+                    }
+                    stop.store(true, Ordering::Relaxed);
+                    mismatches
+                });
+                let _ = fs::remove_dir_all(&dir);
+
+                assert!(
+                    mismatches.is_empty(),
+                    "{} of {N} saves left the file or AppState off the saved set; first: {:?}",
+                    mismatches.len(),
+                    mismatches.first()
+                );
+            }
         }
     }
 }

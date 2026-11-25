@@ -521,6 +521,8 @@ pub struct AppSsotSnapshot {
     /// The "press <key> to read" prompt (POE-388), read from the owner
     /// `AppState.read_prompt` at snapshot time — not stored in `AppState.ssot`.
     pub read_prompt: crate::read_prompt::ReadPromptSnapshot,
+    /// The exclusive Auto/Manual OCR regions (POE-411, ADR-036).
+    pub ocr_regions: regions::OcrRegionsSnapshot,
     // future slices (e.g. account, config) added here as later tasks land.
 }
 

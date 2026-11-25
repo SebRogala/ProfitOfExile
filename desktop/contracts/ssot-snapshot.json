@@ -478,5 +478,68 @@
       true
     ],
     "recalibrateOffer": false
+  },
+  "ocrRegions": {
+    "mode": "auto",
+    "manual": null,
+    "auto": {
+      "temple": {
+        "entranceOrigin": [
+          960,
+          713
+        ]
+      },
+      "merc": {
+        "panel": [
+          100,
+          200,
+          555,
+          477
+        ]
+      },
+      "exchange": {
+        "panel": [
+          267,
+          128,
+          861,
+          944
+        ]
+      },
+      "lab": {
+        "gem": [
+          0,
+          0,
+          1920,
+          44
+        ],
+        "font": [
+          224,
+          244,
+          740,
+          757
+        ],
+        "gemSlots": [
+          [
+            456,
+            415,
+            53,
+            53
+          ],
+          [
+            566,
+            415,
+            53,
+            53
+          ],
+          [
+            676,
+            415,
+            53,
+            53
+          ]
+        ]
+      }
+    },
+    "screenWarning": null
   }
 }

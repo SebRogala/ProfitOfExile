@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	ssot,
 	applySnapshot,
+	type OcrRegionsSnapshot,
 	type Placements,
 	type ScreenSlice,
 	type SsotSnapshot
@@ -1692,6 +1693,25 @@ const referencePlacements: Placements = {
 	}
 };
 
+// A Manual set saved on 3440x1440 and read on a 2560x1440 game monitor (POE-411).
+const referenceOcrRegions: OcrRegionsSnapshot = {
+	mode: 'manual',
+	manual: {
+		setOn: { width: 3440, height: 1440, origin: [0, 0], at_ms: 1732400000000 },
+		edited: true,
+		labGem: [0, 0, 3440, 64],
+		labFont: [1820, 293, 888, 908],
+		labGemSlots: null,
+		templePanel: null,
+		mercPanel: [1406, 738, 666, 572]
+	},
+	auto: referencePlacements,
+	screenWarning: {
+		setOn: { width: 3440, height: 1440, origin: [0, 0], at_ms: 1732400000000 },
+		live: { width: 2560, height: 1440, origin: [0, 0], at_ms: 1732500000000 }
+	}
+};
+
 // A `ScreenSlice` carrying a source string Rust never emits. Deliberately not a
 // test case: there is no runtime behaviour to assert (reading back a value the
 // literal just set would be a tautology), and the `@ts-expect-error` below IS
@@ -1715,13 +1735,15 @@ describe('screen slice (POE-214)', () => {
 		const snap: SsotSnapshot = {
 			league: { name: 'Mirage' },
 			screen: referenceScreen,
-			placements: referencePlacements
+			placements: referencePlacements,
+			ocrRegions: referenceOcrRegions
 		};
 
 		applySnapshot(snap);
 
 		expect(ssot.screen).toEqual(referenceScreen);
 		expect(ssot.placements).toEqual(referencePlacements);
+		expect(ssot.ocrRegions).toEqual(referenceOcrRegions);
 	});
 
 	// `screen: null` rather than an absent key, because that is the payload Rust

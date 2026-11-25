@@ -344,6 +344,63 @@ pub(super) fn log_edges(setting: &OcrRegionsSetting, capture: Option<(u32, u32)>
     }
 }
 
+/// The snapshot's `ocrRegions` projection.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrRegionsSnapshot {
+    pub mode: OcrRegionsMode,
+    pub manual: Option<ManualRegionsView>,
+    pub auto: Option<Placements>,
+    pub screen_warning: Option<ScreenWarning>,
+}
+
+/// The camelCase snapshot mirror of [`ManualRegions`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualRegionsView {
+    pub set_on: ScreenRef,
+    pub edited: bool,
+    pub lab_gem: Option<[i32; 4]>,
+    pub lab_font: Option<[i32; 4]>,
+    pub lab_gem_slots: Option<[i32; 4]>,
+    pub temple_panel: Option<[i32; 4]>,
+    pub merc_panel: Option<[i32; 4]>,
+}
+
+/// The Manual set was placed on a different game monitor than the live one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenWarning {
+    pub set_on: ScreenRef,
+    pub live: ScreenRef,
+}
+
+pub fn screen_warning(_set_on: ScreenRef, _live: ScreenRef) -> Option<ScreenWarning> {
+    None
+}
+
+pub fn recalibrate_allowed(_state: &crate::AppState) -> Result<(), String> {
+    Ok(())
+}
+
+pub fn set_mode_at(
+    _state: &crate::AppState,
+    _path: Option<&std::path::Path>,
+    _mode: OcrRegionsMode,
+    _live: Option<ScreenRef>,
+) -> Result<(), String> {
+    Ok(())
+}
+
+pub fn save_manual_regions_at(
+    _state: &crate::AppState,
+    _path: Option<&std::path::Path>,
+    _regions: ManualRegions,
+    _live: Option<ScreenRef>,
+) -> Result<(), String> {
+    Ok(())
+}
+
 /// The Entrance origin and shared ui_scale a temple panel rect implies — the
 /// inverse of the temple panel rule.
 pub fn origin_scale_for_panel(rect: [i32; 4]) -> ((i32, i32), f32) {
@@ -383,6 +440,272 @@ mod tests {
     /// client is the whole monitor, so Auto scales it at ui 1.2.
     fn whole_capture_2560x1440() -> ScreenSlice {
         screen_from_geometry(2560, 1440, 1, (0, 0), [0, 0, 2560, 1440], 0)
+    }
+
+    /// The live game monitor the command cores are handed, stamped later than
+    /// [`SET_ON_3440`] so a test can tell a fresh stamp from a kept one.
+    const LIVE_3440: ScreenRef = ScreenRef { width: 3440, height: 1440, origin: [0, 0], at_ms: 1_732_500_000_000 };
+    const LIVE_2560: ScreenRef = ScreenRef { width: 2560, height: 1440, origin: [0, 0], at_ms: 1_732_600_000_000 };
+
+    fn game_monitor(live: ScreenRef) -> crate::capture::GameMonitor {
+        crate::capture::GameMonitor { id: 1, x: live.origin[0], y: live.origin[1], width: live.width, height: live.height }
+    }
+
+    /// A test `AppState` on `live`'s game monitor, holding `setting`.
+    fn state_on(live: Option<ScreenRef>, screen: Option<ScreenSlice>, setting: OcrRegionsSetting) -> crate::AppState {
+        let state = crate::settings::tests::test_app_state();
+        *state.game_monitor.lock().unwrap() = live.map(game_monitor);
+        *state.screen.lock().unwrap() = screen;
+        *state.ocr_regions.lock().unwrap() = setting;
+        state
+    }
+
+    /// A fresh settings path under the temp dir; the caller removes the dir.
+    fn settings_path(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("poe_test_regions_{}_{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        (dir.join("settings.json"), dir)
+    }
+
+    /// Write `state` to `path` the way every whole-file save does.
+    fn persist(state: &crate::AppState, path: &std::path::Path) {
+        crate::settings::update_at(path, |loaded| loaded.unwrap_or_default(), |_| crate::settings::from_state(state))
+            .unwrap();
+    }
+
+    fn slice_3440x1440() -> ScreenSlice {
+        screen_from_geometry(3440, 1440, 1, (0, 0), [0, 0, 3440, 1440], 0)
+    }
+
+    fn snapshot_ocr_regions(state: &crate::AppState) -> serde_json::Value {
+        serde_json::to_value(crate::ssot::build_snapshot(state)).unwrap()["ocrRegions"].clone()
+    }
+
+    fn screen_json(screen: &serde_json::Value) -> (serde_json::Value, serde_json::Value, serde_json::Value) {
+        (screen["width"].clone(), screen["height"].clone(), screen["origin"].clone())
+    }
+
+    mod commands {
+        use super::*;
+
+        mod keep_happy {
+            use super::*;
+
+            enum Expect {
+                /// The snapshot after the switch: mode, `manual.labFont`, the
+                /// `setOn` monitor, `edited`, and whether `auto` is projected.
+                Snapshot { lab_font: serde_json::Value, five_null: bool, auto_null: bool },
+                /// The setting the switch leaves in `AppState`.
+                State(OcrRegionsSetting),
+            }
+
+            /// WI-3 example 1 and the 2026-11-25 seeding rulings: the first
+            /// Manual switch seeds from Auto (all five null with no Auto slice),
+            /// a stored set comes back with its own stamp, and Auto keeps it.
+            #[test]
+            fn set_mode_at_leaves_the_set_each_switch_names() {
+                let stored = ManualRegions { lab_font: Some([1820, 293, 888, 908]), ..unset_on(SET_ON_3440) };
+                let cases = [
+                    (
+                        "Auto on 3440x1440, no stored set: Manual seeds the Auto Font",
+                        Some(slice_3440x1440()),
+                        OcrRegionsSetting::default(),
+                        OcrRegionsMode::Manual,
+                        Expect::Snapshot { lab_font: serde_json::json!([837, 293, 888, 908]), five_null: false, auto_null: false },
+                    ),
+                    (
+                        "known monitor, no Auto slice: Manual seeds all five null",
+                        None,
+                        OcrRegionsSetting::default(),
+                        OcrRegionsMode::Manual,
+                        Expect::Snapshot { lab_font: serde_json::Value::Null, five_null: true, auto_null: true },
+                    ),
+                    (
+                        "Auto with a stored set: Manual restores it with its original stamp",
+                        Some(slice_3440x1440()),
+                        OcrRegionsSetting { mode: OcrRegionsMode::Auto, manual: Some(stored) },
+                        OcrRegionsMode::Manual,
+                        Expect::State(OcrRegionsSetting { mode: OcrRegionsMode::Manual, manual: Some(stored) }),
+                    ),
+                    (
+                        "Manual with a stored set: Auto keeps the set",
+                        Some(slice_3440x1440()),
+                        manual(stored),
+                        OcrRegionsMode::Auto,
+                        Expect::State(OcrRegionsSetting { mode: OcrRegionsMode::Auto, manual: Some(stored) }),
+                    ),
+                ];
+
+                for (case, screen, setting, mode, expect) in cases {
+                    let (path, dir) = settings_path("set_mode");
+                    let state = state_on(Some(LIVE_3440), screen, setting);
+
+                    let result = set_mode_at(&state, Some(&path), mode, Some(LIVE_3440));
+                    let regions = snapshot_ocr_regions(&state);
+                    let after = *state.ocr_regions.lock().unwrap();
+                    let _ = std::fs::remove_dir_all(&dir);
+
+                    assert_eq!(result, Ok(()), "{case}");
+                    match expect {
+                        Expect::Snapshot { lab_font, five_null, auto_null } => {
+                            assert_eq!(regions["mode"], "manual", "{case}: {regions}");
+                            let set = &regions["manual"];
+                            assert_eq!(set["labFont"], lab_font, "{case}: {regions}");
+                            assert_eq!(
+                                screen_json(&set["setOn"]),
+                                (serde_json::json!(3440), serde_json::json!(1440), serde_json::json!([0, 0])),
+                                "{case}: {regions}"
+                            );
+                            assert_eq!(set["edited"], false, "{case}: a seed is not an edit: {regions}");
+                            assert_eq!(regions["screenWarning"], serde_json::Value::Null, "{case}: {regions}");
+                            assert_eq!(regions["auto"].is_null(), auto_null, "{case}: {regions}");
+                            if five_null {
+                                for key in ["labGem", "labFont", "labGemSlots", "templePanel", "mercPanel"] {
+                                    assert_eq!(set[key], serde_json::Value::Null, "{case}: {key} in {regions}");
+                                }
+                            }
+                        }
+                        Expect::State(want) => assert_eq!(after, want, "{case}"),
+                    }
+                }
+            }
+
+            /// WI-3 example 2 (AC-3): Recalibrate is refused in Manual and
+            /// allowed again once the mode is back to Auto.
+            #[test]
+            fn recalibrate_is_refused_only_while_ocr_regions_are_manual() {
+                let stored = ManualRegions { lab_font: Some([1820, 293, 888, 908]), ..unset_on(SET_ON_3440) };
+                let cases = [
+                    ("Manual", manual(stored), Err("Recalibrate refused: OCR regions are Manual".to_string())),
+                    ("Auto with a stored set", OcrRegionsSetting { mode: OcrRegionsMode::Auto, manual: Some(stored) }, Ok(())),
+                ];
+
+                for (case, setting, want) in cases {
+                    let state = state_on(Some(LIVE_3440), Some(slice_3440x1440()), setting);
+
+                    assert_eq!(recalibrate_allowed(&state), want, "{case}");
+                }
+            }
+
+            /// WI-3 example 3 (AC-4): a set saved on 3440x1440 warns on a
+            /// 2560x1440 game monitor and stops warning back on 3440x1440.
+            #[test]
+            fn the_snapshot_screen_warning_follows_the_live_game_monitor() {
+                let (path, dir) = settings_path("screen_warning");
+                // Stamped on 2560x1440 before this save, so only the save's
+                // fresh stamp can make the 2560x1440 monitor the mismatch.
+                let earlier = ScreenRef { at_ms: 1_732_300_000_000, ..LIVE_2560 };
+                let state = state_on(Some(LIVE_3440), Some(slice_3440x1440()), manual(unset_on(earlier)));
+                let placed = ManualRegions { lab_font: Some([1820, 293, 888, 908]), ..unset_on(earlier) };
+
+                let saved = save_manual_regions_at(&state, Some(&path), placed, Some(LIVE_3440));
+                *state.game_monitor.lock().unwrap() = Some(game_monitor(LIVE_2560));
+                let elsewhere = snapshot_ocr_regions(&state)["screenWarning"].clone();
+                *state.game_monitor.lock().unwrap() = Some(game_monitor(LIVE_3440));
+                let back = snapshot_ocr_regions(&state)["screenWarning"].clone();
+                let _ = std::fs::remove_dir_all(&dir);
+
+                assert_eq!(saved, Ok(()));
+                assert_eq!(
+                    (screen_json(&elsewhere["setOn"]), screen_json(&elsewhere["live"])),
+                    (
+                        (serde_json::json!(3440), serde_json::json!(1440), serde_json::json!([0, 0])),
+                        (serde_json::json!(2560), serde_json::json!(1440), serde_json::json!([0, 0])),
+                    ),
+                    "warning on 2560x1440: {elsewhere}"
+                );
+                assert_eq!(back, serde_json::Value::Null, "back on 3440x1440");
+            }
+        }
+
+        mod keep_critical {
+            use super::*;
+
+            enum Call {
+                Save(ManualRegions, Option<ScreenRef>),
+                Mode(OcrRegionsMode, Option<ScreenRef>),
+            }
+
+            const UNKNOWN_MONITOR: &str = "game monitor unknown: focus the game once, then save";
+
+            /// Silent consequence: a saved crop past the image (or a set
+            /// stamped against no monitor) reads the wrong pixels on every
+            /// press with nothing on screen to say so; a refused call must
+            /// leave both the running set and the settings file as they were.
+            #[test]
+            fn a_refused_save_or_switch_leaves_the_state_and_the_file_byte_identical() {
+                let stored = ManualRegions { lab_font: Some([1820, 293, 888, 908]), ..unset_on(SET_ON_3440) };
+                let cases = [
+                    (
+                        "Font right edge at 3888 on a 3440-wide capture",
+                        manual(stored),
+                        Call::Save(ManualRegions { lab_font: Some([3000, 293, 888, 908]), ..stored }, Some(LIVE_3440)),
+                        None,
+                    ),
+                    (
+                        "a zero-width gem tooltip",
+                        manual(stored),
+                        Call::Save(ManualRegions { lab_gem: Some([0, 0, 0, 64]), ..stored }, Some(LIVE_3440)),
+                        None,
+                    ),
+                    (
+                        "a save with the game monitor unknown",
+                        manual(stored),
+                        Call::Save(stored, None),
+                        Some(UNKNOWN_MONITOR),
+                    ),
+                    (
+                        "a first Manual switch with the game monitor unknown",
+                        OcrRegionsSetting::default(),
+                        Call::Mode(OcrRegionsMode::Manual, None),
+                        Some(UNKNOWN_MONITOR),
+                    ),
+                ];
+
+                for (case, setting, call, message) in cases {
+                    let (path, dir) = settings_path("refused");
+                    let live = match call {
+                        Call::Save(_, live) | Call::Mode(_, live) => live,
+                    };
+                    let state = state_on(live, Some(slice_3440x1440()), setting);
+                    persist(&state, &path);
+                    let before = std::fs::read(&path).unwrap();
+
+                    let result = match call {
+                        Call::Save(regions, live) => save_manual_regions_at(&state, Some(&path), regions, live),
+                        Call::Mode(mode, live) => set_mode_at(&state, Some(&path), mode, live),
+                    };
+                    let after = std::fs::read(&path).unwrap();
+                    let _ = std::fs::remove_dir_all(&dir);
+
+                    match message {
+                        Some(message) => assert_eq!(result, Err(message.to_string()), "{case}"),
+                        None => assert!(result.is_err(), "{case}: {result:?}"),
+                    }
+                    assert_eq!(*state.ocr_regions.lock().unwrap(), setting, "{case}: AppState set");
+                    assert!(after == before, "{case}: the settings file changed");
+                }
+            }
+
+            /// Silent consequence: a save the file refused but `AppState`
+            /// took makes the app read with a set the next launch has lost,
+            /// and the player is told nothing.
+            #[test]
+            fn an_unreadable_settings_file_refuses_the_save_with_the_old_set_still_in_state() {
+                let (path, dir) = settings_path("unreadable");
+                let stored = ManualRegions { lab_font: Some([1820, 293, 888, 908]), ..unset_on(SET_ON_3440) };
+                let state = state_on(Some(LIVE_3440), Some(slice_3440x1440()), manual(stored));
+                std::fs::write(&path, "{ not json").unwrap();
+                let moved = ManualRegions { lab_font: Some([1700, 293, 888, 908]), ..stored };
+
+                let result = save_manual_regions_at(&state, Some(&path), moved, Some(LIVE_3440));
+                let _ = std::fs::remove_dir_all(&dir);
+
+                assert!(result.is_err(), "{result:?}");
+                assert_eq!(*state.ocr_regions.lock().unwrap(), manual(stored));
+            }
+        }
     }
 
     mod keep_happy {

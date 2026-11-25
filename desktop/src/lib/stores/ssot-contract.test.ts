@@ -17,6 +17,7 @@ import type {
 	ReadHotkeySettings,
 	ExchangeReadSettings,
 	DismissSnapshot,
+	OcrRegionsSnapshot,
 	ReadPromptSnapshot,
 	ScreenSlice,
 	ServerSlice,
@@ -43,7 +44,15 @@ const snapshotKeys: Record<keyof SsotSnapshot, true> = {
 	readHotkey: true,
 	exchangeRead: true,
 	overlayDismiss: true,
-	readPrompt: true
+	readPrompt: true,
+	ocrRegions: true
+};
+
+const ocrRegionsKeys: Record<keyof OcrRegionsSnapshot, true> = {
+	mode: true,
+	manual: true,
+	auto: true,
+	screenWarning: true
 };
 
 const readHotkeyKeys: Record<keyof ReadHotkeySettings, true> = {
@@ -178,7 +187,8 @@ describe('ssot-snapshot.json golden matches SsotSnapshot', () => {
 		['readHotkey', readHotkeyKeys],
 		['exchangeRead', exchangeReadKeys],
 		['overlayDismiss', overlayDismissKeys],
-		['readPrompt', readPromptKeys]
+		['readPrompt', readPromptKeys],
+		['ocrRegions', ocrRegionsKeys]
 	] as const)('carries exactly the %s slice keys', (slice, table) => {
 		expect(keysOf(wire[slice])).toEqual(Object.keys(table).sort());
 	});

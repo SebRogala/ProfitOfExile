@@ -431,5 +431,11 @@
       true
     ],
     "recalibrateOffer": false
+  },
+  "ocrRegions": {
+    "mode": "auto",
+    "manual": null,
+    "auto": null,
+    "screenWarning": null
   }
 }
