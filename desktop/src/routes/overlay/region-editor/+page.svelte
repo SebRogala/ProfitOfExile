@@ -109,7 +109,9 @@
 		dispatch(gesture.edge ? { type: 'resize', edge: gesture.edge, ...delta } : { type: 'drag', ...delta });
 	}
 
-	function typeField(field: RectField, value: string) {
+	function applyField(event: KeyboardEvent, field: RectField) {
+		if (event.key !== 'Enter') return;
+		const value = (event.currentTarget as HTMLInputElement).value;
 		typedValues[field] = value;
 		dispatch({ type: 'typeField', field, value });
 	}
@@ -209,7 +211,7 @@
 			{:else if view.frame}
 				<div class="ep-fields">
 					{#each RECT_FIELDS as field, i}
-						<label>{field}<input aria-label={field} aria-invalid={!!draft.invalid[field]} class:bad={!!draft.invalid[field]} value={draft.invalid[field] ? typedValues[field] : view.frame[i]} inputmode="numeric" disabled={saving || view.leavePrompt} oninput={event => typeField(field, event.currentTarget.value)} /></label>
+						<label>{field}<input aria-label={field} aria-invalid={!!draft.invalid[field]} class:bad={!!draft.invalid[field]} value={draft.invalid[field] ? typedValues[field] : view.frame[i]} inputmode="numeric" disabled={saving || view.leavePrompt} oninput={event => { typedValues[field] = event.currentTarget.value; }} onkeydown={event => applyField(event, field)} /></label>
 					{/each}
 				</div>
 				{#if view.carried}<div class="ep-carried">Gem choice slots <span class="r">{numbers(view.carried)}</span></div>{/if}
