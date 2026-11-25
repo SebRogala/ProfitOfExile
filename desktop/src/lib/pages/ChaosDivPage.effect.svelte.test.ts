@@ -6,8 +6,8 @@
  * on the clipboard, and every exchange press reaches the page through the real
  * exchange-read store's registered listener, as the app layout starts it.
  */
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Component } from 'svelte';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as svelte from 'svelte';
 
 const mocks = vi.hoisted(() => ({
 	/** The handlers registered through Tauri's `listen`, by event name. */
@@ -24,30 +24,17 @@ vi.mock('@tauri-apps/api/event', () => ({
 	})
 }));
 
+import { startExchangeReadStore } from '$lib/tools/exchange-read.svelte';
+import ChaosDivPage from './ChaosDivPage.svelte';
+
 let mounted: Record<string, unknown> | null = null;
 let stopStore: (() => void) | null = null;
 let writeText: ReturnType<typeof vi.fn>;
-let svelte: typeof import('svelte');
-let ChaosDivPage: Component;
-let store: typeof import('$lib/tools/exchange-read.svelte');
 
-// The page, the store and mount/flushSync are loaded once, after one module reset, from the
-// same graph so they share one Svelte runtime; `svelte` is re-mocked after that reset because a
-// hoisted `vi.mock` factory result outlives it, which would leave the page's `onDestroy` and mount
-// on another runtime. Each case still starts from a null read: the store's stop clears it.
-beforeAll(async () => {
-	vi.resetModules();
-	// The `unit` project resolves no browser condition, and vite-plugin-svelte inlines `svelte`,
-	// so NODE_OPTIONS conditions never reach it: bare `svelte` is the server entry, whose `mount` throws.
-	vi.doMock('svelte', () => vi.importActual<typeof import('svelte')>('../../../node_modules/svelte/src/index-client.js'));
-	svelte = await import('svelte');
-	store = await import('$lib/tools/exchange-read.svelte');
-	ChaosDivPage = (await import('./ChaosDivPage.svelte')).default as Component;
-});
-
+// Each case starts from a null read: the store's stop in `afterEach` clears it.
 beforeEach(() => {
 	mocks.handlers = {};
-	stopStore = store.startExchangeReadStore();
+	stopStore = startExchangeReadStore();
 	writeText = vi.fn(async () => {});
 	Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
 });
