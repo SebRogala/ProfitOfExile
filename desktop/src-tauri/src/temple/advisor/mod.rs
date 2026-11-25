@@ -59,9 +59,6 @@ mod fixtures;
 // still reached only by tests — in `state`, `rollout` and `fixtures` — carry
 // their own attribute instead.
 pub mod convenience;
-// Analysis only (POE-415): no production caller, so it compiles with the tests.
-#[cfg(test)]
-mod option_simulation;
 pub mod rollout;
 pub mod rules;
 pub mod state;
