@@ -18,18 +18,26 @@ fn matches(image: &RgbImage, template: &RgbImage, x: i32, y: i32) -> bool {
     let w = template.width() as i32;
     let h = template.height() as i32;
     if x < 0 || y < 0 || w < 8 || h < 4 || x + w > image.width() as i32 || y + h > image.height() as i32 { return false; }
+    let n = template.width().div_ceil(2) as u64 * template.height().div_ceil(2) as u64 * 3;
+    // Source pixels match exactly. This tolerance admits resize interpolation;
+    // masked and darkened patches are rejected by the real-fixture tests.
+    let limit = n * 12;
     let mut error = 0u64;
-    let mut n = 0u64;
     for ty in (0..template.height()).step_by(2) {
         for tx in (0..template.width()).step_by(2) {
             let actual = image.get_pixel((x + tx as i32) as u32, (y + ty as i32) as u32);
             let expected = template.get_pixel(tx, ty);
-            for c in 0..3 { error += actual[c].abs_diff(expected[c]) as u64; n += 1; }
+            for c in 0..3 { error += actual[c].abs_diff(expected[c]) as u64; }
         }
+        if error >= limit { return false; }
     }
-    // Source pixels match exactly. This tolerance admits resize interpolation;
-    // masked and darkened patches are rejected by the real-fixture tests.
-    error < n * 12
+    error < limit
+}
+
+/// False-positive guard: the Divine Font title must sit in its column anywhere
+/// from the frame top down to `max_y`, so a lone CONFIRM does not match.
+fn font_title_above_popup(image: &RgbImage, title: &RgbImage, x: i32, max_y: i32, margin: i32) -> bool {
+    (0..=max_y).rev().any(|y| (-margin..=margin).any(|dx| matches(image, title, x + dx, y)))
 }
 
 pub(crate) fn probe(frame: &Capture, lab: &LabPlacements) -> Option<GemPanelEvidence> {
@@ -47,21 +55,19 @@ pub(crate) fn probe(frame: &Capture, lab: &LabPlacements) -> Option<GemPanelEvid
     let margin = (4.0 * scale).ceil() as i32;
     let (cx, cy) = ((2.0 * scale).round() as i32, (250.0 * scale).round() as i32);
     let left = (x - margin).min(x + cx - margin).max(0);
-    let top = (y - margin).max(0);
     let right = (x + margin + title.width() as i32).max(x + cx + margin + confirm.width() as i32)
         .min(frame.image.width() as i32);
     let bottom = (y + margin + title.height() as i32).max(y + cy + margin + confirm.height() as i32)
         .min(frame.image.height() as i32);
-    if right <= left || bottom <= top { return None; }
-    let image = frame.image.crop_imm(left as u32, top as u32, (right - left) as u32, (bottom - top) as u32).to_rgb8();
-    let (x, y) = (x - left, y - top);
-    for dy in -margin..=margin {
-        for dx in -margin..=margin {
-            if matches(&image, &title, x + dx, y + dy)
-                && matches(&image, &confirm, x + dx + cx, y + dy + cy) { return Some(GemPanelEvidence); }
-        }
-    }
-    None
+    if right <= left || bottom <= 0 { return None; }
+    let image = frame.image.crop_imm(left as u32, 0, (right - left) as u32, bottom as u32).to_rgb8();
+    let x = x - left;
+    let confirm_found = (-margin..=margin)
+        .any(|dy| (-margin..=margin).any(|dx| matches(&image, &confirm, x + cx + dx, y + cy + dy)));
+    // The Font window behind the popup grows with difficulty (Cruel lifts the
+    // title 26 px at 1080p) while the popup and CONFIRM stay fixed to the slots,
+    // so the title is searched upward to the frame top rather than at a fixed offset.
+    (confirm_found && font_title_above_popup(&image, &title, x, y + margin, margin)).then_some(GemPanelEvidence)
 }
 
 #[cfg(test)]
