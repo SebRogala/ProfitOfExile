@@ -24,6 +24,17 @@ describe('TopBar proxy error', () => {
 });
 
 
+describe('TopBar status dots', () => {
+	it('keep:happy: renders only the server status dot', () => {
+		const { body } = render(TopBar, { props: { status: { state: 'PickingGems', server_url: 'http://s' } } });
+		const dots = [...body.matchAll(/<span[^>]*class="status-dot[^"]*"[^>]*>/g)].map((m) => m[0]);
+
+		expect(dots).toHaveLength(1);
+		expect(dots[0]).toMatch(/title="Server: /);
+		expect(body).not.toMatch(/title="OCR Scanner/);
+	});
+});
+
 /** Fixture states (handoff fixtures.json → deviceMe), already normalized. */
 const REGISTERED: Registration = { state: 'registered', alias: 'Gaming PC', role: 'beta' };
 const REGISTERED_NO_ROLE: Registration = { state: 'registered', alias: 'Gaming PC', role: '' };
