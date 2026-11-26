@@ -156,4 +156,25 @@ mod tests {
         assert_eq!(*title, frame.image.crop_imm(540,216,176,40).to_rgb8());
         assert_eq!(*confirm, frame.image.crop_imm(542,466,170,36).to_rgb8());
     }
+
+    mod keep_regression {
+        use super::*;
+
+        // keep:regression (POE-503, Operator-reported): in a Cruel lab the Font window
+        // behind the gem pick is taller, so its title sits 26 px higher than in Normal
+        // while the 3-gem popup and CONFIRM stay within 1 px, and the pick went undetected.
+        // Fixture: the Operator's 1920x1080 JPEG capture (2026-11-26, Cruel lab), rect
+        // (x 282, y 138, w 690, h 536) decoded by the `image` crate and saved as PNG
+        // without re-encode; pasted back at that offset on a black 1080p canvas.
+        #[test]
+        fn cruel_font_window_gem_pick_matches() {
+            let crop = image::load_from_memory(
+                include_bytes!("../../tests/fixtures/lab/font-gems-cruel-1080p-crop.png")).unwrap();
+            let mut frame = frame();
+            frame.image = DynamicImage::new_rgb8(1920, 1080);
+            image::imageops::overlay(&mut frame.image, &crop, 282, 138);
+            assert!(probe(&frame, &crate::ssot::placements_for(None).lab).is_some(),
+                "the Cruel-height Font window's gem pick must be recognised");
+        }
+    }
 }

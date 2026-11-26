@@ -24,6 +24,19 @@ sibling pairs under gold/white washes, offsets and scales. Run it with
 `cargo test --lib gem_icon_pair_rmse_report -- --ignored --nocapture`. The
 certainty margin and its measured derivation live in `lab::gem_icons`.
 
+## `font-gems-cruel-1080p-crop.png`
+
+The Divine Font window during a Cruel-lab gem pick (POE-503), cropped from an
+Operator's 1920×1080 JPEG capture of 2026-11-26. The rect is x 282, y 138,
+w 690, h 536: the whole Font window, title ornament to below CRAFT, plus a few
+px. The JPEG was decoded by the `image` crate and the rect saved as PNG without
+re-encode, so the PNG holds exactly the decoded JPEG pixels (other decoders
+differ by a level or two). At this difficulty the window behind the gem popup
+is taller than in `font-gems-1080p.png`: its title sits 26 px higher and its
+CRAFT button lower, while the popup and CONFIRM stay within 1 px (CONFIRM
+matches 1 px higher). `lab::panel_probe`'s regression test pastes the crop
+back at (282, 138) on a black 1080p frame.
+
 ## `gem-sets.json`
 
 Names only: `{normal, transfigured, iconless}`.
