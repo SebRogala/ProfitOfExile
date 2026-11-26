@@ -130,7 +130,6 @@
 	</div>
 	<div class="center">
 		<span class="status-dot" class:connected={store.serverConnected} title={store.serverConnected ? `Server: Connected (${status?.server_url})` : 'Server: Disconnected'}></span>
-		<span class="status-dot scanning-dot" class:active={status?.state && status.state !== 'Idle'} title={`OCR Scanner: ${status?.state ?? 'Unknown'} ${status?.state === 'PickingGems' ? '— reading gem names' : status?.state === 'FontReady' ? '— font detected' : ''}`}></span>
 		{#if import.meta.env.DEV}
 			<button class="btn-debug" class:active={toggle.label === 'DEBUG'} class:no-target={!toggle.target} title={toggle.title} onclick={toggleServer}>
 				{toggle.label}
@@ -224,15 +223,6 @@
 
 	.status-dot.connected {
 		background: var(--success);
-	}
-
-	.scanning-dot {
-		background: var(--text-muted);
-	}
-
-	.scanning-dot.active {
-		background: var(--success);
-		animation: pulse 1.5s ease-in-out infinite;
 	}
 
 	@keyframes pulse {
