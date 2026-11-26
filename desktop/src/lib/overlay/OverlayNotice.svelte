@@ -63,6 +63,7 @@
 		max-height: 32px;
 		overflow: hidden;
 	}
+	.body:has(kbd) { line-height: 18px; max-height: 36px; padding-bottom: 2px; }
 	kbd { font-family: 'Consolas', 'Monaco', monospace; font-size: 11px; line-height: 12px; padding: 0 5px; border: 1px solid var(--color-lab-text-muted); border-bottom-width: 2px; border-radius: 3px; background: var(--color-lab-surface); color: var(--color-lab-text); }
 	.reason { margin-top: 2px; font: 11px/16px 'Consolas', 'Monaco', monospace; color: var(--color-lab-text-muted); }
 	.spinner { box-sizing: border-box; flex: none; width: 12px; height: 12px; border: 2px solid var(--color-lab-border); border-top-color: var(--color-lab-blue); border-radius: 50%; animation: spin 1s linear infinite; }
