@@ -69,12 +69,12 @@ const (
 	// carries both the request path and the analysis pipeline. 6 is the
 	// symmetric value that is safe when nobody sets either.
 	//
-	// Landmine, recorded rather than fixed: pool_mode=transaction does not
-	// guarantee that session-scoped state stays on one backend. That includes
+	// Session-scoped state requires the session-mode pgbouncer pool.
 	// golang-migrate's session-level pg_advisory_lock and the process-lifetime
-	// fences in cmd/server/main.go and cmd/collector/main.go, which assume the
-	// session holding the lock is the session that later releases and
-	// health-checks it. Not observed to fail. Do not assume it cannot.
+	// fences in cmd/server/main.go and cmd/collector/main.go assume the session
+	// holding the lock is the session that later releases and health-checks it.
+	// Pointing an app at a transaction-mode pool breaks that: the lock can land
+	// on a pooled backend that outlives the process, stranding it.
 	DefaultMaxConns = 6
 
 	maxAllowedConns = 10000
