@@ -155,6 +155,22 @@ Every `web.poecdn.com` entry in `gems.json` is a pending swap. Check each one
 in the next league's patch-notes impact pass and in every icon pull. Example
 from 3.30: Arcane Link and Fireball of Radiation (`c3c5eb23`).
 
+### Licensing: fetch the art, never vendor it
+
+The repository is GPL-3.0 (`LICENSE`); the poewiki inventory icons it serves
+are complete, reusable CC-BY-NC-SA images, so committing them would relicense
+what cannot be relicensed (as recorded in `.gitignore` and the `Makefile`,
+verified 2026-11-27). The URL maps (`internal/icons/urls/`,
+`internal/exchange/itemdata/icon-urls.json`) are the only committed part. The
+fetched bytes stay uncommitted wherever they land: the cache roots and pre-seed
+dumps above, and the desktop test fixtures
+`desktop/src-tauri/tests/fixtures/merc-seed-art/` and
+`desktop/src-tauri/tests/fixtures/lab-gem-art/`, which keep only their README
+and are fetched with `make merc-seed-art` and `make lab-gem-art`; CI fetches
+them before the Rust suite (`.github/workflows/desktop-quality.yml`). Static
+UI art bundled with the desktop app is a separate source with its own
+provenance in [Game art sourcing](GAME-ART-SOURCING.md).
+
 ## Production seeding and migration
 
 This section is an owner-run procedure. It was not executed by the route/layout
