@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"profitofexile/internal/price/tier"
 )
 
 // keep:critical — silent: a colour sum, withheld EV or zero-valued winner
@@ -210,7 +212,64 @@ func TestKeepCritical_AnalyzeFontCoverageCountsSolidPoolGemsAtAnyPrice(t *testin
 	}
 }
 
-func TestKeepHappy_AnalyzeFontJackpotStatesTopEvaluatedPerVariant(t *testing.T) {
+func TestKeepHappy_AnalyzeFontServesUnratedPoolRow(t *testing.T) {
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		solid int
+	}{
+		{name: "three confident and eight gated", solid: 3},
+		{name: "eleven gated"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gems []GemPrice
+			for i, price := range []float64{527, 264, 170, 88, 64, 45, 33, 24, 17, 12, 8} {
+				sample := 3
+				if i < tc.solid {
+					sample = 10
+				}
+				gems = append(gems, GemPrice{Name: fmt.Sprintf("Blue Gem %d of Test", i), Variant: "20/20",
+					GemColor: "BLUE", IsTransfigured: true, Chaos: price, Listings: 20, SampleCount: &sample})
+			}
+			classification := ComputeGemClassification(gems)
+			features := ComputeGemFeatures(now, gems, nil, MarketContext{}, classification.Gems, nil)
+			analysis := AnalyzeFont(now, gems, features)
+			got := blueFontSafe2020(t, analysis)
+			want := []TierPoolInfo{{Tier: tier.Unrated, Count: tc.solid}}
+			if tc.solid > 0 {
+				want[0].MinPrice, want[0].MaxPrice = 170, 527
+			}
+			if !reflect.DeepEqual(got.PoolBreakdown, want) {
+				t.Errorf("BLUE/20/20 PoolBreakdown = %+v, want %+v", got.PoolBreakdown, want)
+			}
+			for mode, rows := range map[string][]FontResult{"safe": analysis.Safe, "premium": analysis.Premium, "jackpot": analysis.Jackpot} {
+				if len(rows) != 4 {
+					t.Errorf("%s rows = %d, want only BLUE at four variants", mode, len(rows))
+				}
+				for _, r := range rows {
+					if r.Winners != 0 || r.PWin != 0 || r.FontsToHit != 0 || len(r.JackpotGems) != 0 {
+						t.Errorf("%s/%s/%s UNRATED pool has winning outcomes: %+v", mode, r.Color, r.Variant, r)
+					}
+					if (mode != "safe" || r.Variant != "20/20") && len(r.PoolBreakdown) != 0 {
+						t.Errorf("%s/%s/%s PoolBreakdown = %+v, want empty", mode, r.Color, r.Variant, r.PoolBreakdown)
+					}
+					if r.Variant == "20/20" {
+						if r.Pool != 11 || r.PricedGems != tc.solid {
+							t.Errorf("%s coverage = %d/%d, want %d/11", mode, r.PricedGems, r.Pool, tc.solid)
+						}
+						if tc.solid == 0 {
+							assertFontMissingEV(t, r)
+						} else if r.EVRaw == nil || math.Abs(*r.EVRaw-37979.0/165) > 1e-9 {
+							t.Errorf("%s EVRaw = %v, want 37979/165 from the three confident prices", mode, r.EVRaw)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestKeepHappy_AnalyzeFontJackpotNotEvaluatedForUnratedVariant(t *testing.T) {
 	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		name    string
@@ -221,6 +280,7 @@ func TestKeepHappy_AnalyzeFontJackpotStatesTopEvaluatedPerVariant(t *testing.T) 
 		{name: "three confident plus two low confidence", colors: []string{"BLUE", "BLUE", "BLUE"}, lowConf: 2},
 		{name: "four confident", colors: []string{"BLUE", "BLUE", "BLUE", "BLUE"}, want: true},
 		{name: "two BLUE plus two RED", colors: []string{"BLUE", "BLUE", "RED", "RED"}, want: true},
+		{name: "all gated", lowConf: 11},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var features []GemFeature
@@ -237,6 +297,8 @@ func TestKeepHappy_AnalyzeFontJackpotStatesTopEvaluatedPerVariant(t *testing.T) 
 			}
 			gems := fontSnapshotFromFeatures(features)
 			gems = append(gems, GemPrice{Name: "Green of Test", Variant: "1", GemColor: "GREEN", IsTransfigured: true})
+			classification := ComputeGemClassification(gems)
+			features = ComputeGemFeatures(now, gems, nil, MarketContext{}, classification.Gems, nil)
 			analysis := AnalyzeFont(now, gems, features)
 			for mode, rows := range map[string][]FontResult{"safe": analysis.Safe, "premium": analysis.Premium, "jackpot": analysis.Jackpot} {
 				if len(rows) != 12 {
@@ -258,7 +320,7 @@ func TestKeepHappy_AnalyzeFontJackpotStatesTopEvaluatedPerVariant(t *testing.T) 
 						}
 						continue
 					}
-					want := r.Variant == "1" || (r.Variant == "20/20" && tc.want)
+					want := r.Variant != "20/20" || tc.want
 					if got == nil {
 						t.Errorf("jackpot/%s/%s: TopEvaluated = nil, want %v", r.Color, r.Variant, want)
 					} else if *got != want {

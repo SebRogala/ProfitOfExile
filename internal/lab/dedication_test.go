@@ -1,9 +1,13 @@
 package lab
 
 import (
+	"fmt"
 	"math"
+	"reflect"
 	"testing"
 	"time"
+
+	"profitofexile/internal/price/tier"
 )
 
 // makeDedicationGem creates a corrupted 21/23c GemPrice for Dedication pool tests.
@@ -677,6 +681,76 @@ func TestAnalyzeDedication_SafeAndPremiumHaveNoJackpotGems(t *testing.T) {
 				t.Errorf("%s mode should not have JackpotGems (has %d)", r.Mode, len(r.JackpotGems))
 			}
 		}
+	}
+}
+
+func TestKeepHappy_AnalyzeDedicationServesUnratedPoolRow(t *testing.T) {
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name     string
+		redSolid int
+	}{
+		{name: "all gated"},
+		{name: "three RED solid", redSolid: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gems []GemPrice
+			for _, color := range []string{"RED", "GREEN"} {
+				prices := []float64{527, 264, 170, 88, 64, 45}
+				if color == "GREEN" {
+					prices = []float64{33, 24, 17, 12, 8}
+				}
+				for i, price := range prices {
+					g := makeDedicationGem(fmt.Sprintf("%s Gem %d", color, i), color, price, 20, false)
+					sample := 3
+					if color == "RED" && i < tc.redSolid {
+						sample = 10
+					}
+					g.SampleCount = &sample
+					gems = append(gems, g)
+				}
+			}
+			analysis := AnalyzeDedication(now, gems, nil)
+			if len(analysis.Skills) != 6 || len(analysis.Transfigured) != 0 {
+				t.Fatalf("result rows = %d skills/%d transfigured, want 6/0", len(analysis.Skills), len(analysis.Transfigured))
+			}
+			seen := make(map[string]int)
+			for _, r := range analysis.Skills {
+				if r.Variant != "21/23c" || r.GemType != "skill" || (r.Color != "RED" && r.Color != "GREEN") {
+					t.Errorf("unexpected pool identity: %+v", r)
+				}
+				seen[r.Color+"/"+r.Mode]++
+				if r.Winners != 0 || r.PWin != 0 || r.FontsToHit != 0 || len(r.JackpotGems) != 0 {
+					t.Errorf("%s/%s UNRATED pool has winning outcomes: %+v", r.Color, r.Mode, r)
+				}
+				wantPool, wantEV := 5, 0.0
+				want := []TierPoolInfo{{Tier: tier.Unrated}}
+				if r.Color == "RED" {
+					wantPool = 6
+					if tc.redSolid > 0 {
+						want[0].Count, want[0].MinPrice, want[0].MaxPrice = 3, 170, 527
+						wantEV = 7364.0 / 20
+					}
+				}
+				if r.Pool != wantPool || math.Abs(r.EVRaw-wantEV) > 1e-9 {
+					t.Errorf("%s/%s Pool/EVRaw = %d/%g, want %d/%g", r.Color, r.Mode, r.Pool, r.EVRaw, wantPool, wantEV)
+				}
+				if r.Mode == "safe" {
+					if !reflect.DeepEqual(r.PoolBreakdown, want) {
+						t.Errorf("%s/skill/21/23c PoolBreakdown = %+v, want %+v", r.Color, r.PoolBreakdown, want)
+					}
+				} else if len(r.PoolBreakdown) != 0 {
+					t.Errorf("%s/%s PoolBreakdown = %+v, want empty", r.Color, r.Mode, r.PoolBreakdown)
+				}
+			}
+			for _, color := range []string{"RED", "GREEN"} {
+				for _, mode := range []string{"safe", "premium", "jackpot"} {
+					if got := seen[color+"/"+mode]; got != 1 {
+						t.Errorf("%s/%s rows = %d, want 1", color, mode, got)
+					}
+				}
+			}
+		})
 	}
 }
 
