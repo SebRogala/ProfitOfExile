@@ -39,6 +39,8 @@ const (
 // which TOP detection runs.
 const MinTopItems = 4
 
+const MaxHighStep = 0
+
 // Order lists tier names from highest to lowest. Of indexes into it when a
 // Boundaries carries no Names: boundary[0] -> Order[0] (TOP), etc.
 var Order = []string{Top, High, MidHigh, Mid, Low, Floor}
@@ -94,6 +96,7 @@ type Policy struct {
 	// MinConfident requires this many confident, cutoff-passing items per
 	// group before rating it. Zero preserves the existing fallback ladder.
 	MinConfident int
+	RatioLadder  bool
 }
 
 // excludes reports whether the policy's cutoff leaves price out.

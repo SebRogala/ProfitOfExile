@@ -1,6 +1,7 @@
 package tier
 
 import (
+	"math"
 	"reflect"
 	"strconv"
 	"testing"
@@ -11,6 +12,69 @@ func item(group, key string, price float64, depth int) Item {
 }
 
 func k(group, key string) Key { return Key{Group: group, Key: key} }
+
+func TestKeepHappy_ClassifyOneGemCrossingConfidenceMovesHighWithinMargin(t *testing.T) {
+	const group = "1/20"
+	items := make([]Item, 0, 21)
+	for i := 0; i < 20; i++ {
+		items = append(items, item(group, "gem-"+strconv.Itoa(i), 100*math.Pow(0.9, float64(i)), 10))
+	}
+	items = append(items, gatedItem(group, "entrant", 130, 10))
+	policy := Policy{MinConfident: MinTopItems, RatioLadder: true}
+	before := Classify(items, policy)
+	items[len(items)-1].Gated = false
+	after := Classify(items, policy)
+
+	highs := make([]float64, 0, 2)
+	for _, snapshot := range []struct {
+		name string
+		res  Result
+		want float64
+	}{
+		{"gated", before, 57.3314},
+		{"confident", after, 66.346},
+	} {
+		b, ok := snapshot.res.Boundaries[group]
+		if !ok || len(b.Boundaries) == 0 || len(b.Names) == 0 || b.Names[0] != High {
+			t.Fatalf("%s boundaries = %+v, want a named HIGH boundary", snapshot.name, b)
+		}
+		high := b.Boundaries[0]
+		if math.Abs(high-snapshot.want) > 1e-6 {
+			t.Errorf("%s HIGH = %.6f, want top-five ratio anchor %.6f", snapshot.name, high, snapshot.want)
+		}
+		highs = append(highs, high)
+	}
+	step := math.Abs(highs[1]/highs[0] - 1)
+	if step > MaxHighStep+1e-12 {
+		t.Errorf("one confidence entrant moved HIGH %.6f -> %.6f by %.6f, want at most MaxHighStep %.6f", highs[0], highs[1], step, float64(MaxHighStep))
+	}
+}
+
+func TestKeepCritical_RatioLadderBoundariesStayDescendingInACheapGroup(t *testing.T) {
+	// Duplicate or inverted thresholds silently assign plausible wrong tiers.
+	const group = "cheap"
+	var items []Item
+	for i, price := range []float64{6.5, 6, 5.5, 5, 4.5} {
+		items = append(items, item(group, "gem-"+strconv.Itoa(i), price, 10))
+	}
+	res := Classify(items, Policy{MinConfident: MinTopItems, RatioLadder: true})
+	b, ok := res.Boundaries[group]
+	want := []float64{3.85, 1.925, 1}
+	if !ok || len(b.Boundaries) != len(want) {
+		t.Fatalf("cheap-group boundaries = %+v, want thresholds %v", b, want)
+	}
+	for i, boundary := range b.Boundaries {
+		if math.Abs(boundary-want[i]) > 1e-12 {
+			t.Errorf("boundary[%d] = %.6f, want %.6f from top-five average 5.5", i, boundary, want[i])
+		}
+		if i > 0 && boundary >= b.Boundaries[i-1] {
+			t.Errorf("boundaries %v are not strictly descending", b.Boundaries)
+		}
+	}
+	if !reflect.DeepEqual(b.Names, []string{High, MidHigh, Low, Floor}) {
+		t.Errorf("cheap-group names = %v, want HIGH, MID-HIGH, LOW, FLOOR without MID", b.Names)
+	}
+}
 
 func TestKeepHappy_ClassifyGroupBelowMinimumConfidentIsUnrated(t *testing.T) {
 	const group = "20/20"
