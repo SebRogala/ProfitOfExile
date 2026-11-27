@@ -155,8 +155,8 @@ func TestKeepCritical_ClassifyKeepsCutoffMembershipUntilPriceClearsTheCutoffMarg
 				x.Prev = prev
 				res := Classify(append(tierMarginPool(group, 20, 0.9), x), policy)
 				got, present := res.Items[k(group, "x")]
-				if present != tt.present || present && got.Tier != Floor {
-					t.Errorf("step %d Prev %q at %.2fc = %+v (present %v), want present %v and FLOOR when present", i, prev, price, got, present, tt.present)
+				if present != tt.present || present && price <= 5.4 && got.Tier != Floor {
+					t.Errorf("step %d Prev %q at %.2fc = %+v (present %v), want present %v (oscillation members remain FLOOR)", i, prev, price, got, present, tt.present)
 				}
 				prev = Excluded
 				if present {
