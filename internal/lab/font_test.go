@@ -320,7 +320,7 @@ func TestKeepHappy_AnalyzeFontJackpotNotEvaluatedForUnratedVariant(t *testing.T)
 						}
 						continue
 					}
-					want := r.Variant != "20/20" || tc.want
+					want := r.Variant == "1" || (r.Variant == "20/20" && tc.want)
 					if got == nil {
 						t.Errorf("jackpot/%s/%s: TopEvaluated = nil, want %v", r.Color, r.Variant, want)
 					} else if *got != want {
