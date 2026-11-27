@@ -1,6 +1,5 @@
 //! Built-in boss loot pools. Exchange-backed names and keys come from the
 //! generated subset; unique names and category keys belong to the profile.
-#![allow(dead_code)] // WI-5 wires the capture owner to this model.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
