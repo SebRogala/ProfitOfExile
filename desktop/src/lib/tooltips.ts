@@ -6,6 +6,18 @@
 export const LOW_CONFIDENCE_TOOLTIP =
 	'Too few listings or poe.ninja data points to trust the price, or far fewer listings than usual for this variant.';
 
+export const TIER_RULES: Record<string, string> = {
+	TOP: 'monopoly outliers (gap-detected)',
+	HIGH: 'within 30% of the top-5 average',
+	'MID-HIGH': 'above 50% of HIGH boundary',
+	MID: 'above 17% of the top-5 average',
+	LOW: 'marginal profit above FLOOR',
+	FLOOR: 'below 8% of top-5 average',
+};
+
+export const TIER_RULES_NOTE =
+	'Thin-market gems are excluded from boundary computation. HIGH moves at most 25% per snapshot; MID-HIGH and MID move proportionally with it, while FLOOR does not. A gem keeps its previous tier until its price clears the boundary by 25%. CHAOTIC has no tier-change margin: a thin gem above the lower of raw HIGH and clamped HIGH shows CHAOTIC immediately. A key above twice its last SOLID price is also CHAOTIC (ADR-032).';
+
 export const SIGNAL_TOOLTIPS: Record<string, string> = {
 	STABLE:
 		'Price and listings are steady. Safe to farm \u2014 predictable returns.',

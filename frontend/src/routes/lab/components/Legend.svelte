@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { TIER_RULES, TIER_RULES_NOTE } from '$lib/tooltips';
+
 	let expanded = $state(false);
 </script>
 
@@ -66,13 +68,13 @@
 
 				<div class="legend-col">
 					<h4 class="legend-heading">Price Tiers (per variant, dynamic)</h4>
-					<div class="legend-item"><span class="sig gold">TOP</span> monopoly outliers (gap-detected)</div>
-					<div class="legend-item"><span class="sig orange">HIGH</span> within 30% of top gem</div>
-					<div class="legend-item"><span class="sig purple">MID-HIGH</span> above 50% of HIGH boundary</div>
-					<div class="legend-item"><span class="sig silver">MID</span> natural gap above LOW</div>
-					<div class="legend-item"><span class="sig muted">LOW</span> marginal profit above FLOOR</div>
-					<div class="legend-item"><span class="sig dim">FLOOR</span> below 8% of top-5 avg price</div>
-					<div class="legend-note">Thin-market gems excluded from boundary computation. Tiers adapt automatically to market prices.</div>
+					<div class="legend-item"><span class="sig gold">TOP</span> {TIER_RULES.TOP}</div>
+					<div class="legend-item"><span class="sig orange">HIGH</span> {TIER_RULES.HIGH}</div>
+					<div class="legend-item"><span class="sig purple">MID-HIGH</span> {TIER_RULES['MID-HIGH']}</div>
+					<div class="legend-item"><span class="sig silver">MID</span> {TIER_RULES.MID}</div>
+					<div class="legend-item"><span class="sig muted">LOW</span> {TIER_RULES.LOW}</div>
+					<div class="legend-item"><span class="sig dim">FLOOR</span> {TIER_RULES.FLOOR}</div>
+					<div class="legend-note">{TIER_RULES_NOTE}</div>
 
 					<h4 class="legend-heading" style="margin-top: 16px;">Font EV Hit Tiers</h4>
 					<div class="legend-item"><span class="sig teal">Safe</span> any gem above FLOOR (not low-confidence)</div>

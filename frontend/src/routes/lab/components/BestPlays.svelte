@@ -2,7 +2,7 @@
 	import { fetchSignalHistory, type GemPlay, type RankingsSort, type SignalTransition } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { formatPrice } from '$lib/price.svelte';
-	import { METRIC_TOOLTIPS } from '$lib/tooltips';
+	import { METRIC_TOOLTIPS, TIER_RULES, TIER_RULES_NOTE } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
 	import GemIcon from './GemIcon.svelte';
@@ -100,7 +100,7 @@
 		<tr>
 			<th class="col-name" title="Transfigured gem name">Gem</th>
 			{#if showVariantColumn}<th class="col-var" title="Gem variant: level/quality (e.g. 20/20 = level 20, 20% quality)">Var</th>{/if}
-			<th class="col-tier">Tier <InfoTooltip text="<b>Price Tier</b> — per variant, dynamic boundaries.<br><br><span style='color:#fbbf24'>TOP</span> — Monopoly outliers (gap-detected)<br><span style='color:#fb923c'>HIGH</span> — Within 30% of top gem<br><span style='color:#c084fc'>MID-HIGH</span> — Above 50% of HIGH boundary<br><span style='color:#94a3b8'>MID</span> — Natural gap above LOW<br><span style='color:#64748b'>LOW</span> — Marginal profit above FLOOR<br><span style='color:#475569'>FLOOR</span> — Below 8% of top-5 average<br><br>Low-confidence gems (thin market) excluded from tier computation. Boundaries adapt to market prices automatically." /></th>
+			<th class="col-tier">Tier <InfoTooltip text={`<b>Price Tier</b> — per variant, dynamic boundaries.<br><br><span style='color:#fbbf24'>TOP</span> — ${TIER_RULES.TOP}<br><span style='color:#fb923c'>HIGH</span> — ${TIER_RULES.HIGH}<br><span style='color:#c084fc'>MID-HIGH</span> — ${TIER_RULES['MID-HIGH']}<br><span style='color:#94a3b8'>MID</span> — ${TIER_RULES.MID}<br><span style='color:#64748b'>LOW</span> — ${TIER_RULES.LOW}<br><span style='color:#475569'>FLOOR</span> — ${TIER_RULES.FLOOR}<br><br>${TIER_RULES_NOTE}`} /></th>
 			<th class="col-num" title="Current ninja price of the transfigured gem">Price</th>
 			<th class="col-num" title={sort === 'riskAdjusted' ? 'Risk-adjusted ROI: raw ROI weighted by sellability and market stability' : METRIC_TOOLTIPS.ROI}>{sort === 'riskAdjusted' ? 'Adj ROI' : 'ROI'}</th>
 			<th class="col-signal">Signal <InfoTooltip text="<b>Market Signal + Sell Confidence</b><br><br><b>Signals</b> (current market behavior):<br>• <span style='color:#5eead4'>STABLE</span> — Steady price, safe to sell at listed<br>• <span style='color:#94a3b8'>UNCERTAIN</span> — Direction unclear (accuracy &lt;50%, showing raw data)<br>• <span style='color:#eab308'>HERD</span> — Farmers flooding in, price + listings surging<br>• <span style='color:#ef4444'>DUMPING</span> — Price crashing with rising supply<br>• <span style='color:#a855f7'>RECOVERY</span> — Supply draining, potential price recovery<br>• <span style='color:#22c55e'>DEMAND</span> — Listings draining, buyers absorbing supply<br>• <span style='color:#eab308'>CAUTION</span> — Short-term volatility, check history<br><br><b>Sell Confidence</b> (can you sell near listed price?):<br>• <span style='color:#22c55e'>✓ SAFE</span> — Liquid + stable, sell confidently<br>• <span style='color:#eab308'>• FAIR</span> — Moderate risk, may need patience<br>• <span style='color:#ef4444'>✗ RISKY</span> — Thin market or volatile, undercut aggressively" /></th>
