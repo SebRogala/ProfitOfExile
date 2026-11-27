@@ -4,6 +4,8 @@ import (
 	"math"
 	"sort"
 	"time"
+
+	"profitofexile/internal/price/tier"
 )
 
 // DedicationVariants are the corrupted gem variants the Dedication font pool is
@@ -231,6 +233,7 @@ func analyzeDedicationVariant(snapTime time.Time, gems []GemPrice, features []Ge
 			var lowConfGems []LowConfidenceGemInfo
 
 			tierStats := make(map[string]*TierPoolInfo)
+			var entryTiers []string
 			gemAdjustedPrice := make(map[string]float64)
 			gemRawPrice := make(map[string]float64)
 
@@ -240,6 +243,7 @@ func analyzeDedicationVariant(snapTime time.Time, gems []GemPrice, features []Ge
 				// Get classification from the dedication-specific classification.
 				classKey := GemClassificationKey{e.name, variant}
 				gc, hasClass := classification.Gems[classKey]
+				entryTiers = append(entryTiers, gc.Tier)
 
 				if gc.LowConfidence {
 					lowConfGems = append(lowConfGems, LowConfidenceGemInfo{
@@ -373,10 +377,11 @@ func analyzeDedicationVariant(snapTime time.Time, gems []GemPrice, features []Ge
 				}
 			}
 
-			// Build sorted pool breakdown (TOP -> FLOOR).
-			tierOrder := []string{"TOP", "HIGH", "MID-HIGH", "MID", "LOW", "FLOOR"}
+			if groupUnrated(entryTiers) && tierStats[tier.Unrated] == nil {
+				tierStats[tier.Unrated] = &TierPoolInfo{Tier: tier.Unrated, Count: 0}
+			}
 			var poolBreakdown []TierPoolInfo
-			for _, tier := range tierOrder {
+			for _, tier := range poolBreakdownTierOrder {
 				if ts, ok := tierStats[tier]; ok {
 					ts.MinPrice = math.Round(ts.MinPrice)
 					ts.MaxPrice = math.Round(ts.MaxPrice)

@@ -18,6 +18,15 @@ const labThinSampleCount = 5
 // labPolicy is the tier policy every Lab pool classifies under.
 var labPolicy = tier.Policy{CutoffChaos: labTierCutoffChaos, HasCutoff: true, MinConfident: tier.MinTopItems, RatioLadder: true}
 
+func groupUnrated(tiers []string) bool {
+	for _, name := range tiers {
+		if name == tier.Unrated {
+			return true
+		}
+	}
+	return false
+}
+
 func gemDepth(g GemPrice) evidence.Depth {
 	source := evidence.SourceNone
 	if g.Chaos > 0 {

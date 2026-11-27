@@ -10,6 +10,8 @@ import (
 	"profitofexile/internal/price/tier"
 )
 
+var poolBreakdownTierOrder = append(slices.Clone(tier.Order), tier.Unrated)
+
 // FontResult holds the computed EV for a single (color, variant) Font of Divine Skill analysis.
 type FontResult struct {
 	Time              time.Time
@@ -239,13 +241,11 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 	// Build feature lookup: "name|variant" -> *GemFeature
 	type featureKey struct{ name, variant string }
 	featureLookup := make(map[featureKey]*GemFeature, len(features))
-	topItemCounts := make(map[string]int)
+	variantTiers := make(map[string][]string)
 	for i := range features {
 		f := &features[i]
 		featureLookup[featureKey{f.Name, f.Variant}] = f
-		if !f.LowConfidence {
-			topItemCounts[f.Variant]++
-		}
+		variantTiers[f.Variant] = append(variantTiers[f.Variant], f.Tier)
 	}
 
 	// Pool sizes: unique gem names per color (across all variants).
@@ -323,6 +323,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 
 			// Pool breakdown: track count and price range per tier.
 			tierStats := make(map[string]*TierPoolInfo)
+			var entryTiers []string
 
 			gemAdjustedPrice := make(map[string]float64)
 			gemRawPrice := make(map[string]float64)
@@ -331,6 +332,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				if feat == nil {
 					continue
 				}
+				entryTiers = append(entryTiers, feat.Tier)
 
 				// Low-confidence gems: track separately, exclude from EV and winners.
 				// They still count in pool size (via poolNames populated above) with
@@ -449,10 +451,11 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				}
 			}
 
-			// Build sorted pool breakdown (TOP → FLOOR).
-			tierOrder := []string{"TOP", "HIGH", "MID-HIGH", "MID", "LOW", "FLOOR"}
+			if groupUnrated(entryTiers) && tierStats[tier.Unrated] == nil {
+				tierStats[tier.Unrated] = &TierPoolInfo{Tier: tier.Unrated, Count: 0}
+			}
 			var poolBreakdown []TierPoolInfo
-			for _, tier := range tierOrder {
+			for _, tier := range poolBreakdownTierOrder {
 				if ts, ok := tierStats[tier]; ok {
 					ts.MinPrice = math.Round(ts.MinPrice)
 					ts.MaxPrice = math.Round(ts.MaxPrice)
@@ -539,7 +542,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			if jackpotPWin > 0 {
 				jackpotFontsToHit = 1.0 / jackpotPWin
 			}
-			topEvaluated := topItemCounts[variant] >= tier.MinTopItems
+			topEvaluated := !groupUnrated(variantTiers[variant])
 			jackpotResult := FontResult{
 				Time:          snapTime,
 				Color:         color,
