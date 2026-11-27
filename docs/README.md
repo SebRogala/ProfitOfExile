@@ -143,4 +143,9 @@ Every new architecture/design document should state:
 - What the document is canonical for.
 - Which document supersedes it, when applicable.
 
+Write runbook shell commands so they paste as-is: give each operator-supplied
+value a named variable set on its own line (`PREVIOUS_VERSION=...`, then
+`VERSION="$PREVIOUS_VERSION"` in the command), never an angle-bracket token
+such as `<version>`, which the shell reads as a redirection.
+
 Documentation changes should run a relative-link check in CI. Public documentation must not contain credentials, real private endpoints, production identifiers, pairing capabilities, device fingerprints, or backup locations.
