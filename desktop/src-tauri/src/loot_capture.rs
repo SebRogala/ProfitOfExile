@@ -769,9 +769,9 @@ async fn submit_capture(
     }
 }
 
-pub fn capture_rect(cursor: (i32, i32), screen: (u32, u32), _client_height: u32) -> [i32; 4] {
+pub fn capture_rect(cursor: (i32, i32), screen: (u32, u32), client_height: u32) -> [i32; 4] {
     let (sw, sh) = (screen.0 as i32, screen.1 as i32);
-    let scale = screen.1 as f64 / 1080.0;
+    let scale = client_height as f64 / 1080.0;
     let w = ((900.0 * scale).round() as i32).clamp(1, sw.max(1));
     let h = ((750.0 * scale).round() as i32).clamp(1, sh.max(1));
     [
@@ -1199,7 +1199,12 @@ mod platform {
         let rect = if owner.preview && foreground {
             cursor()
                 .zip(game)
-                .map(|(cur, g)| capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height), g.height))
+                .map(|(cur, g)| {
+                    let client_height = crate::capture::raw_game_client()
+                        .map(|client| client[3] as u32)
+                        .unwrap_or(g.height);
+                    capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height), client_height)
+                })
         } else {
             None
         };
@@ -1218,7 +1223,10 @@ mod platform {
             .clone();
         let game = *state.game_monitor.lock().unwrap_or_else(|e| e.into_inner());
         let Some(g) = game else { return };
-        let rect = capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height), g.height);
+        let client_height = crate::capture::raw_game_client()
+            .map(|client| client[3] as u32)
+            .unwrap_or(g.height);
+        let rect = capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height), client_height);
         let league = crate::ssot::league_name(&state).unwrap_or_default();
         // Freeze the area, seed, profile, league and identity BEFORE grabbing/OCR.
         let begin = {
@@ -1251,7 +1259,7 @@ mod platform {
                 let rect = capture_rect(
                     (cur.0 - shot.origin.0, cur.1 - shot.origin.1),
                     (shot.image.width(), shot.image.height()),
-                    shot.image.height(),
+                    shot.client[3] as u32,
                 );
                 let crop = shot.image.crop_imm(
                     rect[0] as u32,
