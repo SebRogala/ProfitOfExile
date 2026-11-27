@@ -13,6 +13,194 @@ func item(group, key string, price float64, depth int) Item {
 
 func k(group, key string) Key { return Key{Group: group, Key: key} }
 
+func TestKeepHappy_ClassifyKeepsPreviousTierUntilPriceClearsTheBoundary(t *testing.T) {
+	const group = "1/20"
+	const margin = 0.25
+	base := tierMarginPool(group, 20, 0.9)
+	boundary := 28.6657
+	for _, tt := range []struct {
+		name, prev, want string
+		price            float64
+	}{
+		{"inside margin", Mid, Mid, 1.2 * boundary},
+		{"clears margin", Mid, MidHigh, 1.05 * boundary / (1 - margin)},
+		{"first sight", "", MidHigh, 1.2 * boundary},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			x := gatedItem(group, "x", tt.price, 10)
+			x.Prev = tt.prev
+			res := Classify(append(append([]Item(nil), base...), x), Policy{MinConfident: MinTopItems, RatioLadder: true})
+			got, ok := res.Items[k(group, "x")]
+			if !ok || got.Tier != tt.want {
+				t.Errorf("Prev %q at %.6fc = %+v (present %v), want %s", tt.prev, tt.price, got, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestKeepCritical_ClassifyShowsChaoticInTheSnapshotItCrossesWhateverPrev(t *testing.T) {
+	// A held ordinary tier would silently present a thin spike as confident.
+	const group = "1/20"
+	for _, tt := range []struct {
+		prev  string
+		price float64
+	}{{High, 68.80}, {MidHigh, 60.20}} {
+		t.Run(tt.prev, func(t *testing.T) {
+			x := gatedItem(group, "x", tt.price, 10)
+			x.Prev = tt.prev
+			res := Classify(append(tierMarginPool(group, 20, 0.9), x), Policy{MinConfident: MinTopItems, RatioLadder: true})
+			if got := res.Items[k(group, "x")]; got != (Classification{Tier: Chaotic, LowConfidence: true}) {
+				t.Errorf("gated %.2fc with Prev %s = %+v, want CHAOTIC and LowConfidence", tt.price, tt.prev, got)
+			}
+		})
+	}
+}
+
+func TestKeepCritical_PreviousTierIsIgnoredForAnUnratedGroup(t *testing.T) {
+	// A stale winning HIGH would silently survive insufficient evidence.
+	items := evenPool("1/20", 10)[:MinTopItems-1]
+	for i := range items {
+		items[i].Prev = High
+	}
+	res := Classify(items, Policy{MinConfident: MinTopItems, RatioLadder: true})
+	for _, it := range items {
+		if got, ok := res.Items[k(it.Group, it.Key)]; !ok || got.Tier != Unrated {
+			t.Errorf("%s with Prev HIGH = %+v (present %v), want UNRATED", it.Key, got, ok)
+		}
+	}
+	if len(res.Boundaries) != 0 || len(res.TopBoundary) != 0 {
+		t.Errorf("UNRATED group retained boundaries: %+v / %v", res.Boundaries, res.TopBoundary)
+	}
+}
+
+func TestKeepCritical_ClassifyClampsHighToTheMarginAgainstThePreviousSnapshot(t *testing.T) {
+	// A confidence toggle must not silently retier flat-price peers via HIGH.
+	const group = "1/20"
+	for _, direction := range []string{"up", "down"} {
+		t.Run(direction, func(t *testing.T) {
+			beforeItems, afterItems, previousHigh, rawHigh, clampedHigh := tierClampSnapshots(group, direction)
+			policy := Policy{MinConfident: MinTopItems, RatioLadder: true}
+			before := Classify(beforeItems, policy)
+			assertMarginBoundary(t, before.Boundaries[group], High, previousHigh)
+			raw := Classify(afterItems, policy)
+			assertMarginBoundary(t, raw.Boundaries[group], High, rawHigh)
+			for _, tt := range []struct {
+				name     string
+				previous map[string]Boundaries
+				want     float64
+			}{
+				{"named previous HIGH", before.Boundaries, clampedHigh},
+				{"empty boundaries", map[string]Boundaries{}, rawHigh},
+				{"nil Names", map[string]Boundaries{group: {Boundaries: []float64{previousHigh}}}, rawHigh},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					policy.PrevBoundaries = tt.previous
+					res := Classify(afterItems, policy)
+					b := res.Boundaries[group]
+					assertMarginBoundary(t, b, High, tt.want)
+					assertMarginBoundary(t, b, MidHigh, tt.want*0.5)
+					assertMarginBoundary(t, b, Mid, tt.want*0.17/0.7)
+					assertMarginBoundary(t, b, Low, rawHigh*0.08/0.7)
+					if tt.name == "named previous HIGH" && len(b.Boundaries) > 0 {
+						if step := math.Abs(b.Boundaries[0]/previousHigh - 1); step > MaxHighStep+1e-12 {
+							t.Errorf("HIGH step %.9f exceeds MaxHighStep %.9f", step, float64(MaxHighStep))
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestKeepCritical_ClampedHighPutsTheChaoticLineAtTheLowerHigh(t *testing.T) {
+	// A lagging HIGH must not silently admit a thin gem as an ordinary tier.
+	const group = "1/20"
+	for _, tt := range []struct {
+		direction string
+		price     float64
+	}{{"down", 24.30}, {"up", 49}} {
+		t.Run(tt.direction, func(t *testing.T) {
+			beforeItems, afterItems, _, _, _ := tierClampSnapshots(group, tt.direction)
+			policy := Policy{MinConfident: MinTopItems, RatioLadder: true}
+			policy.PrevBoundaries = Classify(beforeItems, policy).Boundaries
+			y := gatedItem(group, "y", tt.price, 10)
+			y.Prev = High
+			res := Classify(append(afterItems, y), policy)
+			if got := res.Items[k(group, "y")]; got != (Classification{Tier: Chaotic, LowConfidence: true}) {
+				t.Errorf("gated y %.2fc during %s clamp = %+v, want CHAOTIC and LowConfidence", tt.price, tt.direction, got)
+			}
+		})
+	}
+}
+
+func TestKeepCritical_ClassifyKeepsCutoffMembershipUntilPriceClearsTheCutoffMargin(t *testing.T) {
+	// Membership flapping or freezing silently changes stored tiers and pool inputs.
+	const group = "1/20"
+	policy := Policy{CutoffChaos: 5, HasCutoff: true, MinConfident: MinTopItems, RatioLadder: true}
+	for _, tt := range []struct {
+		name, prev string
+		prices     []float64
+		present    bool
+	}{
+		{"inside oscillation", Floor, []float64{4.6, 5.4, 4.6, 5.4}, true},
+		{"outside oscillation", Excluded, []float64{5.4, 4.6, 5.4, 4.6}, false},
+		{"leaves", Floor, []float64{3.5}, false},
+		{"enters", Excluded, []float64{6.8}, true},
+		{"first sight", "", []float64{5.4}, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			prev := tt.prev
+			for i, price := range tt.prices {
+				x := item(group, "x", price, 10)
+				x.Prev = prev
+				res := Classify(append(tierMarginPool(group, 20, 0.9), x), policy)
+				got, present := res.Items[k(group, "x")]
+				if present != tt.present || present && got.Tier != Floor {
+					t.Errorf("step %d Prev %q at %.2fc = %+v (present %v), want present %v and FLOOR when present", i, prev, price, got, present, tt.present)
+				}
+				prev = Excluded
+				if present {
+					prev = got.Tier
+				}
+			}
+		})
+	}
+}
+
+func tierMarginPool(group string, count int, ratio float64) []Item {
+	items := make([]Item, 0, count)
+	for i := 0; i < count; i++ {
+		items = append(items, item(group, "gem-"+strconv.Itoa(i), 100*math.Pow(ratio, float64(i)), 10))
+	}
+	return items
+}
+
+func tierClampSnapshots(group, direction string) ([]Item, []Item, float64, float64, float64) {
+	if direction == "up" {
+		before := append(tierMarginPool(group, 9, 0.7), gatedItem(group, "x", 100, 10))
+		after := append([]Item(nil), before...)
+		after[len(after)-1].Gated = false
+		return before, after, 38.8234, 49.462, 48.52925
+	}
+	before := []Item{item(group, "a", 100, 10), item(group, "b", 50, 10), item(group, "c", 25, 10), item(group, "d", 12.5, 10), gatedItem(group, "x", 50, 10)}
+	after := append([]Item(nil), before...)
+	after[len(after)-1].Gated = false
+	return before, after, 32.8125, 24.0625, 24.609375
+}
+
+func assertMarginBoundary(t *testing.T, b Boundaries, name string, want float64) {
+	t.Helper()
+	for i, gotName := range b.Names {
+		if gotName == name && i < len(b.Boundaries) {
+			if got := b.Boundaries[i]; math.Abs(got-want) > 1e-9 {
+				t.Errorf("%s = %.9f, want %.9f", name, got, want)
+			}
+			return
+		}
+	}
+	t.Errorf("boundaries %+v lack named %s (want %.9f)", b, name, want)
+}
+
 func TestKeepHappy_ClassifyOneGemCrossingConfidenceMovesHighWithinMargin(t *testing.T) {
 	const group = "1/20"
 	items := make([]Item, 0, 21)

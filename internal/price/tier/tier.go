@@ -27,14 +27,15 @@ import (
 
 // Tier names.
 const (
-	Top     = "TOP"
-	High    = "HIGH"
-	MidHigh = "MID-HIGH"
-	Mid     = "MID"
-	Low     = "LOW"
-	Floor   = "FLOOR"
-	Chaotic = "CHAOTIC"
-	Unrated = "UNRATED"
+	Top      = "TOP"
+	High     = "HIGH"
+	MidHigh  = "MID-HIGH"
+	Mid      = "MID"
+	Low      = "LOW"
+	Floor    = "FLOOR"
+	Chaotic  = "CHAOTIC"
+	Unrated  = "UNRATED"
+	Excluded = ""
 )
 
 // MinTopItems is the fewest confident, cutoff-passing items in a group for
@@ -81,6 +82,7 @@ type Item struct {
 	// and takes no part in TOP or boundaries.
 	Gated bool
 	Held  bool
+	Prev  string
 }
 
 // Key identifies a classified item.
@@ -104,7 +106,8 @@ type Policy struct {
 	MinConfident int
 	// RatioLadder anchors boundaries to the clean top-5 average without gap
 	// snapping or the small-group percentile fallback. Zero keeps the gap ladder.
-	RatioLadder bool
+	RatioLadder    bool
+	PrevBoundaries map[string]Boundaries
 }
 
 // excludes reports whether the policy's cutoff leaves price out.
