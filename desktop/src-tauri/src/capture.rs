@@ -180,6 +180,20 @@ fn untrimmed_client_in_capture(game_client: Option<[i32; 4]>, origin: (i32, i32)
     }
 }
 
+#[derive(Default)]
+struct ClientDiagnostics;
+
+fn select_client_with_diagnostic(
+    _diagnostics: &ClientDiagnostics,
+    _raw: Option<[i32; 4]>,
+    _origin: (i32, i32),
+    _size: (u32, u32),
+    _select: impl FnOnce() -> [i32; 4],
+    _log: impl FnOnce(String),
+) -> [i32; 4] {
+    [0; 4]
+}
+
 #[cfg_attr(not(windows), allow(dead_code))]
 fn rendered_area(image: &image::RgbaImage) -> Option<[i32; 4]> {
     let (width, height) = image.dimensions();
@@ -984,6 +998,81 @@ mod tests {
         }
     }
 
+    mod keep_regression {
+        use super::super::{
+            rendered_area, select_client_with_diagnostic, untrimmed_client_in_capture,
+            ClientDiagnostics, RenderedClientLatch,
+        };
+
+        #[test]
+        fn windowed_client_fallbacks_report_each_distinct_rectangle_once() {
+            let origin = (1920, 0);
+            let size = (1920, 1080);
+            let source = image::load_from_memory(include_bytes!(
+                "../tests/fixtures/lab/font-gems-1080p.png"
+            )).unwrap();
+            let mut failures = Vec::new();
+            for (w, h) in [(1024, 576), (1280, 720), (1366, 768)] {
+                let game = source.resize_exact(w, h, image::imageops::FilterType::Lanczos3).to_rgba8();
+                let inside = [2020, 100, w as i32, h as i32];
+                let partial = [3500, 90, w as i32, h as i32];
+                let outside = [100, 90, w as i32, h as i32];
+                let clipped = [1580, 90, 340, h as i32];
+                let whole = [0, 0, 1920, 1080];
+                for path in ["grab observation", "selected client", "raced grab fallback"] {
+                    let diagnostics = ClientDiagnostics::default();
+                    let mut latch = RenderedClientLatch::default();
+                    let mut lines = Vec::new();
+                    for (raw, expected, log_count) in [
+                        (inside, [100, 100, w as i32, h as i32], 0),
+                        (partial, clipped, 1),
+                        (partial, clipped, 1),
+                        (outside, whole, 2),
+                        (outside, whole, 2),
+                        (partial, clipped, 2),
+                    ] {
+                        let mut frame = image::RgbaImage::from_pixel(
+                            size.0, size.1, image::Rgba([90, 90, 90, 255]),
+                        );
+                        image::imageops::overlay(
+                            &mut frame, &game,
+                            i64::from(raw[0]) - i64::from(origin.0), i64::from(raw[1]),
+                        );
+                        let client = select_client_with_diagnostic(
+                            &diagnostics, Some(raw), origin, frame.dimensions(),
+                            || match path {
+                                "grab observation" => latch.observe(
+                                    Some(raw), origin, size, || rendered_area(&frame),
+                                ),
+                                "selected client" => latch.select(Some(raw), origin, size),
+                                _ => untrimmed_client_in_capture(Some(raw), origin, size),
+                            },
+                            |line| lines.push(line),
+                        );
+                        if client != expected || lines.len() != log_count {
+                            failures.push(format!(
+                                "{w}x{h} {path} raw {raw:?}: client {client:?}, expected {expected:?}; diagnostics {}, expected {log_count}",
+                                lines.len(),
+                            ));
+                        }
+                    }
+                    for (index, (raw, used)) in [(partial, clipped), (outside, whole)].into_iter().enumerate() {
+                        let Some(line) = lines.get(index) else {
+                            failures.push(format!("{w}x{h} {path}: missing diagnostic for {raw:?}"));
+                            continue;
+                        };
+                        for value in [format!("{raw:?}"), format!("{origin:?}"), "1920x1080".to_string(), format!("{used:?}")] {
+                            if !line.contains(&value) {
+                                failures.push(format!("{path}: diagnostic {line:?} omits geometry {value}"));
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(failures.is_empty(), "windowed client fallback contract:\n{}", failures.join("\n"));
+        }
+    }
+
     mod keep_critical {
         use super::super::{client_in_capture, recalibrate_client_diagnostic, rendered_area, RenderedClientLatch};
         use super::bordered_frame;
@@ -1288,13 +1377,12 @@ mod tests {
             assert!(line.contains("(no client read)"), "line: {line:?}");
         }
 
-        /// Silent consequence if this broke: a client rect running past the
-        /// image would crop OCR from the wrong pixels and return a plausible
-        /// wrong read instead of failing.
+        /// Silent consequence: replacing the visible client with the whole
+        /// monitor supplies plausible wrong geometry to OCR.
         #[test]
         fn a_client_off_the_captured_monitor_falls_back_to_the_whole_capture() {
             let client = client_in_capture(Some([3500, 90, 1600, 900]), (1920, 0), (1920, 1080));
-            assert_eq!(client, WHOLE);
+            assert_eq!(client, [1580, 90, 340, 900]);
         }
 
         /// Silent consequence if this broke: before the first client read,
