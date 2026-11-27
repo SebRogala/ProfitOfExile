@@ -34,6 +34,13 @@ type FontResult struct {
 	TopEvaluated      *bool
 }
 
+type FontCell struct {
+	Variant string `json:"variant"`
+	Color   string `json:"color"`
+}
+
+func BestFontCell(results []FontResult) *FontCell { return nil }
+
 // Coverage is the share of the pool graded SOLID at this variant.
 func (r FontResult) Coverage() float64 {
 	if r.Pool <= 0 {
