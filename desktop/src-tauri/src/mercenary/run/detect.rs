@@ -1432,6 +1432,53 @@ mod tests {
     }
 
     #[test]
+    fn paddle_spike_merc_cold_probe_on_the_pc_fixture() {
+        use crate::ocr_paddle::spike;
+        let name = "merc_cold_probe_pc_1080p";
+        if spike::off(name) {
+            return;
+        }
+        let mut session = test_session();
+        session.fitted = None;
+        let clock = spike::Clock::default();
+        let t = std::time::Instant::now();
+        let probe = probe_frame_with(&session, None, &probe_capture(), FallbackKey { refit: 0, press: 1 }, None,
+            &mut |img| clock.time(|| crate::ocr::recognize_lines(img)));
+        let total = t.elapsed().as_secs_f64() * 1000.0;
+        let want = vec!["Withering Step", "Chaotic Burst", "Chaotic Shot", "Caustic Arrow", "Trarthan Agility", "Grace"];
+        let rows: Option<Vec<String>> = match &probe {
+            Ok(Some(MercProbe::Panel(location))) => Some(location.layout.rows.iter().map(|r| r.text.clone()).collect()),
+            _ => None,
+        };
+        let pass = rows.as_ref().map(|r| r.iter().map(String::as_str).collect::<Vec<_>>() == want).unwrap_or(false);
+        let lines = crate::ocr::recognize_lines(&probe_capture().image).map(|l| l.into_iter().map(|l| l.text).collect::<Vec<_>>());
+        spike::report(name, pass, &clock, total, &format!("rows={rows:?}; probe_is_err={}; ocr_lines={lines:?}", probe.is_err()));
+        assert!(pass);
+    }
+
+    /// POE-507 spike diagnostic: why the real-pixel probe misses. The
+    /// committed crop starts at y 585, so the `Wager: 8 831` line the
+    /// hand-authored `pc_lines` put at y 580 is not in the pixels.
+    #[test]
+    fn paddle_spike_merc_detect_reason_with_and_without_wager() {
+        use crate::ocr_paddle::spike;
+        if spike::off("merc_detect_diag") {
+            return;
+        }
+        let session = test_session();
+        let lines = crate::ocr::recognize_lines(&probe_capture().image).unwrap();
+        eprintln!("PADDLE-DIAG|merc lines={lines:?}");
+        let bare = geometry::detect_reason(&lines, &session.geometry, &session.vocab, None);
+        eprintln!("PADDLE-DIAG|merc bare={:?}", bare.as_ref().map(|l| l.rows.iter().map(|r| r.text.clone()).collect::<Vec<_>>()));
+        let mut with = lines.clone();
+        with.insert(0, geometry::test_line("Wager: 8 831", 700, 580));
+        let wager = geometry::detect_reason(&with, &session.geometry, &session.vocab, None);
+        eprintln!("PADDLE-DIAG|merc with_wager={:?}", wager.as_ref().map(|l| l.rows.iter().map(|r| r.text.clone()).collect::<Vec<_>>()));
+        let canned = geometry::detect_reason(&cellfit::pc_lines()[1..], &session.geometry, &session.vocab, None);
+        eprintln!("PADDLE-DIAG|merc canned_without_wager={:?}", canned.as_ref().map(|l| l.rows.len()));
+    }
+
+    #[test]
     fn losing_probe_preserves_the_held_capture_and_registration() {
         let mut session = test_session();
         let capture = test_capture([1920,1080]);

@@ -65,6 +65,12 @@ windows = { version = "0.58", features = [
 ] }
 xcap = "0.0.13"
 
+# POE-507 spike only (never lands): PaddleOCR (PP-OCRv6 ONNX) as the off-Windows
+# engine. `load-dynamic` opens the onnxruntime library at ORT_DYLIB_PATH at run
+# time, so nothing is downloaded at build time.
+[target.'cfg(not(windows))'.dependencies]
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-31"] }
+
 # Dev profile, measured on the PC 2026-09-07 under `npx tauri dev` with a
 # one-line change in temple/run.rs: this crate at opt-level 1 rebuilt in 70 s,
 # at 0 in 16 s; a from-scratch crate build took ~4 min at 1 and 87 s at 0. So

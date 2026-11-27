@@ -25,6 +25,8 @@ mod loot_profiles;
 mod mercenary;
 mod modules;
 mod ocr;
+#[cfg(not(windows))]
+mod ocr_paddle;
 mod overlay_clickthrough;
 mod overlay_hook;
 mod privacy;

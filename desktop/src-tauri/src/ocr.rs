@@ -399,15 +399,25 @@ mod platform {
     /// loop's `unavailable` status and the debug command's error read the same.
     pub const UNAVAILABLE: &str = "OCR not available on this platform";
 
-    pub fn recognize_text(_img: &DynamicImage) -> Result<Vec<String>, String> {
+    // POE-507 spike: `POE_OCR_ENGINE=paddle` routes these to PaddleOCR.
+    pub fn recognize_text(img: &DynamicImage) -> Result<Vec<String>, String> {
+        if crate::ocr_paddle::enabled() {
+            return crate::ocr_paddle::recognize_text(img);
+        }
         Err(UNAVAILABLE.to_string())
     }
 
-    pub fn recognize_lines(_img: &DynamicImage) -> Result<Vec<OcrLineBox>, String> {
+    pub fn recognize_lines(img: &DynamicImage) -> Result<Vec<OcrLineBox>, String> {
+        if crate::ocr_paddle::enabled() {
+            return crate::ocr_paddle::recognize_lines(img);
+        }
         Err(UNAVAILABLE.to_string())
     }
 
     pub fn engine_ready() -> Result<(), String> {
+        if crate::ocr_paddle::enabled() {
+            return crate::ocr_paddle::ready();
+        }
         Err(UNAVAILABLE.to_string())
     }
 
@@ -417,6 +427,9 @@ mod platform {
     }
 
     pub fn engine_report() -> String {
+        if crate::ocr_paddle::enabled() {
+            return "OCR: using PaddleOCR (ONNX)".to_string();
+        }
         UNAVAILABLE.to_string()
     }
 }

@@ -197,6 +197,48 @@ mod tests {
     use super::*;
     use crate::settings::tests::test_app_state;
 
+    /// POE-507 spike: the Font reader's own crop + prep + parse through
+    /// PaddleOCR on the committed gem-pick frames. Both show the gem popup,
+    /// not the options list, so the reader must decline (Ok(None)); the
+    /// window's own labels are checked in the raw lines.
+    fn paddle_font_case(name: &str, image: image::DynamicImage) {
+        use crate::ocr_paddle::spike;
+        if spike::off(name) {
+            return;
+        }
+        let frame = Capture { image, monitor_id: 1, origin: (0, 0), client: [0, 0, 1920, 1080], timing: Default::default() };
+        let region = crate::ssot::placements_for(None).lab.font;
+        let clock = spike::Clock::default();
+        let seen = std::cell::RefCell::new(Vec::new());
+        let t = std::time::Instant::now();
+        let got = probe_font_frame(&frame, region, |img| {
+            let r = clock.time(|| crate::ocr::recognize_text(img));
+            if let Ok(l) = &r { *seen.borrow_mut() = l.clone(); }
+            r
+        });
+        let total = t.elapsed().as_secs_f64() * 1000.0;
+        let seen = seen.into_inner();
+        let has = |w: &str| seen.iter().any(|l| l.to_uppercase().contains(w));
+        let declined = matches!(got, Ok(None));
+        let labels = ["DIVINE FONT", "CONFIRM", "CRAFT"].iter().filter(|w| has(w)).count();
+        spike::report(name, declined, &clock, total, &format!("declined={declined}; labels={labels}/3; region={region:?}; lines={seen:?}"));
+        assert!(declined);
+    }
+
+    #[test]
+    fn paddle_spike_font_gem_pick_1080p() {
+        let img = image::load_from_memory(include_bytes!("../../tests/fixtures/lab/font-gems-1080p.png")).unwrap();
+        paddle_font_case("font_gem_pick_1080p", img);
+    }
+
+    #[test]
+    fn paddle_spike_font_gem_pick_cruel_crop() {
+        let crop = image::load_from_memory(include_bytes!("../../tests/fixtures/lab/font-gems-cruel-1080p-crop.png")).unwrap();
+        let mut img = image::DynamicImage::new_rgb8(1920, 1080);
+        image::imageops::overlay(&mut img, &crop, 282, 138);
+        paddle_font_case("font_gem_pick_cruel_crop", img);
+    }
+
     fn lines(text: &[&str]) -> Vec<String> {
         text.iter().map(|l| l.to_string()).collect()
     }

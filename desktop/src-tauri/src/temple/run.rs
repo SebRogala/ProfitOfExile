@@ -3164,7 +3164,7 @@ mod tests {
         }
 
         /// What a first read publishes, as plain values.
-        #[derive(Debug, PartialEq)]
+        #[derive(Debug, Clone, PartialEq)]
         struct Verdict {
             status: TempleStatus,
             unread: usize,
@@ -3182,7 +3182,7 @@ mod tests {
         /// [`verdict`] → [`finish`] — without an `AppHandle`: the valuation is
         /// the Default preset with no market, `read_at` is 0, and no anchor was
         /// located.
-        fn press_read(ocr: &ScriptedOcr, stop: &dyn Fn() -> bool) -> (Result<slice::KeptRead, String>, PressFinish) {
+        fn press_read(ocr: &dyn TextRecognizer, stop: &dyn Fn() -> bool) -> (Result<slice::KeptRead, String>, PressFinish) {
             let img = live_capture();
             let layout = live_layout(&img);
             let settings = TempleSettings::default();
@@ -3198,7 +3198,7 @@ mod tests {
             (read, finish(projected, None))
         }
 
-        fn first_read(ocr: &ScriptedOcr) -> Verdict {
+        fn first_read(ocr: &dyn TextRecognizer) -> Verdict {
             let (read, done) = press_read(ocr, &|| false);
             let read = read.expect("a scripted read succeeds");
             let projected = done.publish.expect("a successful read publishes its slice");
@@ -3239,6 +3239,64 @@ mod tests {
                 warnings: vec!["architect target \"OMNITECT REACTOR PLANT\" is not a known room".to_string()],
                 recommended_exit: Some(("B0-C1".to_string(), "House of the Others".to_string())),
                 unclean: true,
+            }
+        }
+
+        /// POE-507 spike: the same press through the real engine
+        /// (`SystemOcr` → PaddleOCR), timed per OCR call.
+        struct TimedOcr<'a>(&'a crate::ocr_paddle::spike::Clock);
+        impl panel::TextRecognizer for TimedOcr<'_> {
+            fn recognize(&self, img: &DynamicImage) -> Result<Vec<OcrLineBox>, String> {
+                self.0.time(|| SystemOcr.recognize(img))
+            }
+        }
+
+        #[test]
+        fn paddle_spike_temple_live_capture_full_read() {
+            use crate::ocr_paddle::spike;
+            let name = "temple_live_capture_full_read";
+            if spike::off(name) {
+                return;
+            }
+            let clock = spike::Clock::default();
+            let t = std::time::Instant::now();
+            let got = first_read(&TimedOcr(&clock));
+            let total = t.elapsed().as_secs_f64() * 1000.0;
+            let (read, _) = press_read(&SystemOcr, &|| false);
+            let read = read.expect("paddle read succeeds");
+            let rooms: Vec<String> = read.rooms.iter().map(|r| format!("{:?}", r.identity)).collect();
+            let strict = got == recorded_full_read();
+            // Small-caps glyphs come back mixed-case from some models; the
+            // verdict's decision fields are compared exactly, warning text
+            // case-folded.
+            let fold = |mut v: Verdict| { v.warnings = v.warnings.iter().map(|w| w.to_uppercase()).collect(); v };
+            let pass = fold(got.clone()) == fold(recorded_full_read());
+            spike::report(name, pass, &clock, total, &format!(
+                "strict_eq={strict}; unread={}/13; panel={:?}; got={got:?}; rooms={rooms:?}", got.unread, read.panel));
+            assert!(pass);
+        }
+
+        #[test]
+        fn paddle_spike_temple_diag_raw_lines() {
+            use crate::ocr_paddle::spike;
+            if spike::off("temple_diag") {
+                return;
+            }
+            let img = live_capture();
+            let layout = live_layout(&img);
+            for (name, [x, y, w, h]) in text_regions(&layout) {
+                let crop = img.crop_imm(x.max(0) as u32, y.max(0) as u32, w as u32, h as u32);
+                let lines = panel::crop_lines(&SystemOcr, &crop, (x, y)).unwrap();
+                eprintln!("PADDLE-DIAG|temple region {name} [{x},{y},{w},{h}]");
+                for l in lines { eprintln!("PADDLE-DIAG|  {:?} [{},{},{},{}]", l.text, l.x, l.y, l.w, l.h); }
+            }
+            let lattice = crate::temple::lattice::Lattice::new(layout.origin, layout.scale);
+            for slot in crate::temple::lattice::Slot::ALL {
+                for (kind, [x, y, w, h]) in [("name", panel::name_strip(&lattice, slot)), ("num", panel::numeral_box(&lattice, slot))] {
+                    let crop = img.crop_imm(x as u32, y as u32, w as u32, h as u32);
+                    let t: Vec<String> = SystemOcr.recognize(&crop).unwrap().into_iter().map(|l| l.text).collect();
+                    eprintln!("PADDLE-DIAG|temple {slot:?} {kind} {t:?}");
+                }
             }
         }
 

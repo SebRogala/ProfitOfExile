@@ -1549,6 +1549,32 @@ mod owner_tests {
         assert!(capture.ambiguous.is_empty(), "{:?}", capture.ambiguous);
     }
     #[test]
+    fn paddle_spike_loot_catarina_png_through_read_capture() {
+        use crate::ocr_paddle::spike;
+        let name = "loot_catarina_png_read_capture";
+        if spike::off(name) {
+            return;
+        }
+        let png = image::load_from_memory(include_bytes!("../tests/fixtures/boss-loot/catarina-drops-2026-11-18.png")).unwrap();
+        let clock = spike::Clock::default();
+        let t = std::time::Instant::now();
+        let read = read_capture(|| true, || Ok(([0, 0, 590, 253], png.clone())),
+            |img| clock.time(|| crate::ocr::recognize_text(img)), crate::capture::preprocess_for_ocr_fast, |_| {});
+        let total = t.elapsed().as_secs_f64() * 1000.0;
+        let lines = read.expect("read ok").expect("active").1;
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let s = LootSettings::default();
+        let (owner, _, _) = pending_with_ocr_log(&s, &refs);
+        let owner = owner.lock().unwrap();
+        let capture = owner.pending.as_ref().unwrap();
+        let want = selection(&[(EYE, 1), (ETHEREAL, 1), ("Bitterbind Point", 1), (VEILED, 1)]);
+        let pass = capture.incoming == want && capture.unknown_lines.is_empty() && capture.ambiguous.is_empty();
+        spike::report(name, pass, &clock, total, &format!("lines={lines:?}; incoming={:?}; unknown={:?}; ambiguous={:?}",
+            capture.incoming, capture.unknown_lines, capture.ambiguous));
+        assert!(pass);
+    }
+
+    #[test]
     fn keep_regression_catarina_2026_11_18_read_keys_hold_each_matched_id_once() {
         let s = LootSettings::default();
         let (owner, _, _) = pending_with_ocr_log(&s, &CATARINA_2026_11_18_LINES);
