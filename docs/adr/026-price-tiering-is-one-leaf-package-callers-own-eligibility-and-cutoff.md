@@ -206,5 +206,42 @@ uses the greater of 0.08 of the average and 1c. Intermediate boundaries at or
 below FLOOR are omitted together with their names. The ratio path bypasses gap
 snapping and the small-group percentile fallback. The zero policy preserves
 the gap ladder; Harvest and Lab leave the ratio policy disabled at this step.
-`tier.MaxHighStep` records the accepted 0.25 movement limit; enforcing it
-against previous boundaries remains proposed under POE-406 WI-4.
+`tier.MaxHighStep` sets the accepted 0.25 movement limit enforced against
+previous boundaries as described below.
+
+### Previous state and margins — 2026-11-27 (POE-406)
+
+Status: accepted; current opt-in tier implementation. Lab activation and its
+trailing-input loader remain proposed under POE-406 WI-5.
+
+Callers may supply three optional inputs: a trailing price through existing
+`Item.Price`, the preceding tier through `Item.Prev`, and the last stored group
+boundaries through `Policy.PrevBoundaries`. The tier package owns classification;
+the caller owns history loading and the trailing-price calculation. Empty
+`Prev` and absent previous boundaries preserve classification without memory.
+Groups remain separate markets and the stored/served `Boundaries` JSON shape
+is unchanged.
+
+With `RatioLadder`, a positive HIGH explicitly identified in the previous
+group's `Names` bounds the new HIGH to
+`[(1-MaxHighStep)*previousHIGH, (1+MaxHighStep)*previousHIGH]`, at any age.
+Missing groups, absent `Names`, and missing or nonpositive named HIGH are cold
+starts. MID-HIGH and MID scale by clamped HIGH / raw HIGH; FLOOR keeps its raw
+anchor. Intermediate boundaries at or below FLOOR are dropped after scaling.
+Returned boundaries carry the clamped ladder for the next snapshot. TOP
+detection remains independent. Low-confidence members above the lower of raw
+and clamped HIGH are CHAOTIC immediately.
+
+On the ordinary `tier.Order` ladder, a previous tier is retained only when it
+lies between the tiers at `Price*(1+0.25)` and `Price*(1-0.25)`. CHAOTIC and
+UNRATED never participate in retention; an undersized group remains UNRATED
+regardless of its previous tiers. Entering or leaving CHAOTIC has no margin.
+
+This amends Decision 2's cutoff rule: with cutoff C, a previously included
+member leaves only below `C/(1+0.25)`; input-only `tier.Excluded` enters only
+above `C/(1-0.25)`; empty `Prev` keeps today's `Price > C` rule. At C=5c,
+members remain included at 4c and excluded members must exceed 6.666…c to
+enter. The same membership predicate controls confidence, median depth, TOP,
+boundary construction and output. Excluded items are absent from results;
+`Excluded` is never an output tier. No cutoff remains no cutoff. Caller-owned
+eligibility and ADR-032's held-price evidence contract remain unchanged.

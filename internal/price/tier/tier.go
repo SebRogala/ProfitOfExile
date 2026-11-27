@@ -10,9 +10,11 @@
 //  3. Boundaries: FLOOR anchored to the top-5 average, HIGH and MID-HIGH
 //     gap-snapped, MID at the largest relative gap below MID-HIGH.
 //     RatioLadder instead anchors every boundary to the clean top-5 average,
-//     omitting intermediate boundaries at or below FLOOR.
+//     clamps HIGH against supplied previous boundaries, and omits intermediate
+//     boundaries at or below FLOOR after scaling.
 //  4. Every item is classified; a low-confidence item above the highest
-//     boundary is CHAOTIC.
+//     boundary (the lower raw/clamped HIGH with RatioLadder) is CHAOTIC.
+//     Previous ordinary tiers hold within a 25% price margin.
 //
 // Callers own eligibility and cutoff: they pass only the items that belong in
 // a market, and a Policy. The zero Policy applies no price cutoff.
@@ -27,16 +29,18 @@ import (
 
 // Tier names.
 const (
-	Top      = "TOP"
-	High     = "HIGH"
-	MidHigh  = "MID-HIGH"
-	Mid      = "MID"
-	Low      = "LOW"
-	Floor    = "FLOOR"
-	Chaotic  = "CHAOTIC"
-	Unrated  = "UNRATED"
-	Excluded = ""
+	Top     = "TOP"
+	High    = "HIGH"
+	MidHigh = "MID-HIGH"
+	Mid     = "MID"
+	Low     = "LOW"
+	Floor   = "FLOOR"
+	Chaotic = "CHAOTIC"
+	Unrated = "UNRATED"
 )
+
+// Excluded is input-only previous cutoff membership; it is never a result tier.
+const Excluded = "EXCLUDED"
 
 // MinTopItems is the fewest confident, cutoff-passing items in a group for
 // which TOP detection runs.
@@ -44,6 +48,8 @@ const MinTopItems = 4
 
 // MaxHighStep is the maximum relative HIGH movement between snapshots.
 const MaxHighStep = 0.25
+
+const tierChangeMargin = 0.25
 
 // Order lists tier names from highest to lowest. Of indexes into it when a
 // Boundaries carries no Names: boundary[0] -> Order[0] (TOP), etc.
@@ -82,7 +88,9 @@ type Item struct {
 	// and takes no part in TOP or boundaries.
 	Gated bool
 	Held  bool
-	Prev  string
+	// Prev is the previous tier, Excluded for a previous cutoff exclusion,
+	// or empty when there is no previous observation.
+	Prev string
 }
 
 // Key identifies a classified item.
@@ -94,8 +102,8 @@ type Key struct {
 // Policy is the caller's choice of what the algorithm leaves out. The zero
 // value means no cutoff and depth-aware low-confidence detection.
 type Policy struct {
-	// CutoffChaos excludes every item priced at or below it from every step,
-	// when HasCutoff is set.
+	// CutoffChaos sets cutoff membership when HasCutoff is set. Item.Prev
+	// applies the entry/exit margin; an empty Prev uses Price > CutoffChaos.
 	CutoffChaos float64
 	HasCutoff   bool
 	// DepthUnknown skips relative-depth detection for markets whose depth is
@@ -106,13 +114,24 @@ type Policy struct {
 	MinConfident int
 	// RatioLadder anchors boundaries to the clean top-5 average without gap
 	// snapping or the small-group percentile fallback. Zero keeps the gap ladder.
-	RatioLadder    bool
+	RatioLadder bool
+	// PrevBoundaries supplies each group's last stored named HIGH. Only the
+	// ratio ladder uses it; absent or nonpositive named HIGH means cold start.
 	PrevBoundaries map[string]Boundaries
 }
 
-// excludes reports whether the policy's cutoff leaves price out.
-func (p Policy) excludes(price float64) bool {
-	return p.HasCutoff && price <= p.CutoffChaos
+func (p Policy) includes(it Item) bool {
+	if !p.HasCutoff {
+		return true
+	}
+	switch it.Prev {
+	case "":
+		return it.Price > p.CutoffChaos
+	case Excluded:
+		return it.Price > p.CutoffChaos/(1-tierChangeMargin)
+	default:
+		return it.Price >= p.CutoffChaos/(1+tierChangeMargin)
+	}
 }
 
 // Boundaries holds tier thresholds sorted descending. Names, when set, names
@@ -145,7 +164,7 @@ func Classify(items []Item, p Policy) Result {
 	ratedItems := items
 	if p.MinConfident > 0 {
 		for _, it := range items {
-			if !p.excludes(it.Price) && !lowConf[Key{it.Group, it.Key}] {
+			if p.includes(it) && !lowConf[Key{it.Group, it.Key}] {
 				confidentCounts[it.Group]++
 			}
 		}
@@ -157,7 +176,7 @@ func Classify(items []Item, p Policy) Result {
 		}
 	}
 	tops, topBoundary := detectTops(ratedItems, lowConf, p)
-	boundaries := cleanBoundaries(ratedItems, lowConf, tops, p)
+	boundaries, chaoticLines := classificationBoundaries(ratedItems, lowConf, tops, p)
 
 	result := Result{
 		Items:       make(map[Key]Classification),
@@ -166,7 +185,7 @@ func Classify(items []Item, p Policy) Result {
 	}
 
 	for _, it := range items {
-		if p.excludes(it.Price) {
+		if !p.includes(it) {
 			continue
 		}
 		key := Key{it.Group, it.Key}
@@ -180,11 +199,13 @@ func Classify(items []Item, p Policy) Result {
 			tier = Top
 		} else if tb, ok := boundaries[it.Group]; ok {
 			tier = Of(it.Price, tb)
-			// Low-confidence items with prices above the highest tier boundary
+			// Low-confidence items with prices above the CHAOTIC line
 			// have unreliable inflated prices (CASCADE, manipulation, thin market
 			// spike). Classify as CHAOTIC — excluded from font EV and rankings.
-			if isLowConf && len(tb.Boundaries) > 0 && it.Price > tb.Boundaries[0] {
+			if line, ok := chaoticLines[it.Group]; isLowConf && ok && it.Price > line {
 				tier = Chaotic
+			} else {
+				tier = retainPreviousTier(it, tb, tier)
 			}
 		} else {
 			tier = Floor
@@ -199,13 +220,34 @@ func Classify(items []Item, p Policy) Result {
 	return result
 }
 
+func retainPreviousTier(it Item, b Boundaries, current string) string {
+	upper := Of(it.Price*(1+tierChangeMargin), b)
+	lower := Of(it.Price*(1-tierChangeMargin), b)
+	previousRank, upperRank, lowerRank := -1, -1, -1
+	for i, name := range Order {
+		if name == it.Prev {
+			previousRank = i
+		}
+		if name == upper {
+			upperRank = i
+		}
+		if name == lower {
+			lowerRank = i
+		}
+	}
+	if previousRank >= 0 && upperRank >= 0 && lowerRank >= 0 && previousRank >= upperRank && previousRank <= lowerRank {
+		return it.Prev
+	}
+	return current
+}
+
 // LowConfidence identifies caller-gated items and, per group, items whose depth
 // is under 40% of the group's median depth. Held items and DepthUnknown skip
 // only the relative depth rule; the policy's cutoff excludes items from both rules.
 func LowConfidence(items []Item, p Policy) map[Key]bool {
 	result := make(map[Key]bool)
 	for _, it := range items {
-		if it.Gated && !p.excludes(it.Price) {
+		if it.Gated && p.includes(it) {
 			result[Key{it.Group, it.Key}] = true
 		}
 	}
@@ -215,7 +257,7 @@ func LowConfidence(items []Item, p Policy) map[Key]bool {
 
 	byGroup := make(map[string][]Item)
 	for _, it := range items {
-		if p.excludes(it.Price) {
+		if !p.includes(it) {
 			continue
 		}
 		byGroup[it.Group] = append(byGroup[it.Group], it)
@@ -247,7 +289,7 @@ func LowConfidence(items []Item, p Policy) map[Key]bool {
 func detectTops(items []Item, lowConf map[Key]bool, p Policy) (map[Key]bool, map[string]float64) {
 	byGroup := make(map[string][]Item)
 	for _, it := range items {
-		if p.excludes(it.Price) {
+		if !p.includes(it) {
 			continue
 		}
 		if lowConf[Key{it.Group, it.Key}] {
@@ -503,10 +545,15 @@ func computeVariantTiers(prices []float64, floorBoundary float64) Boundaries {
 // cleanBoundaries produces per-group tier boundaries from the clean pool (no
 // low-confidence, no TOP items) using the policy's chosen ladder.
 func cleanBoundaries(items []Item, lowConf map[Key]bool, tops map[Key]bool, p Policy) map[string]Boundaries {
+	boundaries, _ := classificationBoundaries(items, lowConf, tops, p)
+	return boundaries
+}
+
+func classificationBoundaries(items []Item, lowConf map[Key]bool, tops map[Key]bool, p Policy) (map[string]Boundaries, map[string]float64) {
 	// Build per-group clean price lists (descending).
 	byGroup := make(map[string][]float64)
 	for _, it := range items {
-		if p.excludes(it.Price) {
+		if !p.includes(it) {
 			continue
 		}
 		key := Key{it.Group, it.Key}
@@ -517,6 +564,7 @@ func cleanBoundaries(items []Item, lowConf map[Key]bool, tops map[Key]bool, p Po
 	}
 
 	result := make(map[string]Boundaries)
+	chaoticLines := make(map[string]float64)
 	for group, prices := range byGroup {
 		sort.Float64s(prices)
 		// Reverse to descending.
@@ -527,9 +575,19 @@ func cleanBoundaries(items []Item, lowConf map[Key]bool, tops map[Key]bool, p Po
 		anchor := computeTop5Avg(prices)
 		floorBound := math.Max(anchor*floorTopRatio, 1)
 		if p.RatioLadder {
+			rawHigh := anchor * highRatio
+			high := rawHigh
+			previous := p.PrevBoundaries[group]
+			for i, name := range previous.Names {
+				if name == High && i < len(previous.Boundaries) && previous.Boundaries[i] > 0 {
+					high = math.Max(previous.Boundaries[i]*(1-MaxHighStep), math.Min(high, previous.Boundaries[i]*(1+MaxHighStep)))
+					break
+				}
+			}
+			chaoticLines[group] = math.Min(rawHigh, high)
 			b := Boundaries{}
 			for i, ratio := range []float64{highRatio, midHighRatio, midRatio} {
-				boundary := anchor * ratio
+				boundary := high * (ratio / highRatio)
 				if boundary > floorBound {
 					b.Boundaries = append(b.Boundaries, boundary)
 					b.Names = append(b.Names, Order[i+1])
@@ -541,8 +599,11 @@ func cleanBoundaries(items []Item, lowConf map[Key]bool, tops map[Key]bool, p Po
 			continue
 		}
 		result[group] = computeVariantTiers(prices, floorBound)
+		if b := result[group]; len(b.Boundaries) > 0 {
+			chaoticLines[group] = b.Boundaries[0]
+		}
 	}
-	return result
+	return result, chaoticLines
 }
 
 // tierFallback produces boundaries using percentile splitting when there are
