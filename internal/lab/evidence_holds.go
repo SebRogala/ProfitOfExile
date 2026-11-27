@@ -70,12 +70,17 @@ func deriveEvidenceHolds(gems []GemPrice, points []evidencePoint, asOf time.Time
 	for i := range held {
 		g := &held[i]
 		g.hold = nil
+		g.holdRejected = false
 		if g.Chaos <= 0 || evidence.Grade(gemDepth(*g), policy) == evidence.Solid {
 			continue
 		}
 		point, ok := latest[GemClassificationKey{Name: g.Name, Variant: g.Variant}]
+		if ok && g.Chaos > point.Chaos*policy.HoldBand {
+			g.holdRejected = true
+		}
 		if ok && math.Max(g.Chaos, point.Chaos)/math.Min(g.Chaos, point.Chaos) <= policy.HoldBand {
 			g.hold = &evidence.Hold{LastSolidPrice: point.Chaos, LastSolidAge: asOf.Sub(point.Time)}
+			g.Chaos = math.Min(g.Chaos, point.Chaos)
 		}
 	}
 	return held

@@ -130,7 +130,7 @@ func (a *Analyzer) RunFont(ctx context.Context, scope league.Scope) error {
 	a.muFont.Lock()
 	defer a.muFont.Unlock()
 
-	gems, snapTime, err := a.repo.LatestGemPrices(ctx, scope)
+	gems, snapTime, err := a.heldLatestGemPrices(ctx, scope)
 	if err != nil {
 		a.logger.Error("font: failed to load gem prices", "error", err)
 		return err
@@ -154,6 +154,26 @@ func (a *Analyzer) RunFont(ctx context.Context, scope league.Scope) error {
 		if err != nil {
 			a.logger.Error("font: failed to load gem features", "error", err)
 			return err
+		}
+	}
+	if len(features) > 0 {
+		classification := ComputeGemClassification(gems)
+		aligned := make(map[GemClassificationKey]GemPrice)
+		for _, g := range gems {
+			if g.hold != nil || g.holdRejected {
+				aligned[GemClassificationKey{Name: g.Name, Variant: g.Variant}] = g
+			}
+		}
+		features = append([]GemFeature(nil), features...)
+		for i := range features {
+			f := &features[i]
+			key := GemClassificationKey{Name: f.Name, Variant: f.Variant}
+			g, ok := aligned[key]
+			if c, classified := classification.Gems[key]; ok && classified {
+				f.Chaos = g.Chaos
+				f.Tier = c.Tier
+				f.LowConfidence = c.LowConfidence
+			}
 		}
 	}
 	analysis := AnalyzeFont(snapTime, gems, features)

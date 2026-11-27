@@ -37,6 +37,7 @@ func tierItems(gems []GemPrice, filter func(GemPrice) bool) []tier.Item {
 		items = append(items, tier.Item{
 			Group: g.Variant, Key: g.Name, Price: g.Chaos, Depth: g.Listings,
 			Gated: evidence.Grade(gemDepth(g), GemEvidencePolicy()) != evidence.Solid,
+			Held:  g.hold != nil,
 		})
 	}
 	return items
@@ -62,6 +63,13 @@ func classify(gems []GemPrice, filter func(GemPrice) bool) ClassificationResult 
 		result.Gems[GemClassificationKey{Name: key.Key, Variant: key.Group}] = GemClassification{
 			Tier:          c.Tier,
 			LowConfidence: c.LowConfidence,
+		}
+	}
+	for _, g := range gems {
+		key := GemClassificationKey{Name: g.Name, Variant: g.Variant}
+		if c, ok := result.Gems[key]; ok && g.holdRejected && filter(g) {
+			c.Tier = tier.Chaotic
+			result.Gems[key] = c
 		}
 	}
 	return result

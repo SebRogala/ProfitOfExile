@@ -49,6 +49,7 @@ type GemPrice struct {
 	SampleCount    *int  // nil means the poe.ninja sample is unknown.
 	SparklineEmpty *bool // nil means the poe.ninja sparkline is unknown.
 	hold           *evidence.Hold
+	holdRejected   bool
 }
 
 // AnalyzeTransfigure computes transfigure ROI for all base→transfigured pairs.

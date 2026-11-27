@@ -41,7 +41,7 @@ func GemEvidencePolicy() evidence.Policy {
 		TradeSellers:     gemEvidenceTradeSellers,
 		NinjaSampleAbove: labThinSampleCount,
 		NinjaListings:    gemEvidenceNinjaListings,
-		HoldWindow:       24 * time.Hour,
+		HoldWindow:       12 * time.Hour,
 		HoldBand:         2,
 	}
 }

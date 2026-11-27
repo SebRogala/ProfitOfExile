@@ -159,8 +159,8 @@ func Classify(items []Item, p Policy) Result {
 }
 
 // LowConfidence identifies caller-gated items and, per group, items whose depth
-// is under 40% of the group's median depth. DepthUnknown skips only the relative
-// depth rule; the policy's cutoff excludes items from both rules.
+// is under 40% of the group's median depth. Held items and DepthUnknown skip
+// only the relative depth rule; the policy's cutoff excludes items from both rules.
 func LowConfidence(items []Item, p Policy) map[Key]bool {
 	result := make(map[Key]bool)
 	for _, it := range items {
@@ -192,7 +192,7 @@ func LowConfidence(items []Item, p Policy) map[Key]bool {
 		}
 		for _, it := range gItems {
 			depth := float64(it.Depth) / median
-			if depth < lowConfidenceDepth {
+			if !it.Held && depth < lowConfidenceDepth {
 				result[Key{group, it.Key}] = true
 			}
 		}

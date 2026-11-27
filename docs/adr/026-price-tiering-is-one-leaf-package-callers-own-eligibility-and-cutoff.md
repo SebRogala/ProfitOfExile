@@ -177,3 +177,5 @@ above the highest boundary, or FLOOR when the group has no boundaries. An
 all-gated group has neither boundaries nor a TOP boundary. With no caller gates,
 classification is unchanged. Callers continue to own the evidence policy that
 sets the gate; the tier package introduces no evidence floor.
+
+Caller-held items (`tier.Item.Held`) are exempt from relative-depth detection as defined in [ADR-032](032-one-price-engine-key-per-market-resolver-and-book.md#evidence-gate).
