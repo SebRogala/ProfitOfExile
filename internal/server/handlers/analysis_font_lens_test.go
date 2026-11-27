@@ -348,11 +348,11 @@ func TestKeepHappyFontAnalysis_WarmBodyIsPinned(t *testing.T) {
 	c := lab.NewCache(corpusScope)
 	c.For(corpusScope).SetFont(lab.FontAnalysis{
 		Safe: []lab.FontResult{
-			{Time: at, Color: "RED", Variant: "20/20", Pool: 9, PricedGems: 8, Winners: 2, PWin: 0.5, EV: fontFixtureFloat(3, lab.FontResult{}.EV), InputCost: 1, Profit: fontFixtureFloat(2, lab.FontResult{}.Profit), FontsToHit: 2, LiquidityRisk: "LOW"},
-			{Time: at, Color: "BLUE", Variant: "20/20", Pool: 7, PricedGems: 7, Winners: 1, PWin: 0.25, EV: fontFixtureFloat(9, lab.FontResult{}.EV), InputCost: 1, Profit: fontFixtureFloat(8, lab.FontResult{}.Profit), FontsToHit: 4, LiquidityRisk: "HIGH"},
+			{Time: at, Color: "RED", Variant: "20/20", Pool: 9, PricedGems: 8, Winners: 2, PWin: 0.5, EV: fontFixtureFloat(3, lab.FontResult{}.EV), EVRaw: fontFixtureFloat(0, lab.FontResult{}.EVRaw), InputCost: 1, Profit: fontFixtureFloat(2, lab.FontResult{}.Profit), FontsToHit: 2, LiquidityRisk: "LOW"},
+			{Time: at, Color: "BLUE", Variant: "20/20", Pool: 7, PricedGems: 7, Winners: 1, PWin: 0.25, EV: fontFixtureFloat(9, lab.FontResult{}.EV), EVRaw: fontFixtureFloat(0, lab.FontResult{}.EVRaw), InputCost: 1, Profit: fontFixtureFloat(8, lab.FontResult{}.Profit), FontsToHit: 4, LiquidityRisk: "HIGH"},
 			{Time: at, Color: "GREEN", Variant: "1", Pool: 5, Profit: fontFixtureFloat(99, lab.FontResult{}.Profit), LiquidityRisk: "LOW"},
 		},
-		Jackpot: []lab.FontResult{{Time: at, Color: "GREEN", Variant: "20/20", Pool: 3, EV: fontFixtureFloat(1, lab.FontResult{}.EV), Profit: fontFixtureFloat(1, lab.FontResult{}.Profit), ThinPoolGems: 1, LiquidityRisk: "MEDIUM"}},
+		Jackpot: []lab.FontResult{{Time: at, Color: "GREEN", Variant: "20/20", Pool: 3, EV: fontFixtureFloat(1, lab.FontResult{}.EV), EVRaw: fontFixtureFloat(0, lab.FontResult{}.EVRaw), Profit: fontFixtureFloat(1, lab.FontResult{}.Profit), ThinPoolGems: 1, LiquidityRisk: "MEDIUM"}},
 	})
 	w := serveWithoutRepository(t, FontAnalysis(nil, c, nil, corpusScope), "/api/analysis/font?variant=20/20&limit=1")
 	var got map[string]any
