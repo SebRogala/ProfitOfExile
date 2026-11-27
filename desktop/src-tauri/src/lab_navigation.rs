@@ -364,6 +364,32 @@ mod tests {
     }
 
     #[test]
+    fn keep_regression_chat_area_quotes_preserve_lab_room_navigation() {
+        let chat_lines = [
+            "2026/11/19 21:04:11 1234567 cff94598 [INFO Client 4120] ExamplePlayer: You have entered Lioneye's Watch.",
+            "2026/11/19 21:04:12 1234568 cff94598 [INFO Client 4120] #ExamplePlayer: You have entered Lioneye's Watch.",
+        ];
+
+        for line in chat_lines {
+            let event = parse_nav_event(line, true);
+            assert!(event.is_none(), "chat must emit no navigation event: {event:?}; line: {line}");
+        }
+
+        let room_line = "2026/11/19 21:04:52 1275012 cff94598 [INFO Client 4120] : You have entered Estate Walkways.";
+        let event = parse_nav_event(room_line, true);
+        assert!(matches!(event, Some(NavEvent::RoomChanged { ref name }) if name == "Estate Walkways"),
+            "the next system area entry must still change the lab room: {event:?}");
+    }
+
+    #[test]
+    fn keep_critical_real_town_entry_exits_lab_preventing_stale_run_tracking_overlays() {
+        let line = "2026/11/19 21:09:03 120 cff94598 [INFO Client 9] : You have entered Lioneye's Watch.";
+        let event = parse_nav_event(line, true);
+        assert!(matches!(event, Some(NavEvent::LabExited)),
+            "a missed real exit silently leaves stale lab run tracking and overlays live: {event:?}");
+    }
+
+    #[test]
     fn test_nav_event_plaza() {
         let line = "2026/04/01 20:00:00 12345678 [INFO Client 1234] : You have entered Aspirants' Plaza.";
         assert!(matches!(parse_nav_event(line, false), Some(NavEvent::PlazaEntered)));
