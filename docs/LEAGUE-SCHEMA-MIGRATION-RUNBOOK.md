@@ -38,6 +38,24 @@ Do not use generic down migrations against restored production data. Recovery
 is restore of the pre-deploy backup, then investigation and a new forward
 migration; it is not `migrate down`.
 
+### At-creation checklist for league tables
+
+When creating a league-scoped table, register its migration-contract coverage in
+`internal/db/migrations/migrations_integration_test.go`:
+
+- Add the table and its expected, ordered, league-inclusive primary key to the
+  `relations` map in `TestScopedRelationsHaveLeagueIdentityAndPrimaryKeys`.
+- Add tables with a league foreign key to `leagueRegistryRelations`.
+  Keep new tables out of `scopedRelations`: that list covers only tables that
+  existed before the league migration, were backfilled to Mirage, and carried
+  compression policies under the historical migration contract.
+
+Observed in `TestScopedRelationsHaveLeagueIdentityAndPrimaryKeys` and the
+`scopedRelations` / `leagueRegistryRelations` declarations. Follow
+[ADR-009](adr/009-league-scoped-repository-convention.md) for the league-scoping
+policy and [ADR-004](adr/004-database-migration-strategy-auto-migrate-on-start-with-golang-migrate.md)
+for the migration policy (POE-418).
+
 ## Merging the stack (POE-119 + POE-120 + POE-121)
 
 POE-119, POE-120, and POE-121 are developed as **stacked branches**
