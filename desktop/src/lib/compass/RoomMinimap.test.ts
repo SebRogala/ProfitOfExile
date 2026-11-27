@@ -47,3 +47,26 @@ describe('RoomMinimap without a preset', () => {
 		expect(texts(html({ areaCode: '', targetDirection: 'NE' }), 'div', 'fallback-dir')).toEqual(['NE']);
 	});
 });
+
+/** Opening tag of every element (any tag) whose class list holds `cls`. */
+function openingTags(markup: string, cls: string): string[] {
+	const re = new RegExp(`<[a-z]+\\b[^>]*class="[^"]*\\b${cls}\\b[^"]*"[^>]*>`, 'g');
+	return [...markup.matchAll(re)].map((m) => m[0]);
+}
+
+describe('RoomMinimap exit-direction arrow', () => {
+	it.each([
+		{ direction: 'NE', degrees: 45 },
+		{ direction: 'W', degrees: 270 }
+	])('keep:happy: without a layout, $direction draws one arrow rotated $degrees deg beside its label', ({ direction, degrees }) => {
+		const markup = html({ areaCode: '', targetDirection: direction });
+		const arrows = openingTags(markup, 'fallback-arrow');
+		expect(arrows).toHaveLength(1);
+		expect(arrows[0].match(/transform:\s*rotate\(([-\d.]+)deg\)/)?.[1]).toBe(String(degrees));
+		expect(texts(markup, 'div', 'fallback-dir')).toEqual([direction]);
+	});
+
+	it('keep:happy: with a layout, draws no arrow', () => {
+		expect(openingTags(html({ doors: [DOOR], targetDirection: 'NE' }), 'fallback-arrow')).toEqual([]);
+	});
+});
