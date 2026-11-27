@@ -519,7 +519,7 @@ func TestKeepCriticalFontColdFillNeverWarms(t *testing.T) {
 
 	t.Run("an analyzer answer published mid-load wins", func(t *testing.T) {
 		cache := NewCache(scope)
-		published := FontAnalysis{Safe: []FontResult{{Variant: "20/20", Color: "BLUE", Mode: "safe", Profit: 42}}}
+		published := FontAnalysis{Safe: []FontResult{{Variant: "20/20", Color: "BLUE", Mode: "safe", Profit: fontFixtureFloat(42, FontResult{}.Profit)}}}
 		publishedDedication := DedicationCorpus{Analysis: DedicationAnalysis{
 			Skills: []DedicationResult{{Variant: DefaultDedicationVariant, Color: "GREEN", GemType: "skill", Mode: "safe", Profit: 7}},
 		}}
