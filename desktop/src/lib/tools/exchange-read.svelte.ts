@@ -21,7 +21,7 @@ export interface ExchangeSelection {
 	oneSide: ChaosDivOneSide;
 	left: number;
 	right: number;
-	stock: number;
+	stock: number | null;
 	wantName: string;
 	haveName: string;
 }

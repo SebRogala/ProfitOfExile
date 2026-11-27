@@ -65,7 +65,7 @@
 			ratio = String(selected.ratio);
 			oneSide = selected.oneSide;
 			clearCopy();
-			readStatus = `${time} · ${selected.left} : ${selected.right} · stock ${selected.stock} · ${selected.wantName} ⇄ ${selected.haveName}`;
+			readStatus = `${time} · ${selected.left} : ${selected.right}${selected.stock === null ? '' : ` · stock ${selected.stock}`} · ${selected.wantName} ⇄ ${selected.haveName}`;
 		});
 	});
 
