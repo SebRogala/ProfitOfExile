@@ -41,6 +41,18 @@ process, reacting to a Mercure notification the collector published.
 Each analysis kind has its own mutex on `Analyzer` (`muV2`, `muFont`, …), so
 overlapping ticks queue rather than pile up.
 
+Inside `RunV2` the tier comes from one place (verified 2026-11-27):
+`ComputeGemClassification` runs once per tick, per variant, and its result
+feeds the three persisted outputs in order. `ComputeMarketContext` stores the
+`20/20` boundaries (any variant's when `20/20` is absent) as
+`market_context.tier_boundaries`; `ComputeGemFeatures` copies each gem's
+classified tier into `gem_features.tier`; `ComputeGemSignals` copies the
+feature's tier into `gem_signals.tier`. The three tables therefore never
+reclassify, and a gem's tier agrees across them within a tick; the per-gem
+tier is per variant, while `market_context` keeps one variant's boundaries.
+The tier algorithm and its policy are owned by
+[ADR-026](adr/026-price-tiering-is-one-leaf-package-callers-own-eligibility-and-cutoff.md).
+
 ### `RunV2` runs twice per snapshot
 
 After every `ninja_gems` event the server also schedules a **T+15-minute delayed
@@ -337,6 +349,26 @@ apart between them.
 
 The mark advances **only to the newest timestamp actually observed among incoming
 points**, never to `now`. An empty read leaves it where it was.
+
+**Accepted trade-off: a mark ahead of the rows is a fixed point** (verified
+2026-11-27 against `internal/lab/sparkline_cache.go`). Nothing reconciles the
+mark against what `gem_snapshots` holds. Move the rows backwards under a
+running server, by truncating `gem_snapshots` and re-COPYing an older dump, and
+the mark is newer than every row: the incremental read matches nothing, the
+series decay to empty once the lookback passes, and every sparkline serves `[]`
+at HTTP 200 for the life of the process. Rows newer than the mark resume
+population; nothing in the process repairs the mark itself. The remedy is a
+server restart: the mark is in-memory only, so the next tick reads cold.
+
+`warnSparklineCacheRetainedNothing` logs the state as the WARN "lab sparkline
+cache retained no series against a live high-water mark", with `highWater`,
+`markAge` and `lookback` fields. It fires when a tick leaves both maps empty
+while the mark is non-zero, and it covers two states it cannot tell apart on
+its own; `markAge` is the discriminator. A `markAge` past `lookback` is a
+corpus that legitimately decayed (nothing priced for the whole lookback) and
+recovers by itself when a gem is priced again. A `markAge` inside `lookback`
+is the mark ahead of the live rows, which only a restart clears. Empty maps
+alone do not mean the cache is cold.
 
 Population deliberately does **not** reuse the history `RunV2` already holds:
 `GemPriceHistoryByVariant` filters `chaos > 5`, excludes Trarthus names, and
