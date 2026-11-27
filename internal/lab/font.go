@@ -542,7 +542,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			if jackpotPWin > 0 {
 				jackpotFontsToHit = 1.0 / jackpotPWin
 			}
-			topEvaluated := !groupUnrated(variantTiers[variant])
+			topEvaluated := len(variantTiers[variant]) > 0 && !groupUnrated(variantTiers[variant])
 			jackpotResult := FontResult{
 				Time:          snapTime,
 				Color:         color,
