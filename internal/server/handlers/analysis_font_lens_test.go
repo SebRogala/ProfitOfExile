@@ -394,7 +394,7 @@ func TestFontAnalysis_MixedChaosAndDivineLensWithoutARateHasNoPrice(t *testing.T
 }
 
 // The Font body served from a warm corpus, pinned whole: per-mode rows
-// narrowed to the variant in profit order and cut at the limit, best colors,
+// narrowed to the variant in profit order and cut at the limit, one global best,
 // and the all-null lens of a nil trade cache and nil repository, carrying
 // every search with four unpriced feeders.
 func TestKeepHappyFontAnalysis_WarmBodyIsPinned(t *testing.T) {
@@ -406,7 +406,7 @@ func TestKeepHappyFontAnalysis_WarmBodyIsPinned(t *testing.T) {
 			{Time: at, Color: "BLUE", Variant: "20/20", Pool: 7, PricedGems: 7, Winners: 1, PWin: 0.25, EV: fontFixtureFloat(9, lab.FontResult{}.EV), EVRaw: fontFixtureFloat(0, lab.FontResult{}.EVRaw), InputCost: 1, Profit: fontFixtureFloat(8, lab.FontResult{}.Profit), FontsToHit: 4, LiquidityRisk: "HIGH"},
 			{Time: at, Color: "GREEN", Variant: "1", Pool: 5, Profit: fontFixtureFloat(99, lab.FontResult{}.Profit), LiquidityRisk: "LOW"},
 		},
-		Jackpot: []lab.FontResult{{Time: at, Color: "GREEN", Variant: "20/20", Pool: 3, EV: fontFixtureFloat(1, lab.FontResult{}.EV), EVRaw: fontFixtureFloat(0, lab.FontResult{}.EVRaw), Profit: fontFixtureFloat(1, lab.FontResult{}.Profit), ThinPoolGems: 1, LiquidityRisk: "MEDIUM"}},
+		Jackpot: []lab.FontResult{{Time: at, Color: "GREEN", Variant: "20/20", Pool: 3, ThinPoolGems: 1, LiquidityRisk: "MEDIUM"}},
 	})
 	w := serveWithoutRepository(t, FontAnalysis(nil, c, nil, corpusScope), "/api/analysis/font?variant=20/20&limit=1")
 	var got map[string]any
@@ -416,10 +416,10 @@ func TestKeepHappyFontAnalysis_WarmBodyIsPinned(t *testing.T) {
 	wantLens := unpricedLensBody(t, got)
 	var want map[string]any
 	if err := json.Unmarshal([]byte(`{
-		"safe": [{"time":"2026-11-19T12:00:00Z","color":"BLUE","variant":"20/20","pool":7,"pricedGems":7,"winners":1,"pWin":0.25,"avgWin":0,"avgWinRaw":0,"ev":9,"evRaw":0,"inputCost":1,"profit":8,"fontsToHit":4,"thinPoolGems":0,"liquidityRisk":"HIGH"}],
+		"safe": [{"time":"2026-11-19T12:00:00Z","color":"BLUE","variant":"20/20","pool":7,"pricedGems":7,"coverage":1,"winners":1,"pWin":0.25,"avgWin":0,"avgWinRaw":0,"ev":9,"evRaw":0,"inputCost":1,"profit":8,"fontsToHit":4,"thinPoolGems":0,"liquidityRisk":"HIGH"}],
 		"premium": [],
-		"jackpot": [{"time":"2026-11-19T12:00:00Z","color":"GREEN","variant":"20/20","pool":3,"pricedGems":0,"winners":0,"pWin":0,"avgWin":0,"avgWinRaw":0,"ev":1,"evRaw":0,"inputCost":0,"profit":1,"fontsToHit":0,"thinPoolGems":1,"liquidityRisk":"MEDIUM"}],
-		"bestColorSafe": "BLUE", "bestColorPremium": "", "bestColorJackpot": "GREEN"}`), &want); err != nil {
+		"jackpot": [{"time":"2026-11-19T12:00:00Z","color":"GREEN","variant":"20/20","pool":3,"pricedGems":0,"coverage":0,"winners":0,"pWin":0,"avgWin":0,"avgWinRaw":0,"ev":null,"evRaw":null,"inputCost":0,"profit":null,"fontsToHit":0,"thinPoolGems":1,"liquidityRisk":"MEDIUM"}],
+		"best": null}`), &want); err != nil {
 		t.Fatal(err)
 	}
 	want["lens"] = wantLens
@@ -869,4 +869,98 @@ func TestKeepHappy_FontAnalysisServesLowConfidenceGems(t *testing.T) {
 			t.Errorf("lowConfidenceGems[%d] = %+v, want %+v", i, got[i], want)
 		}
 	}
+}
+
+func serveFontCells(t *testing.T, rows []lab.FontResult, target string) map[string]json.RawMessage {
+	t.Helper()
+	cache := lab.NewCache(corpusScope)
+	cache.For(corpusScope).SetFont(lab.FontAnalysis{Safe: rows, Premium: rows, Jackpot: rows})
+	w := serveWithoutRepository(t, FontAnalysis(nil, cache, nil, corpusScope), target)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func assertServedFontBest(t *testing.T, body map[string]json.RawMessage, want any) {
+	t.Helper()
+	raw, present := body["best"]
+	if !present {
+		t.Error("best is absent, want the global best field")
+		return
+	}
+	var got any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("best = %s, want %v", raw, want)
+	}
+	for _, key := range []string{"bestColorSafe", "bestColorPremium", "bestColorJackpot"} {
+		if _, exists := body[key]; exists {
+			t.Errorf("obsolete %s is still served", key)
+		}
+	}
+}
+
+// keep:happy — AC-1: the dated Covens cell retains its coverage and withheld
+// values while the one best names a covered cell outside the requested variant.
+func TestKeepHappy_FontAnalysisServesCovensBlue2020AsCoverageWithoutEVOrBest(t *testing.T) {
+	v := 14.0
+	rows := []lab.FontResult{
+		{Color: "BLUE", Variant: "20/20", Pool: 88},
+		{Color: "RED", Variant: "1/20", Pool: 88, PricedGems: 22, EV: &v, EVRaw: &v, Profit: &v},
+	}
+	body := serveFontCells(t, rows, "/api/analysis/font?variant=20/20")
+	for _, mode := range []string{"safe", "premium", "jackpot"} {
+		var got []map[string]json.RawMessage
+		if err := json.Unmarshal(body[mode], &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("%s = %s, want one BLUE 20/20 cell", mode, body[mode])
+		}
+		for key, want := range map[string]string{"color": `"BLUE"`, "variant": `"20/20"`, "coverage": "0", "pricedGems": "0", "pool": "88", "ev": "null", "evRaw": "null", "profit": "null"} {
+			if string(got[0][key]) != want {
+				t.Errorf("%s %s = %s, want %s", mode, key, got[0][key], want)
+			}
+		}
+	}
+	assertServedFontBest(t, body, map[string]any{"variant": "1/20", "color": "RED"})
+}
+
+// keep:happy — AC-4: no covered cell means no BEST anywhere on the grid.
+func TestKeepHappy_FontAnalysisServesNoBestWhenNoCellIsCovered(t *testing.T) {
+	var rows []lab.FontResult
+	for _, variant := range []string{"1", "1/20", "20", "20/20"} {
+		for _, color := range []string{"RED", "GREEN", "BLUE"} {
+			rows = append(rows, lab.FontResult{Color: color, Variant: variant, Pool: 88, PricedGems: 21})
+		}
+	}
+	body := serveFontCells(t, rows, "/api/analysis/font")
+	assertServedFontBest(t, body, nil)
+}
+
+// keep:critical — silent: four sliced responses can otherwise crown four
+// different cells, and the player trusts each ring when choosing runs.
+func TestKeepCritical_FontAnalysisBestIgnoresTheVariantSlice(t *testing.T) {
+	low, high := 14.0, 30.0
+	rows := []lab.FontResult{
+		{Color: "RED", Variant: "1", Pool: 88, PricedGems: 22, EV: &low, EVRaw: &low, Profit: &low},
+		{Color: "GREEN", Variant: "1", Pool: 88, PricedGems: 22, EV: &low, EVRaw: &low, Profit: &low},
+		{Color: "BLUE", Variant: "20/20", Pool: 88, PricedGems: 22, EV: &high, EVRaw: &high, Profit: &high},
+	}
+	body := serveFontCells(t, rows, "/api/analysis/font?variant=1/0&limit=1")
+	var safe []map[string]json.RawMessage
+	if err := json.Unmarshal(body["safe"], &safe); err != nil {
+		t.Fatal(err)
+	}
+	if len(safe) != 1 || string(safe[0]["variant"]) != `"1"` {
+		t.Fatalf("safe = %s, want one normalized variant 1 cell", body["safe"])
+	}
+	assertServedFontBest(t, body, map[string]any{"variant": "20/20", "color": "BLUE"})
 }

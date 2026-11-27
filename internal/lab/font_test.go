@@ -9,6 +9,46 @@ import (
 	"time"
 )
 
+// keep:critical — silent: a colour sum, withheld EV or zero-valued winner
+// produces a plausible BEST ring that the player trusts when planning runs.
+func TestKeepCritical_BestFontCellIsTheCellArgmaxOverPresentEVRaw(t *testing.T) {
+	ten, twentyFive, thirty, zero, phantom := 10.0, 25.0, 30.0, 0.0, 500.0
+	covered := func(color, variant string, raw *float64) FontResult {
+		return FontResult{Color: color, Variant: variant, Pool: 88, PricedGems: 22, EVRaw: raw, EV: &phantom}
+	}
+	for _, tc := range []struct {
+		name string
+		rows []FontResult
+		want *FontCell
+	}{
+		{
+			name: "cell argmax beats cross-variant colour sum",
+			rows: []FontResult{covered("RED", "1", &ten), covered("RED", "1/20", &ten), covered("RED", "20", &ten), covered("BLUE", "20/20", &twentyFive)},
+			want: &FontCell{Variant: "20/20", Color: "BLUE"},
+		},
+		{
+			name: "withheld raw EV stays absent",
+			rows: []FontResult{covered("RED", "1/20", &ten), {Color: "BLUE", Variant: "20/20", Pool: 88, PricedGems: 21, AvgWinRaw: 500, PWin: 1}},
+			want: &FontCell{Variant: "1/20", Color: "RED"},
+		},
+		{
+			name: "all covered raw EVs zero crown nothing",
+			rows: []FontResult{covered("RED", "1", &zero), covered("BLUE", "20/20", &zero)},
+		},
+		{
+			name: "canonical variant-major tie ignores input order",
+			rows: []FontResult{covered("RED", "20/20", &thirty), covered("BLUE", "1/20", &thirty)},
+			want: &FontCell{Variant: "1/20", Color: "BLUE"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := BestFontCell(tc.rows); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("BestFontCell = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 // Numeric fixtures compile before and after the sealed nullable-field change,
 // so the red phase observes the missing behavior rather than a build error.
 func fontFixtureFloat[T float64 | *float64](value float64, field T) T {
