@@ -35,6 +35,10 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) })
 
 let CurrencyExchangePage: typeof import('./CurrencyExchangePage.svelte').default;
 let { flushSync, mount, unmount } = await import('svelte');
+// Transform the page graph once at collection, outside any hook's timeout;
+// resetModules below only re-evaluates the cached transforms per case.
+await import('./CurrencyExchangePage.svelte');
+await import('$lib/stores/number-format.svelte');
 
 // prefs.svelte.ts caches the loaded map at module level; fresh modules per case
 // keep one case's chip toggle from hydrating the next case's mount.
