@@ -76,18 +76,20 @@ export interface SignalTransition {
 
 export interface FontColor {
 	color: 'RED' | 'GREEN' | 'BLUE';
-	ev: number;
+	ev: number | null;
 	pool: number;
-	/** How many of `pool` carry a price at this variant. Below `pool` means missing prices, not a smaller pool. */
+	/** Pool gems with solid price evidence at this variant. */
 	pricedGems: number;
+	coverage: number;
+	topEvaluated?: boolean | null;
 	winners: number;
 	pWin: number;
-	profit: number;
+	profit: number | null;
 	evDelta2h: number;
 	fontsToHit?: number;
 	avgWin?: number;
 	avgWinRaw?: number;
-	evRaw?: number;
+	evRaw: number | null;
 	jackpotGems?: { name: string; chaos: number; gcpRecipeCost: number; gcpRecipeBase: number; gcpRecipeSaves: number }[];
 	thinPoolGems?: number;
 	liquidityRisk?: string;
@@ -96,20 +98,11 @@ export interface FontColor {
 	lowConfidenceGems?: { name: string; chaos: number; listings: number }[];
 }
 
-export interface FontEVData {
-	colors: FontColor[];
-	qualityAvgRoi: number;
-	bestColor: string;
-	bestAdvantage: number;
-}
-
 export interface FontEVResponse {
 	safe: FontColor[];
 	premium: FontColor[];
 	jackpot: FontColor[];
-	bestColorSafe: string;
-	bestColorPremium: string;
-	bestColorJackpot: string;
+	best: { variant: string; color: string } | null;
 	/** Facetor's Lens craft quotes; null when the server predates the field. */
 	lens: FontLensCraft | null;
 }
@@ -631,17 +624,19 @@ export async function fetchVariantPlays(variant: string): Promise<GemPlay[]> {
 function mapFontRows(rows: any[]): FontColor[] {
 	return rows.map((r: any) => ({
 		color: r.color || '',
-		ev: Math.round(r.ev || 0),
+		ev: r.ev == null ? null : Math.round(r.ev),
 		pool: r.pool || 0,
-		pricedGems: r.pricedGems ?? (r.pool || 0),
+		pricedGems: r.pricedGems ?? 0,
+		coverage: r.coverage ?? 0,
+		topEvaluated: r.topEvaluated,
 		winners: r.winners || 0,
 		pWin: Math.round((r.pWin || 0) * 10000) / 100,
-		profit: Math.round(r.profit || 0),
+		profit: r.profit == null ? null : Math.round(r.profit),
 		evDelta2h: 0,
 		fontsToHit: r.fontsToHit || 0,
 		avgWin: r.avgWin ? Math.round(r.avgWin) : 0,
 		avgWinRaw: r.avgWinRaw ? Math.round(r.avgWinRaw) : 0,
-		evRaw: r.evRaw ? Math.round(r.evRaw) : 0,
+		evRaw: r.evRaw == null ? null : Math.round(r.evRaw),
 		jackpotGems: r.jackpotGems || [],
 		thinPoolGems: r.thinPoolGems || 0,
 		liquidityRisk: r.liquidityRisk || 'LOW',
@@ -659,9 +654,7 @@ export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
 		safe: any[];
 		premium: any[];
 		jackpot: any[];
-		bestColorSafe: string;
-		bestColorPremium: string;
-		bestColorJackpot: string;
+		best?: { variant: string; color: string } | null;
 		lens?: unknown;
 	}>('/analysis/font', params);
 
@@ -669,9 +662,7 @@ export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
 		safe: mapFontRows(resp.safe || []),
 		premium: mapFontRows(resp.premium || []),
 		jackpot: mapFontRows(resp.jackpot || []),
-		bestColorSafe: resp.bestColorSafe || '',
-		bestColorPremium: resp.bestColorPremium || '',
-		bestColorJackpot: resp.bestColorJackpot || '',
+		best: resp.best ? { variant: displayVariant(resp.best.variant), color: resp.best.color } : null,
 		lens: mapFontLensCraft(resp.lens),
 	};
 }

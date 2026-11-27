@@ -108,22 +108,9 @@
 	}
 
 	// EV is the same across all modes, just use safe.
-	function getEV(variant: string, color: string): number {
+	function getEV(variant: string, color: string): number | null {
 		const fc = getColorData(variant, color, 'safe');
-		return fc?.evRaw ?? fc?.ev ?? 0;
-	}
-
-	function winner(): { variant: string; color: string; ev: number } {
-		let best = { variant: '', color: '', ev: -Infinity };
-		for (const v of VARIANTS) {
-			for (const color of COLORS) {
-				const ev = getEV(v, color);
-				if (ev > best.ev) {
-					best = { variant: v, color, ev };
-				}
-			}
-		}
-		return best;
+		return fc?.evRaw ?? null;
 	}
 
 	// --- Dedication mode helpers ---
@@ -390,11 +377,11 @@
 			</div>
 		{/if}
 	{:else if !isDedication}
-		{@const best = winner()}
+		{@const best = data[VARIANTS[0]]?.best}
 		<table class="ft">
 			<thead>
 				<tr>
-					<th class="var-header">Font EV<InfoTooltip text="<b>Font of Divine Skill — Expected Value per usage</b><br><br><b>Nc/font</b>: Your average income each time you use the Font. Based on best-of-3 random draws — you always pick the most valuable gem.<br><br><b>Highlighted cell</b>: Best color for highest average income.<br><br><b>Hit tiers</b> (using unified per-variant tier system):<br>• <span style='color:#5eead4'>Safe</span>: Any gem above FLOOR tier. 'X in Y' = probability from 3 picks.<br>• <span style='color:#c084fc'>Premium</span>: HIGH + MID-HIGH + TOP gems. Significant profit when hit.<br>• <span style='color:#fbbf24'>Jackpot</span>: TOP-tier monopoly outliers. Rare but massive payout.<br><br>Low-confidence gems (thin market, unreliable prices) are excluded from EV calculation but counted in pool size.<br><br><b>Pool Overview</b>: Expand below to see per-color tier breakdown with hit probabilities.<br><br><b>Tip</b>: With Gift Lab (8 fonts/run), even low Jackpot hit rates become viable through compound probability." /></th>
+					<th class="var-header">Font EV<InfoTooltip text="<b>Font of Divine Skill — Expected Value per usage</b><br><br><b>Nc/font</b>: Your average income each time you use the Font. Based on best-of-3 random draws — you always pick the most valuable gem.<br><br><b>Highlighted cell</b>: The cell with the highest average income among cells with enough priced gems.<br><br><b>Hit tiers</b> (using unified per-variant tier system):<br>• <span style='color:#5eead4'>Safe</span>: Any gem above FLOOR tier. 'X in Y' = probability from 3 picks.<br>• <span style='color:#c084fc'>Premium</span>: HIGH + MID-HIGH + TOP gems. Significant profit when hit.<br>• <span style='color:#fbbf24'>Jackpot</span>: TOP-tier monopoly outliers. Rare but massive payout.<br><br>Low-confidence gems (thin market, unreliable prices) are excluded from EV calculation but counted in pool size.<br><br><b>Pool Overview</b>: Expand below to see per-color tier breakdown with hit probabilities.<br><br><b>Tip</b>: With Gift Lab (8 fonts/run), even low Jackpot hit rates become viable through compound probability." /></th>
 					{#each COLORS as color}
 						<th><span class="c-{color.toLowerCase()}">{'\u25CF'} {color}</span></th>
 					{/each}
@@ -410,9 +397,9 @@
 							{@const safe = getColorData(variant, color, 'safe')}
 							{@const premium = getColorData(variant, color, 'premium')}
 							{@const jackpot = getColorData(variant, color, 'jackpot')}
-							{@const isW = best.variant === variant && best.color === color}
+							{@const isW = best?.variant === variant && best.color === color}
 							<td class:w-red={isW && color === 'RED'} class:w-green={isW && color === 'GREEN'} class:w-blue={isW && color === 'BLUE'}>
-								{#if ev > 0}
+								{#if ev != null && ev > 0}
 									<span class="ev" class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>{formatPrice(ev)}/font</span>
 									<div class="tier-lines">
 										<div class="tier-row">
@@ -499,7 +486,7 @@
 						<div class="pool-color-card">
 							<div class="pool-color-header c-{color.toLowerCase()}">{color}
 								{#if pricedGems < totalGems}
-									<span class="pool-count pool-count-partial" title="Only {pricedGems} of the {totalGems} {color} gems this Font can roll are priced at {poolVariant}. The rest count as outcomes worth 0c, so the EV here is a floor — missing prices, not worthless gems.">{pricedGems} / {totalGems} priced</span>
+									<span class="pool-count pool-count-partial" title="Only {pricedGems} of {totalGems} {color} gems have solid price evidence at {poolVariant}; the rest count as 0c, so the EV is a floor.">{pricedGems} / {totalGems} priced</span>
 								{:else}
 									<span class="pool-count">{totalGems} gems</span>
 								{/if}
