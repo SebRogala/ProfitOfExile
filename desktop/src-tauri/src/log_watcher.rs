@@ -137,65 +137,9 @@ fn watch_file(path: &Path, tx: mpsc::Sender<String>) -> anyhow::Result<()> {
             }
         }
 
-        // Read new lines if file grew
-        let new_len = match std::fs::metadata(path) {
-            Ok(m) => m.len(),
-            Err(e) => {
-                log::warn!("Log watcher: failed to read metadata: {}", e);
-                continue;
-            }
-        };
-
-        if new_len < pos {
-            log::info!("Log watcher: file truncated ({} -> {}), resetting", pos, new_len);
-            pos = 0;
-        }
-
-        if new_len > pos {
-            match File::open(path) {
-                Ok(mut f) => {
-                    if let Err(e) = f.seek(SeekFrom::Start(pos)) {
-                        log::warn!("Log watcher: seek failed: {}", e);
-                        continue;
-                    }
-                    // Advance `pos` by what was actually consumed, and only over
-                    // NEWLINE-TERMINATED lines. The client keeps appending while we
-                    // drain, so the reader reaches an EOF past the `new_len` sampled
-                    // above; assigning `pos = new_len` rewound behind everything that
-                    // arrived mid-read and re-sent it on the next pass. A duplicated
-                    // "you have entered" line is a second RoomChanged for the room the
-                    // player is already standing in. Stopping at the last '\n' also
-                    // keeps a half-written trailing line unconsumed, so it is emitted
-                    // once, whole, when its newline lands.
-                    let mut reader = BufReader::new(&f);
-                    let mut consumed = pos;
-                    loop {
-                        let mut buf = String::new();
-                        match reader.read_line(&mut buf) {
-                            Ok(0) => break,
-                            Ok(n) => {
-                                if !buf.ends_with('\n') {
-                                    break;
-                                }
-                                consumed += n as u64;
-                                let line = buf.trim_end_matches(['\n', '\r']);
-                                if !line.is_empty() && tx.blocking_send(line.to_string()).is_err() {
-                                    return Ok(());
-                                }
-                            }
-                            Err(e) => {
-                                log::warn!("Log watcher: failed to read line: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                    pos = consumed;
-                }
-                Err(e) => {
-                    log::warn!("Log watcher: failed to open file: {}", e);
-                    continue;
-                }
-            }
+        match read_new_lines(path, pos, &mut |line| tx.blocking_send(line).is_ok()) {
+            Some(next) => pos = next,
+            None => return Ok(()),
         }
     }
 }
@@ -203,7 +147,67 @@ fn watch_file(path: &Path, tx: mpsc::Sender<String>) -> anyhow::Result<()> {
 /// Reads the complete lines appended after `pos`, resetting to 0 when the file shrank.
 /// Returns the new position, or None when `emit` reports the receiver is gone.
 fn read_new_lines(path: &Path, pos: u64, emit: &mut dyn FnMut(String) -> bool) -> Option<u64> {
-    let _ = (path, emit);
+    let mut pos = pos;
+    // Read new lines if file grew
+    let new_len = match std::fs::metadata(path) {
+        Ok(m) => m.len(),
+        Err(e) => {
+            log::warn!("Log watcher: failed to read metadata: {}", e);
+            return Some(pos);
+        }
+    };
+
+    if new_len < pos {
+        log::info!("Log watcher: file truncated ({} -> {}), resetting", pos, new_len);
+        pos = 0;
+    }
+
+    if new_len > pos {
+        match File::open(path) {
+            Ok(mut f) => {
+                if let Err(e) = f.seek(SeekFrom::Start(pos)) {
+                    log::warn!("Log watcher: seek failed: {}", e);
+                    return Some(pos);
+                }
+                // Advance `pos` by what was actually consumed, and only over
+                // NEWLINE-TERMINATED lines. The client keeps appending while we
+                // drain, so the reader reaches an EOF past the `new_len` sampled
+                // above; assigning `pos = new_len` rewound behind everything that
+                // arrived mid-read and re-sent it on the next pass. A duplicated
+                // "you have entered" line is a second RoomChanged for the room the
+                // player is already standing in. Stopping at the last '\n' also
+                // keeps a half-written trailing line unconsumed, so it is emitted
+                // once, whole, when its newline lands.
+                let mut reader = BufReader::new(&f);
+                let mut consumed = pos;
+                loop {
+                    let mut buf = String::new();
+                    match reader.read_line(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if !buf.ends_with('\n') {
+                                break;
+                            }
+                            consumed += n as u64;
+                            let line = buf.trim_end_matches(['\n', '\r']);
+                            if !line.is_empty() && !emit(line.to_string()) {
+                                return None;
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Log watcher: failed to read line: {}", e);
+                            break;
+                        }
+                    }
+                }
+                pos = consumed;
+            }
+            Err(e) => {
+                log::warn!("Log watcher: failed to open file: {}", e);
+                return Some(pos);
+            }
+        }
+    }
     Some(pos)
 }
 
