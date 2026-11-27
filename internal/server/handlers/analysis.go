@@ -331,6 +331,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 			ThinPoolGems      int                        `json:"thinPoolGems"`
 			LiquidityRisk     string                     `json:"liquidityRisk"`
 			PoolBreakdown     []lab.TierPoolInfo         `json:"poolBreakdown,omitempty"`
+			TopEvaluated      *bool                      `json:"topEvaluated,omitempty"`
 		}
 
 		toRows := func(results []lab.FontResult) []row {
@@ -356,6 +357,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 					ThinPoolGems:      r.ThinPoolGems,
 					LiquidityRisk:     r.LiquidityRisk,
 					PoolBreakdown:     r.PoolBreakdown,
+					TopEvaluated:      r.TopEvaluated,
 				})
 			}
 			return rows

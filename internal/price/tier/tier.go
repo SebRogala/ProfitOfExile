@@ -32,6 +32,10 @@ const (
 	Chaotic = "CHAOTIC"
 )
 
+// MinTopItems is the fewest confident, cutoff-passing items in a group for
+// which TOP detection runs.
+const MinTopItems = 4
+
 // Order lists tier names from highest to lowest. Of indexes into it when a
 // Boundaries carries no Names: boundary[0] -> Order[0] (TOP), etc.
 var Order = []string{Top, High, MidHigh, Mid, Low, Floor}
@@ -225,7 +229,7 @@ func detectTops(items []Item, lowConf map[Key]bool, p Policy) (map[Key]bool, map
 		}
 		sort.Sort(sort.Reverse(sort.Float64Slice(prices)))
 
-		if len(prices) < 4 {
+		if len(prices) < MinTopItems {
 			continue
 		}
 

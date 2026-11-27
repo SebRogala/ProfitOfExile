@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"profitofexile/internal/price/evidence"
+	"profitofexile/internal/price/tier"
 )
 
 // FontResult holds the computed EV for a single (color, variant) Font of Divine Skill analysis.
@@ -30,6 +31,7 @@ type FontResult struct {
 	LiquidityRisk     string                 // "LOW", "MEDIUM", "HIGH"
 	PoolBreakdown     []TierPoolInfo         `json:"poolBreakdown,omitempty"`     // per-tier gem counts and price ranges
 	LowConfidenceGems []LowConfidenceGemInfo `json:"lowConfidenceGems,omitempty"` // gems excluded from EV due to thin market
+	TopEvaluated      *bool
 }
 
 // Coverage is the share of the pool graded SOLID at this variant.
@@ -211,9 +213,13 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 	// Build feature lookup: "name|variant" -> *GemFeature
 	type featureKey struct{ name, variant string }
 	featureLookup := make(map[featureKey]*GemFeature, len(features))
+	topItemCounts := make(map[string]int)
 	for i := range features {
 		f := &features[i]
 		featureLookup[featureKey{f.Name, f.Variant}] = f
+		if !f.LowConfidence {
+			topItemCounts[f.Variant]++
+		}
 	}
 
 	// Pool sizes: unique gem names per color (across all variants).
@@ -507,6 +513,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			if jackpotPWin > 0 {
 				jackpotFontsToHit = 1.0 / jackpotPWin
 			}
+			topEvaluated := topItemCounts[variant] >= tier.MinTopItems
 			jackpotResult := FontResult{
 				Time:          snapTime,
 				Color:         color,
@@ -526,6 +533,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				Mode:          "jackpot",
 				ThinPoolGems:  jackpotThinCount,
 				LiquidityRisk: computeLiquidityRisk(jackpotThinCount, jackpotWinnerCount),
+				TopEvaluated:  &topEvaluated,
 			}
 			withholdUnderFloor(&jackpotResult)
 			analysis.Jackpot = append(analysis.Jackpot, jackpotResult)
