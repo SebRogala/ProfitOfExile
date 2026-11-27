@@ -5,6 +5,8 @@ section was added and verified 2026-08-25, and the desktop release channels
 section 2026-08-25 (beta channel not yet exercised by a real tag; the client-side dual-manifest check ships with POE-203 WI-2).
 The merc registration reset runbook was written 2026-08-28 against the POE-215
 plan and the shipped server code; it is a one-off and has not been executed yet.
+The partial-migration recovery procedure was written 2026-11-27 against
+`cmd/migrate` and the Makefile (POE-418); it has not been exercised.
 
 Canonical for: how `main` reaches production, why the deploy is path-filtered, and
 what a green pipeline does and does not tell you.
@@ -100,6 +102,36 @@ Verify that scheduling resumes. These controls affect only the connected
 database; leave other databases' workers running. The integration harness uses
 the same isolation around its schema-changing phase and resumes workers before
 the application integration tests.
+
+### Recovering from a partially applied migration
+
+A migration that fails partway leaves the database dirty at the failed version,
+possibly with part of its DDL applied. Recover in this order:
+
+1. Identify the failed migration, the exact object it left behind (a table,
+   index, view or policy), and the last version that applied successfully.
+   `go run ./cmd/migrate version` prints the current version and dirty flag.
+2. DROP that partial object, and only that object.
+3. Force the version marker back to the last successful version:
+
+   ```
+   PREVIOUS_MIGRATION_VERSION=...   # last successfully applied version
+
+   make migrate-force VERSION="$PREVIOUS_MIGRATION_VERSION"
+   ```
+
+   Forcing rewrites only the recorded version and clears the dirty flag
+   (`m.Force` in `cmd/migrate/main.go`); it does not undo the partial DDL,
+   which is why step 2 comes first. The Makefile target runs the CLI in the
+   local compose stack; against another database, run the same `force`
+   command with that database's connection.
+4. Redeploy, so startup re-applies the failed migration from a clean state.
+
+Never hide a partial migration by adding `IF NOT EXISTS` to its DDL: the
+migration then reports success over half-built state, and editing a deployed
+migration file breaks the immutability rule in [AGENTS.md](../AGENTS.md).
+Startup migration and CLI ownership are recorded in
+[ADR-004](adr/004-database-migration-strategy-auto-migrate-on-start-with-golang-migrate.md).
 
 ## Verifying a deploy landed
 
