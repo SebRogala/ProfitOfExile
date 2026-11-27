@@ -326,10 +326,39 @@ transfigured gems are two disjoint reroll pools (the two wordings above).
   the rankings. `internal/lab/dedication.go` prices the feed over what may be
   fed and the pool over what may come out; the two differ by exactly the Vaal
   gems.
-- **Colourless gems are neither.** poe.ninja's skill-gem feed carries gems
-  with no attribute requirement (the Allflame Pacts, Portal, Detonate Mines,
-  Convocation). "Of the same colour" excludes them; the colour resolver leaves
-  `gem_color` empty for them, and that empty colour is what the code keys on.
+- **Colourless gems are neither, and colourless is `WHITE`, not empty.**
+  poe.ninja's skill-gem feed carries gems with no attribute requirement (the
+  four Allflame Pacts, Portal, Eclipse Support). "Of the same colour" excludes
+  them. They are seeded `WHITE` in `gem_colors` (migrations
+  `20260315800000_seed_gem_colors_328` and
+  `20260730060000_seed_allflame_new_gems`), and `WHITE` is what the code keys
+  on (`isColorlessByRule` in `internal/lab/eligibility.go`). An empty
+  `gem_color` is a different state: the resolver has not met the name yet. That
+  is a data gap, not a game rule ([ADR-006](adr/006-gem-colors-database-backed-upsert-lookup-table-with-in-memory-resolver.md)
+  owns the resolver mechanics).
+- **A new league's gems need a `gem_colors` seed migration.** The Dedication
+  feed requires a resolved colour (`isDedicationFeed`), so a new gem with no
+  row drops out of the pools, the tiers and the rankings until a seed
+  migration gives it one. Code-verified 2026-11-27.
+- **" of " in a name does not make a gem transfigured.** Herald of Ash is a
+  base gem. A name is transfigured when its base name (the part before the last
+  " of ") is itself a known gem: "Rain of Arrows of Saturation" has the base
+  "Rain of Arrows", while there is no gem "Herald". `FilterGemDictionary` in
+  `internal/lab/repository.go` applies that rule (code-verified 2026-11-27);
+  poe.ninja's own transfigured flag is authoritative where a snapshot carries
+  it. Two code paths still use the bare substring test and so treat such base
+  gems as transfigured: the trade query's `type`/`term` choice in
+  `internal/trade/client.go` and the pool detection in
+  `BuildDedicationCompareResults` (`internal/lab/collective.go`).
+- **Vaal counterpart names are data, not a rule.** Most follow the base name
+  ("Arc" → "Vaal Arc"; "Rain of Arrows" → "Vaal Rain of Arrows", so cutting at
+  the first " of " is wrong), but some pairs cannot be derived at all:
+  "Dominating Blow" → "Vaal Domination" (seeded in
+  `20260315800000_seed_gem_colors_328`), whose transfigured market row is
+  "Vaal Domination (Dominating Blow of Inspiring)". Measured on the local
+  snapshots 2026-08-24, 1 of 46 parenthesised Vaal identities was irregular.
+  `buildVaalIdentityIndex` in `internal/lab/doublecorrupt.go` therefore reads
+  the pairs out of the market rows.
 - **`is_drop_restricted` is not an exclusion key.** Every transfigured gem
   carries it, and transfigured gems are the font's main output.
 - **Best of three** on the reroll is confirmed by the owner.
@@ -383,6 +412,14 @@ reduce the amount of filters used.\nLogging in will increase this limit."}}`.
 This is why the mercenary module's `trade ↗` link (opened in the user's
 browser, logged in) and the query the app posts (anonymous) are two different
 shapes.
+
+A `mercenary` stat group scopes to ONE skill row: every filter in the group
+must match the same row. Live-verified 2026-08-21 with differential searches
+in the Allflame league (POE-165): Spark + Conductivity as one `mercenary` group
+returns 0 while the same pair as an `and` group returns thousands, because the
+two never share a row; a same-row skill and support pair does return results.
+`rowSatisfies` in `desktop/src/lib/mercenaries/verdict.ts` is the single owner
+of that row scoping in the verdict. Not re-verified since.
 
 ## Mercenaries
 
