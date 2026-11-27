@@ -14,6 +14,18 @@
 	const svgUrl = $derived(getRoomSvgUrl(areaCode) ?? getDisabledSvgUrl());
 	const hasFallback = $derived(!areaCode || doors.length === 0);
 
+	const ARROW_DEGREES = new Map([
+		['N', 0],
+		['NE', 45],
+		['E', 90],
+		['SE', 135],
+		['S', 180],
+		['SW', 225],
+		['W', 270],
+		['NW', 315]
+	]);
+	const arrowDegrees = $derived(targetDirection ? ARROW_DEGREES.get(targetDirection) : undefined);
+
 </script>
 
 <div class="minimap">
@@ -48,6 +60,11 @@
 
 	{#if hasFallback}
 		<div class="fallback-box">
+			{#if arrowDegrees !== undefined}
+				<svg class="fallback-arrow" viewBox="0 0 100 100" style="transform: rotate({arrowDegrees}deg);" aria-hidden="true">
+					<path d="M50 50 V16 M34 32 L50 12 L66 32" />
+				</svg>
+			{/if}
 			<div class="fallback-name">{roomName || 'Unknown Room'}</div>
 			{#if targetDirection}
 				<div class="fallback-dir">{directionLabel(targetDirection)}</div>
@@ -98,6 +115,26 @@
 		justify-content: center;
 		background: rgba(0, 0, 0, 0.5);
 		border-radius: 4px;
+		/* Own stacking context, so the arrow's z-index: -1 stays above this background. */
+		isolation: isolate;
+	}
+
+	.fallback-arrow {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		width: min(80cqw, 80cqh);
+		height: min(80cqw, 80cqh);
+		margin: calc(min(80cqw, 80cqh) / -2) 0 0 calc(min(80cqw, 80cqh) / -2);
+		z-index: -1;
+		fill: none;
+		stroke: #10b981;
+		stroke-width: 7;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+		opacity: 0.35;
+		filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.8));
+		pointer-events: none;
 	}
 
 	.fallback-name {
