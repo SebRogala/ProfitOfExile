@@ -601,7 +601,6 @@ fn compose_snapshot_regions(
         temple.force_off();
     }
     let resolved = regions::resolve(screen.as_ref(), setting, capture);
-    regions::log_edges(setting, capture, &resolved);
     let placements = resolved.placements;
     AppSsotSnapshot {
         normal_variant,
@@ -1555,7 +1554,17 @@ pub fn geometry_recalibrate(app: AppHandle) {
     );
 }
 
-fn log_region_edges<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) {}
+fn log_region_edges<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let state = app.state::<AppState>();
+    let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
+    let setting = *state.ocr_regions.lock().unwrap_or_else(|e| e.into_inner());
+    let capture = state.game_monitor.lock().unwrap_or_else(|e| e.into_inner())
+        .as_ref().map(|monitor| (monitor.width, monitor.height));
+    let resolved = regions::resolve(screen.as_ref(), &setting, capture);
+    for line in regions::log_edges(&setting, capture, &resolved) {
+        crate::app_log(app, line);
+    }
+}
 
 /// Emit `ssot-changed` with the current snapshot.
 ///
@@ -1566,6 +1575,7 @@ fn log_region_edges<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) {}
 ///
 /// Called by `apply_league` after every SSOT mutation.
 pub fn emit_ssot(app: &AppHandle) {
+    log_region_edges(app);
     let snapshot = {
         let state = app.state::<AppState>();
         build_snapshot(&state)
@@ -1578,7 +1588,8 @@ pub fn emit_ssot(app: &AppHandle) {
 /// Poll target for overlay windows: compose the snapshot from the stored slice
 /// plus the market fields, and return it. Serialized to the webview.
 #[tauri::command]
-pub fn get_ssot(state: tauri::State<AppState>) -> AppSsotSnapshot {
+pub fn get_ssot(app: AppHandle, state: tauri::State<AppState>) -> AppSsotSnapshot {
+    log_region_edges(&app);
     build_snapshot(&state)
 }
 

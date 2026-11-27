@@ -335,17 +335,16 @@ fn classify(rect: Option<[i32; 4]>, capture: Option<(u32, u32)>, scale_bearing: 
 pub fn current(state: &crate::AppState, capture: Option<(u32, u32)>) -> Resolved {
     let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
     let setting = *state.ocr_regions.lock().unwrap_or_else(|e| e.into_inner());
-    let resolved = resolve(screen.as_ref(), &setting, capture);
-    log_edges(&setting, capture, &resolved);
-    resolved
+    resolve(screen.as_ref(), &setting, capture)
 }
 
-pub(super) fn log_edges(setting: &OcrRegionsSetting, capture: Option<(u32, u32)>, resolved: &Resolved) {
+pub(super) fn log_edges(setting: &OcrRegionsSetting, capture: Option<(u32, u32)>, resolved: &Resolved) -> Vec<String> {
     use std::collections::HashSet;
     use std::sync::{LazyLock, Mutex};
     static SAID: LazyLock<Mutex<HashSet<(RegionKey, [i32; 4], (u32, u32))>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
-    let (Some(regions), Some(capture)) = (setting.manual, capture) else { return };
-    if !resolved.manual { return; }
+    let (Some(regions), Some(capture)) = (setting.manual, capture) else { return Vec::new() };
+    if !resolved.manual { return Vec::new(); }
+    let mut lines = Vec::new();
     for (key, rect, actual) in [
         (RegionKey::LabGem, regions.lab_gem, Some(resolved.placements.lab.gem)),
         (RegionKey::LabFont, regions.lab_font, Some(resolved.placements.lab.font)),
@@ -356,9 +355,10 @@ pub(super) fn log_edges(setting: &OcrRegionsSetting, capture: Option<(u32, u32)>
         let Some(rect) = rect else { continue };
         let unread = resolved.unread.contains(&key);
         if (unread || actual != Some(rect)) && SAID.lock().unwrap_or_else(|e| e.into_inner()).insert((key, rect, capture)) {
-            log::warn!("Manual OCR region {key:?} {rect:?} on {capture:?}: {}", if unread { "not read" } else { "cut at the screen edge" });
+            lines.push(format!("Manual OCR region {key:?} {rect:?} on {capture:?}: {}", if unread { "not read" } else { "cut at the screen edge" }));
         }
     }
+    lines
 }
 
 /// The snapshot's `ocrRegions` projection.

@@ -649,14 +649,14 @@ fn report_ocr_engine(app: &AppHandle) {
 }
 
 /// Emit the current logs array to all frontend listeners.
-fn emit_logs(app: &AppHandle) {
+fn emit_logs<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let state = app.state::<AppState>();
     let logs = state.logs.lock().unwrap_or_else(|e| e.into_inner()).clone();
     if let Err(e) = app.emit("logs-changed", logs) { log::warn!("emit logs-changed failed: {}", e); }
 }
 
 /// Add a log entry: in-memory buffer (UI) + persistent file + emit to frontend.
-pub(crate) fn app_log(app: &AppHandle, msg: String) {
+pub(crate) fn app_log<R: tauri::Runtime>(app: &tauri::AppHandle<R>, msg: String) {
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let formatted = format!("[{}] {}", timestamp, msg);
 
