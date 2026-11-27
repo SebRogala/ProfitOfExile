@@ -76,6 +76,21 @@ check "the lane compose file names only lane containers, its own host and its ow
 check "setup migrates the lane's dev database through the lane Compose project" \
 	grep -qxF "compose --project-directory $p/.worktrees/poe-414 -p profitofexile-lanepoe414 --profile collector -f docker-compose.lane.yml run --rm -T app go run ./cmd/migrate up" "$FAKE_LOG"
 
+# keep:regression — setup gives frontend the base-stack gate mounts (POE-437).
+frontend_compose=$(awk '
+	/^  frontend:$/ { frontend=1; next }
+	frontend && /^  [^ ]/ { exit }
+	frontend { print }
+' "$lane_compose")
+check "setup renders the frontend compatibility mounts for base-stack gates" \
+	bash -c '
+		rc=0
+		for mount in ./frontend:/app ./.worktree/frontend_node_modules:/app/node_modules ./internal/trade/testdata:/internal/trade/testdata:ro; do
+			grep -qxF "      - $mount" <<<"$1" || { echo "missing frontend mount: $mount"; rc=1; }
+		done
+		exit "$rc"
+	' _ "$frontend_compose"
+
 # keep:happy — a repeated setup reuses the lane's resources.
 before=$(cat "$FAKE_DBS")
 check "a second setup of the same lane succeeds" bash -c '(cd "$1" && "$2" setup) >/dev/null' _ "$p/.worktrees/poe-414" "$script"
