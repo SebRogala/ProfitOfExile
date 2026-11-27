@@ -507,3 +507,33 @@ func TestKeepCritical_LowConfidenceIncludesGatedItems(t *testing.T) {
 		})
 	}
 }
+
+// keep:critical — silent: held values vanish from EV, or caller-gated asks enter it.
+func TestKeepCritical_HeldExemptsRelativeDepthOnly(t *testing.T) {
+	peers := []Item{item("20/20", "a", 80, 40), item("20/20", "b", 60, 40), item("20/20", "c", 40, 40)}
+	for _, tt := range []struct {
+		name              string
+		held, gated       bool
+		price             float64
+		wantFlag, wantRow bool
+	}{
+		{"held shallow", true, false, 100, false, true},
+		{"unheld shallow", false, false, 100, true, true},
+		{"caller gated held", true, true, 100, true, true},
+		{"held below cutoff", true, false, 5, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			it := Item{Group: "20/20", Key: "thin", Price: tt.price, Depth: 1, Held: tt.held, Gated: tt.gated}
+			items := append(append([]Item(nil), peers...), it)
+			key := k("20/20", "thin")
+			if flag := LowConfidence(items, labLikePolicy)[key]; flag != tt.wantFlag {
+				t.Errorf("relative-depth flag = %v, want %v", flag, tt.wantFlag)
+			}
+			got := Classify(items, labLikePolicy)
+			c, ok := got.Items[key]
+			if ok != tt.wantRow || c.LowConfidence != tt.wantFlag {
+				t.Errorf("classification = %+v (present %v), want present %v, flag %v", c, ok, tt.wantRow, tt.wantFlag)
+			}
+		})
+	}
+}

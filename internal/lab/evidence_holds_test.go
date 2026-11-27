@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"profitofexile/internal/league"
+	"profitofexile/internal/price/tier"
 )
 
 var holdAsOf = time.Date(2026, 11, 16, 6, 44, 0, 0, time.UTC)
@@ -64,7 +65,8 @@ func TestKeepCritical_HoldRejectsNeverSolidRepricedStaleAndChainedHolds(t *testi
 		{"SOLID two hours ago within 2x is held", []evidencePoint{heldPoint(holdAsOf.Add(-2*time.Hour), 120, 9, 9)}, true},
 		{"never SOLID", []evidencePoint{heldPoint(holdAsOf.Add(-2*time.Hour), 110, 1, 1), heldPoint(holdAsOf.Add(-time.Hour), 105, 2, 2)}, false},
 		{"price over 2x the last SOLID price", []evidencePoint{heldPoint(holdAsOf.Add(-2*time.Hour), 40, 9, 9)}, false},
-		{"last SOLID at 24h plus 1s", []evidencePoint{heldPoint(holdAsOf.Add(-24*time.Hour-time.Second), 120, 9, 9)}, false},
+		{"last SOLID at 12h", []evidencePoint{heldPoint(holdAsOf.Add(-12*time.Hour), 120, 9, 9)}, true},
+		{"last SOLID at 12h plus 1s", []evidencePoint{heldPoint(holdAsOf.Add(-12*time.Hour-time.Second), 120, 9, 9)}, false},
 		{"last SOLID was itself only a hold", []evidencePoint{
 			heldPoint(holdAsOf.Add(-26*time.Hour), 120, 9, 9), // floor-SOLID, now stale
 			heldPoint(holdAsOf.Add(-10*time.Hour), 110, 1, 1), // held by the point above, not floor-SOLID
@@ -83,5 +85,64 @@ func TestKeepCritical_HoldRejectsNeverSolidRepricedStaleAndChainedHolds(t *testi
 				t.Errorf("LowConfidence = %v, want %v (held = %v)", got.LowConfidence, !tt.wantHeld, tt.wantHeld)
 			}
 		})
+	}
+}
+
+// keep:critical — silent: an inflated ask becomes the valuation used by EV consumers.
+func TestKeepCritical_HeldPriceIsCappedWithoutChangingObservedInput(t *testing.T) {
+	for _, tt := range []struct {
+		current, want float64
+	}{{120, 100}, {90, 90}} {
+		t.Run(fmt.Sprint(tt.current), func(t *testing.T) {
+			gems := heldSnapshot()
+			gems[len(gems)-1].Chaos = tt.current
+			before := append([]GemPrice(nil), gems...)
+			points := []evidencePoint{heldPoint(holdAsOf.Add(-time.Hour), 100, 9, 9)}
+			got := deriveEvidenceHolds(gems, points, holdAsOf)
+			g := got[len(got)-1]
+			if g.hold == nil || g.Chaos != tt.want {
+				t.Errorf("held price = %g, hold = %+v, want %g with provenance", g.Chaos, g.hold, tt.want)
+			}
+			if !reflect.DeepEqual(gems, before) {
+				t.Errorf("observed input changed: got %+v, want %+v", gems, before)
+			}
+			if g.Listings != before[len(before)-1].Listings || g.SampleCount != before[len(before)-1].SampleCount {
+				t.Error("held valuation changed observed evidence depth")
+			}
+		})
+	}
+}
+
+// keep:critical — silent: an over-band ask receives a plausible trusted price tier.
+func TestKeepCritical_OverBandHoldRejectionForcesChaotic(t *testing.T) {
+	gems := heldSnapshot()
+	key := GemClassificationKey{heldName, "20/20"}
+	ordinary := tier.Classify(tierItems(gems, isFontOutcome), labPolicy).Items[tier.Key{Group: key.Variant, Key: key.Name}]
+	if ordinary.Tier == tier.Chaotic || ordinary.Tier == "" {
+		t.Fatalf("fixture ordinary tier = %+v, want a non-CHAOTIC price band", ordinary)
+	}
+	held := deriveEvidenceHolds(gems, []evidencePoint{heldPoint(holdAsOf.Add(-time.Hour), 40, 9, 9)}, holdAsOf)
+	if held[len(held)-1].hold != nil {
+		t.Error("price above 2x was held")
+	}
+	got := ComputeGemClassification(held).Gems[key]
+	if got.Tier != tier.Chaotic || !got.LowConfidence {
+		t.Errorf("over-band classification = %+v, want CHAOTIC and low confidence (ordinary tier %s)", got, ordinary.Tier)
+	}
+}
+
+func TestKeepHappy_HeldSmiteCountsAtObservedLowerPrice(t *testing.T) {
+	gems := heldSnapshot()
+	for i := range gems {
+		gems[i].Listings = 40
+	}
+	smite := &gems[len(gems)-1]
+	smite.Name, smite.Chaos, smite.Listings = "Smite of Divine Judgement", 111, 1
+	point := heldPoint(holdAsOf.Add(-2*time.Hour), 138, 9, 9)
+	point.Name = smite.Name
+	held := deriveEvidenceHolds(gems, []evidencePoint{point}, holdAsOf)
+	got, ok := ComputeGemClassification(held).Gems[GemClassificationKey{smite.Name, smite.Variant}]
+	if !ok || got.LowConfidence || held[len(held)-1].Chaos != 111 || held[len(held)-1].hold == nil {
+		t.Errorf("Smite = %+v, classification = %+v (present %v), want held at 111c and confident", held[len(held)-1], got, ok)
 	}
 }

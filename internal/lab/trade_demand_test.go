@@ -344,13 +344,17 @@ func TestKeepCritical_OneSnapshotGradesTheSameInFontAndDemand(t *testing.T) {
 	asOf := time.Date(2026, 11, 16, 6, 44, 0, 0, time.UTC)
 	one := 1
 	gems := []GemPrice{
-		{Name: "Smite of Divine Judgement", Variant: "20/20", Chaos: 111, Listings: 1, SampleCount: &one, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Smite of Divine Judgement", Variant: "20/20", Chaos: 120, Listings: 1, SampleCount: &one, IsTransfigured: true, GemColor: "GREEN"},
 		{Name: "Storm Burst of Repulsion", Variant: "20/20", Chaos: 527, Listings: 1, SampleCount: &one, IsTransfigured: true, GemColor: "BLUE"},
 		{Name: "Deep Gem of Test", Variant: "20/20", Chaos: 60, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Deep Peer of Test", Variant: "20/20", Chaos: 40, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Confident Floor of Test", Variant: "20/20", Chaos: 6, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Blue High of Test", Variant: "20/20", Chaos: 400, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Blue Peer of Test", Variant: "20/20", Chaos: 300, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"},
 	}
 	nine := 9
 	points := []evidencePoint{{Name: "Smite of Divine Judgement", Variant: "20/20",
-		Time: time.Date(2026, 11, 16, 4, 44, 0, 0, time.UTC), Chaos: 138, Listings: 9, SampleCount: &nine}}
+		Time: time.Date(2026, 11, 16, 4, 44, 0, 0, time.UTC), Chaos: 100, Listings: 9, SampleCount: &nine}}
 
 	held := deriveEvidenceHolds(gems, points, asOf)
 	cls := ComputeGemClassification(held)
@@ -363,6 +367,18 @@ func TestKeepCritical_OneSnapshotGradesTheSameInFontAndDemand(t *testing.T) {
 	inDemand := make(map[resolve.Key]bool)
 	for _, d := range BuildTradeDemand(league.Historical("Temp-demand"), demandSnapshot, held) {
 		inDemand[d.Key] = true
+		if d.Key == resolve.GemKey("Temp-demand", "Smite of Divine Judgement", "20/20") {
+			if len(d.Ninja.Prices) != 1 || d.Ninja.Prices[0].Amount != 100 || math.Abs(d.PotentialContribution-75) > 1e-9 {
+				t.Errorf("held demand observation/contribution = %+v/%g, want 100c/75c (3 of 4)", d.Ninja.Prices, d.PotentialContribution)
+			}
+		}
+	}
+	if !inDemand[resolve.GemKey("Temp-demand", "Smite of Divine Judgement", "20/20")] {
+		t.Error("held Smite missing from demand")
+	}
+	floor := cls.Gems[GemClassificationKey{"Confident Floor of Test", "20/20"}]
+	if floor.Tier != tier.Floor || floor.LowConfidence {
+		t.Fatalf("confident-FLOOR control = %+v, want confident FLOOR", floor)
 	}
 	for _, g := range held {
 		c := cls.Gems[GemClassificationKey{g.Name, g.Variant}]

@@ -2171,7 +2171,7 @@ func TestKeepCritical_GemEvidenceHistoryUsesScopedWindowAndCorruptedVariant(t *t
 	registerLeague(t, pool, leagueB)
 
 	asOf := futureTime(102)
-	windowStart := asOf.Add(-24 * time.Hour)
+	windowStart := asOf.Add(-12 * time.Hour)
 	beforeWindow := windowStart.Add(-time.Second)
 	afterAsOf := asOf.Add(time.Second)
 	for _, tm := range []time.Time{windowStart, asOf, beforeWindow, afterAsOf} {
@@ -2203,6 +2203,6 @@ func TestKeepCritical_GemEvidenceHistoryUsesScopedWindowAndCorruptedVariant(t *t
 	}
 	want := []seen{{"21/20c", windowStart.Format(time.RFC3339), 100}, {"21/20c", asOf.Format(time.RFC3339), 110}}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("points = %+v, want %+v (league %s, 21/20c, inside [asOf-24h, asOf] only)", got, want, leagueA)
+		t.Errorf("points = %+v, want %+v (league %s, 21/20c, inside [asOf-12h, asOf] only)", got, want, leagueA)
 	}
 }

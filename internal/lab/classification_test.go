@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"profitofexile/internal/price/tier"
 )
@@ -473,5 +474,68 @@ func TestKeepCritical_TierItemsGradesEachVariantOnItsOwnSample(t *testing.T) {
 	want := map[string]bool{"1/20": false, "20/20": true}
 	if !reflect.DeepEqual(gated, want) {
 		t.Errorf("Gated by variant = %v, want %v (each variant graded on its own sample)", gated, want)
+	}
+}
+
+// keep:critical — silent: a held thin key disappears from the confident EV pool.
+func TestKeepCritical_HeldShallowKeyContributesCappedPriceToBoundaries(t *testing.T) {
+	gems := heldSnapshot()
+	for i := range gems {
+		gems[i].Chaos = float64(80 - i*5)
+		gems[i].Listings = 40
+	}
+	thin := &gems[len(gems)-1]
+	thin.Chaos, thin.Listings = 120, 1
+	held := deriveEvidenceHolds(gems, []evidencePoint{heldPoint(holdAsOf.Add(-time.Hour), 100, 9, 9)}, holdAsOf)
+	got := ComputeGemClassification(held)
+	key := GemClassificationKey{heldName, "20/20"}
+	if c := got.Gems[key]; c.LowConfidence || c.Tier == "" {
+		t.Errorf("held key = %+v, want confident classification", c)
+	}
+	valued := append([]GemPrice(nil), gems...)
+	valued[len(valued)-1].Chaos = 100
+	valued[len(valued)-1].Listings = 40
+	valued[len(valued)-1].SampleCount = solidSample()
+	want := ComputeGemClassification(valued)
+	without := ComputeGemClassification(gems[:len(gems)-1])
+	if reflect.DeepEqual(want.Boundaries, without.Boundaries) {
+		t.Fatal("fixture capped key does not change boundaries")
+	}
+	if !reflect.DeepEqual(got.Boundaries, want.Boundaries) || got.Gems[key] != want.Gems[key] {
+		t.Errorf("held boundaries/class = %+v/%+v, want capped confident reference %+v/%+v", got.Boundaries, got.Gems[key], want.Boundaries, want.Gems[key])
+	}
+	control := append([]GemPrice(nil), gems...)
+	control[len(control)-1].SampleCount = solidSample()
+	if c := ComputeGemClassification(control).Gems[key]; !c.LowConfidence {
+		t.Errorf("unheld same-depth key = %+v, want relative-depth flag", c)
+	}
+}
+
+// keep:critical — silent: an inflated held price reaches TOP and ranking.
+func TestKeepCritical_HeldAnimateWeaponUsesLastSolidPriceForTop(t *testing.T) {
+	gems := heldSnapshot()
+	for i := range gems {
+		gems[i].Chaos = float64(140 - i*10)
+	}
+	g := &gems[len(gems)-1]
+	g.Name, g.Chaos, g.Listings = "Animate Weapon of Ranged Arms", 291.5, 4
+	point := heldPoint(holdAsOf.Add(-time.Hour), 146.3, 9, 9)
+	point.Name = g.Name
+	held := deriveEvidenceHolds(gems, []evidencePoint{point}, holdAsOf)
+	if price := held[len(held)-1].Chaos; price != 146.3 {
+		t.Errorf("Animate Weapon valuation = %g, want 146.3", price)
+	}
+	reference := append([]GemPrice(nil), gems...)
+	reference[len(reference)-1].Chaos = 146.3
+	reference[len(reference)-1].SampleCount = solidSample()
+	want := ComputeGemClassification(reference)
+	got := ComputeGemClassification(held)
+	key := GemClassificationKey{g.Name, g.Variant}
+	if got.Gems[key] != want.Gems[key] || !reflect.DeepEqual(got.Boundaries, want.Boundaries) {
+		t.Errorf("Animate Weapon tier/boundaries = %+v/%+v, want capped reference %+v/%+v", got.Gems[key], got.Boundaries, want.Gems[key], want.Boundaries)
+	}
+	top := tier.Classify(tierItems(held, isFontOutcome), labPolicy).TopBoundary["20/20"]
+	if top > 146.3 {
+		t.Errorf("TOP boundary = %g, exceeds last SOLID 146.3", top)
 	}
 }
