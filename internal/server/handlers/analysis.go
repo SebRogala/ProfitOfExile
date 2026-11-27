@@ -299,13 +299,16 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 
 		// A warm cache answers alone; a cold one shares one grouped load with
 		// every overlapping request — see lab.FontModes.
-		modes, err := lab.FontModes(r.Context(), repo, cache, scope, variant, limit)
+		modes, err := lab.FontModes(r.Context(), repo, cache, scope, "", lab.FontOverviewMaxLimit)
 		if err != nil {
 			slog.Error("font analysis: query failed", "error", err, "variant", variant)
 			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 			return
 		}
-		safeResults, premiumResults, jackpotResults := modes.Safe, modes.Premium, modes.Jackpot
+		best := lab.BestFontCell(modes.Safe)
+		safeResults := lab.FilterFont(modes.Safe, variant, limit)
+		premiumResults := lab.FilterFont(modes.Premium, variant, limit)
+		jackpotResults := lab.FilterFont(modes.Jackpot, variant, limit)
 		lens, err := lensCraft(r.Context(), tradeCache, feeders, scope, time.Now())
 		if err != nil {
 			slog.Error("font analysis: lens query failed", "error", err)
@@ -317,6 +320,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 			Variant           string                     `json:"variant"`
 			Pool              int                        `json:"pool"`
 			PricedGems        int                        `json:"pricedGems"`
+			Coverage          float64                    `json:"coverage"`
 			Winners           int                        `json:"winners"`
 			PWin              float64                    `json:"pWin"`
 			AvgWin            float64                    `json:"avgWin"`
@@ -343,6 +347,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 					Variant:           r.Variant,
 					Pool:              r.Pool,
 					PricedGems:        r.PricedGems,
+					Coverage:          r.Coverage(),
 					Winners:           r.Winners,
 					PWin:              r.PWin,
 					AvgWin:            r.AvgWin,
@@ -406,36 +411,15 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
-			"safe":             safeRows,
-			"premium":          premiumRows,
-			"jackpot":          jackpotRows,
-			"bestColorSafe":    bestColor(safeResults),
-			"bestColorPremium": bestColor(premiumResults),
-			"bestColorJackpot": bestColor(jackpotResults),
-			"lens":             lens,
+			"safe":    safeRows,
+			"premium": premiumRows,
+			"jackpot": jackpotRows,
+			"best":    best,
+			"lens":    lens,
 		}); err != nil {
 			slog.Error("font analysis: encode response", "error", err)
 		}
 	}
-}
-
-// bestColor returns the color with the highest EV among the given font results.
-func bestColor(results []lab.FontResult) string {
-	evByColor := make(map[string]float64)
-	for _, r := range results {
-		if r.EV != nil {
-			evByColor[r.Color] += *r.EV
-		}
-	}
-	var best string
-	var bestEV float64
-	for color, ev := range evByColor {
-		if best == "" || ev > bestEV {
-			best = color
-			bestEV = ev
-		}
-	}
-	return best
 }
 
 // TrendAnalysis returns the latest trend analysis results sourced from v2 GemSignals + GemFeatures.

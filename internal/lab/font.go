@@ -2,6 +2,7 @@ package lab
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"time"
 
@@ -39,7 +40,25 @@ type FontCell struct {
 	Color   string `json:"color"`
 }
 
-func BestFontCell(results []FontResult) *FontCell { return nil }
+func BestFontCell(results []FontResult) *FontCell {
+	variants := []string{"1", "1/20", "20", "20/20"}
+	colors := []string{"RED", "GREEN", "BLUE"}
+	var best *FontCell
+	var bestEV float64
+	var bestRank int
+	for _, r := range results {
+		if r.EVRaw == nil || !(*r.EVRaw > 0) {
+			continue
+		}
+		rank := slices.Index(variants, r.Variant)*len(colors) + slices.Index(colors, r.Color)
+		if best == nil || *r.EVRaw > bestEV || (*r.EVRaw == bestEV && rank < bestRank) {
+			best = &FontCell{Variant: r.Variant, Color: r.Color}
+			bestEV = *r.EVRaw
+			bestRank = rank
+		}
+	}
+	return best
+}
 
 // Coverage is the share of the pool graded SOLID at this variant.
 func (r FontResult) Coverage() float64 {
