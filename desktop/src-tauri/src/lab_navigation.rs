@@ -1,7 +1,8 @@
 use serde::Serialize;
 use std::path::Path;
 
-use crate::client_log::{parse_entered_area, read_tail, recent_log_tail};
+use crate::client_log::{parse_area_change, parse_entered_area, read_tail, recent_log_tail};
+use crate::lab_detection::LabDetection;
 
 /// Navigation events emitted during lab runs.
 /// Parsed from Client.txt independently of the font/OCR state machine.
@@ -198,9 +199,27 @@ pub fn replay_recent_log(path: &Path) -> (Vec<NavEvent>, bool) {
 /// once for every catch-up pass. `None` (missing, unreadable or empty log) is
 /// "not in lab". Step 2 still reads its own 128KB from `path`.
 pub fn replay_recent_tail(path: &Path, tail: Option<&str>) -> (Vec<NavEvent>, bool) {
+    let catchup = replay_recent_catchup(path, tail);
+    (catchup.events, catchup.in_lab)
+}
+
+/// What a catch-up pass reconstructs: the events to replay, whether the
+/// player is in the lab, and the layout difficulty detected from the
+/// "Generating level N area" lines after the latest Plaza (`None` when not in
+/// the lab or no lab area line names a difficulty).
+pub struct LabCatchup {
+    pub events: Vec<NavEvent>,
+    pub in_lab: bool,
+    pub layout_difficulty: Option<&'static str>,
+}
+
+/// [`replay_recent_tail`] plus the detected layout difficulty, read in the
+/// same scan.
+pub fn replay_recent_catchup(path: &Path, tail: Option<&str>) -> LabCatchup {
+    let not_in_lab = LabCatchup { events: vec![], in_lab: false, layout_difficulty: None };
     // Step 1: check in_lab over the shared tail — see `CATCH_UP_TAIL_BYTES`
     let Some(probe) = tail else {
-        return (vec![], false);
+        return not_in_lab;
     };
     let mut in_lab = false;
     for line in probe.lines().rev() {
@@ -214,21 +233,22 @@ pub fn replay_recent_tail(path: &Path, tail: Option<&str>) -> (Vec<NavEvent>, bo
 
     if !in_lab {
         log::info!("replay_recent_log: not in lab, skipping replay");
-        return (vec![], false);
+        return not_in_lab;
     }
     log::info!("replay_recent_log: in_lab=true, loading replay data");
+    let in_lab_empty = LabCatchup { events: vec![], in_lab: true, layout_difficulty: None };
 
     // Step 2: larger read to find PlazaEntered and replay events (128KB)
     let file_len = match std::fs::metadata(path) {
         Ok(m) => m.len(),
         Err(e) => {
             log::warn!("replay_recent_log: metadata failed: {}", e);
-            return (vec![], true);
+            return in_lab_empty;
         }
     };
     let content = match read_tail(path, file_len, 131_072) {
         Some(s) => s,
-        None => return (vec![], true),
+        None => return in_lab_empty,
     };
     let lines: Vec<&str> = content.lines().collect();
 
@@ -243,11 +263,15 @@ pub fn replay_recent_tail(path: &Path, tail: Option<&str>) -> (Vec<NavEvent>, bo
         }
     }
 
-    // Parse events forward from plaza
+    // Parse events and the detected difficulty forward from plaza
     let mut parse_in_lab = false;
     let mut events: Vec<NavEvent> = Vec::new();
+    let mut detection = LabDetection::default();
     for line in &lines[plaza_idx..] {
         if line.is_empty() { continue; }
+        if let Some(change) = parse_area_change(line) {
+            detection.observe_area(change.level, change.area);
+        }
         if let Some(event) = parse_nav_event(line, parse_in_lab) {
             match &event {
                 NavEvent::PlazaEntered => parse_in_lab = true,
@@ -258,18 +282,7 @@ pub fn replay_recent_tail(path: &Path, tail: Option<&str>) -> (Vec<NavEvent>, bo
         }
     }
 
-    (events, true)
-}
-
-pub struct LabCatchup {
-    pub events: Vec<NavEvent>,
-    pub in_lab: bool,
-    pub layout_difficulty: Option<&'static str>,
-}
-
-pub fn replay_recent_catchup(path: &Path, tail: Option<&str>) -> LabCatchup {
-    let (events, in_lab) = replay_recent_tail(path, tail);
-    LabCatchup { events, in_lab, layout_difficulty: None }
+    LabCatchup { events, in_lab: true, layout_difficulty: detection.layout_difficulty() }
 }
 
 #[cfg(test)]

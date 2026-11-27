@@ -239,13 +239,23 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 		await waitForSelectedLayout(lifecycle);
 		if (lifecycle !== catchupLifecycle) return;
 		const catchup = await ports
-			.invoke<{ events?: LabNavMessage[] }>('get_lab_catchup')
+			.invoke<{ events?: LabNavMessage[]; in_lab?: boolean; layout_difficulty?: string | null }>(
+				'get_lab_catchup'
+			)
 			.catch((e) => {
 				log(`catchup failed: ${e}`);
 				return null;
 			});
 		await waitForSelectedLayout(lifecycle);
 		if (lifecycle !== catchupLifecycle) return;
+		// The lab's detected layout outranks the saved manual difficulty, which
+		// may belong to another lab; replayed rooms must match that layout.
+		if (catchup?.in_lab && catchup.layout_difficulty) {
+			log(`catchup detected layout: ${catchup.layout_difficulty}`);
+			void fetchLayoutFromServer(catchup.layout_difficulty);
+			await waitForSelectedLayout(lifecycle);
+			if (lifecycle !== catchupLifecycle) return;
+		}
 		const events = catchup?.events ?? [];
 		if (!events.length) return;
 		log(`replaying ${events.length} catchup events`);

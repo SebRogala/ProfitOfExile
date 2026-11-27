@@ -58,16 +58,23 @@ pub(crate) fn set_shrine_warn(enabled: bool, size: String, corner: String, on_ta
     persist_settings(&app);
 }
 
-/// Returns recent lab nav events for overlays to catch up on mount.
+/// Returns recent lab nav events for overlays to catch up on mount, with the
+/// layout difficulty detected in the current lab (null when none).
 /// Reads last 32KB of Client.txt and replays from last PlazaEntered/LabExited.
 #[tauri::command]
 pub(crate) fn get_lab_catchup(app: AppHandle) -> serde_json::Value {
     let state = app.state::<AppState>();
     let client_txt = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let (events, in_lab) = lab_navigation::replay_recent_log(
-        std::path::Path::new(&client_txt),
+    let path = std::path::Path::new(&client_txt);
+    let catchup = lab_navigation::replay_recent_catchup(
+        path,
+        crate::client_log::recent_log_tail(path).as_deref(),
     );
-    serde_json::json!({ "events": events, "in_lab": in_lab })
+    serde_json::json!({
+        "events": catchup.events,
+        "in_lab": catchup.in_lab,
+        "layout_difficulty": catchup.layout_difficulty,
+    })
 }
 
 /// Arm the gem reader for a new gem choice (CRAFT): mint a token and clear the
