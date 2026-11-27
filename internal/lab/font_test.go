@@ -170,6 +170,66 @@ func TestKeepCritical_AnalyzeFontCoverageCountsSolidPoolGemsAtAnyPrice(t *testin
 	}
 }
 
+func TestKeepHappy_AnalyzeFontJackpotStatesTopEvaluatedPerVariant(t *testing.T) {
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		colors  []string
+		lowConf int
+		want    bool
+	}{
+		{name: "three confident plus two low confidence", colors: []string{"BLUE", "BLUE", "BLUE"}, lowConf: 2},
+		{name: "four confident", colors: []string{"BLUE", "BLUE", "BLUE", "BLUE"}, want: true},
+		{name: "two BLUE plus two RED", colors: []string{"BLUE", "BLUE", "RED", "RED"}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var features []GemFeature
+			for i, color := range tc.colors {
+				features = append(features, makeFeatureColored(fmt.Sprintf("Confident %d of Test", i), "20/20", color, 20, 20, "HIGH", 1, 1))
+			}
+			for i := 0; i < tc.lowConf; i++ {
+				f := makeFeatureColored(fmt.Sprintf("Thin %d of Test", i), "20/20", "BLUE", 20, 1, "HIGH", 1, 1)
+				f.LowConfidence = true
+				features = append(features, f)
+			}
+			for i := 0; i < 4; i++ {
+				features = append(features, makeFeatureColored(fmt.Sprintf("Other market %d of Test", i), "1", "RED", 20, 20, "HIGH", 1, 1))
+			}
+			gems := fontSnapshotFromFeatures(features)
+			gems = append(gems, GemPrice{Name: "Green of Test", Variant: "1", GemColor: "GREEN", IsTransfigured: true})
+			analysis := AnalyzeFont(now, gems, features)
+			for mode, rows := range map[string][]FontResult{"safe": analysis.Safe, "premium": analysis.Premium, "jackpot": analysis.Jackpot} {
+				if len(rows) != 12 {
+					t.Fatalf("%s rows = %d, want all three colours at four variants", mode, len(rows))
+				}
+				for _, r := range rows {
+					field := reflect.ValueOf(r).FieldByName("TopEvaluated")
+					if !field.IsValid() {
+						t.Errorf("%s/%s/%s: FontResult.TopEvaluated missing", mode, r.Color, r.Variant)
+						continue
+					}
+					got, ok := field.Interface().(*bool)
+					if !ok {
+						t.Fatalf("FontResult.TopEvaluated is %T, want *bool", field.Interface())
+					}
+					if mode != "jackpot" {
+						if got != nil {
+							t.Errorf("%s/%s/%s: TopEvaluated = %v, want nil", mode, r.Color, r.Variant, *got)
+						}
+						continue
+					}
+					want := r.Variant == "1" || (r.Variant == "20/20" && tc.want)
+					if got == nil {
+						t.Errorf("jackpot/%s/%s: TopEvaluated = nil, want %v", r.Color, r.Variant, want)
+					} else if *got != want {
+						t.Errorf("jackpot/%s/%s: TopEvaluated = %v, want %v", r.Color, r.Variant, *got, want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestExpectedBestOf3_RankedValues(t *testing.T) {
 	if got := expectedBestOf3([]float64{100, 80, 60, 40, 20}); got != 90 {
 		t.Fatalf("EV = %g, want 90", got)

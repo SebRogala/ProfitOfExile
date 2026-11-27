@@ -186,6 +186,60 @@ func TestFontAnalysis_NilTradeCacheServesAnAllNullLens(t *testing.T) {
 	}
 }
 
+func TestKeepHappy_FontAnalysisSerializesJackpotTopEvaluatedState(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state string
+		want  string
+	}{
+		{name: "insufficient items", state: "false", want: "false"},
+		{name: "evaluated", state: "true", want: "true"},
+		{name: "cold row unknown", state: "null"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var jackpot lab.FontResult
+			if err := json.Unmarshal([]byte(`{"Color":"BLUE","Variant":"20/20","Pool":4,"PricedGems":4,"TopEvaluated":`+tc.state+`}`), &jackpot); err != nil {
+				t.Fatal(err)
+			}
+			cache := lab.NewCache(corpusScope)
+			cache.For(corpusScope).SetFont(lab.FontAnalysis{
+				Safe:    []lab.FontResult{{Color: "BLUE", Variant: "20/20", Pool: 4, PricedGems: 4}},
+				Premium: []lab.FontResult{{Color: "BLUE", Variant: "20/20", Pool: 4, PricedGems: 4}},
+				Jackpot: []lab.FontResult{jackpot},
+			})
+			w := serveWithoutRepository(t, FontAnalysis(nil, cache, nil, corpusScope), "/api/analysis/font?variant=20/20")
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+			}
+			var body map[string]json.RawMessage
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			for _, mode := range []string{"safe", "premium", "jackpot"} {
+				var rows []map[string]json.RawMessage
+				if err := json.Unmarshal(body[mode], &rows); err != nil {
+					t.Fatal(err)
+				}
+				if len(rows) != 1 || string(rows[0]["color"]) != `"BLUE"` || string(rows[0]["variant"]) != `"20/20"` {
+					t.Fatalf("%s rows = %s, want the BLUE 20/20 cell", mode, body[mode])
+				}
+				got, present := rows[0]["topEvaluated"]
+				want := ""
+				if mode == "jackpot" {
+					want = tc.want
+				}
+				if want == "" {
+					if present {
+						t.Errorf("%s topEvaluated = %s, want absent", mode, got)
+					}
+				} else if !present || string(got) != want {
+					t.Errorf("%s topEvaluated = %s (present %v), want %s", mode, got, present, want)
+				}
+			}
+		})
+	}
+}
+
 var settlersScope = league.Historical("Settlers")
 
 // settlersLensCache is a trade cache bound to Settlers holding priced lens and
