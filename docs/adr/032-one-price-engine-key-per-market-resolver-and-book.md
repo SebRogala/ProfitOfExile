@@ -114,7 +114,8 @@ that last SOLID-by-floor price. A key whose current price is above 2x
 that last SOLID-by-floor price is not held: it stays THIN and is forced
 to CHAOTIC (POE-404). A held key skips the low-confidence depth flag
 (below 0.4x the market's median depth, `tier.lowConfidenceDepth`), so a
-sold-through gem such as Smite counts. The hold covers every
+sold-through gem such as Smite counts. A key that is SOLID by the floor
+keeps that depth flag unchanged. The hold covers every
 ninja-priced key and reads `gem_snapshots` over `[asOf-12h, asOf]`
 (POE-404). Holds do not chain.
 
