@@ -1555,6 +1555,8 @@ pub fn geometry_recalibrate(app: AppHandle) {
     );
 }
 
+fn log_region_edges<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) {}
+
 /// Emit `ssot-changed` with the current snapshot.
 ///
 /// Optional eager nudge for the main window; overlay windows poll `get_ssot`
@@ -3472,6 +3474,78 @@ mod tests {
 
     mod keep_regression {
         use super::*;
+
+        #[test]
+        fn manual_region_edge_warnings_reach_the_application_log_once() {
+            struct ScratchLogDir(std::path::PathBuf);
+            impl Drop for ScratchLogDir {
+                fn drop(&mut self) {
+                    std::fs::remove_dir_all(&self.0).expect("remove test-owned app data directory");
+                }
+            }
+
+            let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+            context.config_mut().identifier = format!("poe510-regression-{}", uuid::Uuid::new_v4());
+            let app = tauri::test::mock_builder()
+                .manage(crate::settings::tests::test_app_state())
+                .build(context)
+                .unwrap();
+            let log_dir = app.path().app_data_dir().unwrap();
+            std::fs::create_dir_all(&log_dir).unwrap();
+            let _scratch = ScratchLogDir(log_dir);
+            let state = app.state::<AppState>();
+            *state.game_monitor.lock().unwrap() = Some(crate::capture::GameMonitor {
+                id: 510, x: 0, y: 0, width: 1973, height: 1109,
+            });
+
+            for (font, merc, expected) in [
+                (
+                    None,
+                    Some([1961, 1079, 77, 61]),
+                    "Manual OCR region MercPanel [1961, 1079, 77, 61] on (1973, 1109): not read",
+                ),
+                (
+                    Some([1957, 1073, 79, 63]),
+                    None,
+                    "Manual OCR region LabFont [1957, 1073, 79, 63] on (1973, 1109): cut at the screen edge",
+                ),
+            ] {
+                *state.ocr_regions.lock().unwrap() = OcrRegionsSetting {
+                    mode: OcrRegionsMode::Manual,
+                    manual: Some(regions::ManualRegions {
+                        set_on: regions::ScreenRef {
+                            width: 1973, height: 1109, origin: [0, 0], at_ms: 510,
+                        },
+                        edited: true,
+                        lab_gem: None,
+                        lab_font: font,
+                        lab_gem_slots: None,
+                        temple_panel: None,
+                        merc_panel: merc,
+                    }),
+                };
+                let before = state.logs.lock().unwrap().len();
+
+                log_region_edges(app.handle());
+
+                let first = state.logs.lock().unwrap().clone();
+                assert_eq!(
+                    first[before..].iter().filter(|line| {
+                        line.split_once("] ").map(|(_, message)| message) == Some(expected)
+                    }).count(),
+                    1,
+                    "first detection must deliver exactly one application-log entry: {expected}",
+                );
+                assert_eq!(first.len(), before + 1, "one new warning per region");
+
+                log_region_edges(app.handle());
+
+                assert_eq!(
+                    *state.logs.lock().unwrap(), first,
+                    "repeating the same key, rectangle and capture must add no log entry",
+                );
+            }
+        }
 
         /// POE-472 reported geometry: a 2560x1080 client on a 2560x1440
         /// monitor. Pre-passing characterization of the Font placements a
