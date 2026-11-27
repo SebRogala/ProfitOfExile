@@ -16,7 +16,7 @@ const labTierCutoffChaos = 5
 const labThinSampleCount = 5
 
 // labPolicy is the tier policy every Lab pool classifies under.
-var labPolicy = tier.Policy{CutoffChaos: labTierCutoffChaos, HasCutoff: true}
+var labPolicy = tier.Policy{CutoffChaos: labTierCutoffChaos, HasCutoff: true, MinConfident: tier.MinTopItems, RatioLadder: true}
 
 func gemDepth(g GemPrice) evidence.Depth {
 	source := evidence.SourceNone
@@ -26,18 +26,29 @@ func gemDepth(g GemPrice) evidence.Depth {
 	return evidence.Depth{PricedBy: source, NinjaListings: g.Listings, NinjaSample: g.SampleCount, Hold: g.hold}
 }
 
+// classificationInput is the price, depth and previous tier a gem is
+// classified on: its trailing inputs when derived, else the observed values.
+func classificationInput(g GemPrice) (price float64, depth int, prev string) {
+	if g.tierPrice > 0 {
+		return g.tierPrice, g.tierDepth, g.prevTier
+	}
+	return g.Chaos, g.Listings, g.prevTier
+}
+
 // tierItems maps the gems that pass filter to tier items: the market is the
-// variant, the key the gem name, the depth its listing count.
+// variant, the key the gem name. The gate grades the observed depth.
 func tierItems(gems []GemPrice, filter func(GemPrice) bool) []tier.Item {
 	items := make([]tier.Item, 0, len(gems))
 	for _, g := range gems {
 		if !filter(g) {
 			continue
 		}
+		price, depth, prev := classificationInput(g)
 		items = append(items, tier.Item{
-			Group: g.Variant, Key: g.Name, Price: g.Chaos, Depth: g.Listings,
+			Group: g.Variant, Key: g.Name, Price: price, Depth: depth,
 			Gated: evidence.Grade(gemDepth(g), GemEvidencePolicy()) != evidence.Solid,
 			Held:  g.hold != nil,
+			Prev:  prev,
 		})
 	}
 	return items
@@ -52,7 +63,17 @@ func labLowConfidence(gems []GemPrice, filter func(GemPrice) bool) map[tier.Key]
 // classify runs the tier algorithm over the gems passing filter and maps the
 // result back to Lab's ClassificationResult. Lab leaves TopBoundary empty.
 func classify(gems []GemPrice, filter func(GemPrice) bool) ClassificationResult {
-	res := tier.Classify(tierItems(gems, filter), labPolicy)
+	policy := labPolicy
+	for _, g := range gems {
+		if len(g.prevBoundaries.Names) == 0 || !filter(g) {
+			continue
+		}
+		if policy.PrevBoundaries == nil {
+			policy.PrevBoundaries = make(map[string]tier.Boundaries)
+		}
+		policy.PrevBoundaries[g.Variant] = g.prevBoundaries
+	}
+	res := tier.Classify(tierItems(gems, filter), policy)
 
 	result := ClassificationResult{
 		Gems:        make(GemClassificationMap, len(res.Items)),
@@ -67,9 +88,8 @@ func classify(gems []GemPrice, filter func(GemPrice) bool) ClassificationResult 
 	}
 	for _, g := range gems {
 		key := GemClassificationKey{Name: g.Name, Variant: g.Variant}
-		if c, ok := result.Gems[key]; ok && g.holdRejected && filter(g) {
-			c.Tier = tier.Chaotic
-			result.Gems[key] = c
+		if _, ok := result.Gems[key]; g.holdRejected && filter(g) && (ok || g.Chaos > labTierCutoffChaos) {
+			result.Gems[key] = GemClassification{Tier: tier.Chaotic, LowConfidence: true}
 		}
 	}
 	return result

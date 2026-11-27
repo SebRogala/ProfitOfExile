@@ -371,6 +371,10 @@ func processSnapshot(ctx context.Context, pool *pgxpool.Pool, scope league.Scope
 	if err != nil {
 		return nil, fmt.Errorf("load history: %w", err)
 	}
+	gems, err = lab.LoadTierInputs(ctx, repo, scope, gems, history, priceTime)
+	if err != nil {
+		return nil, fmt.Errorf("load tier inputs: %w", err)
+	}
 
 	// Load future snapshots for scoring: short-term (T+1h) and medium-term (T+4h).
 	futureGems, err := loadFutureSnapshots(ctx, pool, scope, snapTime, map[int]time.Duration{

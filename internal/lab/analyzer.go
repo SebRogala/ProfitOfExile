@@ -157,7 +157,17 @@ func (a *Analyzer) RunFont(ctx context.Context, scope league.Scope) error {
 		}
 	}
 	if len(features) > 0 {
-		classification := ComputeGemClassification(gems)
+		history, err := a.repo.GemPriceHistoryByVariant(ctx, scope, "", snapTime.Add(-labTrailingSnapshots*labSnapshotGapMax), snapTime)
+		if err != nil {
+			a.logger.Error("font: failed to load gem price history", "error", err)
+			return err
+		}
+		tierGems, err := LoadTierInputs(ctx, a.repo, scope, gems, history, snapTime)
+		if err != nil {
+			a.logger.Error("font: failed to load tier inputs", "error", err)
+			return err
+		}
+		classification := ComputeGemClassification(tierGems)
 		aligned := make(map[GemClassificationKey]GemPrice)
 		for _, g := range gems {
 			if g.hold != nil || g.holdRejected {
@@ -431,6 +441,12 @@ func (a *Analyzer) RunV2(ctx context.Context, scope league.Scope) error {
 	history, err := a.repo.GemPriceHistoryByVariant(ctx, scope, "", snapTime.Add(-168*time.Hour), snapTime)
 	if err != nil {
 		a.logger.Error("v2: failed to load gem price history", "error", err)
+		return err
+	}
+
+	gems, err = LoadTierInputs(ctx, a.repo, scope, gems, history, snapTime)
+	if err != nil {
+		a.logger.Error("v2: failed to load tier inputs", "error", err)
 		return err
 	}
 

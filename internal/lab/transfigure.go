@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"profitofexile/internal/price/evidence"
+	"profitofexile/internal/price/tier"
 )
 
 // TransfigureResult holds the computed ROI for a single base→transfigured gem pair.
@@ -50,6 +51,12 @@ type GemPrice struct {
 	SparklineEmpty *bool // nil means the poe.ninja sparkline is unknown.
 	hold           *evidence.Hold
 	holdRejected   bool
+	// tierPrice and tierDepth are the trailing classification inputs; a zero
+	// tierPrice means none were derived and the observed values apply.
+	tierPrice      float64
+	tierDepth      int
+	prevTier       string
+	prevBoundaries tier.Boundaries
 }
 
 // AnalyzeTransfigure computes transfigure ROI for all base→transfigured pairs.

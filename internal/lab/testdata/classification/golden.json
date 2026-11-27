@@ -35,7 +35,7 @@
     {
      "name": "Bulk 02 of Mixing",
      "variant": "20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
@@ -113,7 +113,7 @@
     {
      "name": "Bulk 10 of Mixing",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
@@ -137,7 +137,7 @@
     {
      "name": "Bulk 13 of Mixing",
      "variant": "1",
-     "tier": "MID",
+     "tier": "MID-HIGH",
      "lowConfidence": true
     },
     {
@@ -166,122 +166,122 @@
     },
     {
      "name": "Bulk 16 of Mixing",
-     "variant": "20",
-     "tier": "MID",
-     "lowConfidence": true
-    },
-    {
-     "name": "Bulk 16 of Mixing",
-     "variant": "20/20",
-     "tier": "HIGH",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 17 of Mixing",
-     "variant": "1/20",
-     "tier": "CHAOTIC",
-     "lowConfidence": true
-    },
-    {
-     "name": "Bulk 17 of Mixing",
-     "variant": "20",
-     "tier": "FLOOR",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 17 of Mixing",
-     "variant": "20/20",
-     "tier": "FLOOR",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 19 of Mixing",
-     "variant": "1",
-     "tier": "HIGH",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 19 of Mixing",
-     "variant": "20",
-     "tier": "FLOOR",
-     "lowConfidence": true
-    },
-    {
-     "name": "Bulk 19 of Mixing",
-     "variant": "20/20",
-     "tier": "FLOOR",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 20 of Mixing",
-     "variant": "1",
-     "tier": "HIGH",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 20 of Mixing",
-     "variant": "1/20",
-     "tier": "MID",
-     "lowConfidence": true
-    },
-    {
-     "name": "Bulk 20 of Mixing",
-     "variant": "20",
-     "tier": "TOP",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 20 of Mixing",
-     "variant": "20/20",
-     "tier": "FLOOR",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 22 of Mixing",
-     "variant": "1",
-     "tier": "FLOOR",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 22 of Mixing",
-     "variant": "1/20",
-     "tier": "FLOOR",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 22 of Mixing",
-     "variant": "20",
-     "tier": "FLOOR",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 23 of Mixing",
-     "variant": "1",
-     "tier": "MID",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 23 of Mixing",
-     "variant": "20",
-     "tier": "FLOOR",
-     "lowConfidence": true
-    },
-    {
-     "name": "Bulk 23 of Mixing",
-     "variant": "20/20",
-     "tier": "MID",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 25 of Mixing",
-     "variant": "1/20",
-     "tier": "TOP",
-     "lowConfidence": false
-    },
-    {
-     "name": "Bulk 25 of Mixing",
      "variant": "20",
      "tier": "MID-HIGH",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 16 of Mixing",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 17 of Mixing",
+     "variant": "1/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 17 of Mixing",
+     "variant": "20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 17 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 19 of Mixing",
+     "variant": "1",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 19 of Mixing",
+     "variant": "20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 19 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 20 of Mixing",
+     "variant": "1",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 20 of Mixing",
+     "variant": "1/20",
+     "tier": "MID",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 20 of Mixing",
+     "variant": "20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 20 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 22 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 22 of Mixing",
+     "variant": "1/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 22 of Mixing",
+     "variant": "20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 23 of Mixing",
+     "variant": "1",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 23 of Mixing",
+     "variant": "20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 23 of Mixing",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 25 of Mixing",
+     "variant": "1/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 25 of Mixing",
+     "variant": "20",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
@@ -407,7 +407,7 @@
     {
      "name": "Bulk 38 of Mixing",
      "variant": "1/20",
-     "tier": "MID",
+     "tier": "LOW",
      "lowConfidence": false
     },
     {
@@ -467,7 +467,7 @@
     {
      "name": "Bulk 43 of Mixing",
      "variant": "20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
@@ -485,13 +485,13 @@
     {
      "name": "Bulk 44 of Mixing",
      "variant": "1/20",
-     "tier": "MID",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Bulk 44 of Mixing",
      "variant": "20",
-     "tier": "MID-HIGH",
+     "tier": "CHAOTIC",
      "lowConfidence": true
     },
     {
@@ -527,7 +527,7 @@
     {
      "name": "Bulk 47 of Mixing",
      "variant": "20",
-     "tier": "MID",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
@@ -540,12 +540,14 @@
    "boundaries": {
     "1": {
      "boundaries": [
-      1879.55,
-      290.69,
+      1104.0511999999999,
+      552.0255999999999,
+      268.12672,
       126.17728
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
       "MID",
       "LOW",
       "FLOOR"
@@ -553,12 +555,14 @@
     },
     "1/20": {
      "boundaries": [
-      258.01,
-      46.71,
+      237.06899999999996,
+      118.53449999999998,
+      57.573899999999995,
       27.0936
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
       "MID",
       "LOW",
       "FLOOR"
@@ -566,9 +570,9 @@
     },
     "20": {
      "boundaries": [
-      1059.42,
-      542.92,
-      134.67,
+      469.0322,
+      234.5161,
+      113.90782000000002,
       53.603680000000004
      ],
      "names": [
@@ -581,12 +585,14 @@
     },
     "20/20": {
      "boundaries": [
-      1091.46,
-      421.81,
+      916.8516,
+      458.4258,
+      222.66396,
       104.78304
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
       "MID",
       "LOW",
       "FLOOR"
@@ -613,7 +619,7 @@
      {
       "name": "Bulk 09",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
@@ -625,7 +631,7 @@
      {
       "name": "Bulk 15",
       "variant": "21/20c",
-      "tier": "LOW",
+      "tier": "MID",
       "lowConfidence": false
      },
      {
@@ -643,13 +649,13 @@
      {
       "name": "Bulk 24",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "CHAOTIC",
       "lowConfidence": true
      },
      {
       "name": "Bulk 27",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
@@ -667,7 +673,7 @@
      {
       "name": "Bulk 36",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
@@ -692,12 +698,14 @@
     "boundaries": {
      "21/20c": {
       "boundaries": [
-       2473.82,
-       387.76,
+       743.6674,
+       371.8337,
+       180.60494000000003,
        84.99056
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
        "MID",
        "LOW",
        "FLOOR"
@@ -711,7 +719,7 @@
      {
       "name": "Bulk 00",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
@@ -729,7 +737,7 @@
      {
       "name": "Bulk 09",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID",
       "lowConfidence": false
      },
      {
@@ -741,13 +749,13 @@
      {
       "name": "Bulk 27",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID",
       "lowConfidence": false
      },
      {
       "name": "Bulk 30",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
@@ -765,19 +773,21 @@
      {
       "name": "Bulk 45",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "HIGH",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       1466.37,
-       414.97,
+       480.655,
+       240.3275,
+       116.7305,
        54.932
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
        "MID",
        "LOW",
        "FLOOR"
@@ -803,7 +813,7 @@
      {
       "name": "Bulk 05 of Mixing",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "LOW",
       "lowConfidence": false
      },
      {
@@ -815,7 +825,7 @@
      {
       "name": "Bulk 08 of Mixing",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
@@ -881,7 +891,7 @@
      {
       "name": "Bulk 32 of Mixing",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": true
      },
      {
@@ -899,7 +909,7 @@
      {
       "name": "Bulk 37 of Mixing",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "CHAOTIC",
       "lowConfidence": true
      },
      {
@@ -923,13 +933,13 @@
      {
       "name": "Bulk 43 of Mixing",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Bulk 44 of Mixing",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "LOW",
       "lowConfidence": false
      },
      {
@@ -948,12 +958,14 @@
     "boundaries": {
      "21/20c": {
       "boundaries": [
-       1022.71,
-       128.84,
+       642.4082,
+       321.2041,
+       156.01342,
        73.41808
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
        "MID",
        "LOW",
        "FLOOR"
@@ -973,13 +985,13 @@
      {
       "name": "Bulk 02 of Mixing",
       "variant": "21/23c",
-      "tier": "MID-HIGH",
+      "tier": "CHAOTIC",
       "lowConfidence": true
      },
      {
       "name": "Bulk 04 of Mixing",
       "variant": "21/23c",
-      "tier": "MID-HIGH",
+      "tier": "CHAOTIC",
       "lowConfidence": true
      },
      {
@@ -991,7 +1003,7 @@
      {
       "name": "Bulk 07 of Mixing",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
@@ -1003,19 +1015,19 @@
      {
       "name": "Bulk 10 of Mixing",
       "variant": "21/23c",
-      "tier": "MID-HIGH",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Bulk 11 of Mixing",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Bulk 13 of Mixing",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
@@ -1027,7 +1039,7 @@
      {
       "name": "Bulk 17 of Mixing",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "CHAOTIC",
       "lowConfidence": true
      },
      {
@@ -1051,19 +1063,19 @@
      {
       "name": "Bulk 26 of Mixing",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Bulk 28 of Mixing",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID",
       "lowConfidence": true
      },
      {
       "name": "Bulk 29 of Mixing",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": true
      },
      {
@@ -1075,7 +1087,7 @@
      {
       "name": "Bulk 34 of Mixing",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
@@ -1099,22 +1111,22 @@
      {
       "name": "Bulk 43 of Mixing",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID",
       "lowConfidence": false
      },
      {
       "name": "Bulk 47 of Mixing",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "HIGH",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       1083.56,
-       771.54,
-       230.29,
+       461.22159999999997,
+       230.61079999999998,
+       112.01096,
        52.711040000000004
       ],
       "names": [
@@ -1132,12 +1144,14 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     1091.46,
-     421.81,
+     916.8516,
+     458.4258,
+     222.66396,
      104.78304
     ],
     "names": [
      "HIGH",
+     "MID-HIGH",
      "MID",
      "LOW",
      "FLOOR"
@@ -1146,12 +1160,14 @@
    "variantTiers": {
     "1": {
      "boundaries": [
-      1879.55,
-      290.69,
+      1104.0511999999999,
+      552.0255999999999,
+      268.12672,
       126.17728
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
       "MID",
       "LOW",
       "FLOOR"
@@ -1159,12 +1175,14 @@
     },
     "1/20": {
      "boundaries": [
-      258.01,
-      46.71,
+      237.06899999999996,
+      118.53449999999998,
+      57.573899999999995,
       27.0936
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
       "MID",
       "LOW",
       "FLOOR"
@@ -1172,9 +1190,9 @@
     },
     "20": {
      "boundaries": [
-      1059.42,
-      542.92,
-      134.67,
+      469.0322,
+      234.5161,
+      113.90782000000002,
       53.603680000000004
      ],
      "names": [
@@ -1187,12 +1205,14 @@
     },
     "20/20": {
      "boundaries": [
-      1091.46,
-      421.81,
+      916.8516,
+      458.4258,
+      222.66396,
       104.78304
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
       "MID",
       "LOW",
       "FLOOR"
@@ -1200,12 +1220,14 @@
     },
     "all": {
      "boundaries": [
-      1091.46,
-      421.81,
+      916.8516,
+      458.4258,
+      222.66396,
       104.78304
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
       "MID",
       "LOW",
       "FLOOR"
@@ -1220,19 +1242,11 @@
     {
      "name": "Molten Strike of the Zenith",
      "variant": "20/20",
-     "tier": "TOP",
+     "tier": "UNRATED",
      "lowConfidence": false
     }
    ],
-   "boundaries": {
-    "20/20": {
-     "boundaries": [
-      90,
-      90,
-      90
-     ]
-    }
-   },
+   "boundaries": {},
    "topBoundary": {}
   },
   "dedication": {
@@ -1247,32 +1261,34 @@
      {
       "name": "Cleave",
       "variant": "21/20c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Molten Strike",
       "variant": "21/20c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Spark",
       "variant": "21/20c",
-      "tier": "MID-HIGH",
+      "tier": "HIGH",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/20c": {
       "boundaries": [
-       120,
-       96,
+       65.1,
+       32.55,
+       15.81,
        7.44
       ],
       "names": [
        "HIGH",
        "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -1291,38 +1307,40 @@
      {
       "name": "Cleave",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Fireball",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Molten Strike",
       "variant": "21/23c",
-      "tier": "MID-HIGH",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Spark",
       "variant": "21/23c",
-      "tier": "MID-HIGH",
+      "tier": "HIGH",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       150,
-       105,
+       77.69999999999999,
+       38.849999999999994,
+       18.869999999999997,
        8.88
       ],
       "names": [
        "HIGH",
        "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -1342,27 +1360,12 @@
    }
   },
   "marketContext": {
-   "tierBoundaries": {
-    "boundaries": [
-     90,
-     90,
-     90
-    ]
-   },
    "variantTiers": {
     "20/20": {
-     "boundaries": [
-      90,
-      90,
-      90
-     ]
+     "boundaries": null
     },
     "all": {
-     "boundaries": [
-      90,
-      90,
-      90
-     ]
+     "boundaries": null
     }
    }
   }
@@ -1373,13 +1376,13 @@
     {
      "name": "Clean of Five",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
      "name": "Clean of Four",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
@@ -1391,13 +1394,13 @@
     {
      "name": "Clean of Three",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Clean of Two",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
@@ -1410,12 +1413,14 @@
    "boundaries": {
     "20/20": {
      "boundaries": [
-      800,
-      200,
+      294,
+      147,
+      71.4,
       33.6
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
       "MID",
       "LOW",
       "FLOOR"
@@ -1441,30 +1446,34 @@
      {
       "name": "Clean Ded B",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Clean Ded C",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Clean Ded D",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       600,
+       227.49999999999997,
+       113.74999999999999,
+       55.25,
        26
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -1486,12 +1495,14 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     800,
-     200,
+     294,
+     147,
+     71.4,
      33.6
     ],
     "names": [
      "HIGH",
+     "MID-HIGH",
      "MID",
      "LOW",
      "FLOOR"
@@ -1500,12 +1511,14 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      800,
-      200,
+      294,
+      147,
+      71.4,
       33.6
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
       "MID",
       "LOW",
       "FLOOR"
@@ -1513,12 +1526,14 @@
     },
     "all": {
      "boundaries": [
-      800,
-      200,
+      294,
+      147,
+      71.4,
       33.6
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
       "MID",
       "LOW",
       "FLOOR"
@@ -1539,19 +1554,19 @@
     {
      "name": "Normal B",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Normal C",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Normal D",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
@@ -1570,11 +1585,15 @@
    "boundaries": {
     "20/20": {
      "boundaries": [
-      300,
+      113.74999999999999,
+      56.87499999999999,
+      27.625,
       13
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -1607,11 +1626,15 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     300,
+     113.74999999999999,
+     56.87499999999999,
+     27.625,
      13
     ],
     "names": [
      "HIGH",
+     "MID-HIGH",
+     "MID",
      "LOW",
      "FLOOR"
     ]
@@ -1619,22 +1642,30 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      300,
+      113.74999999999999,
+      56.87499999999999,
+      27.625,
       13
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
     },
     "all": {
      "boundaries": [
-      300,
+      113.74999999999999,
+      56.87499999999999,
+      27.625,
       13
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -1702,13 +1733,13 @@
     {
      "name": "G18",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
      "name": "G19",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
@@ -1720,19 +1751,19 @@
     {
      "name": "G20",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
      "name": "G21",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
      "name": "G22",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
@@ -1799,9 +1830,9 @@
    "boundaries": {
     "20/20": {
      "boundaries": [
-      175,
-      89,
-      63,
+      156.93999999999997,
+      78.46999999999998,
+      38.114,
       17.936
      ],
      "names": [
@@ -1840,9 +1871,9 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     175,
-     89,
-     63,
+     156.93999999999997,
+     78.46999999999998,
+     38.114,
      17.936
     ],
     "names": [
@@ -1856,9 +1887,9 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      175,
-      89,
-      63,
+      156.93999999999997,
+      78.46999999999998,
+      38.114,
       17.936
      ],
      "names": [
@@ -1871,9 +1902,9 @@
     },
     "all": {
      "boundaries": [
-      175,
-      89,
-      63,
+      156.93999999999997,
+      78.46999999999998,
+      38.114,
       17.936
      ],
      "names": [
@@ -1905,13 +1936,13 @@
      {
       "name": "Ball Lightning",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Firestorm",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
@@ -1923,19 +1954,21 @@
      {
       "name": "Spark",
       "variant": "21/20c",
-      "tier": "MID",
+      "tier": "HIGH",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/20c": {
       "boundaries": [
-       200,
-       30,
+       59.08,
+       29.54,
+       14.348,
        6.752000000000001
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
        "MID",
        "LOW",
        "FLOOR"
@@ -1955,32 +1988,34 @@
      {
       "name": "Ball Lightning",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Firestorm",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Spark",
       "variant": "21/23c",
-      "tier": "MID-HIGH",
+      "tier": "HIGH",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       5000,
-       4000,
+       2450,
+       1225,
+       595.0000000000001,
        280
       ],
       "names": [
        "HIGH",
        "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -2030,30 +2065,34 @@
      {
       "name": "Valid Gem 2",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Valid Gem 3",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Valid Gem 4",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       300,
+       113.74999999999999,
+       56.87499999999999,
+       27.625,
        13
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -2103,30 +2142,34 @@
      {
       "name": "Cleave",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Fireball",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Slam",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       300,
+       113.74999999999999,
+       56.87499999999999,
+       27.625,
        13
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -2176,30 +2219,34 @@
      {
       "name": "Cleave",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Fireball",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Slam",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       300,
+       113.74999999999999,
+       56.87499999999999,
+       27.625,
        13
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -2243,13 +2290,13 @@
      {
       "name": "Arc",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Cleave",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
@@ -2261,20 +2308,22 @@
      {
       "name": "Fireball",
       "variant": "21/23c",
-      "tier": "MID-HIGH",
+      "tier": "HIGH",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       300,
-       250,
+       162.75,
+       81.375,
+       39.525000000000006,
        18.6
       ],
       "names": [
        "HIGH",
        "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -2324,30 +2373,34 @@
      {
       "name": "Cleave",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Fireball",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Slam",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       300,
+       113.74999999999999,
+       56.87499999999999,
+       27.625,
        13
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -2371,30 +2424,34 @@
      {
       "name": "Cleave of Rage",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Fireball of Volatility",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Slam of Magnitude",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       800,
+       358.75,
+       179.375,
+       87.12500000000001,
        41
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -2446,7 +2503,7 @@
      {
       "name": "High Gem",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
@@ -2464,13 +2521,13 @@
      {
       "name": "Mid Gem 1",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Mid Gem 2",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
@@ -2483,12 +2540,14 @@
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       1500,
-       200,
+       427,
+       213.5,
+       103.70000000000002,
        48.800000000000004
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
        "MID",
        "LOW",
        "FLOOR"
@@ -2563,31 +2622,31 @@
      {
       "name": "Low 1",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID",
       "lowConfidence": false
      },
      {
       "name": "Low 2",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID",
       "lowConfidence": false
      },
      {
       "name": "Mid 1",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Mid 2",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Mid 3",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
@@ -2606,12 +2665,14 @@
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       700,
-       200,
+       315,
+       157.5,
+       76.50000000000001,
        36
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
        "MID",
        "LOW",
        "FLOOR"
@@ -2678,7 +2739,7 @@
      {
       "name": "Trans High",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
@@ -2696,19 +2757,21 @@
      {
       "name": "Trans Mid",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       1200,
-       80,
+       298.2,
+       149.1,
+       72.42,
        34.08
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
        "MID",
        "LOW",
        "FLOOR"
@@ -2738,7 +2801,7 @@
     {
      "name": "Bash of Impact",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
@@ -2750,7 +2813,7 @@
     {
      "name": "Fireball of Volatility",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
@@ -2774,18 +2837,22 @@
     {
      "name": "Strike of Swiping",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     }
    ],
    "boundaries": {
     "20/20": {
      "boundaries": [
-      300,
+      172.2,
+      86.1,
+      41.82,
       19.68
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -2818,11 +2885,15 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     300,
+     172.2,
+     86.1,
+     41.82,
      19.68
     ],
     "names": [
      "HIGH",
+     "MID-HIGH",
+     "MID",
      "LOW",
      "FLOOR"
     ]
@@ -2830,22 +2901,30 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      300,
+      172.2,
+      86.1,
+      41.82,
       19.68
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
     },
     "all": {
      "boundaries": [
-      300,
+      172.2,
+      86.1,
+      41.82,
       19.68
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -2865,7 +2944,7 @@
     {
      "name": "Another",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
@@ -2889,25 +2968,25 @@
     {
      "name": "Fireball",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Frostbolt",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Ground Slam",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Ice Shot",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
@@ -2944,9 +3023,9 @@
    "boundaries": {
     "20/20": {
      "boundaries": [
-      350,
-      250,
-      100,
+      235.2,
+      117.6,
+      57.120000000000005,
       26.88
      ],
      "names": [
@@ -2985,9 +3064,9 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     350,
-     250,
-     100,
+     235.2,
+     117.6,
+     57.120000000000005,
      26.88
     ],
     "names": [
@@ -3001,9 +3080,9 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      350,
-      250,
-      100,
+      235.2,
+      117.6,
+      57.120000000000005,
       26.88
      ],
      "names": [
@@ -3016,9 +3095,9 @@
     },
     "all": {
      "boundaries": [
-      350,
-      250,
-      100,
+      235.2,
+      117.6,
+      57.120000000000005,
       26.88
      ],
      "names": [
@@ -3038,37 +3117,29 @@
     {
      "name": "Another Normal",
      "variant": "20/20",
-     "tier": "HIGH",
+     "tier": "UNRATED",
      "lowConfidence": false
     },
     {
      "name": "Moderate Gem",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "UNRATED",
      "lowConfidence": false
     },
     {
      "name": "Normal Gem",
      "variant": "20/20",
-     "tier": "TOP",
+     "tier": "UNRATED",
      "lowConfidence": false
     },
     {
      "name": "Thin Gem",
      "variant": "20/20",
-     "tier": "CHAOTIC",
+     "tier": "UNRATED",
      "lowConfidence": true
     }
    ],
-   "boundaries": {
-    "20/20": {
-     "boundaries": [
-      350,
-      200,
-      150
-     ]
-    }
-   },
+   "boundaries": {},
    "topBoundary": {}
   },
   "dedication": {
@@ -3094,27 +3165,12 @@
    }
   },
   "marketContext": {
-   "tierBoundaries": {
-    "boundaries": [
-     350,
-     200,
-     150
-    ]
-   },
    "variantTiers": {
     "20/20": {
-     "boundaries": [
-      350,
-      200,
-      150
-     ]
+     "boundaries": null
     },
     "all": {
-     "boundaries": [
-      350,
-      200,
-      150
-     ]
+     "boundaries": null
     }
    }
   }
@@ -3125,56 +3181,41 @@
     {
      "name": "Gem A",
      "variant": "20/20",
-     "tier": "TOP",
+     "tier": "UNRATED",
      "lowConfidence": false
     },
     {
      "name": "Gem B",
      "variant": "20/20",
-     "tier": "TOP",
+     "tier": "UNRATED",
      "lowConfidence": false
     },
     {
      "name": "Gem C",
      "variant": "20/20",
-     "tier": "TOP",
+     "tier": "UNRATED",
      "lowConfidence": true
     },
     {
      "name": "Gem D",
      "variant": "1",
-     "tier": "TOP",
+     "tier": "UNRATED",
      "lowConfidence": false
     },
     {
      "name": "Gem E",
      "variant": "1",
-     "tier": "TOP",
+     "tier": "UNRATED",
      "lowConfidence": false
     },
     {
      "name": "Gem F",
      "variant": "1",
-     "tier": "TOP",
+     "tier": "UNRATED",
      "lowConfidence": true
     }
    ],
-   "boundaries": {
-    "1": {
-     "boundaries": [
-      10,
-      10,
-      10
-     ]
-    },
-    "20/20": {
-     "boundaries": [
-      100,
-      100,
-      100
-     ]
-    }
-   },
+   "boundaries": {},
    "topBoundary": {}
   },
   "dedication": {
@@ -3200,34 +3241,15 @@
    }
   },
   "marketContext": {
-   "tierBoundaries": {
-    "boundaries": [
-     100,
-     100,
-     100
-    ]
-   },
    "variantTiers": {
     "1": {
-     "boundaries": [
-      10,
-      10,
-      10
-     ]
+     "boundaries": null
     },
     "20/20": {
-     "boundaries": [
-      100,
-      100,
-      100
-     ]
+     "boundaries": null
     },
     "all": {
-     "boundaries": [
-      100,
-      100,
-      100
-     ]
+     "boundaries": null
     }
    }
   }
@@ -3238,19 +3260,11 @@
     {
      "name": "Normal",
      "variant": "20/20",
-     "tier": "TOP",
+     "tier": "UNRATED",
      "lowConfidence": false
     }
    ],
-   "boundaries": {
-    "20/20": {
-     "boundaries": [
-      100,
-      100,
-      100
-     ]
-    }
-   },
+   "boundaries": {},
    "topBoundary": {}
   },
   "dedication": {
@@ -3276,27 +3290,12 @@
    }
   },
   "marketContext": {
-   "tierBoundaries": {
-    "boundaries": [
-     100,
-     100,
-     100
-    ]
-   },
    "variantTiers": {
     "20/20": {
-     "boundaries": [
-      100,
-      100,
-      100
-     ]
+     "boundaries": null
     },
     "all": {
-     "boundaries": [
-      100,
-      100,
-      100
-     ]
+     "boundaries": null
     }
    }
   }
@@ -3313,25 +3312,25 @@
     {
      "name": "Normal B",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Normal C",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Normal D",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Normal E",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
@@ -3344,13 +3343,15 @@
    "boundaries": {
     "20/20": {
      "boundaries": [
-      500,
-      400,
+      210,
+      105,
+      51.00000000000001,
       24
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -3383,13 +3384,15 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     500,
-     400,
+     210,
+     105,
+     51.00000000000001,
      24
     ],
     "names": [
      "HIGH",
      "MID-HIGH",
+     "MID",
      "LOW",
      "FLOOR"
     ]
@@ -3397,26 +3400,30 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      500,
-      400,
+      210,
+      105,
+      51.00000000000001,
       24
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
     },
     "all": {
      "boundaries": [
-      500,
-      400,
+      210,
+      105,
+      51.00000000000001,
       24
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -3436,19 +3443,19 @@
     {
      "name": "Floor A",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Floor B",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Floor C",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
@@ -3479,11 +3486,15 @@
    "boundaries": {
     "20/20": {
      "boundaries": [
-      300,
+      123.19999999999999,
+      61.599999999999994,
+      29.92,
       14.08
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -3516,11 +3527,15 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     300,
+     123.19999999999999,
+     61.599999999999994,
+     29.92,
      14.08
     ],
     "names": [
      "HIGH",
+     "MID-HIGH",
+     "MID",
      "LOW",
      "FLOOR"
     ]
@@ -3528,22 +3543,30 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      300,
+      123.19999999999999,
+      61.599999999999994,
+      29.92,
       14.08
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
     },
     "all": {
      "boundaries": [
-      300,
+      123.19999999999999,
+      61.599999999999994,
+      29.92,
       14.08
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -3569,37 +3592,37 @@
     {
      "name": "Gem 1C",
      "variant": "1",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Gem 1D",
      "variant": "1",
-     "tier": "LOW",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Gem 1E",
      "variant": "1",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Low 2020 A",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Low 2020 B",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Low 2020 C",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
@@ -3618,24 +3641,30 @@
    "boundaries": {
     "1": {
      "boundaries": [
-      180,
-      150,
+      105,
+      52.5,
+      25.500000000000004,
       12
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
     },
     "20/20": {
      "boundaries": [
-      200,
+      87.5,
+      43.75,
+      21.250000000000004,
       10
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -3668,11 +3697,15 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     200,
+     87.5,
+     43.75,
+     21.250000000000004,
      10
     ],
     "names": [
      "HIGH",
+     "MID-HIGH",
+     "MID",
      "LOW",
      "FLOOR"
     ]
@@ -3680,35 +3713,45 @@
    "variantTiers": {
     "1": {
      "boundaries": [
-      180,
-      150,
+      105,
+      52.5,
+      25.500000000000004,
       12
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
     },
     "20/20": {
      "boundaries": [
-      200,
+      87.5,
+      43.75,
+      21.250000000000004,
       10
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
     },
     "all": {
      "boundaries": [
-      200,
+      87.5,
+      43.75,
+      21.250000000000004,
       10
      ],
      "names": [
       "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -3722,19 +3765,19 @@
     {
      "name": "A of One",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "B of Two",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "C of Three",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
@@ -3759,9 +3802,15 @@
    "boundaries": {
     "20/20": {
      "boundaries": [
+      269.71,
+      134.855,
+      65.501,
       30.824
      ],
      "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -3794,9 +3843,15 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
+     269.71,
+     134.855,
+     65.501,
      30.824
     ],
     "names": [
+     "HIGH",
+     "MID-HIGH",
+     "MID",
      "LOW",
      "FLOOR"
     ]
@@ -3804,18 +3859,30 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
+      269.71,
+      134.855,
+      65.501,
       30.824
      ],
      "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
     },
     "all": {
      "boundaries": [
+      269.71,
+      134.855,
+      65.501,
       30.824
      ],
      "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -3829,31 +3896,23 @@
     {
      "name": "Arc of Surging",
      "variant": "20/20",
-     "tier": "TOP",
+     "tier": "UNRATED",
      "lowConfidence": false
     },
     {
      "name": "Cleave of Rage",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "UNRATED",
      "lowConfidence": false
     },
     {
      "name": "Spark of Nova",
      "variant": "20/20",
-     "tier": "HIGH",
+     "tier": "UNRATED",
      "lowConfidence": false
     }
    ],
-   "boundaries": {
-    "20/20": {
-     "boundaries": [
-      250,
-      200,
-      150
-     ]
-    }
-   },
+   "boundaries": {},
    "topBoundary": {}
   },
   "dedication": {
@@ -3867,31 +3926,23 @@
      {
       "name": "Ded Three A",
       "variant": "21/23c",
-      "tier": "TOP",
+      "tier": "UNRATED",
       "lowConfidence": false
      },
      {
       "name": "Ded Three B",
       "variant": "21/23c",
-      "tier": "HIGH",
+      "tier": "UNRATED",
       "lowConfidence": false
      },
      {
       "name": "Ded Three C",
       "variant": "21/23c",
-      "tier": "MID",
+      "tier": "UNRATED",
       "lowConfidence": false
      }
     ],
-    "boundaries": {
-     "21/23c": {
-      "boundaries": [
-       250,
-       200,
-       150
-      ]
-     }
-    },
+    "boundaries": {},
     "topBoundary": {}
    },
    "transfigured 21/20c": {
@@ -3906,27 +3957,12 @@
    }
   },
   "marketContext": {
-   "tierBoundaries": {
-    "boundaries": [
-     250,
-     200,
-     150
-    ]
-   },
    "variantTiers": {
     "20/20": {
-     "boundaries": [
-      250,
-      200,
-      150
-     ]
+     "boundaries": null
     },
     "all": {
-     "boundaries": [
-      250,
-      200,
-      150
-     ]
+     "boundaries": null
     }
    }
   }
@@ -3943,7 +3979,7 @@
     {
      "name": "astrolabe:Metadata/Items/Currency/AstrolabeBlight",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
@@ -3955,13 +3991,13 @@
     {
      "name": "astrolabe:Metadata/Items/Currency/AstrolabeDelirium",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "astrolabe:Metadata/Items/Currency/AstrolabeExpedition",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
@@ -3973,19 +4009,19 @@
     {
      "name": "astrolabe:Metadata/Items/Currency/AstrolabeLegion",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "astrolabe:Metadata/Items/Currency/AstrolabeRitual",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "astrolabe:Metadata/Items/Currency/AstrolabeUltimatum",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
@@ -4021,7 +4057,7 @@
     {
      "name": "corrupt:Metadata/Items/Currency/CurrencyEssenceHorror1",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
@@ -4183,7 +4219,7 @@
     {
      "name": "essence:Metadata/Items/Currency/CurrencyEssenceScorn3",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "LOW",
      "lowConfidence": false
     },
     {
@@ -4237,7 +4273,7 @@
     {
      "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingBleedPoison",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "LOW",
      "lowConfidence": false
     },
     {
@@ -4382,9 +4418,9 @@
    "boundaries": {
     "20/20": {
      "boundaries": [
-      179.76,
-      89.14,
-      26.93,
+      131.3396,
+      65.6698,
+      31.89676,
       15.01024
      ],
      "names": [
@@ -4423,9 +4459,9 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     179.76,
-     89.14,
-     26.93,
+     131.3396,
+     65.6698,
+     31.89676,
      15.01024
     ],
     "names": [
@@ -4439,9 +4475,9 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      179.76,
-      89.14,
-      26.93,
+      131.3396,
+      65.6698,
+      31.89676,
       15.01024
      ],
      "names": [
@@ -4454,9 +4490,9 @@
     },
     "all": {
      "boundaries": [
-      179.76,
-      89.14,
-      26.93,
+      131.3396,
+      65.6698,
+      31.89676,
       15.01024
      ],
      "names": [
@@ -4494,7 +4530,7 @@
     {
      "name": "Normal 11 of Pool",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
@@ -4506,19 +4542,19 @@
     {
      "name": "Normal 3 of Pool",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Normal 4 of Pool",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Normal 5 of Pool",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
@@ -4530,25 +4566,25 @@
     {
      "name": "Normal 7 of Pool",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Normal 8 of Pool",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Normal 9 of Pool",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Shallow of Depth",
      "variant": "20/20",
-     "tier": "MID",
+     "tier": "MID-HIGH",
      "lowConfidence": true
     },
     {
@@ -4561,9 +4597,9 @@
    "boundaries": {
     "20/20": {
      "boundaries": [
-      340,
-      220,
-      100,
+      237.99999999999997,
+      118.99999999999999,
+      57.8,
       27.2
      ],
      "names": [
@@ -4612,13 +4648,13 @@
      {
       "name": "Ded Normal 4",
       "variant": "21/23c",
-      "tier": "MID-HIGH",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Ded Normal 5",
       "variant": "21/23c",
-      "tier": "MID-HIGH",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
@@ -4636,13 +4672,13 @@
      {
       "name": "Ded Normal 8",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Ded Normal 9",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
@@ -4655,13 +4691,15 @@
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       395,
-       255,
+       301,
+       150.5,
+       73.10000000000001,
        34.4
       ],
       "names": [
        "HIGH",
        "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -4683,9 +4721,9 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     340,
-     220,
-     100,
+     237.99999999999997,
+     118.99999999999999,
+     57.8,
      27.2
     ],
     "names": [
@@ -4699,9 +4737,9 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      340,
-      220,
-      100,
+      237.99999999999997,
+      118.99999999999999,
+      57.8,
       27.2
      ],
      "names": [
@@ -4714,9 +4752,9 @@
     },
     "all": {
      "boundaries": [
-      340,
-      220,
-      100,
+      237.99999999999997,
+      118.99999999999999,
+      57.8,
       27.2
      ],
      "names": [
@@ -4736,37 +4774,37 @@
     {
      "name": "Empty 0 of Book",
      "variant": "20/20",
-     "tier": "FLOOR",
+     "tier": "UNRATED",
      "lowConfidence": true
     },
     {
      "name": "Empty 1 of Book",
      "variant": "20/20",
-     "tier": "FLOOR",
+     "tier": "UNRATED",
      "lowConfidence": true
     },
     {
      "name": "Empty 2 of Book",
      "variant": "20/20",
-     "tier": "FLOOR",
+     "tier": "UNRATED",
      "lowConfidence": true
     },
     {
      "name": "Empty 3 of Book",
      "variant": "20/20",
-     "tier": "FLOOR",
+     "tier": "UNRATED",
      "lowConfidence": true
     },
     {
      "name": "Empty 4 of Book",
      "variant": "20/20",
-     "tier": "FLOOR",
+     "tier": "UNRATED",
      "lowConfidence": true
     },
     {
      "name": "Empty 5 of Book",
      "variant": "20/20",
-     "tier": "FLOOR",
+     "tier": "UNRATED",
      "lowConfidence": true
     }
    ],
@@ -4779,31 +4817,31 @@
      {
       "name": "Ded Empty 0",
       "variant": "21/20c",
-      "tier": "FLOOR",
+      "tier": "UNRATED",
       "lowConfidence": true
      },
      {
       "name": "Ded Empty 1",
       "variant": "21/20c",
-      "tier": "FLOOR",
+      "tier": "UNRATED",
       "lowConfidence": true
      },
      {
       "name": "Ded Empty 2",
       "variant": "21/20c",
-      "tier": "FLOOR",
+      "tier": "UNRATED",
       "lowConfidence": true
      },
      {
       "name": "Ded Empty 3",
       "variant": "21/20c",
-      "tier": "FLOOR",
+      "tier": "UNRATED",
       "lowConfidence": true
      },
      {
       "name": "Ded Empty 4",
       "variant": "21/20c",
-      "tier": "FLOOR",
+      "tier": "UNRATED",
       "lowConfidence": true
      }
     ],
@@ -4855,50 +4893,52 @@
     {
      "name": "Even 2 of Spacing",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Even 3 of Spacing",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Even 4 of Spacing",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Even 5 of Spacing",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Even 6 of Spacing",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Even 7 of Spacing",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     }
    ],
    "boundaries": {
     "20/20": {
      "boundaries": [
-      180,
-      120,
+      112,
+      56,
+      27.200000000000003,
       12.8
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -4931,13 +4971,15 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     180,
-     120,
+     112,
+     56,
+     27.200000000000003,
      12.8
     ],
     "names": [
      "HIGH",
      "MID-HIGH",
+     "MID",
      "LOW",
      "FLOOR"
     ]
@@ -4945,26 +4987,30 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      180,
-      120,
+      112,
+      56,
+      27.200000000000003,
       12.8
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
     },
     "all": {
      "boundaries": [
-      180,
-      120,
+      112,
+      56,
+      27.200000000000003,
       12.8
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -4996,32 +5042,34 @@
     {
      "name": "Font 2 of Fives",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Font 3 of Fives",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Font 4 of Fives",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     }
    ],
    "boundaries": {
     "20/20": {
      "boundaries": [
-      260,
-      220,
+      154,
+      77,
+      37.400000000000006,
       17.6
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -5052,30 +5100,34 @@
      {
       "name": "Ded B",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Ded C",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "HIGH",
       "lowConfidence": false
      },
      {
       "name": "Ded D",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       300,
+       91.7014,
+       45.8507,
+       22.270340000000004,
        10.480160000000001
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -5097,13 +5149,15 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     260,
-     220,
+     154,
+     77,
+     37.400000000000006,
      17.6
     ],
     "names": [
      "HIGH",
      "MID-HIGH",
+     "MID",
      "LOW",
      "FLOOR"
     ]
@@ -5111,26 +5165,30 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      260,
-      220,
+      154,
+      77,
+      37.400000000000006,
       17.6
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
     },
     "all": {
      "boundaries": [
-      260,
-      220,
+      154,
+      77,
+      37.400000000000006,
       17.6
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -5144,38 +5202,23 @@
     {
      "name": "Arcanist Brand of Volatility",
      "variant": "20/20",
-     "tier": "CHAOTIC",
+     "tier": "UNRATED",
      "lowConfidence": true
     },
     {
      "name": "Ball Lightning of Orbiting",
      "variant": "20/20",
-     "tier": "TOP",
+     "tier": "UNRATED",
      "lowConfidence": false
     },
     {
      "name": "Kinetic Blast of Fragmentation",
      "variant": "1/20",
-     "tier": "TOP",
+     "tier": "UNRATED",
      "lowConfidence": false
     }
    ],
-   "boundaries": {
-    "1/20": {
-     "boundaries": [
-      177,
-      177,
-      177
-     ]
-    },
-    "20/20": {
-     "boundaries": [
-      350,
-      350,
-      350
-     ]
-    }
-   },
+   "boundaries": {},
    "topBoundary": {}
   },
   "dedication": {
@@ -5201,34 +5244,15 @@
    }
   },
   "marketContext": {
-   "tierBoundaries": {
-    "boundaries": [
-     350,
-     350,
-     350
-    ]
-   },
    "variantTiers": {
     "1/20": {
-     "boundaries": [
-      177,
-      177,
-      177
-     ]
+     "boundaries": null
     },
     "20/20": {
-     "boundaries": [
-      350,
-      350,
-      350
-     ]
+     "boundaries": null
     },
     "all": {
-     "boundaries": [
-      350,
-      350,
-      350
-     ]
+     "boundaries": null
     }
    }
   }
@@ -5299,13 +5323,13 @@
     {
      "name": "Tie 7 of Mid",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
      "name": "Tie 8 of Mid",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID",
      "lowConfidence": false
     },
     {
@@ -5330,13 +5354,15 @@
    "boundaries": {
     "20/20": {
      "boundaries": [
-      300,
-      200,
+      237.99999999999997,
+      118.99999999999999,
+      57.8,
       27.2
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -5379,24 +5405,28 @@
      {
       "name": "Tie Ded E",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      },
      {
       "name": "Tie Ded F",
       "variant": "21/23c",
-      "tier": "LOW",
+      "tier": "MID-HIGH",
       "lowConfidence": false
      }
     ],
     "boundaries": {
      "21/23c": {
       "boundaries": [
-       250,
+       122.49999999999999,
+       61.24999999999999,
+       29.75,
        14
       ],
       "names": [
        "HIGH",
+       "MID-HIGH",
+       "MID",
        "LOW",
        "FLOOR"
       ]
@@ -5418,13 +5448,15 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     300,
-     200,
+     237.99999999999997,
+     118.99999999999999,
+     57.8,
      27.2
     ],
     "names": [
      "HIGH",
      "MID-HIGH",
+     "MID",
      "LOW",
      "FLOOR"
     ]
@@ -5432,26 +5464,30 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      300,
-      200,
+      237.99999999999997,
+      118.99999999999999,
+      57.8,
       27.2
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
     },
     "all": {
      "boundaries": [
-      300,
-      200,
+      237.99999999999997,
+      118.99999999999999,
+      57.8,
       27.2
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -5489,13 +5525,13 @@
     {
      "name": "Deep 4 of Market",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
      "name": "Deep 5 of Market",
      "variant": "20/20",
-     "tier": "MID-HIGH",
+     "tier": "HIGH",
      "lowConfidence": false
     },
     {
@@ -5513,13 +5549,13 @@
     {
      "name": "Deep 8 of Market",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
      "name": "Deep 9 of Market",
      "variant": "20/20",
-     "tier": "LOW",
+     "tier": "MID-HIGH",
      "lowConfidence": false
     },
     {
@@ -5538,13 +5574,15 @@
    "boundaries": {
     "20/20": {
      "boundaries": [
-      395,
-      255,
+      301,
+      150.5,
+      73.10000000000001,
       34.4
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
@@ -5577,13 +5615,15 @@
   "marketContext": {
    "tierBoundaries": {
     "boundaries": [
-     395,
-     255,
+     301,
+     150.5,
+     73.10000000000001,
      34.4
     ],
     "names": [
      "HIGH",
      "MID-HIGH",
+     "MID",
      "LOW",
      "FLOOR"
     ]
@@ -5591,26 +5631,30 @@
    "variantTiers": {
     "20/20": {
      "boundaries": [
-      395,
-      255,
+      301,
+      150.5,
+      73.10000000000001,
       34.4
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]
     },
     "all": {
      "boundaries": [
-      395,
-      255,
+      301,
+      150.5,
+      73.10000000000001,
       34.4
      ],
      "names": [
       "HIGH",
       "MID-HIGH",
+      "MID",
       "LOW",
       "FLOOR"
      ]

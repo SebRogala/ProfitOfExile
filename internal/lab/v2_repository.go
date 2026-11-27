@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"profitofexile/internal/league"
+	"profitofexile/internal/price/tier"
 )
 
 // ---------------------------------------------------------------------------
@@ -301,6 +302,79 @@ func (r *Repository) LatestGemFeatures(ctx context.Context, scope league.Scope, 
 	}
 
 	return results, nil
+}
+
+// previousGemTiers returns the gem_features tiers of the latest snapshot
+// strictly before asOf and no older than labSnapshotGapMax, with that
+// snapshot's time; found is false when there is none.
+func (r *Repository) previousGemTiers(ctx context.Context, scope league.Scope, asOf time.Time) (GemClassificationMap, time.Time, bool, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, time.Time{}, false, fmt.Errorf("lab repo: previous gem tiers: %w", err)
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT time, name, variant, tier
+		FROM gem_features
+		WHERE league = $1 AND time = (
+			SELECT MAX(time) FROM gem_features
+			WHERE league = $1 AND time < $2 AND time >= $2::timestamptz - $3 * interval '1 second')`,
+		scope.ID(), asOf, labSnapshotGapMax.Seconds())
+	if err != nil {
+		return nil, time.Time{}, false, fmt.Errorf("lab repo: query previous gem tiers: %w", err)
+	}
+	defer rows.Close()
+	tiers := make(GemClassificationMap)
+	var at time.Time
+	found := false
+	for rows.Next() {
+		var key GemClassificationKey
+		var c GemClassification
+		if err := rows.Scan(&at, &key.Name, &key.Variant, &c.Tier); err != nil {
+			return nil, time.Time{}, false, fmt.Errorf("lab repo: scan previous gem tier: %w", err)
+		}
+		tiers[key] = c
+		found = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, time.Time{}, false, fmt.Errorf("lab repo: iterate previous gem tiers: %w", err)
+	}
+	return tiers, at, found, nil
+}
+
+// previousTierBoundaries returns, per variant except "all", the tier
+// boundaries of the latest market_context row strictly before asOf whose
+// boundaries name a HIGH, at any age. A variant without one is absent.
+func (r *Repository) previousTierBoundaries(ctx context.Context, scope league.Scope, asOf time.Time) (map[string]tier.Boundaries, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: previous tier boundaries: %w", err)
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT ON (v.key) v.key, v.value->'tiers'
+		FROM market_context mc,
+		     jsonb_each(CASE WHEN jsonb_typeof(mc.variant_stats) = 'object' THEN mc.variant_stats ELSE '{}'::jsonb END) AS v
+		WHERE mc.league = $1 AND mc.time < $2 AND v.key <> 'all'
+		  AND v.value->'tiers'->'names' @> jsonb_build_array($3::text)
+		ORDER BY v.key, mc.time DESC`, scope.ID(), asOf, tier.High)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query previous tier boundaries: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string]tier.Boundaries)
+	for rows.Next() {
+		var variant string
+		var raw []byte
+		if err := rows.Scan(&variant, &raw); err != nil {
+			return nil, fmt.Errorf("lab repo: scan previous tier boundaries: %w", err)
+		}
+		var b tier.Boundaries
+		if err := json.Unmarshal(raw, &b); err != nil {
+			return nil, fmt.Errorf("lab repo: unmarshal previous tier boundaries for %s: %w", variant, err)
+		}
+		result[variant] = b
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: iterate previous tier boundaries: %w", err)
+	}
+	return result, nil
 }
 
 // DeleteV2ForSnapshot removes computed v2 data (market_context, gem_features,

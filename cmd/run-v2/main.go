@@ -110,6 +110,11 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 			return fmt.Errorf("snapshot %s: %w", snapTime.Format(time.RFC3339), err)
 		}
 
+		gems, err = lab.LoadTierInputs(ctx, repo, scope, gems, history, priceTime)
+		if err != nil {
+			return fmt.Errorf("snapshot %s: %w", snapTime.Format(time.RFC3339), err)
+		}
+
 		// Step 0: Unified gem classification.
 		classification := lab.ComputeGemClassification(gems)
 
