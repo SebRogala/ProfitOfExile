@@ -45,12 +45,13 @@ func TestRunFont_WarmEmptyFeaturesPersistCompletePools(t *testing.T) {
 				t.Errorf("duplicate cached %s/%s", mode, key)
 			}
 			seen[key] = true
-			if r.Pool != 2 || r.PricedGems != 0 || r.EV != 0 || r.EVRaw != 0 || r.Winners != 0 || !r.Time.Equal(now) {
+			if r.Pool != 2 || r.PricedGems != 0 || r.Winners != 0 || !r.Time.Equal(now) {
 				t.Errorf("cached %s/%s: %+v", mode, key, r)
 			}
+			assertFontMissingEV(t, r)
 		}
 	}
-	rows, err := pool.Query(ctx, `SELECT color, variant, mode, pool, priced_gems, ev, profit + input_cost, winners
+	rows, err := pool.Query(ctx, `SELECT color, variant, mode, pool, priced_gems, ev, profit, winners
 		FROM font_snapshots WHERE league = $1 AND time = $2`, leagueID, now)
 	if err != nil {
 		t.Fatal(err)
@@ -60,13 +61,14 @@ func TestRunFont_WarmEmptyFeaturesPersistCompletePools(t *testing.T) {
 	for rows.Next() {
 		var color, variant, mode string
 		var size, priced, winners int
-		var ev, evRaw float64
-		if err := rows.Scan(&color, &variant, &mode, &size, &priced, &ev, &evRaw, &winners); err != nil {
+		var ev *float64
+		var profit float64
+		if err := rows.Scan(&color, &variant, &mode, &size, &priced, &ev, &profit, &winners); err != nil {
 			t.Fatal(err)
 		}
 		count++
-		if size != 2 || priced != 0 || ev != 0 || evRaw != 0 || winners != 0 {
-			t.Errorf("persisted %s/%s/%s: pool=%d priced=%d ev=%g raw=%g winners=%d", color, variant, mode, size, priced, ev, evRaw, winners)
+		if size != 2 || priced != 0 || ev != nil || profit != 0 || winners != 0 {
+			t.Errorf("persisted %s/%s/%s: pool=%d priced=%d ev=%v profit=%g winners=%d, want 2/0/NULL/0/0", color, variant, mode, size, priced, ev, profit, winners)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -121,8 +123,8 @@ func TestKeepCritical_RunFontUsesHeldPrices(t *testing.T) {
 			found = true
 			// Three draws from three outcomes always include the 100c held key;
 			// its retained risk inputs yield 100 × 0.45 × 0.8 = 36c.
-			if r.Pool != 3 || r.PricedGems != 3 || math.Abs(r.EVRaw-100) > 1e-9 || math.Abs(r.EV-36) > 1e-9 || len(r.LowConfidenceGems) != 0 {
-				t.Errorf("cached %s held Font: pool=%d priced=%d EVRaw=%g EV=%g exclusions=%+v, want 3/3/100/36/none", mode, r.Pool, r.PricedGems, r.EVRaw, r.EV, r.LowConfidenceGems)
+			if r.Pool != 3 || r.PricedGems != 3 || math.Abs(fontNumber(r.EVRaw)-100) > 1e-9 || math.Abs(fontNumber(r.EV)-36) > 1e-9 || len(r.LowConfidenceGems) != 0 {
+				t.Errorf("cached %s held Font: pool=%d priced=%d EVRaw=%v EV=%v exclusions=%+v, want 3/3/100/36/none", mode, r.Pool, r.PricedGems, r.EVRaw, r.EV, r.LowConfidenceGems)
 			}
 		}
 		if !found {
@@ -208,8 +210,8 @@ func TestKeepCritical_RunFontExcludesKeyHeldBelowTierCutoff(t *testing.T) {
 				continue
 			}
 			found = true
-			if r.Pool != 3 || r.PricedGems != 2 || math.Abs(r.EVRaw-6) > 1e-9 {
-				t.Errorf("cached %s Font: pool=%d priced=%d EVRaw=%g, want 3/2/6 (held 4c key below the 5c cutoff)", mode, r.Pool, r.PricedGems, r.EVRaw)
+			if r.Pool != 3 || r.PricedGems != 3 || math.Abs(fontNumber(r.EVRaw)-6) > 1e-9 {
+				t.Errorf("cached %s Font: pool=%d priced=%d EVRaw=%v, want 3/3/6 (held 4c key counts as SOLID below the 5c cutoff)", mode, r.Pool, r.PricedGems, r.EVRaw)
 			}
 		}
 		if !found {
@@ -231,8 +233,8 @@ func TestKeepCritical_RunFontExcludesKeyHeldBelowTierCutoff(t *testing.T) {
 			t.Fatal(err)
 		}
 		count++
-		if size != 3 || priced != 2 || math.Abs(raw-6) > 1e-9 {
-			t.Errorf("persisted %s Font: pool=%d priced=%d EVRaw=%g, want 3/2/6", mode, size, priced, raw)
+		if size != 3 || priced != 3 || math.Abs(raw-6) > 1e-9 {
+			t.Errorf("persisted %s Font: pool=%d priced=%d EVRaw=%g, want 3/3/6", mode, size, priced, raw)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -240,5 +242,93 @@ func TestKeepCritical_RunFontExcludesKeyHeldBelowTierCutoff(t *testing.T) {
 	}
 	if count != 3 {
 		t.Errorf("persisted BLUE/20/20 rows = %d, want 3", count)
+	}
+}
+
+// keep:critical — silent: ignoring a held key makes a covered market appear
+// under-covered, withholding the EV consumed by the overview and BEST.
+func TestKeepCritical_RunFontCountsAHeldKeyAsCovered(t *testing.T) {
+	for _, held := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unheld", true: "held"}[held], func(t *testing.T) {
+			pool := labIntegrationPool(t)
+			ctx := context.Background()
+			leagueID := "font-coverage-unheld"
+			if held {
+				leagueID = "font-coverage-held"
+			}
+			registerLeague(t, pool, leagueID)
+			scope := league.Historical(leagueID)
+			now := futureTime(105)
+			lastSolid := now.Add(-time.Hour)
+			cleanupAtTime(t, pool, now, "font_snapshots", "gem_snapshots")
+			cleanupAtTime(t, pool, lastSolid, "gem_snapshots")
+			seed := func(at time.Time, name, variant string, chaos float64, listings, sample int) {
+				t.Helper()
+				_, err := pool.Exec(ctx, `INSERT INTO gem_snapshots
+					(league, time, name, variant, is_transfigured, is_corrupted, chaos, listings, sample_count, gem_color)
+					VALUES ($1, $2, $3, $4, true, false, $5, $6, $7, 'BLUE')`, leagueID, at, name, variant, chaos, listings, sample)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			seed(now, "Coverage Solid of Test", "20/20", 10, 20, 20)
+			seed(now, "Coverage Thin of Test", "20/20", 12, 1, 2)
+			for _, name := range []string{"Coverage A of Test", "Coverage B of Test", "Coverage C of Test"} {
+				seed(now, name, "1", 3, 20, 20)
+			}
+			if held {
+				seed(lastSolid, "Coverage Thin of Test", "20/20", 10, 20, 20)
+			}
+			cache := NewCache(scope)
+			cache.SetGemFeatures([]GemFeature{})
+			if err := NewAnalyzer(NewRepository(pool), nil, cache, nil).RunFont(ctx, scope); err != nil {
+				t.Fatalf("RunFont: %v", err)
+			}
+			analysis, warm := cache.Font()
+			if !warm {
+				t.Fatal("Font cache remains cold")
+			}
+			wantPriced := 1
+			if held {
+				wantPriced = 2
+			}
+			for _, results := range [][]FontResult{analysis.Safe, analysis.Premium, analysis.Jackpot} {
+				found := false
+				for _, r := range results {
+					if r.Color == "BLUE" && r.Variant == "20/20" {
+						found = true
+						assertFontCoverage(t, r, 5, wantPriced, float64(wantPriced)/5, held)
+					}
+				}
+				if !found {
+					t.Error("cached BLUE 20/20 row missing")
+				}
+			}
+			rows, err := pool.Query(ctx, `SELECT mode, pool, priced_gems, ev FROM font_snapshots
+				WHERE league = $1 AND time = $2 AND color = 'BLUE' AND variant = '20/20'`, leagueID, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			count := 0
+			for rows.Next() {
+				var mode string
+				var size, priced int
+				var ev *float64
+				if err := rows.Scan(&mode, &size, &priced, &ev); err != nil {
+					t.Fatal(err)
+				}
+				count++
+				if size != 5 || priced != wantPriced || (ev != nil) != held {
+					t.Errorf("persisted %s pool/priced/ev = %d/%d/%v, want 5/%d/served=%v", mode, size, priced, ev, wantPriced, held)
+				}
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if count != 3 {
+				t.Errorf("persisted BLUE 20/20 modes = %d, want 3", count)
+			}
+		})
 	}
 }

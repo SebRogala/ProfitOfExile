@@ -20,6 +20,75 @@ import (
 
 var fontOverviewVariants = []string{"1", "1/20", "20", "20/20"}
 
+// keep:critical — silent: restart serving must not turn a missing or legacy
+// under-floor EV into a plausible number trusted by sorting and BEST.
+func TestKeepCritical_FontColdPathKeepsUnderFloorEVMissing(t *testing.T) {
+	pool := labIntegrationPool(t)
+	scope := fontOverviewLeague(t, pool, "font-cold-coverage")
+	ctx := context.Background()
+	repo := NewRepository(pool)
+	now := futureTime(106)
+	under := fontResultJSON(t, `{"Color":"RED","Variant":"20/20","Mode":"safe","Pool":88,"PricedGems":0,"InputCost":3.5,"EV":null,"EVRaw":null,"Profit":null,"LiquidityRisk":"LOW"}`)
+	covered := fontResultJSON(t, `{"Color":"GREEN","Variant":"20/20","Mode":"safe","Pool":4,"PricedGems":1,"EV":9,"EVRaw":12,"InputCost":3.5,"Profit":8.5,"LiquidityRisk":"LOW"}`)
+	under.Time, covered.Time = now, now
+	if _, err := repo.SaveFontResults(ctx, scope, []FontResult{under, covered}); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		color, variant string
+		priced         any
+		ev             float64
+	}{
+		{"BLUE", "1", nil, 9},
+		{"BLUE", "20/20", 3, 51.5},
+	} {
+		if _, err := pool.Exec(ctx, `INSERT INTO font_snapshots
+			(league, time, color, variant, mode, pool, priced_gems, ev, input_cost, profit, liquidity_risk)
+			VALUES ($1, $2, $3, $4, 'safe', 88, $5, $6, 3.5, 8.5, 'LOW')`, scope.ID(), now, row.color, row.variant, row.priced, row.ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var storedEV *float64
+	var storedProfit float64
+	if err := pool.QueryRow(ctx, `SELECT ev, profit FROM font_snapshots
+		WHERE league = $1 AND time = $2 AND color = 'RED'`, scope.ID(), now).Scan(&storedEV, &storedProfit); err != nil {
+		t.Fatal(err)
+	}
+	if storedEV != nil || storedProfit != 0 {
+		t.Errorf("under-floor storage ev/profit = %v/%g, want SQL NULL/0", storedEV, storedProfit)
+	}
+	rows, err := repo.FontOverviewRows(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("cold rows = %d, want 4", len(rows))
+	}
+	seen := make(map[string]bool)
+	for _, r := range rows {
+		key := r.Color + "/" + r.Variant
+		seen[key] = true
+		switch key {
+		case "GREEN/20/20":
+			assertFontCoverage(t, r, 4, 1, 0.25, true)
+			if fontNumber(r.EV) != 9 || fontNumber(r.EVRaw) != 12 || fontNumber(r.Profit) != 8.5 || r.InputCost != 3.5 {
+				t.Errorf("covered round-trip EV/EVRaw/Profit/input = %v/%v/%v/%g, want 9/12/8.5/3.5", r.EV, r.EVRaw, r.Profit, r.InputCost)
+			}
+		case "RED/20/20", "BLUE/1":
+			assertFontCoverage(t, r, 88, 0, 0, false)
+		case "BLUE/20/20":
+			assertFontCoverage(t, r, 88, 3, 3.0/88, false)
+		default:
+			t.Errorf("unexpected cold row %s", key)
+		}
+	}
+	for _, key := range []string{"GREEN/20/20", "RED/20/20", "BLUE/1", "BLUE/20/20"} {
+		if !seen[key] {
+			t.Errorf("cold row %s missing", key)
+		}
+	}
+}
+
 // gatedCounter counts every statement and holds each one until the gate opens,
 // so a burst's callers all overlap the load they would share.
 type gatedCounter struct {
@@ -122,12 +191,12 @@ func seedFontOverview(t *testing.T, repo *Repository, scope league.Scope) {
 	n := 0
 	for _, variant := range fontOverviewVariants {
 		for _, mode := range modes {
-			fonts = append(fonts, FontResult{Time: stale, Color: "RED", Variant: variant, Mode: mode, Pool: 1, Profit: 1e6, LiquidityRisk: "LOW"})
+			fonts = append(fonts, FontResult{Time: stale, Color: "RED", Variant: variant, Mode: mode, Pool: 1, Profit: fontFixtureFloat(1e6, FontResult{}.Profit), LiquidityRisk: "LOW"})
 			for _, color := range colors {
 				n++
 				fonts = append(fonts, FontResult{Time: latest, Color: color, Variant: variant, Mode: mode,
-					Pool: 10 + n, PricedGems: n, Winners: n % 4, PWin: 0.5, AvgWin: float64(n), EV: float64(2 * n),
-					InputCost: 5, Profit: float64((n * 37) % 101), ThinPoolGems: n % 3, LiquidityRisk: "MEDIUM"})
+					Pool: 10 + n, PricedGems: n, Winners: n % 4, PWin: 0.5, AvgWin: float64(n), EV: fontFixtureFloat(float64(2*n), FontResult{}.EV),
+					InputCost: 5, Profit: fontFixtureFloat(float64((n*37)%101), FontResult{}.Profit), ThinPoolGems: n % 3, LiquidityRisk: "MEDIUM"})
 			}
 		}
 	}
@@ -220,7 +289,7 @@ func sameRows[T any](got, want []T, profit func(T) float64) bool {
 	return reflect.DeepEqual(canon(got), canon(want))
 }
 
-func fontProfit(r FontResult) float64             { return r.Profit }
+func fontProfit(r FontResult) float64             { return fontNumber(r.Profit) }
 func dedicationProfit(r DedicationResult) float64 { return r.Profit }
 
 func sameFontModes(got, want FontAnalysis) bool {

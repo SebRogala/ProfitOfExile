@@ -26,6 +26,14 @@ import (
 	"profitofexile/internal/trade"
 )
 
+// Keep fixtures executable on both sides of the sealed nullable-field change.
+func fontFixtureFloat[T float64 | *float64](value float64, field T) T {
+	if _, ok := any(field).(float64); ok {
+		return any(value).(T)
+	}
+	return any(&value).(T)
+}
+
 func TestNewRouter_HealthRoute(t *testing.T) {
 	t.Setenv("SOURCE_COMMIT", "fedcba9876543210fedcba9876543210fedcba98")
 	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
@@ -651,7 +659,7 @@ func TestRouter_FontAnalysisCarriesTheLensCraftFromTheConfiguredTradeCache(t *te
 	scope := league.Historical("Mirage")
 	labCache := lab.NewCache(scope)
 	labCache.For(scope).SetFont(lab.FontAnalysis{
-		Safe: []lab.FontResult{{Time: time.Now(), Color: "BLUE", Variant: "20/20", Profit: 5}},
+		Safe: []lab.FontResult{{Time: time.Now(), Color: "BLUE", Variant: "20/20", Profit: fontFixtureFloat(5, lab.FontResult{}.Profit)}},
 	})
 	tradeCache := trade.NewTradeCache(10, scope)
 	for gem, prices := range map[string][]float64{

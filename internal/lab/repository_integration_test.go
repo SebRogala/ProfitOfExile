@@ -1082,9 +1082,9 @@ func TestLatestFontResults_returnsOnlyScopedLeague(t *testing.T) {
 
 	base := FontResult{Time: tm, Color: "RED", Variant: "20/20", Mode: "safe", LiquidityRisk: "LOW"}
 	rowA := base
-	rowA.Profit = 111
+	rowA.Profit = fontFixtureFloat(111, FontResult{}.Profit)
 	rowB := base
-	rowB.Profit = 222
+	rowB.Profit = fontFixtureFloat(222, FontResult{}.Profit)
 	if _, err := repo.SaveFontResults(ctx, league.Historical(leagueA), []FontResult{rowA}); err != nil {
 		t.Fatalf("SaveFontResults league A: %v", err)
 	}
@@ -1099,7 +1099,7 @@ func TestLatestFontResults_returnsOnlyScopedLeague(t *testing.T) {
 	if len(res) != 1 {
 		t.Fatalf("result count = %d, want 1 (only league %q)", len(res), leagueA)
 	}
-	if !valuesClose(res[0].Profit, 111) {
+	if !valuesClose(fontNumber(res[0].Profit), 111) {
 		t.Errorf("profit = %v, want 111 (league %q); 222 means the query read league %q", res[0].Profit, leagueA, leagueB)
 	}
 }

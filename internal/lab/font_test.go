@@ -1,12 +1,174 @@
 package lab
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
 	"testing"
 	"time"
 )
+
+// Numeric fixtures compile before and after the sealed nullable-field change,
+// so the red phase observes the missing behavior rather than a build error.
+func fontFixtureFloat[T float64 | *float64](value float64, field T) T {
+	if _, ok := any(field).(float64); ok {
+		return any(value).(T)
+	}
+	return any(&value).(T)
+}
+
+func fontNumber(value any) float64 {
+	switch v := value.(type) {
+	case float64:
+		return v
+	case *float64:
+		if v != nil {
+			return *v
+		}
+	}
+	return math.Inf(-1)
+}
+
+func fontMissing(value any) bool {
+	v, ok := value.(*float64)
+	return ok && v == nil
+}
+
+func assertFontMissingEV(t *testing.T, r FontResult) {
+	t.Helper()
+	if !fontMissing(r.EV) || !fontMissing(r.EVRaw) || !fontMissing(r.Profit) {
+		t.Errorf("%s/%s/%s EV/EVRaw/Profit = %v/%v/%v, want all nil", r.Mode, r.Color, r.Variant, r.EV, r.EVRaw, r.Profit)
+	}
+}
+
+func assertFontCoverage(t *testing.T, r FontResult, pool, priced int, want float64, served bool) {
+	t.Helper()
+	if r.Pool != pool || r.PricedGems != priced {
+		t.Errorf("%s/%s/%s coverage counts = %d/%d, want %d/%d", r.Mode, r.Color, r.Variant, r.PricedGems, r.Pool, priced, pool)
+	}
+	coverage, ok := any(r).(interface{ Coverage() float64 })
+	if !ok {
+		t.Error("FontResult.Coverage() missing")
+	} else if got := coverage.Coverage(); got != want {
+		t.Errorf("Coverage() = %g, want %g", got, want)
+	}
+	if !served {
+		assertFontMissingEV(t, r)
+	} else {
+		for name, value := range map[string]any{"EV": r.EV, "EVRaw": r.EVRaw, "Profit": r.Profit} {
+			if math.IsInf(fontNumber(value), 0) {
+				t.Errorf("%s/%s/%s %s = %v, want a served number", r.Mode, r.Color, r.Variant, name, value)
+			}
+		}
+	}
+}
+
+func fontResultJSON(t *testing.T, body string) FontResult {
+	t.Helper()
+	var r FontResult
+	if err := json.Unmarshal([]byte(body), &r); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// keep:happy — AC-1: the dated Covens example withholds every mode's EV.
+func TestKeepHappy_AnalyzeFontCovensBlue2020ServesZeroOf88WithoutEV(t *testing.T) {
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	var gems []GemPrice
+	var features []GemFeature
+	for i := 0; i < 88; i++ {
+		g := GemPrice{Name: fmt.Sprintf("Covens Gem %02d of Test", i), GemColor: "BLUE", IsTransfigured: true, Variant: "1"}
+		if i < 3 {
+			g.Variant = "20/20"
+			g.Chaos = []float64{527, 170, 35}[i]
+			g.Listings = []int{1, 2, 1}[i]
+			sample := []int{1, 2, 1}[i]
+			g.SampleCount = &sample
+			f := makeFeatureColored(g.Name, g.Variant, g.GemColor, g.Chaos, g.Listings, "HIGH", 1, 1)
+			f.LowConfidence = true
+			features = append(features, f)
+		}
+		gems = append(gems, g)
+	}
+	analysis := AnalyzeFont(now, gems, features)
+	for mode, rows := range map[string][]FontResult{"safe": analysis.Safe, "premium": analysis.Premium, "jackpot": analysis.Jackpot} {
+		t.Run(mode, func(t *testing.T) {
+			found := false
+			for _, r := range rows {
+				if r.Color == "BLUE" && r.Variant == "20/20" {
+					found = true
+					assertFontCoverage(t, r, 88, 0, 0, false)
+				}
+			}
+			if !found {
+				t.Fatal("BLUE 20/20 row missing")
+			}
+		})
+	}
+}
+
+// keep:critical — silent: a wrong numerator serves or withholds a plausible
+// EV that the downstream BEST ranking trusts.
+func TestKeepCritical_AnalyzeFontCoverageCountsSolidPoolGemsAtAnyPrice(t *testing.T) {
+	now := time.Date(2026, 11, 14, 13, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name                     string
+		solid                    int
+		thin, held, otherVariant bool
+		priced                   int
+		served                   bool
+	}{
+		{name: "22 cheap solid at floor", solid: 22, priced: 22, served: true},
+		{name: "21 cheap solid below floor", solid: 21, priced: 21},
+		{name: "21 solid plus held thin", solid: 21, thin: true, held: true, priced: 22, served: true},
+		{name: "22 solid only at another variant", solid: 22, otherVariant: true},
+		{name: "21 solid plus unheld thin", solid: 21, thin: true, priced: 21},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gems []GemPrice
+			var history []evidencePoint
+			for i := 0; i < 88; i++ {
+				g := GemPrice{Name: fmt.Sprintf("Coverage Gem %02d of Test", i), Variant: "1", GemColor: "BLUE", IsTransfigured: true}
+				if i < tc.solid {
+					g.Chaos, g.Listings, g.SampleCount = 3, 20, solidSample()
+					if !tc.otherVariant {
+						g.Variant = "20/20"
+					}
+				} else if tc.thin && i == tc.solid {
+					sample := 2
+					g.Variant, g.Chaos, g.Listings, g.SampleCount = "20/20", 3, 1, &sample
+					if tc.held {
+						history = append(history, evidencePoint{Name: g.Name, Variant: g.Variant, Time: now.Add(-time.Hour), Chaos: 3, Listings: 20, SampleCount: solidSample()})
+					}
+				}
+				gems = append(gems, g)
+			}
+			gems = deriveEvidenceHolds(gems, history, now)
+			if tc.held && gems[tc.solid].hold == nil {
+				t.Fatal("fixture: thin key did not acquire its evidence hold")
+			}
+			features := ComputeGemFeatures(now, gems, nil, MarketContext{}, nil, nil)
+			analysis := AnalyzeFont(now, gems, features)
+			for _, rows := range [][]FontResult{analysis.Safe, analysis.Premium, analysis.Jackpot} {
+				found := false
+				for _, r := range rows {
+					if r.Color == "BLUE" && r.Variant == "20/20" {
+						found = true
+						assertFontCoverage(t, r, 88, tc.priced, float64(tc.priced)/88, tc.served)
+						if tc.served && (fontNumber(r.EV) != 0 || fontNumber(r.EVRaw) != 0 || fontNumber(r.Profit) != -3.5) {
+							t.Errorf("cheap covered cell EV/EVRaw/Profit = %v/%v/%v, want 0/0/-3.5", r.EV, r.EVRaw, r.Profit)
+						}
+					}
+				}
+				if !found {
+					t.Fatal("BLUE 20/20 row missing")
+				}
+			}
+		})
+	}
+}
 
 func TestExpectedBestOf3_RankedValues(t *testing.T) {
 	if got := expectedBestOf3([]float64{100, 80, 60, 40, 20}); got != 90 {
@@ -141,7 +303,7 @@ func fontSnapshotFromFeatures(features []GemFeature) []GemPrice {
 	gems := make([]GemPrice, 0, len(features))
 	for _, f := range features {
 		gems = append(gems, GemPrice{Name: f.Name, Variant: f.Variant, GemColor: f.GemColor,
-			IsTransfigured: true, Chaos: f.Chaos, Listings: f.Listings})
+			IsTransfigured: true, Chaos: f.Chaos, Listings: f.Listings, SampleCount: solidSample()})
 	}
 	return gems
 }
@@ -559,7 +721,7 @@ func TestAnalyzeFont_PWin3PicksStillWorksWithTierBasedCounts(t *testing.T) {
 			chaos = 6
 			tier = "FLOOR"
 		}
-		gems[i] = GemPrice{Name: name, Variant: "20/20", Chaos: chaos, Listings: 10, IsTransfigured: true, GemColor: "RED"}
+		gems[i] = GemPrice{Name: name, Variant: "20/20", Chaos: chaos, Listings: 10, SampleCount: solidSample(), IsTransfigured: true, GemColor: "RED"}
 		features[i] = makeFeature(name, "20/20", chaos, 10, tier, 0.8, 0.9)
 	}
 
@@ -672,11 +834,9 @@ func TestAnalyzeFont_PricedGemsCountsOnlyThisVariantWhilePoolStaysWhole(t *testi
 	}
 }
 
-func TestAnalyzeFont_PricedGemsExcludesLowConfidenceGems(t *testing.T) {
+func TestAnalyzeFont_PricedGemsCountsOnlySolidGems(t *testing.T) {
 	now := time.Now()
-	// Both gems are listed at 20/20, but the thin-market one is excluded from the
-	// EV and contributes 0. Counting it as "priced" would tell the UI the pool is
-	// fully valued while the EV is quietly depressed by a zero-valued outcome.
+	// Both gems are listed at 20/20; only one has SOLID evidence.
 	lowConf := makeFeature("Slam of Force", "20/20", 120, 1, "HIGH", 0.8, 0.9)
 	lowConf.LowConfidence = true
 	features := []GemFeature{
@@ -699,7 +859,7 @@ func TestAnalyzeFont_PricedGemsExcludesLowConfidenceGems(t *testing.T) {
 		t.Fatalf("Pool = %d, want 2 (both gems are possible outcomes)", got.Pool)
 	}
 	if got.PricedGems != 1 {
-		t.Errorf("PricedGems = %d, want 1 — the low-confidence gem enters the EV as 0, so it is not a valued outcome",
+		t.Errorf("PricedGems = %d, want 1 — the one-listing gem grades THIN",
 			got.PricedGems)
 	}
 }
@@ -731,9 +891,9 @@ func TestLensCraftEV_MissingEitherPriceHasNoEV(t *testing.T) {
 func TestAnalyzeFont_CompleteSnapshotPool(t *testing.T) {
 	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
 	gems := []GemPrice{
-		{Name: "Valuable", Variant: "20/20", GemColor: "RED", IsTransfigured: true, Chaos: 100, Listings: 50},
-		{Name: "Boundary", Variant: "20/20", GemColor: "RED", IsTransfigured: true, Chaos: 5, Listings: 50},
-		{Name: "Cheap", Variant: "20/20", GemColor: "RED", IsTransfigured: true, Chaos: 4, Listings: 50},
+		{Name: "Valuable", Variant: "20/20", GemColor: "RED", IsTransfigured: true, Chaos: 100, Listings: 50, SampleCount: solidSample()},
+		{Name: "Boundary", Variant: "20/20", GemColor: "RED", IsTransfigured: true, Chaos: 5, Listings: 50, SampleCount: solidSample()},
+		{Name: "Cheap", Variant: "20/20", GemColor: "RED", IsTransfigured: true, Chaos: 4, Listings: 50, SampleCount: solidSample()},
 		{Name: "Unpriced", Variant: "1", GemColor: "RED", IsTransfigured: true},
 	}
 	features := ComputeGemFeatures(now, gems, nil, MarketContext{}, nil, nil)
@@ -746,13 +906,13 @@ func TestAnalyzeFont_CompleteSnapshotPool(t *testing.T) {
 			if r.Pool != 4 {
 				t.Errorf("%s/%s pool = %d, want 4", mode, r.Variant, r.Pool)
 			}
-			wantEV := 0.0
 			if r.Variant == "20/20" {
 				// Three of the four equally likely triples contain Valuable.
-				wantEV = 75
-			}
-			if math.Abs(r.EVRaw-wantEV) > 1e-9 {
-				t.Errorf("%s/%s EVRaw = %g, want %g", mode, r.Variant, r.EVRaw, wantEV)
+				if math.Abs(fontNumber(r.EVRaw)-75) > 1e-9 {
+					t.Errorf("%s/%s EVRaw = %v, want 75", mode, r.Variant, r.EVRaw)
+				}
+			} else {
+				assertFontMissingEV(t, r)
 			}
 		}
 	}
@@ -773,6 +933,7 @@ func TestAnalyzeFont_PoolIgnoresSnapshotPrices(t *testing.T) {
 			for i := range gems {
 				gems[i].Chaos = price
 				gems[i].Listings = 50
+				gems[i].SampleCount = solidSample()
 			}
 			features := ComputeGemFeatures(now, gems, nil, MarketContext{}, nil, nil)
 			analysis := AnalyzeFont(now, gems, features)
@@ -792,10 +953,21 @@ func TestAnalyzeFont_PoolIgnoresSnapshotPrices(t *testing.T) {
 							wantEV = 75
 						}
 					}
-					if math.Abs(r.EVRaw-wantEV) > 1e-9 {
-						t.Errorf("%s/%s/%s EVRaw = %g, want %g", r.Mode, r.Color, r.Variant, r.EVRaw, wantEV)
+					wantPriced := 0
+					if price > 0 && r.Variant == "1" {
+						wantPriced = 4
+					} else if price > 0 && r.Variant == "20/20" {
+						wantPriced = 1
 					}
-					if price <= 5 && (r.EV != 0 || r.PricedGems != 0 || r.Winners != 0 || r.PWin != 0 || r.FontsToHit != 0) {
+					if r.PricedGems != wantPriced {
+						t.Errorf("%s/%s/%s PricedGems = %d, want %d", r.Mode, r.Color, r.Variant, r.PricedGems, wantPriced)
+					}
+					if wantPriced == 0 {
+						assertFontMissingEV(t, r)
+					} else if math.Abs(fontNumber(r.EVRaw)-wantEV) > 1e-9 {
+						t.Errorf("%s/%s/%s EVRaw = %v, want %g", r.Mode, r.Color, r.Variant, r.EVRaw, wantEV)
+					}
+					if price <= 5 && (r.Winners != 0 || r.PWin != 0 || r.FontsToHit != 0 || (wantPriced > 0 && fontNumber(r.EV) != 0)) {
 						t.Errorf("zero-valued pool has valued outcomes: %+v", r)
 					}
 				}
@@ -805,7 +977,7 @@ func TestAnalyzeFont_PoolIgnoresSnapshotPrices(t *testing.T) {
 }
 
 func TestAnalyzeFont_SnapshotEligibility(t *testing.T) {
-	eligible := GemPrice{Name: "Eligible", Variant: "20/20", GemColor: "RED", IsTransfigured: true, Chaos: 100, Listings: 50}
+	eligible := GemPrice{Name: "Eligible", Variant: "20/20", GemColor: "RED", IsTransfigured: true, Chaos: 100, Listings: 50, SampleCount: solidSample()}
 	for _, excluded := range []GemPrice{
 		{Name: "Corrupted", IsTransfigured: true, IsCorrupted: true, GemColor: "RED"},
 		{Name: "Normal", GemColor: "RED"},
@@ -827,8 +999,8 @@ func TestAnalyzeFont_SnapshotEligibility(t *testing.T) {
 					if r.Pool != 1 || r.Color != "RED" {
 						t.Errorf("unexpected pool: %+v", r)
 					}
-					if r.Variant == "20/20" && r.EVRaw != 100 {
-						t.Errorf("EVRaw = %g, want 100", r.EVRaw)
+					if r.Variant == "20/20" && fontNumber(r.EVRaw) != 100 {
+						t.Errorf("EVRaw = %v, want 100", r.EVRaw)
 					}
 				}
 			}
@@ -869,7 +1041,7 @@ func TestKeepHappy_AnalyzeFontExcludesGatedGemFromEVAndListsIt(t *testing.T) {
 	// Baseline: the gated gem is a pool member with no priced feature.
 	peerCls := ComputeGemClassification(peers)
 	baseline := blueFontSafe2020(t, AnalyzeFont(now, gems, ComputeGemFeatures(now, peers, nil, MarketContext{}, peerCls.Gems, nil)))
-	if baseline.EVRaw <= 0 {
+	if !(fontNumber(baseline.EVRaw) > 0) {
 		t.Fatalf("fixture: baseline EVRaw = %v, want a priced pool", baseline.EVRaw)
 	}
 
@@ -877,7 +1049,7 @@ func TestKeepHappy_AnalyzeFontExcludesGatedGemFromEVAndListsIt(t *testing.T) {
 	if !reflect.DeepEqual(got.LowConfidenceGems, wantListed) {
 		t.Errorf("LowConfidenceGems = %+v, want %+v", got.LowConfidenceGems, wantListed)
 	}
-	if got.EV != baseline.EV || got.EVRaw != baseline.EVRaw {
+	if fontNumber(got.EV) != fontNumber(baseline.EV) || fontNumber(got.EVRaw) != fontNumber(baseline.EVRaw) {
 		t.Errorf("EV/EVRaw = %v/%v, want %v/%v (the gated gem adds nothing)", got.EV, got.EVRaw, baseline.EV, baseline.EVRaw)
 	}
 	if got.Pool != len(gems) {

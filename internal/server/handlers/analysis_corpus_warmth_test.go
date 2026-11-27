@@ -128,7 +128,7 @@ func TestFontAnalysis_ColdCacheFallsBackToTheRepository(t *testing.T) {
 func TestFontAnalysis_WarmCorpusWithOneEmptyModeAnswersWithoutQuerying(t *testing.T) {
 	cache := lab.NewCache(corpusScope)
 	cache.For(corpusScope).SetFont(lab.FontAnalysis{
-		Safe: []lab.FontResult{{Time: time.Now(), Color: "BLUE", Variant: "20/20", EV: 12, Profit: 5}},
+		Safe: []lab.FontResult{{Time: time.Now(), Color: "BLUE", Variant: "20/20", EV: fontFixtureFloat(12, lab.FontResult{}.EV), Profit: fontFixtureFloat(5, lab.FontResult{}.Profit)}},
 	})
 
 	w := serveWithoutRepository(t, FontAnalysis(nil, cache, nil, corpusScope),
