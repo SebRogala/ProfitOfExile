@@ -3,6 +3,7 @@ package lab
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -60,11 +61,10 @@ func deriveTierInputs(gems []GemPrice, history []GemPriceHistory, prev GemClassi
 			for j, p := range chain {
 				prices[j], depths[j] = p.Chaos, p.Listings
 			}
-			if g.hold != nil {
-				// The hold replaces the observed asOf price; history holds the raw one.
-				prices[len(prices)-1] = g.Chaos
-			}
 			g.tierPrice, g.tierDepth = medianPrice(prices), lowerMedianDepth(depths)
+			if g.hold != nil {
+				g.tierPrice = math.Min(g.tierPrice, g.hold.LastSolidPrice)
+			}
 		}
 		if recent {
 			g.prevTier = tier.Excluded
