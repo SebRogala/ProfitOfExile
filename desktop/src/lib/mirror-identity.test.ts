@@ -74,7 +74,6 @@ const ROOTS: MirrorRoot[] = [
 			'BestPlays.svelte':
 				'desktop reads ssot, uses the shared Tooltip and shows prices with currency icons; web takes a league prop, uses InfoTooltip and title attributes and shows prices as text',
 			'Header.svelte': 'web header carries the Normal/Dedication lab selector and a title attribute; desktop uses the shared Tooltip and no lab selector',
-			'FontEV.svelte': 'desktop shared Tooltip vs web InfoTooltip',
 			'SignalBadge.svelte': 'desktop Tooltip vs web title attribute',
 			'MarketOverview.svelte': 'desktop $effect vs web onDestroy ticker',
 			'SessionQueue.svelte': 'trade refresh is desktop-only',
