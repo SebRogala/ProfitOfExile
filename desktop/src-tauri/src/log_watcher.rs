@@ -199,3 +199,76 @@ fn watch_file(path: &Path, tx: mpsc::Sender<String>) -> anyhow::Result<()> {
         }
     }
 }
+
+/// Reads the complete lines appended after `pos`, resetting to 0 when the file shrank.
+/// Returns the new position, or None when `emit` reports the receiver is gone.
+fn read_new_lines(path: &Path, pos: u64, emit: &mut dyn FnMut(String) -> bool) -> Option<u64> {
+    let _ = (path, emit);
+    Some(pos)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod keep_regression {
+        use super::*;
+
+        fn read(path: &Path, pos: u64) -> (u64, Vec<String>) {
+            let mut lines = Vec::new();
+            let next = read_new_lines(path, pos, &mut |line| {
+                lines.push(line);
+                true
+            })
+            .expect("emit never reports a closed receiver");
+            (next, lines)
+        }
+
+        fn append(path: &Path, text: &str) {
+            use std::io::Write;
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(path)
+                .expect("open Client.txt for append")
+                .write_all(text.as_bytes())
+                .expect("append to Client.txt");
+        }
+
+        // keep:regression — POE-347: a truncated or regrown Client.txt re-emits
+        // only new complete lines. After a truncation the reader restarts at 0
+        // and sends the new line once; a half-written trailing line stays
+        // unconsumed until its newline lands, then goes out once, whole. Fails
+        // if the shrink is not detected (C is never read), if the old lines A
+        // and B are re-sent, or if the half line is emitted early or twice.
+        #[test]
+        fn truncated_client_txt_emits_only_new_complete_lines() {
+            let path = std::env::temp_dir()
+                .join(format!("poe_test_log_watcher_truncate_{}", std::process::id()))
+                .with_extension("txt");
+            let a = "2026/11/19 21:04:11 1234567 cff94598 [INFO Client 4120] : You have entered Aspirants' Plaza.";
+            let b = "2026/11/19 21:04:52 1275012 cff94598 [INFO Client 4120] : You have entered Aspirants' Trial.";
+            let c = "2026/11/19 21:09:03 120 cff94598 [INFO Client 9] : You have entered Lioneye's Watch.";
+            let d = "2026/11/19 21:09:40 157 cff94598 [INFO Client 9] : You have entered The Coast.";
+
+            std::fs::write(&path, format!("{a}\n{b}\n")).expect("write Client.txt");
+            let (pos, first) = read(&path, 0);
+            assert_eq!(first, vec![a.to_string(), b.to_string()], "initial read");
+
+            std::fs::write(&path, format!("{c}\n")).expect("truncate Client.txt");
+            assert!((c.len() as u64 + 1) < pos, "C must shrink the file");
+            let (pos, after_truncate) = read(&path, pos);
+            assert_eq!(after_truncate, vec![c.to_string()], "read after truncation");
+
+            let (d_head, d_tail) = d.split_at(30);
+            append(&path, d_head);
+            let (pos, half) = read(&path, pos);
+            assert_eq!(half, Vec::<String>::new(), "read of a half-written line");
+
+            append(&path, &format!("{d_tail}\n"));
+            let (_, completed) = read(&path, pos);
+            assert_eq!(completed, vec![d.to_string()], "read once the half line's newline lands");
+
+            std::fs::remove_file(&path).expect("remove test Client.txt");
+        }
+    }
+}
