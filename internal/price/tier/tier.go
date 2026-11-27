@@ -88,6 +88,7 @@ type Policy struct {
 	// DepthUnknown skips relative-depth detection for markets whose depth is
 	// not measured. Caller-gated items remain low-confidence.
 	DepthUnknown bool
+	MinConfident int
 }
 
 // excludes reports whether the policy's cutoff leaves price out.

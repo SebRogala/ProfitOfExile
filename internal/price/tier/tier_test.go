@@ -12,6 +12,74 @@ func item(group, key string, price float64, depth int) Item {
 
 func k(group, key string) Key { return Key{Group: group, Key: key} }
 
+func TestKeepHappy_ClassifyGroupBelowMinimumConfidentIsUnrated(t *testing.T) {
+	const group = "20/20"
+	covens := make([]Item, 0, 11)
+	for i, price := range []float64{527, 264, 170, 88, 64, 45, 33, 24, 17, 12, 8} {
+		covens = append(covens, gatedItem(group, "covens-"+strconv.Itoa(i), price, 1+i%2))
+	}
+	confident := evenPool(group, 40)[:MinTopItems]
+	undersized := append([]Item(nil), confident[:MinTopItems-1]...)
+	undersized = append(undersized,
+		gatedItem(group, "gated-a", 527, 40),
+		gatedItem(group, "gated-b", 264, 40),
+		gatedItem(group, "gated-c", 170, 40),
+	)
+
+	for _, tt := range []struct {
+		name    string
+		items   []Item
+		unrated bool
+	}{
+		{"all gated Covens", covens, true},
+		{"one below minimum with three gated", undersized, true},
+		{"exactly minimum confident", confident, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			res := Classify(tt.items, Policy{CutoffChaos: 5, HasCutoff: true, MinConfident: MinTopItems})
+			if len(res.Items) != len(tt.items) {
+				t.Errorf("len(Items) = %d, want %d", len(res.Items), len(tt.items))
+			}
+			for _, it := range tt.items {
+				got, ok := res.Items[k(it.Group, it.Key)]
+				if !ok {
+					t.Errorf("%s (%.0fc) missing from Items", it.Key, it.Price)
+					continue
+				}
+				if got.LowConfidence != it.Gated {
+					t.Errorf("%s LowConfidence = %v, want %v", it.Key, got.LowConfidence, it.Gated)
+				}
+				if tt.unrated {
+					if got.Tier != "UNRATED" {
+						t.Errorf("%s tier = %q, want UNRATED", it.Key, got.Tier)
+					}
+				} else {
+					rated := false
+					for _, name := range Order {
+						if got.Tier == name {
+							rated = true
+						}
+					}
+					if !rated {
+						t.Errorf("%s tier = %q, want a rated tier in %v", it.Key, got.Tier, Order)
+					}
+				}
+			}
+			b, hasBoundaries := res.Boundaries[group]
+			if tt.unrated {
+				if hasBoundaries {
+					t.Errorf("Boundaries[%s] = %+v, want no entry for an undersized group", group, b)
+				}
+				if tb, ok := res.TopBoundary[group]; ok {
+					t.Errorf("TopBoundary[%s] = %v, want no entry for an undersized group", group, tb)
+				}
+			} else if !hasBoundaries || len(b.Boundaries) == 0 {
+				t.Errorf("Boundaries[%s] = %+v (present %v), want a nonempty rated ladder", group, b, hasBoundaries)
+			}
+		})
+	}
+}
+
 func TestLowConfidence_BasicThreshold(t *testing.T) {
 	items := []Item{
 		item("20/20", "Normal Gem", 500, 60),
