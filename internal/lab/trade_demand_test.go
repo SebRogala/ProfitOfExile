@@ -349,8 +349,10 @@ func TestKeepCritical_OneSnapshotGradesTheSameInFontAndDemand(t *testing.T) {
 		{Name: "Deep Gem of Test", Variant: "20/20", Chaos: 60, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "GREEN"},
 		{Name: "Deep Peer of Test", Variant: "20/20", Chaos: 40, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "GREEN"},
 		{Name: "Confident Floor of Test", Variant: "20/20", Chaos: 6, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "GREEN"},
-		{Name: "Blue High of Test", Variant: "20/20", Chaos: 400, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"},
-		{Name: "Blue Peer of Test", Variant: "20/20", Chaos: 300, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Blue High of Test", Variant: "20/20", Chaos: 160, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Blue Peer of Test", Variant: "20/20", Chaos: 150, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Blue Middle of Test", Variant: "20/20", Chaos: 140, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Blue Lower of Test", Variant: "20/20", Chaos: 130, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"},
 	}
 	nine := 9
 	points := []evidencePoint{{Name: "Smite of Divine Judgement", Variant: "20/20",

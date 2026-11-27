@@ -480,8 +480,11 @@ func TestKeepCritical_TierItemsGradesEachVariantOnItsOwnSample(t *testing.T) {
 // keep:critical — silent: a held thin key disappears from the confident EV pool.
 func TestKeepCritical_HeldShallowKeyContributesCappedPriceToBoundaries(t *testing.T) {
 	gems := heldSnapshot()
+	prices := []float64{300, 280, 150, 120, 90, 70, 50, 40, 30}
 	for i := range gems {
-		gems[i].Chaos = float64(80 - i*5)
+		if i < len(prices) {
+			gems[i].Chaos = prices[i]
+		}
 		gems[i].Listings = 40
 	}
 	thin := &gems[len(gems)-1]
