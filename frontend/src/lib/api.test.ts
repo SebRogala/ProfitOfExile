@@ -129,6 +129,20 @@ describe('fetchRankingsPage', () => {
 });
 
 describe('fetchFontEV lens', () => {
+	it.each([
+		{ name: 'null', fields: { ev: null, evRaw: null, profit: null }, expected: null },
+		{ name: 'absent', fields: {}, expected: null },
+		{ name: 'zero', fields: { ev: 0, evRaw: 0, profit: 0 }, expected: 0 },
+		{ name: 'priced', fields: { ev: 12.6, evRaw: 12.6, profit: 12.6 }, expected: 13 }
+	])('keep:critical: fetchFontEV keeps a null ev, evRaw and profit null ($name)', async ({ fields, expected }) => {
+		// Zero-filling withheld values silently makes WI-5 display a priced 0c cell.
+		const row = { color: 'BLUE', pool: 88, ...fields };
+		const result = await fetchWith({ safe: [row], premium: [row], jackpot: [row], best: null });
+		expect([result.safe, result.premium, result.jackpot].map((rows) =>
+			rows.map(({ ev, evRaw, profit }) => ({ ev, evRaw, profit }))
+		)).toEqual(Array.from({ length: 3 }, () => [{ ev: expected, evRaw: expected, profit: expected }]));
+	});
+
 	const originalFetch = globalThis.fetch;
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
