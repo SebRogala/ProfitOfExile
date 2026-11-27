@@ -236,6 +236,7 @@ mod tests {
         // keep:critical — silent: a refused row that still yields a selection (a
         // stripped `<`/`>` prefix, a guessed ratio, a guessed side) fills a plausible
         // wrong trade into the Companion; each must yield its error code and nothing else.
+        // Invalid nonempty stock can signal a misaligned crop with a plausible wrong ratio.
         #[test]
         fn an_unreadable_or_one_sided_top_row_is_refused_with_its_event_code() {
             let cases = [
@@ -258,6 +259,19 @@ mod tests {
                 })
                 .collect();
             assert!(mismatches.is_empty(), "{mismatches:#?}");
+
+            for stock in ["1O", "8 12", "0"] {
+                let mut branch = None;
+                let got = parse_top_row_detailed(
+                    "346 : 1",
+                    stock,
+                    &["Chaos Orb"],
+                    &["Allflame Ember of", "the Ethereal"],
+                    &mut branch,
+                );
+                assert_eq!(got, Err(ExchangeReadError::RatioUnreadable), "stock {stock:?}");
+                assert_eq!(branch, Some("bad-stock"), "stock {stock:?}");
+            }
         }
     }
 
@@ -281,6 +295,33 @@ mod tests {
                     have_name: "Chaos Orb".into(),
                 })
             );
+        }
+
+        #[test]
+        fn a_valid_ratio_without_stock_selects_the_complete_trade_with_null_stock() {
+            let expected = serde_json::json!({
+                "mode": "sell",
+                "currency": "chaos",
+                "ratio": 346.0,
+                "oneSide": "right",
+                "left": 346.0,
+                "right": 1.0,
+                "stock": null,
+                "wantName": "Chaos Orb",
+                "haveName": "Allflame Ember of the Ethereal",
+            });
+            let selections = [
+                parse_fixture_row("ratio-read-without-stock"),
+                parse_top_row(
+                    "346 : 1",
+                    " \t\r\n ",
+                    &["Chaos Orb"],
+                    &["Allflame Ember of", "the Ethereal"],
+                ),
+            ]
+            .map(|result| result.map(|selection| serde_json::to_value(selection).unwrap()));
+
+            assert_eq!(selections, [Ok(expected.clone()), Ok(expected)]);
         }
     }
 }
