@@ -727,7 +727,7 @@ func TestClassify_GroupsSharingKeysClassifyIndependently(t *testing.T) {
 	}
 }
 
-// labLikePolicy mirrors Lab's tier policy: a 5c cutoff.
+// labLikePolicy mirrors only Lab's 5c cutoff.
 var labLikePolicy = Policy{CutoffChaos: 5, HasCutoff: true}
 
 func gatedItem(group, key string, price float64, depth int) Item {

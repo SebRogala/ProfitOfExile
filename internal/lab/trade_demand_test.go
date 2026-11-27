@@ -298,6 +298,9 @@ func TestKeepHappy_BuildTradeDemandKeepsLowConfidenceFloorKey(t *testing.T) {
 		demandGem("C", "20/20", 600), demandGem("D", "20/20", 400),
 		demandGem("E", "20/20", 300), demandGem("F", "20/20", 200),
 	}
+	for i := range gems {
+		gems[i].SampleCount = solidSample()
+	}
 	thin := demandGem("Thin", "20/20", 10)
 	thin.Listings = 2 // under 0.4 × the variant median of 20
 	gems = append(gems, thin)

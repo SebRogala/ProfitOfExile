@@ -2,6 +2,7 @@ package lab
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -14,6 +15,50 @@ import (
 func solidSample() *int {
 	n := labThinSampleCount + 1
 	return &n
+}
+
+func tierClampGems() []GemPrice {
+	var gems []GemPrice
+	for i := 0; i < 9; i++ {
+		gems = append(gems, GemPrice{Name: fmt.Sprintf("Clamp %d of Test", i), Variant: "20/20", Chaos: 100 * math.Pow(0.7, float64(i)), Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"})
+	}
+	return append(gems, GemPrice{Name: "Entrant of Test", Variant: "20/20", Chaos: 100, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"})
+}
+
+// keep:critical — silent: Lab omits previous HIGH and disables the stored step bound.
+func TestKeepCritical_FontClassificationClampsHighAgainstThePreviousSnapshot(t *testing.T) {
+	gems := tierClampGems()
+	previous := map[string]tier.Boundaries{"20/20": {Names: []string{tier.High}, Boundaries: []float64{38.8234}}}
+	inputs := deriveTierInputs(gems, nil, nil, time.Time{}, false, previous, tierInputAsOf)
+	got := ComputeGemClassification(inputs)
+	b := got.Boundaries["20/20"]
+	if len(b.Boundaries) == 0 || len(b.Names) == 0 || b.Names[0] != tier.High {
+		t.Fatalf("boundaries = %+v, want named HIGH", b)
+	}
+	if math.Abs(b.Boundaries[0]-48.52925) > 0.0001 {
+		t.Errorf("HIGH = %.6f, want 48.52925 (previous 38.8234 plus 25%%)", b.Boundaries[0])
+	}
+}
+
+// keep:critical — silent: a rejected spike is admitted into tier-based EV.
+func TestKeepCritical_FontClassificationMarksAnOverBandRejectedGemChaoticWhateverItsMembership(t *testing.T) {
+	for _, prev := range []string{tier.Excluded, tier.Floor} {
+		t.Run(prev, func(t *testing.T) {
+			gems := tierClampGems()
+			g := GemPrice{Name: "Rejected of Test", Variant: "20/20", Chaos: 6, Listings: 1, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"}
+			gems = append(gems, g)
+			point := evidencePoint{Name: g.Name, Variant: g.Variant, Time: tierInputAsOf.Add(-30 * time.Minute), Chaos: 2.5, Listings: 9, SampleCount: solidSample()}
+			held := deriveEvidenceHolds(gems, []evidencePoint{point}, tierInputAsOf)
+			if !held[len(held)-1].holdRejected {
+				t.Fatal("fixture must reject current 6c against last SOLID 2.5c")
+			}
+			inputs := deriveTierInputs(held, nil, GemClassificationMap{{Name: g.Name, Variant: g.Variant}: {Tier: prev}}, tierInputAsOf.Add(-30*time.Minute), true, nil, tierInputAsOf)
+			got, ok := ComputeGemClassification(inputs).Gems[GemClassificationKey{Name: g.Name, Variant: g.Variant}]
+			if !ok || got.Tier != tier.Chaotic || !got.LowConfidence {
+				t.Errorf("rejected member = %+v, present=%v; want CHAOTIC/LowConfidence=true for Prev %s", got, ok, prev)
+			}
+		})
+	}
 }
 
 func TestComputeGemClassification_LeavesOutCorruptedUntransfiguredAndLabCutoffGems(t *testing.T) {

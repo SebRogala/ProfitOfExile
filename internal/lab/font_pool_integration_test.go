@@ -10,7 +10,126 @@ import (
 	"time"
 
 	"profitofexile/internal/league"
+	"profitofexile/internal/price/tier"
 )
+
+// keep:critical — silent: Font silently classifies held gems differently from RunV2.
+func TestKeepCritical_RunFontClassifiesHeldGemsWithTierInputs(t *testing.T) {
+	checkRunFontTierInputs(t, true)
+}
+
+// keep:critical — silent: Font discards a stored HIGH after a history gap and moves a held gem down.
+func TestKeepCritical_RunFontClampsHighFromTheStoredPreviousBoundary(t *testing.T) {
+	checkRunFontTierInputs(t, false)
+}
+
+func checkRunFontTierInputs(t *testing.T, recent bool) {
+	t.Helper()
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	id := "font-tier-stored-boundary"
+	if recent {
+		id = "font-tier-consecutive"
+	}
+	scope := tierInputIntegrationLeague(t, pool, id)
+	repo := NewRepository(pool)
+	asOf := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	gems := tierClampGems()
+	const target = "Held Clamp of Test"
+	gems[2].Name, gems[2].GemColor = target, "GREEN"
+	gems[2].Chaos = 49
+	seed := func(at time.Time, g GemPrice, price float64, listings int, sample *int) {
+		t.Helper()
+		seedGemSnapshot(t, pool, id, at, g.Name, g.Variant, true, false, price, listings, g.GemColor)
+		if _, err := pool.Exec(ctx, `UPDATE gem_snapshots SET sample_count=$1 WHERE league=$2 AND time=$3 AND name=$4 AND variant=$5`, sample, id, at, g.Name, g.Variant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var features []GemFeature
+	for i, g := range gems {
+		features = append(features, GemFeature{Time: asOf, Name: g.Name, Variant: g.Variant, GemColor: g.GemColor, Chaos: g.Chaos, Listings: g.Listings, Tier: tier.MidHigh})
+		if recent {
+			seed(asOf.Add(-60*time.Minute), g, g.Chaos, 20, solidSample())
+			seed(asOf.Add(-30*time.Minute), g, g.Chaos, 20, solidSample())
+		}
+		price, listings, sample := g.Chaos, g.Listings, g.SampleCount
+		if i == 2 {
+			price, listings, sample = 60, 1, nil
+		}
+		seed(asOf, g, price, listings, sample)
+	}
+	priorAt := asOf.Add(-90 * time.Minute)
+	if recent {
+		priorAt = asOf.Add(-30 * time.Minute)
+	} else {
+		seed(asOf.Add(-2*time.Hour), gems[2], 49, 20, solidSample())
+	}
+	mc := testMarketContext()
+	mc.Time = priorAt
+	mc.VariantStats = map[string]VariantBaseline{"20/20": {Tiers: tier.Boundaries{Names: []string{tier.High}, Boundaries: []float64{38.8234}}}}
+	if err := repo.SaveMarketContext(ctx, scope, mc); err != nil {
+		t.Fatal(err)
+	}
+	cache := NewCache(scope)
+	analyzer := NewAnalyzer(repo, nil, cache, nil)
+	if recent {
+		prior := append([]GemFeature(nil), features...)
+		for i := range prior {
+			prior[i].Time = priorAt
+			prior[i].Tier = tier.High
+		}
+		if _, err := repo.SaveGemFeatures(ctx, scope, prior); err != nil {
+			t.Fatal(err)
+		}
+		if err := analyzer.RunV2(ctx, scope); err != nil {
+			t.Fatalf("RunV2: %v", err)
+		}
+		v2, _ := cache.GemFeatures()
+		found := false
+		for _, f := range v2 {
+			if f.Name == target {
+				found = true
+				if f.Tier != tier.High {
+					t.Errorf("RunV2 held tier=%q, want HIGH", f.Tier)
+				}
+			}
+		}
+		if !found {
+			t.Error("RunV2 omitted held gem")
+		}
+	} else {
+		cache.SetGemFeatures(features)
+	}
+	if err := analyzer.RunFont(ctx, scope); err != nil {
+		t.Fatalf("RunFont: %v", err)
+	}
+	analysis, warm := cache.Font()
+	if !warm {
+		t.Fatal("Font remains cold")
+	}
+	found := false
+	for _, r := range analysis.Safe {
+		if r.Color != "GREEN" || r.Variant != "20/20" {
+			continue
+		}
+		found = true
+		var count int
+		for _, b := range r.PoolBreakdown {
+			if b.Tier == tier.High {
+				count += b.Count
+				if b.MinPrice != 49 || b.MaxPrice != 49 {
+					t.Errorf("held HIGH price range=%g..%g, want 49", b.MinPrice, b.MaxPrice)
+				}
+			}
+		}
+		if count != 1 {
+			t.Errorf("served held HIGH count=%d, want 1 against clamped HIGH 48.52925; breakdown=%+v", count, r.PoolBreakdown)
+		}
+	}
+	if !found {
+		t.Error("GREEN/20/20 safe row missing")
+	}
+}
 
 func TestRunFont_WarmEmptyFeaturesPersistCompletePools(t *testing.T) {
 	pool := labIntegrationPool(t)

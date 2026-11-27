@@ -9,13 +9,119 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/league"
+	"profitofexile/internal/price/tier"
 )
+
+func tierInputIntegrationLeague(t *testing.T, pool *pgxpool.Pool, id string) league.Scope {
+	t.Helper()
+	registerLeague(t, pool, id)
+	t.Cleanup(func() {
+		for _, table := range []string{"font_snapshots", "gem_signals", "gem_features", "market_context", "gem_snapshots"} {
+			if _, err := pool.Exec(context.Background(), "DELETE FROM "+table+" WHERE league = $1", id); err != nil {
+				t.Errorf("cleanup %s/%s: %v", id, table, err)
+			}
+		}
+	})
+	return league.Historical(id)
+}
+
+// keep:critical — silent: reruns consume their own tier or another league's tier.
+func TestKeepCritical_PreviousGemTiersReadsTheSnapshotBeforeAsOf(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+	asOf := time.Date(2026, 11, 20, 15, 0, 0, 0, time.UTC)
+	other := tierInputIntegrationLeague(t, pool, "tier-input-other")
+	key := GemClassificationKey{Name: "Prior of Test", Variant: "20/20"}
+	if _, err := repo.SaveGemFeatures(ctx, other, []GemFeature{{Time: asOf.Add(-time.Minute), Name: key.Name, Variant: key.Variant, Tier: tier.Top}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		age       time.Duration
+		wantFound bool
+	}{
+		{"recent", 30 * time.Minute, true}, {"stale", 60 * time.Minute, false}, {"no prior", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scope := tierInputIntegrationLeague(t, pool, "tier-input-"+strings.ReplaceAll(tc.name, " ", "-"))
+			seedGemSnapshot(t, pool, scope.ID(), asOf, key.Name, key.Variant, true, false, 49, 20, "BLUE")
+			features := []GemFeature{{Time: asOf, Name: key.Name, Variant: key.Variant, Tier: tier.Top}}
+			if tc.age > 0 {
+				priorAt := asOf.Add(-tc.age)
+				seedGemSnapshot(t, pool, scope.ID(), priorAt, key.Name, key.Variant, true, false, 49, 20, "BLUE")
+				features = append(features, GemFeature{Time: priorAt, Name: key.Name, Variant: key.Variant, Tier: tier.High}, GemFeature{Time: priorAt, Name: key.Name, Variant: "1", Tier: tier.Mid})
+			}
+			if _, err := repo.SaveGemFeatures(ctx, scope, features); err != nil {
+				t.Fatal(err)
+			}
+			got, at, found, err := repo.previousGemTiers(ctx, scope, asOf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if found != tc.wantFound {
+				t.Errorf("found=%v, want %v", found, tc.wantFound)
+			}
+			if tc.wantFound {
+				want := GemClassificationMap{key: {Tier: tier.High}, {Name: key.Name, Variant: "1"}: {Tier: tier.Mid}}
+				if !at.Equal(asOf.Add(-tc.age)) || !reflect.DeepEqual(got, want) {
+					t.Errorf("previous=%+v at %v, want %+v at -30m (never current TOP or foreign TOP)", got, at, want)
+				}
+			} else if len(got) != 0 {
+				t.Errorf("previous=%+v, want empty without recent preceding snapshot", got)
+			}
+		})
+	}
+}
+
+// keep:critical — silent: a gap or UNRATED row drops HIGH memory and permits a boundary jump.
+func TestKeepCritical_PreviousTierBoundariesReadsTheSnapshotBeforeAsOf(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+	scope := tierInputIntegrationLeague(t, pool, "tier-boundary-prior")
+	other := tierInputIntegrationLeague(t, pool, "tier-boundary-other")
+	asOf := time.Date(2026, 11, 20, 16, 0, 0, 0, time.UTC)
+	seed := func(scope league.Scope, at time.Time, stats map[string]VariantBaseline) {
+		t.Helper()
+		mc := testMarketContext()
+		mc.Time, mc.VariantStats = at, stats
+		mc.TierBoundaries = tier.Boundaries{Names: []string{tier.High}, Boundaries: []float64{9999}}
+		if err := repo.SaveMarketContext(ctx, scope, mc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	high := func(value float64) VariantBaseline {
+		return VariantBaseline{Tiers: tier.Boundaries{Names: []string{tier.High, tier.Floor}, Boundaries: []float64{value, 1}}}
+	}
+	seed(scope, asOf.Add(-6*time.Hour), map[string]VariantBaseline{"1": high(11), "all": high(777)})
+	seed(scope, asOf.Add(-90*time.Minute), map[string]VariantBaseline{"20/20": high(38.8234)})
+	seed(scope, asOf.Add(-30*time.Minute), map[string]VariantBaseline{"20/20": {Tiers: tier.Boundaries{Names: []string{tier.Unrated}}}, "1": {Tiers: tier.Boundaries{Names: []string{tier.Floor}, Boundaries: []float64{2}}}})
+	seed(scope, asOf, map[string]VariantBaseline{"20/20": high(900), "1": high(901), "20": high(902)})
+	seed(other, asOf.Add(-time.Minute), map[string]VariantBaseline{"20/20": high(800), "1": high(801), "20": high(802)})
+	got, err := repo.previousTierBoundaries(ctx, scope, asOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]tier.Boundaries{"20/20": high(38.8234).Tiers, "1": high(11).Tiers}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("previous boundaries=%+v, want %+v (strict-before, per variant, named HIGH, any age, no all)", got, want)
+	}
+	cold, err := repo.previousTierBoundaries(ctx, scope, asOf.Add(-7*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cold) != 0 {
+		t.Errorf("cold boundaries=%+v, want no prior HIGH", cold)
+	}
+}
 
 // These tests are written against the POST-POE-120 scoped repository signatures
 // (`Method(ctx, scope league.Scope, ...existingArgs)`). Until Chunk 2 threads

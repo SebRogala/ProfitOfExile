@@ -36,6 +36,21 @@ func testMarketContext() MarketContext {
 	}
 }
 
+// keep:critical — silent: dropping a retained cheap feature loses cutoff membership memory.
+func TestKeepCritical_ComputeGemFeaturesKeepsAClassifiedGemBelowTheCutoff(t *testing.T) {
+	g := GemPrice{Name: "Retained of Test", Variant: "20/20", Chaos: 4.6, Listings: 20, SampleCount: solidSample(), IsTransfigured: true, GemColor: "BLUE"}
+	cls := GemClassificationMap{{Name: g.Name, Variant: g.Variant}: {Tier: "FLOOR"}}
+	got := ComputeGemFeatures(tierInputAsOf, []GemPrice{g}, nil, testMarketContext(), cls, nil)
+	if len(got) != 1 {
+		t.Errorf("classified 4.6c feature count = %d, want 1 retained FLOOR", len(got))
+	} else if got[0].Tier != "FLOOR" || got[0].Name != g.Name || got[0].Variant != g.Variant || got[0].Chaos != 4.6 {
+		t.Errorf("retained feature = %+v, want observed 4.6c/FLOOR", got[0])
+	}
+	if unclassified := ComputeGemFeatures(tierInputAsOf, []GemPrice{g}, nil, testMarketContext(), nil, nil); len(unclassified) != 0 {
+		t.Errorf("unclassified 4.6c features = %+v, want none", unclassified)
+	}
+}
+
 func TestComputeGemFeatures_BasicVelocities(t *testing.T) {
 	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
 	t0 := snapTime.Add(-3 * time.Hour)
