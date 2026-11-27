@@ -169,8 +169,11 @@ func (a *Analyzer) RunFont(ctx context.Context, scope league.Scope) error {
 			f := &features[i]
 			key := GemClassificationKey{Name: f.Name, Variant: f.Variant}
 			g, ok := aligned[key]
-			if c, classified := classification.Gems[key]; ok && classified {
-				f.Chaos = g.Chaos
+			if !ok {
+				continue
+			}
+			f.Chaos = g.Chaos
+			if c, classified := classification.Gems[key]; classified {
 				f.Tier = c.Tier
 				f.LowConfidence = c.LowConfidence
 			}
