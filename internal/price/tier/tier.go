@@ -9,6 +9,8 @@
 //  2. TOP: the gap-detected cluster at the top of the confident pool.
 //  3. Boundaries: FLOOR anchored to the top-5 average, HIGH and MID-HIGH
 //     gap-snapped, MID at the largest relative gap below MID-HIGH.
+//     RatioLadder instead anchors every boundary to the clean top-5 average,
+//     omitting intermediate boundaries at or below FLOOR.
 //  4. Every item is classified; a low-confidence item above the highest
 //     boundary is CHAOTIC.
 //
@@ -39,7 +41,8 @@ const (
 // which TOP detection runs.
 const MinTopItems = 4
 
-const MaxHighStep = 0
+// MaxHighStep is the maximum relative HIGH movement between snapshots.
+const MaxHighStep = 0.25
 
 // Order lists tier names from highest to lowest. Of indexes into it when a
 // Boundaries carries no Names: boundary[0] -> Order[0] (TOP), etc.
@@ -52,9 +55,12 @@ const floorTopRatio = 0.08
 // floorTop5Count is how many top prices are averaged for the FLOOR anchor.
 const floorTop5Count = 5
 
-// highRatio sets the HIGH target as a ratio of the top non-TOP price: HIGH
-// holds items within 30% of it.
+// highRatio sets the HIGH target relative to the top non-TOP price in the gap
+// ladder, or the clean top-5 average in the ratio ladder.
 const highRatio = 0.7
+
+const midHighRatio = 0.35
+const midRatio = 0.17
 
 // minGemsAboveGap is the minimum number of items above a gap for it to qualify
 // as the MID boundary (prevents single-item tiers).
@@ -96,7 +102,9 @@ type Policy struct {
 	// MinConfident requires this many confident, cutoff-passing items per
 	// group before rating it. Zero preserves the existing fallback ladder.
 	MinConfident int
-	RatioLadder  bool
+	// RatioLadder anchors boundaries to the clean top-5 average without gap
+	// snapping or the small-group percentile fallback. Zero keeps the gap ladder.
+	RatioLadder bool
 }
 
 // excludes reports whether the policy's cutoff leaves price out.
@@ -328,7 +336,7 @@ func detectTops(items []Item, lowConf map[Key]bool, p Policy) (map[Key]bool, map
 }
 
 // computeTop5Avg returns the average of the top N prices of a descending
-// slice. Used to anchor the FLOOR boundary relative to the market's top end.
+// slice. Anchors FLOOR and, with RatioLadder, the intermediate boundaries.
 func computeTop5Avg(prices []float64) float64 {
 	if len(prices) == 0 {
 		return 1 // fallback
@@ -490,7 +498,7 @@ func computeVariantTiers(prices []float64, floorBoundary float64) Boundaries {
 }
 
 // cleanBoundaries produces per-group tier boundaries from the clean pool (no
-// low-confidence, no TOP items) using the hybrid algorithm.
+// low-confidence, no TOP items) using the policy's chosen ladder.
 func cleanBoundaries(items []Item, lowConf map[Key]bool, tops map[Key]bool, p Policy) map[string]Boundaries {
 	// Build per-group clean price lists (descending).
 	byGroup := make(map[string][]float64)
@@ -513,7 +521,22 @@ func cleanBoundaries(items []Item, lowConf map[Key]bool, tops map[Key]bool, p Po
 			prices[i], prices[j] = prices[j], prices[i]
 		}
 
-		floorBound := math.Max(computeTop5Avg(prices)*floorTopRatio, 1)
+		anchor := computeTop5Avg(prices)
+		floorBound := math.Max(anchor*floorTopRatio, 1)
+		if p.RatioLadder {
+			b := Boundaries{}
+			for i, ratio := range []float64{highRatio, midHighRatio, midRatio} {
+				boundary := anchor * ratio
+				if boundary > floorBound {
+					b.Boundaries = append(b.Boundaries, boundary)
+					b.Names = append(b.Names, Order[i+1])
+				}
+			}
+			b.Boundaries = append(b.Boundaries, floorBound)
+			b.Names = append(b.Names, Low, Floor)
+			result[group] = b
+			continue
+		}
 		result[group] = computeVariantTiers(prices, floorBound)
 	}
 	return result

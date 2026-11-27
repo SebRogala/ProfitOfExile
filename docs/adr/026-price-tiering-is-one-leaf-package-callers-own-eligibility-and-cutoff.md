@@ -194,3 +194,17 @@ This supersedes the POE-404 amendment's FLOOR fallback for undersized groups
 only when the caller enables the minimum. The zero policy retains the existing
 no-boundary FLOOR and percentile fallback behavior. Harvest and Lab currently
 leave the minimum disabled; Lab adoption remains proposed under POE-406.
+
+### Ratio ladder — 2026-11-27 (POE-406)
+
+Status: accepted; current opt-in tier implementation.
+
+`tier.Policy.RatioLadder` selects a descending ratio ladder anchored to the
+existing `computeTop5Avg` over confident, cutoff-passing, non-TOP prices in each
+group. HIGH, MID-HIGH and MID use 0.70, 0.35 and 0.17 of that average; FLOOR
+uses the greater of 0.08 of the average and 1c. Intermediate boundaries at or
+below FLOOR are omitted together with their names. The ratio path bypasses gap
+snapping and the small-group percentile fallback. The zero policy preserves
+the gap ladder; Harvest and Lab leave the ratio policy disabled at this step.
+`tier.MaxHighStep` records the accepted 0.25 movement limit; enforcing it
+against previous boundaries remains proposed under POE-406 WI-4.
