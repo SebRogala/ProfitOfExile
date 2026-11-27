@@ -333,13 +333,17 @@ transfigured gems are two disjoint reroll pools (the two wordings above).
   `20260315800000_seed_gem_colors_328` and
   `20260730060000_seed_allflame_new_gems`), and `WHITE` is what the code keys
   on (`isColorlessByRule` in `internal/lab/eligibility.go`). An empty
-  `gem_color` is a different state: the resolver has not met the name yet. That
-  is a data gap, not a game rule ([ADR-006](adr/006-gem-colors-database-backed-upsert-lookup-table-with-in-memory-resolver.md)
+  `gem_color` is a different state: the resolver could not resolve the name
+  from a known base. That is a data gap, not a game rule ([ADR-006](adr/006-gem-colors-database-backed-upsert-lookup-table-with-in-memory-resolver.md)
   owns the resolver mechanics).
-- **A new league's gems need a `gem_colors` seed migration.** The Dedication
-  feed requires a resolved colour (`isDedicationFeed`), so a new gem with no
-  row drops out of the pools, the tiers and the rankings until a seed
-  migration gives it one. Code-verified 2026-11-27.
+- **A genuinely new base gem needs a `gem_colors` seed migration.** The
+  resolver derives a new transfigured, Vaal or Greater variant from its known
+  base and writes it back (`resolve` and `UpsertDiscoveries` in
+  `internal/price/gemcolor/resolver.go`), but a new base gem, such as the
+  Allflame Pacts, has no base to derive from. The Dedication feed requires a
+  resolved colour (`isDedicationFeed`), so such a gem drops out of the pools,
+  the tiers and the rankings until a seed migration gives it a row.
+  Code-verified 2026-11-27.
 - **" of " in a name does not make a gem transfigured.** Herald of Ash is a
   base gem. A name is transfigured when its base name (the part before the last
   " of ") is itself a known gem: "Rain of Arrows of Saturation" has the base

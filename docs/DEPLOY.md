@@ -110,8 +110,11 @@ possibly with part of its DDL applied. Recover in this order:
 
 1. Identify the failed migration, the exact object it left behind (a table,
    index, view or policy), and the last version that applied successfully.
-   `go run ./cmd/migrate version` prints the current version and dirty flag.
-2. DROP that partial object, and only that object.
+   In the local compose stack,
+   `docker compose exec app go run ./cmd/migrate version` prints the current
+   version and dirty flag; against another database, run the same `version`
+   command with that database's `DATABASE_URL`.
+2. DROP the partial objects that migration created, and nothing else.
 3. Force the version marker back to the last successful version:
 
    ```
@@ -124,8 +127,12 @@ possibly with part of its DDL applied. Recover in this order:
    (`m.Force` in `cmd/migrate/main.go`); it does not undo the partial DDL,
    which is why step 2 comes first. The Makefile target runs the CLI in the
    local compose stack; against another database, run the same `force`
-   command with that database's connection.
+   command with that database's `DATABASE_URL`.
 4. Redeploy, so startup re-applies the failed migration from a clean state.
+
+The league-schema migration does not use this path: it recovers only by
+restoring the pre-deploy backup
+([League Schema Migration Runbook](LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md#gate)).
 
 Never hide a partial migration by adding `IF NOT EXISTS` to its DDL: the
 migration then reports success over half-built state, and editing a deployed

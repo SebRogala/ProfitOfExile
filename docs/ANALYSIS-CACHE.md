@@ -356,13 +356,14 @@ mark against what `gem_snapshots` holds. Move the rows backwards under a
 running server, by truncating `gem_snapshots` and re-COPYing an older dump, and
 the mark is newer than every row: the incremental read matches nothing, the
 series decay to empty once the lookback passes, and every sparkline serves `[]`
-at HTTP 200 for the life of the process. Rows newer than the mark resume
-population; nothing in the process repairs the mark itself. The remedy is a
+at HTTP 200 until a row newer than the mark lands. Even then the history
+between the old rows and the mark is never re-read; nothing in the process
+repairs the mark itself. The remedy is a
 server restart: the mark is in-memory only, so the next tick reads cold.
 
-`warnSparklineCacheRetainedNothing` logs the state as the WARN "lab sparkline
-cache retained no series against a live high-water mark", with `highWater`,
-`markAge` and `lookback` fields. It fires when a tick leaves both maps empty
+`warnSparklineCacheRetainedNothing` logs the state as a WARN whose message
+begins "lab sparkline cache retained no series against a live high-water
+mark", with `league`, `highWater`, `markAge` and `lookback` fields. It fires when a tick leaves both maps empty
 while the mark is non-zero, and it covers two states it cannot tell apart on
 its own; `markAge` is the discriminator. A `markAge` past `lookback` is a
 corpus that legitimately decayed (nothing priced for the whole lookback) and
