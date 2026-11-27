@@ -133,23 +133,11 @@ lab-gem-art: ## Fetch the lab gem reader's reference art fixture (see its README
 	slug = lambda g: "".join(c.lower() if c.isalnum() and c.isascii() else "-" for c in g); \
 	print("\n".join("%s\t%s" % (slug(g), urllib.parse.quote(g, safe="")) for g in names))' \
 		$(LAB_GEM_SETS) > "$$list" || { echo "could not read $(LAB_GEM_SETS)"; exit 1; }; \
-	fetched=0; skipped=0; failed=0; \
-	while IFS="$$(printf '\t')" read -r slug enc; do \
-		[ -n "$$slug" ] || continue; \
-		out="$(LAB_GEM_ART_DIR)/$$slug.png"; \
-		if [ -s "$$out" ]; then skipped=$$((skipped+1)); continue; fi; \
-		code=$$(curl -s $(MERC_SEED_CURL_INSECURE) -o "$$out" -w '%{http_code}' --max-time 30 \
-			"$(POE_SERVER_URL)/api/icon/gems/$$enc" 2>/dev/null); \
-		if [ "$$code" = "200" ] && [ -s "$$out" ]; then \
-			fetched=$$((fetched+1)); \
-		else \
-			rm -f "$$out"; failed=$$((failed+1)); \
-			echo "  FAILED $$slug (HTTP $${code:-no response})"; \
-		fi; \
-	done < "$$list"; \
+	status=0; \
+	POE_SERVER_URL="$(POE_SERVER_URL)" MERC_SEED_CURL_INSECURE="$(MERC_SEED_CURL_INSECURE)" \
+		sh scripts/fetch-gem-art.sh "lab gem art" "$(LAB_GEM_ART_DIR)" < "$$list" || status=$$?; \
 	rm -f "$$list"; \
-	echo "lab gem art from $(POE_SERVER_URL): $$fetched fetched, $$skipped already present, $$failed failed"; \
-	[ "$$failed" -eq 0 ]
+	exit "$$status"
 
 merc-seed-art: lab-gem-art ## Fetch the merc seed gem art fixture, and the lab gem art (see their READMEs; honours POE_SERVER_URL)
 	@mkdir -p $(MERC_SEED_ART_DIR)
@@ -159,23 +147,11 @@ merc-seed-art: lab-gem-art ## Fetch the merc seed gem art fixture, and the lab g
 	slug = lambda g: "".join(c.lower() if c.isalnum() and c.isascii() else "-" for c in g); \
 	print("\n".join("%s\t%s" % (slug(e["gem"]), urllib.parse.quote(e["gem"], safe="")) for e in entries))' \
 		$(MERC_SEED_MAP) > "$$list" || { echo "could not read $(MERC_SEED_MAP)"; exit 1; }; \
-	fetched=0; skipped=0; failed=0; \
-	while IFS="$$(printf '\t')" read -r slug enc; do \
-		[ -n "$$slug" ] || continue; \
-		out="$(MERC_SEED_ART_DIR)/$$slug.png"; \
-		if [ -s "$$out" ]; then skipped=$$((skipped+1)); continue; fi; \
-		code=$$(curl -s $(MERC_SEED_CURL_INSECURE) -o "$$out" -w '%{http_code}' --max-time 30 \
-			"$(POE_SERVER_URL)/api/icon/gems/$$enc" 2>/dev/null); \
-		if [ "$$code" = "200" ] && [ -s "$$out" ]; then \
-			fetched=$$((fetched+1)); \
-		else \
-			rm -f "$$out"; failed=$$((failed+1)); \
-			echo "  FAILED $$slug (HTTP $${code:-no response})"; \
-		fi; \
-	done < "$$list"; \
+	status=0; \
+	POE_SERVER_URL="$(POE_SERVER_URL)" MERC_SEED_CURL_INSECURE="$(MERC_SEED_CURL_INSECURE)" \
+		sh scripts/fetch-gem-art.sh "merc seed art" "$(MERC_SEED_ART_DIR)" < "$$list" || status=$$?; \
 	rm -f "$$list"; \
-	echo "merc seed art from $(POE_SERVER_URL): $$fetched fetched, $$skipped already present, $$failed failed"; \
-	[ "$$failed" -eq 0 ]
+	exit "$$status"
 
 desktop-check: ## Cargo check desktop (Rust)
 	docker compose run --rm -w /app/desktop/src-tauri desktop cargo check
