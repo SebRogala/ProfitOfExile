@@ -88,6 +88,15 @@ pub struct GameMonitor {
     pub height: u32,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn refresh_changed_client(
+    _previous: Option<[i32; 4]>,
+    _next: [i32; 4],
+    _resolve_monitor: impl FnOnce(),
+    _accept_client: impl FnOnce(),
+) {
+}
+
 /// Which display the game is on, for the webview (POE-237).
 ///
 /// The layout builds a module's fullscreen widget window on this monitor

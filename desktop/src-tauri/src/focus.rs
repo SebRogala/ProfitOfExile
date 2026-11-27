@@ -8,6 +8,14 @@ use tauri::Emitter;
 use crate::{capture, emit_status, overlay_hook, FocusState};
 use crate::AppState;
 
+#[cfg_attr(not(windows), allow(dead_code))]
+fn refresh_focus_geometry(
+    _entering: bool,
+    _resolve_monitor: impl FnOnce(),
+    _refresh_client: impl FnOnce(),
+) {
+}
+
 /// What the focus poller should do to ONE overlay window on a focus transition.
 ///
 /// `Some(true)` show, `Some(false)` hide, `None` leave it exactly as it is.
@@ -235,6 +243,79 @@ pub(crate) fn spawn_focus_poller(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::overlay_focus_action;
+
+    mod keep_regression {
+        use std::cell::RefCell;
+
+        use crate::capture::{refresh_changed_client, Capture};
+        use super::super::refresh_focus_geometry;
+
+        #[test]
+        fn windowed_geometry_refreshes_the_monitor_before_accepting_a_changed_client() {
+            let source = image::load_from_memory(include_bytes!(
+                "../tests/fixtures/lab/font-gems-1080p.png"
+            )).unwrap();
+            let mut failures = Vec::new();
+            for (w, h) in [(1024, 576), (1280, 720), (1366, 768)] {
+                let game = source.resize_exact(w, h, image::imageops::FilterType::Lanczos3).to_rgba8();
+                let inside = [100, 100, w as i32, h as i32];
+                let resized = [100, 100, w as i32 - 160, h as i32 - 90];
+                let moved = [2020, 100, w as i32, h as i32];
+                let partial = [3500, 90, w as i32, h as i32];
+                for (name, origin, previous, raw, expected) in [
+                    ("first client", (0, 0), None, inside, vec!["monitor", "client"]),
+                    ("unchanged client", (0, 0), Some(inside), inside, vec![]),
+                    ("resized client", (0, 0), Some(inside), resized, vec!["monitor", "client"]),
+                    ("moved across monitors", (1920, 0), Some(inside), moved, vec!["monitor", "client"]),
+                    ("unchanged on second monitor", (1920, 0), Some(moved), moved, vec![]),
+                    ("partly outside", (1920, 0), Some(moved), partial, vec!["monitor", "client"]),
+                    ("moved back", (0, 0), Some(moved), inside, vec!["monitor", "client"]),
+                ] {
+                    let mut canvas = image::RgbaImage::from_pixel(
+                        1920, 1080, image::Rgba([90, 90, 90, 255]),
+                    );
+                    image::imageops::overlay(
+                        &mut canvas, &game,
+                        i64::from(raw[0]) - i64::from(origin.0), i64::from(raw[1]),
+                    );
+                    let frame = Capture {
+                        image: image::DynamicImage::ImageRgba8(canvas),
+                        monitor_id: 7, origin, client: raw, timing: Default::default(),
+                    };
+                    let actions = RefCell::new(Vec::new());
+                    refresh_changed_client(
+                        previous, frame.client,
+                        || actions.borrow_mut().push("monitor"),
+                        || actions.borrow_mut().push("client"),
+                    );
+                    let actual = actions.into_inner();
+                    if actual != expected {
+                        failures.push(format!(
+                            "{w}x{h} {name}: {previous:?} -> {raw:?}: actions {actual:?}, expected {expected:?}",
+                        ));
+                    }
+                }
+                for (entering, expected) in [
+                    (true, vec!["monitor", "client"]),
+                    (false, vec!["client"]),
+                ] {
+                    let actions = RefCell::new(Vec::new());
+                    refresh_focus_geometry(
+                        entering,
+                        || actions.borrow_mut().push("monitor"),
+                        || actions.borrow_mut().push("client"),
+                    );
+                    let actual = actions.into_inner();
+                    if actual != expected {
+                        failures.push(format!(
+                            "{w}x{h} focus entry={entering}: actions {actual:?}, expected {expected:?}",
+                        ));
+                    }
+                }
+            }
+            assert!(failures.is_empty(), "windowed monitor refresh contract:\n{}", failures.join("\n"));
+        }
+    }
 
     #[test]
     fn focus_poller_shows_an_overlay_whose_gate_is_met() {
