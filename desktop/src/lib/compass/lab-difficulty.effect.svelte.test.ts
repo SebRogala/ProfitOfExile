@@ -10,12 +10,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import uberFixture from './__fixtures__/poelab-prod-2026-08-02-uber.json';
 import mercilessFixture from './__fixtures__/poelab-prod-2026-07-31-merciless.json';
+import type { LabLayout } from './navigation';
 
 type Handler = (event: { payload: unknown }) => void;
 
 const ipc = vi.hoisted(() => ({
 	calls: [] as [string, unknown][],
 	settings: {} as Record<string, unknown>,
+	catchup: { events: [] } as { events: unknown[]; in_lab?: boolean; layout_difficulty?: string | null },
 	listeners: new Map<string, Set<(event: { payload: unknown }) => void>>()
 }));
 
@@ -26,7 +28,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 			case 'get_compass_settings':
 				return { ...ipc.settings };
 			case 'get_lab_catchup':
-				return { events: [] };
+				return ipc.catchup;
 			case 'get_status':
 				return { device_id: 'dev-test', app_version: '0.0.0-test' };
 			case 'get_privacy_state':
@@ -117,6 +119,9 @@ afterEach(() => {
 	vi.useRealTimers();
 	ipc.calls.length = 0;
 	ipc.settings = {};
+	ipc.catchup = { events: [] };
+	PUBLISHED.set('Uber', uberFixture);
+	PUBLISHED.set('Merciless', mercilessFixture);
 	ipc.listeners.clear();
 });
 
@@ -152,6 +157,52 @@ function pickOption(select: HTMLSelectElement, value: string): void {
 const emittedLabNav = () => ipc.calls.filter(([cmd]) => cmd === 'emit_lab_nav').map(([, args]) => (args as { eventJson: unknown }).eventJson);
 
 describe('lab difficulty selection', () => {
+	it('keep:regression Uber catch-up renders the North trial exit', async () => {
+		const uber: LabLayout = {
+			difficulty: 'Uber', date: '2026-11-28', weapon: 'Sword', phase1: '', phase2: '', trap1: '', trap2: '',
+			rooms: [
+				{ id: '1', name: 'Estate Crossing', x: '0', y: '0', areacode: '', contents: [], exits: { NE: '4' } },
+				{ id: '2', name: 'Basilica Halls', x: '1', y: '1', areacode: 'rt_branch', contents: [], exits: { NE: '4', NW: '5' } },
+				{ id: '4', name: 'Basilica Halls', x: '1', y: '0', areacode: 'rt_branch_bottleneck_1', contents: [], exits: { NE: '5', NW: '2' } },
+				{ id: '5', name: "aspirant's trial", x: '2', y: '0', areacode: '', contents: [], exits: {} }
+			]
+		};
+		const merciless: LabLayout = {
+			difficulty: 'Merciless', date: '2026-11-28', weapon: 'Sword', phase1: '', phase2: '', trap1: '', trap2: '',
+			rooms: [
+				{ id: '1', name: 'Estate Crossing', x: '0', y: '0', areacode: '', contents: [], exits: { NE: '2' } },
+				{ id: '2', name: 'Basilica Halls', x: '1', y: '0', areacode: 'rt_branch', contents: [], exits: { NW: '5' } },
+				{ id: '5', name: "aspirant's trial", x: '2', y: '0', areacode: '', contents: [], exits: {} }
+			]
+		};
+		PUBLISHED.set('Uber', uber);
+		PUBLISHED.set('Merciless', merciless);
+		ipc.settings = { difficulty: 'Merciless', mode: 'minimap' };
+		ipc.catchup = {
+			in_lab: true, layout_difficulty: 'Uber',
+			events: [
+				{ type: 'PlazaEntered' },
+				{ type: 'RoomChanged', name: 'Estate Crossing' },
+				{ type: 'RoomChanged', name: 'Basilica Halls' }
+			]
+		};
+		const session = labSession.createLabSession();
+		releaseSession = session.acquire({});
+		app = mount(LabCompassWidget, {
+			target: document.body,
+			props: { configMode: false, label: 'Compass' },
+			context: new Map([[labSession.LAB_SESSION, session]])
+		});
+		await settle();
+		expect(document.querySelector('.exit-text')?.textContent?.trim()).toBe("North Exit — aspirant's trial");
+		expect(session.navState.currentRoom).toBe('4');
+		const { resolveRouteDoors } = await import('./navigation');
+		const { resolvePreset } = await import('./room-presets');
+		const nav = session.navState;
+		const room = nav.roomById.get(nav.currentRoom!)!;
+		expect(resolveRouteDoors(nav.layout!.rooms, nav.plannedRoute, room.id, nav.previousRoom, resolvePreset(room)).exit).toBe('N');
+	});
+
 	it('keep:regression a LayoutChanged to a difficulty the server has no layout for leaves no stale Uber layout behind', async () => {
 		ipc.settings = { difficulty: 'Uber', mode: 'minimap' };
 		startRunRecorder();

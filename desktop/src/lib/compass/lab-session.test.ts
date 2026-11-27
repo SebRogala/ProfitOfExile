@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createLabSession, type CompassSettings, type LabNavEvent, type LabSessionHooks } from './lab-session.svelte';
 import type { fetchLabLayout } from './layout-loader';
-import type { LabLayout, NavState } from './navigation';
+import { getNextExitText, resolveRouteDoors, type LabLayout, type NavState } from './navigation';
+import { resolvePreset } from './room-presets';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
@@ -280,6 +281,73 @@ describe('lab session lifecycle', () => {
 });
 
 describe('lab session ordering and catch-up', () => {
+	it('keep:regression saved Merciless + Uber catch-up names the North trial exit in Basilica Halls', async () => {
+		const h = makeHarness();
+		const layouts: Record<string, LabLayout> = {
+			Merciless: {
+				difficulty: 'Merciless', date: '2026-11-28', weapon: 'Sword', phase1: '', phase2: '', trap1: '', trap2: '',
+				rooms: [
+					{ id: '1', name: 'Estate Crossing', x: '0', y: '0', areacode: '', contents: [], exits: { NE: '2' } },
+					{ id: '2', name: 'Basilica Halls', x: '1', y: '0', areacode: 'rt_branch', contents: [], exits: { NW: '5' } },
+					{ id: '5', name: "aspirant's trial", x: '2', y: '0', areacode: '', contents: [], exits: {} }
+				]
+			},
+			Uber: {
+				difficulty: 'Uber', date: '2026-11-28', weapon: 'Sword', phase1: '', phase2: '', trap1: '', trap2: '',
+				rooms: [
+					{ id: '1', name: 'Estate Crossing', x: '0', y: '0', areacode: '', contents: [], exits: { NE: '4' } },
+					{ id: '2', name: 'Basilica Halls', x: '1', y: '1', areacode: 'rt_branch', contents: [], exits: { NE: '4', NW: '5' } },
+					{ id: '4', name: 'Basilica Halls', x: '1', y: '0', areacode: 'rt_branch_bottleneck_1', contents: [], exits: { NE: '5', NW: '2' } },
+					{ id: '5', name: "aspirant's trial", x: '2', y: '0', areacode: '', contents: [], exits: {} }
+				]
+			}
+		};
+		h.state.settingsReply = { difficulty: 'Merciless' };
+		h.hold('get_lab_catchup').resolve({
+			in_lab: true, layout_difficulty: 'Uber',
+			events: [PLAZA, { type: 'RoomChanged', name: 'Estate Crossing' }, { type: 'RoomChanged', name: 'Basilica Halls' }]
+		});
+		const detectedLayout = deferred<LayoutResult>();
+		h.fetchLayout.mockImplementation(async (opts) => {
+			const selected = opts.lockedDifficulty ?? opts.preferredDifficulty ?? 'Merciless';
+			return selected === 'Uber' ? detectedLayout.promise : layouts[selected];
+		});
+		const recorded = recorder();
+		const release = h.session.acquire(recorded.hooks);
+		try {
+			await flush();
+			expect(recorded.events, 'catch-up must wait for the detected Uber layout').toEqual([]);
+			detectedLayout.resolve(layouts.Uber);
+			await flush();
+			const nav = h.session.navState;
+			expect(nav.layout?.difficulty).toBe('Uber');
+			expect(nav.currentRoom).toBe('4');
+			expect(getNextExitText(nav)).toBe("North Exit — aspirant's trial");
+			const room = nav.roomById.get(nav.currentRoom!)!;
+			expect(resolveRouteDoors(nav.layout!.rooms, nav.plannedRoute, room.id, nav.previousRoom, resolvePreset(room)).exit).toBe('N');
+		} finally {
+			detectedLayout.resolve(layouts.Uber);
+			release();
+		}
+	});
+
+	it.each([
+		{ in_lab: false, layout_difficulty: 'Uber' },
+		{ in_lab: true, layout_difficulty: null }
+	])('keep:critical manual difficulty outside the lab holds ($in_lab, $layout_difficulty)', async (catchup) => {
+		const h = makeHarness();
+		h.state.settingsReply = { difficulty: 'Merciless' };
+		h.hold('get_lab_catchup').resolve({ ...catchup, events: [] });
+		h.fetchLayout.mockImplementation(async (opts) => makeLayout(opts.lockedDifficulty ?? opts.preferredDifficulty));
+		const release = h.session.acquire({});
+		try {
+			await flush();
+			expect(h.session.navState.layout?.difficulty, 'guidance from a different lab must not silently replace the manual pick').toBe('Merciless');
+		} finally {
+			release();
+		}
+	});
+
 	it('registers both listeners before catch-up, and catch-up follows the layout fetch', async () => {
 		const h = makeHarness();
 		h.session.acquire({});

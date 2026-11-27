@@ -261,9 +261,50 @@ pub fn replay_recent_tail(path: &Path, tail: Option<&str>) -> (Vec<NavEvent>, bo
     (events, true)
 }
 
+pub struct LabCatchup {
+    pub events: Vec<NavEvent>,
+    pub in_lab: bool,
+    pub layout_difficulty: Option<&'static str>,
+}
+
+pub fn replay_recent_catchup(path: &Path, tail: Option<&str>) -> LabCatchup {
+    let (events, in_lab) = replay_recent_tail(path, tail);
+    LabCatchup { events, in_lab, layout_difficulty: None }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keep_regression_catchup_carries_detected_uber_after_level_83_line() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("poe_catchup_{}_{}", std::process::id(), unique));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("Client.txt");
+        std::fs::write(&path, "\
+2026/11/28 19:00:00 1234 [INFO Client 1] : You have entered Aspirants' Plaza.
+2026/11/28 19:01:00 1234 [DEBUG Client 1] Generating level 68 area \"Labyrinth_Endgame\" with seed 1
+2026/11/28 19:02:00 1234 [INFO Client 1] : You have entered Estate Walkways.
+2026/11/28 19:10:00 1234 [INFO Client 1] : You have entered Highgate.
+2026/11/28 20:00:00 1234 [INFO Client 1] : You have entered Aspirants' Plaza.
+2026/11/28 20:01:00 1234 [DEBUG Client 1] Generating level 83 area \"Labyrinth_Endgame\" with seed 2
+2026/11/28 20:02:00 1234 [INFO Client 1] : You have entered Estate Crossing.
+2026/11/28 20:03:00 1234 [INFO Client 1] : You have entered Basilica Halls.
+").unwrap();
+        let tail = recent_log_tail(&path);
+        let catchup = replay_recent_catchup(&path, tail.as_deref());
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert!(catchup.in_lab);
+        assert_eq!(serde_json::to_value(&catchup.events).unwrap(), serde_json::json!([
+            { "type": "PlazaEntered" },
+            { "type": "RoomChanged", "name": "Estate Crossing" },
+            { "type": "RoomChanged", "name": "Basilica Halls" }
+        ]));
+        assert_eq!(catchup.layout_difficulty, Some("Uber"));
+    }
 
     #[test]
     fn test_is_lab_room() {
