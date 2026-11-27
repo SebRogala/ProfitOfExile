@@ -4,6 +4,8 @@
 //
 // Per group (one market — a gem variant, a Harvest family), independently:
 //  1. Low confidence: caller-gated items or depth under 40% of the group median.
+//     With a positive MinConfident, an undersized confident pool is UNRATED
+//     and has neither tier boundaries nor a TOP boundary.
 //  2. TOP: the gap-detected cluster at the top of the confident pool.
 //  3. Boundaries: FLOOR anchored to the top-5 average, HIGH and MID-HIGH
 //     gap-snapped, MID at the largest relative gap below MID-HIGH.
@@ -30,6 +32,7 @@ const (
 	Low     = "LOW"
 	Floor   = "FLOOR"
 	Chaotic = "CHAOTIC"
+	Unrated = "UNRATED"
 )
 
 // MinTopItems is the fewest confident, cutoff-passing items in a group for
@@ -88,6 +91,8 @@ type Policy struct {
 	// DepthUnknown skips relative-depth detection for markets whose depth is
 	// not measured. Caller-gated items remain low-confidence.
 	DepthUnknown bool
+	// MinConfident requires this many confident, cutoff-passing items per
+	// group before rating it. Zero preserves the existing fallback ladder.
 	MinConfident int
 }
 
@@ -122,8 +127,23 @@ type Result struct {
 // excludes are absent from Result.Items.
 func Classify(items []Item, p Policy) Result {
 	lowConf := LowConfidence(items, p)
-	tops, topBoundary := detectTops(items, lowConf, p)
-	boundaries := cleanBoundaries(items, lowConf, tops, p)
+	confidentCounts := make(map[string]int)
+	ratedItems := items
+	if p.MinConfident > 0 {
+		for _, it := range items {
+			if !p.excludes(it.Price) && !lowConf[Key{it.Group, it.Key}] {
+				confidentCounts[it.Group]++
+			}
+		}
+		ratedItems = make([]Item, 0, len(items))
+		for _, it := range items {
+			if confidentCounts[it.Group] >= p.MinConfident {
+				ratedItems = append(ratedItems, it)
+			}
+		}
+	}
+	tops, topBoundary := detectTops(ratedItems, lowConf, p)
+	boundaries := cleanBoundaries(ratedItems, lowConf, tops, p)
 
 	result := Result{
 		Items:       make(map[Key]Classification),
@@ -140,7 +160,9 @@ func Classify(items []Item, p Policy) Result {
 		isLowConf := lowConf[key]
 
 		var tier string
-		if tops[key] {
+		if p.MinConfident > 0 && confidentCounts[it.Group] < p.MinConfident {
+			tier = Unrated
+		} else if tops[key] {
 			tier = Top
 		} else if tb, ok := boundaries[it.Group]; ok {
 			tier = Of(it.Price, tb)

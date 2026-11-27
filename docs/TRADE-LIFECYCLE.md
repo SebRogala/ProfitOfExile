@@ -349,8 +349,8 @@ actual eligible Font keys in the four uncorrupted markets returned by
 `lab.FontTradeVariants`. Named FLOOR classifications without the low-confidence
 flag are excluded; low-confidence (gated) keys stay eligible. Exclusions apply
 after the full Font draw pool supplies probabilities; untiered cheap or unpriced
-keys and CHAOTIC keys remain eligible. Empty snapshots remove demand. Read failures skip
-work and preserve previous diagnostic state; later eligible ticks retry boot
+keys, UNRATED keys and CHAOTIC keys remain eligible. Empty snapshots remove
+demand. Read failures skip work and preserve previous diagnostic state; later eligible ticks retry boot
 failures. Historical checks count beyond the cache warm window. Desktop aliases
 such as `1/0` count for canonical `1`, and older durable rows cannot undo a
 newer immediate server completion.

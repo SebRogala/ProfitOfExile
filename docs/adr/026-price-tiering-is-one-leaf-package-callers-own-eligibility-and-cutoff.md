@@ -179,3 +179,18 @@ classification is unchanged. Callers continue to own the evidence policy that
 sets the gate; the tier package introduces no evidence floor.
 
 Caller-held items (`tier.Item.Held`) are exempt from relative-depth detection as defined in [ADR-032](032-one-price-engine-key-per-market-resolver-and-book.md#evidence-gate).
+
+## Amendment — 2026-11-27 (POE-406)
+
+Status: accepted; current tier implementation.
+
+Callers may set `tier.Policy.MinConfident` to require a minimum number of
+confident, cutoff-passing items in each group. Below a positive minimum,
+`Classify` returns `tier.Unrated` (`UNRATED`) for every cutoff-passing member,
+preserves each member's `LowConfidence` flag, and omits the group's tier
+boundaries and TOP boundary. `Unrated` is outside `tier.Order`.
+
+This supersedes the POE-404 amendment's FLOOR fallback for undersized groups
+only when the caller enables the minimum. The zero policy retains the existing
+no-boundary FLOOR and percentile fallback behavior. Harvest and Lab currently
+leave the minimum disabled; Lab adoption remains proposed under POE-406.
