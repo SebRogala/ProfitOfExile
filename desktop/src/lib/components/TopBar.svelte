@@ -1,4 +1,5 @@
 <script lang="ts" module>
+	import { escapeHtml } from '$lib/html';
 	import type { Registration } from '$lib/stores/entitlements.svelte';
 
 	export interface AccountView {
@@ -8,10 +9,6 @@
 		ariaLabel: string;
 		filled: boolean;
 		dashed: boolean;
-	}
-
-	function escapeHtml(s: string): string {
-		return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 	}
 
 	function tip(head: string, detail?: string): string {

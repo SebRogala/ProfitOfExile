@@ -14,6 +14,7 @@
  * and `valuation::tier_fraction` name POE-259 as the owner of.
  */
 
+import { escapeHtml } from '$lib/html';
 import type {
 	LineView,
 	MarketView,
@@ -304,16 +305,6 @@ const FIGURE_LABEL: Record<string, string> = {
 	chest: 'Chest'
 };
 
-/** `Tooltip` renders its text as HTML, and room and unique names hold `'` and `&`. */
-function escapeHtml(text: string): string {
-	return text
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&#39;');
-}
-
 function ladder(figure: string, tiers: [number, number, number] | null): string | null {
 	if (tiers === null) return null;
 	const [t1, t2, t3] = tiers;
@@ -330,7 +321,8 @@ function tooltipLine(label: string, body: string): string {
  * and where each figure came from — joined by `<br>`.
  *
  * Every fact is the row's Rust `LineView`; this only words it. Wire strings
- * are escaped because `Tooltip` assigns its text as HTML.
+ * are escaped because `Tooltip` assigns its text as HTML; room and unique
+ * names hold apostrophes and ampersands.
  */
 export function roomTooltip(line: LineView): string {
 	const effect = [
