@@ -90,11 +90,16 @@ pub struct GameMonitor {
 
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn refresh_changed_client(
-    _previous: Option<[i32; 4]>,
-    _next: [i32; 4],
-    _resolve_monitor: impl FnOnce(),
-    _accept_client: impl FnOnce(),
+    previous: Option<[i32; 4]>,
+    next: [i32; 4],
+    resolve_monitor: impl FnOnce(),
+    accept_client: impl FnOnce(),
 ) {
+    if previous == Some(next) {
+        return;
+    }
+    resolve_monitor();
+    accept_client();
 }
 
 /// Which display the game is on, for the webview (POE-237).
@@ -111,9 +116,8 @@ pub(crate) fn refresh_changed_client(
 /// answer before PoE has ever been in the foreground, and the permanent one off
 /// Windows.
 ///
-/// A plain read of the owner. The lookup that fills it happens once per focus
-/// transition, in the poller, precisely so this command is not a display
-/// enumeration on every Settings poll.
+/// A plain read of the owner. Focus entry and changed client geometry refresh
+/// it, so this command does not enumerate displays on every Settings poll.
 #[tauri::command]
 pub fn get_game_monitor(state: tauri::State<crate::AppState>) -> Option<GameMonitor> {
     *state.game_monitor.lock().unwrap_or_else(|e| e.into_inner())
@@ -335,7 +339,7 @@ pub(crate) fn recalibrate_client_diagnostic(
 
 #[cfg(windows)]
 mod platform {
-    use super::{client_in_capture, rendered_area, select_client_with_diagnostic, untrimmed_client_in_capture, AffinityLedger, Capture, ClientDiagnostics, GameMonitor, GrabTiming, RenderedClientLatch};
+    use super::{client_in_capture, refresh_changed_client, rendered_area, select_client_with_diagnostic, untrimmed_client_in_capture, AffinityLedger, Capture, ClientDiagnostics, GameMonitor, GrabTiming, RenderedClientLatch};
     use std::sync::Mutex;
     use windows::Win32::Foundation::{POINT, RECT};
     use windows::Win32::Graphics::Gdi::ClientToScreen;
@@ -606,7 +610,7 @@ mod platform {
     }
 
     /// Resolve the display `hwnd` is on and remember it as the game's
-    /// (POE-237). Called by the focus poller on the transition TO `Game`.
+    /// (POE-237). Called on focus entry and when the client rectangle changes.
     ///
     /// `MONITOR_DEFAULTTONEAREST` rather than `…TONULL`: a window straddling
     /// two displays, or one being dragged, still has a monitor the player is
@@ -677,9 +681,9 @@ mod platform {
     }
 
     /// Read `hwnd`'s client rect (`GetClientRect` + `ClientToScreen` on its
-    /// origin) and remember it as the game's. On a change with a known game
-    /// monitor, re-checks the published slice at once: a move re-places it, a
-    /// resize drops it (`ssot::drop_if_mismatched`). A failed read or an empty
+    /// origin) and remember it as the game's. On a change, resolves the monitor
+    /// before re-checking the published slice: a move re-places it, a resize
+    /// drops it (`ssot::drop_if_mismatched`). A failed read or an empty
     /// rect keeps the last value. The first successful read's duration is
     /// logged once per session — the cost the per-tick refresh rests on.
     pub fn remember_game_client(app: &AppHandle, hwnd: HWND) {
@@ -705,29 +709,32 @@ mod platform {
         }
 
         let abs = [corner.x, corner.y, w, h];
-        {
-            let mut held = GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
-            if held.0 == Some(abs) {
-                return;
+        let previous = raw_game_client();
+        refresh_changed_client(previous, abs, || remember_game_monitor(app, hwnd), || {
+            {
+                let mut held = GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
+                if held.0 == Some(abs) {
+                    return;
+                }
+                *held = (Some(abs), held.1.wrapping_add(1));
+                *RENDERED_CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = RenderedClientLatch::default();
             }
-            *held = (Some(abs), held.1.wrapping_add(1));
-            *RENDERED_CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = RenderedClientLatch::default();
-        }
-        let monitor = *app
-            .state::<crate::AppState>()
-            .game_monitor
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(mon) = monitor {
-            let origin = (mon.x, mon.y);
-            let size = (mon.width, mon.height);
-            let client = select_client_with_diagnostic(
-                &CLIENT_DIAGNOSTICS, Some(abs), origin, size,
-                || client_in_capture(Some(abs), origin, size),
-                |msg| crate::app_log(app, msg),
-            );
-            crate::ssot::drop_if_mismatched(app, size, origin, client);
-        }
+            let monitor = *app
+                .state::<crate::AppState>()
+                .game_monitor
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(mon) = monitor {
+                let origin = (mon.x, mon.y);
+                let size = (mon.width, mon.height);
+                let client = select_client_with_diagnostic(
+                    &CLIENT_DIAGNOSTICS, Some(abs), origin, size,
+                    || client_in_capture(Some(abs), origin, size),
+                    |msg| crate::app_log(app, msg),
+                );
+                crate::ssot::drop_if_mismatched(app, size, origin, client);
+            }
+        });
     }
 }
 

@@ -10,10 +10,14 @@ use crate::AppState;
 
 #[cfg_attr(not(windows), allow(dead_code))]
 fn refresh_focus_geometry(
-    _entering: bool,
-    _resolve_monitor: impl FnOnce(),
-    _refresh_client: impl FnOnce(),
+    entering: bool,
+    resolve_monitor: impl FnOnce(),
+    refresh_client: impl FnOnce(),
 ) {
+    if entering {
+        resolve_monitor();
+    }
+    refresh_client();
 }
 
 /// What the focus poller should do to ONE overlay window on a focus transition.
@@ -151,32 +155,16 @@ pub(crate) fn spawn_focus_poller(app: AppHandle) {
 
                 let is_focused = matches!(focus_state, FocusState::Game);
 
-                // On the transition INTO the game, and only there: resolve
-                // which display the game window is on so every capture that
-                // follows grabs THAT monitor (POE-237). The transition is the
-                // right cadence — a player who moves the game to another screen
-                // alt-tabs out and back to do it, and the per-second poll would
-                // otherwise re-ask a question whose answer changes a handful of
-                // times a session. The call logs and emits only when the answer
-                // actually moved.
-                //
-                // BEFORE the `game_in_foreground` store, not inside the
-                // transition block below it: that flag is what the merc capture
-                // loop gates on, so a tick that read it between the store and
-                // this lookup would grab the display the game had just left —
-                // exactly the wrong-monitor frame POE-237 exists to stop. The
-                // `!was_focused` term is what keeps this on the transition; the
-                // block below owns the assignment to `was_focused`.
-                //
-                // The client rect is a different question: a windowed game
-                // moves or resizes without an alt-tab (POE-268 review), so it
-                // is re-read on EVERY poll while the game is focused, after the
-                // monitor so a transition resolves the monitor first.
-                if is_focused && !was_focused {
-                    capture::remember_game_monitor(&app, game_hwnd);
-                }
+                // Resolve the monitor before the client on focus entry, then
+                // let changed client geometry refresh it during focused polls.
+                // Both precede foreground readiness: the merc capture loop
+                // gates on that flag and must see the refreshed display.
                 if is_focused {
-                    capture::remember_game_client(&app, game_hwnd);
+                    refresh_focus_geometry(
+                        !was_focused,
+                        || capture::remember_game_monitor(&app, game_hwnd),
+                        || capture::remember_game_client(&app, game_hwnd),
+                    );
                 }
 
                 app.state::<AppState>().game_in_foreground.store(is_focused, Ordering::SeqCst);
