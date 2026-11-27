@@ -186,7 +186,7 @@ mod tests {
             one_side: OneSide::Right,
             left: 130.0,
             right: 1.0,
-            stock: 1,
+            stock: Some(1),
             want_name: "Chaos Orb".into(),
             have_name: "Allflame Ember of the Ethereal".into(),
         }

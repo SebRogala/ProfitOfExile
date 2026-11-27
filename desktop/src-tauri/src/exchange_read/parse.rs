@@ -33,7 +33,7 @@ pub struct ExchangeSelection {
     pub one_side: OneSide,
     pub left: f64,
     pub right: f64,
-    pub stock: u64,
+    pub stock: Option<u64>,
     pub want_name: String,
     pub have_name: String,
 }
@@ -79,10 +79,16 @@ pub(crate) fn parse_top_row_detailed(
     } else {
         return Err(refused("ratio-neither-side-one"));
     };
-    let stock = grouped_digits(stock)
-        .and_then(|digits| digits.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .ok_or_else(|| refused("bad-stock"))?;
+    let stock = if stock.trim().is_empty() {
+        None
+    } else {
+        Some(
+            grouped_digits(stock)
+                .and_then(|digits| digits.parse::<u64>().ok())
+                .filter(|value| *value > 0)
+                .ok_or_else(|| refused("bad-stock"))?,
+        )
+    };
     let want_name = joined_name(want_lines).ok_or(ExchangeReadError::NamesUnreadable)?;
     let have_name = joined_name(have_lines).ok_or(ExchangeReadError::NamesUnreadable)?;
     let (mode, currency) = if let Some(currency) = currency(&have_name) {
@@ -206,7 +212,7 @@ mod tests {
 
         #[test]
         fn a_stock_read_as_two_words_is_one_thousands_grouped_number() {
-            assert_eq!(parse_fixture_row("ember-for-chaos-split-stock").map(|s| s.stock), Ok(8125));
+            assert_eq!(parse_fixture_row("ember-for-chaos-split-stock").map(|s| s.stock), Ok(Some(8125)));
         }
     }
 
@@ -226,7 +232,7 @@ mod tests {
                     one_side: OneSide::Left,
                     left: 1.0,
                     right: 6.12,
-                    stock: 3,
+                    stock: Some(3),
                     want_name: "Allflame Ember of the Ethereal".into(),
                     have_name: "Divine Orb".into(),
                 })
@@ -290,7 +296,7 @@ mod tests {
                     one_side: OneSide::Left,
                     left: 1.0,
                     right: 104.0,
-                    stock: 104,
+                    stock: Some(104),
                     want_name: "Apocalypse".into(),
                     have_name: "Chaos Orb".into(),
                 })
