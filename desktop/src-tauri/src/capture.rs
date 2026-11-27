@@ -42,7 +42,7 @@ pub struct Capture {
     /// The game window's client rectangle in this capture's physical pixels:
     /// x, y, w, h. Built only by [`client_in_capture`] from the live client
     /// rect the focus poller last read; the whole image while that is unknown
-    /// or does not lie inside this capture (fullscreen, or another display).
+    /// or has no intersection with this capture (another display).
     pub client: [i32; 4],
     /// Where this grab's time went, for callers that log their own stages.
     pub timing: GrabTiming,
@@ -156,9 +156,9 @@ impl AffinityLedger {
 
 /// The game's client rect made relative to a capture of the monitor at
 /// `origin` sized `size`. `game_client` is virtual-desktop physical px
-/// `[x, y, w, h]`. A rect that is unknown, empty or not fully inside the
-/// capture yields the whole capture: OCR crops from these pixels, and a rect
-/// past the image would read the wrong ones.
+/// `[x, y, w, h]`. Keep its nonempty intersection with the capture; an
+/// unknown rect or empty intersection yields the whole capture so OCR always
+/// crops within the captured pixels.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn client_in_capture(game_client: Option<[i32; 4]>, origin: (i32, i32), size: (u32, u32)) -> [i32; 4] {
     #[cfg(windows)]
@@ -173,25 +173,49 @@ fn untrimmed_client_in_capture(game_client: Option<[i32; 4]>, origin: (i32, i32)
     let Some([x, y, w, h]) = game_client else { return whole };
     let (rx, ry) = (x as i64 - origin.0 as i64, y as i64 - origin.1 as i64);
     let (w64, h64) = (w as i64, h as i64);
-    if w64 > 0 && h64 > 0 && rx >= 0 && ry >= 0 && rx + w64 <= cw && ry + h64 <= ch {
-        [rx as i32, ry as i32, w, h]
+    let (left, top) = (rx.max(0), ry.max(0));
+    let (right, bottom) = ((rx + w64).min(cw), (ry + h64).min(ch));
+    if w64 > 0 && h64 > 0 && right > left && bottom > top {
+        [left as i32, top as i32, (right - left) as i32, (bottom - top) as i32]
     } else {
         whole
     }
 }
 
 #[derive(Default)]
-struct ClientDiagnostics;
+#[cfg_attr(not(windows), allow(dead_code))]
+struct ClientDiagnostics {
+    reported: std::sync::Mutex<std::collections::HashSet<([i32; 4], (i32, i32), (u32, u32))>>,
+}
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn select_client_with_diagnostic(
-    _diagnostics: &ClientDiagnostics,
-    _raw: Option<[i32; 4]>,
-    _origin: (i32, i32),
-    _size: (u32, u32),
-    _select: impl FnOnce() -> [i32; 4],
-    _log: impl FnOnce(String),
+    diagnostics: &ClientDiagnostics,
+    raw: Option<[i32; 4]>,
+    origin: (i32, i32),
+    size: (u32, u32),
+    select: impl FnOnce() -> [i32; 4],
+    log: impl FnOnce(String),
 ) -> [i32; 4] {
-    [0; 4]
+    let client = select();
+    if let Some(rect) = raw {
+        if !client_fits_capture(rect, origin, size) {
+            let first = diagnostics.reported.lock().unwrap_or_else(|e| e.into_inner())
+                .insert((rect, origin, size));
+            if first {
+                log(format!(
+                    "capture: game client {rect:?} (desktop px), monitor origin {origin:?} size {}x{} -> client used {client:?} (client outside the capture)",
+                    size.0, size.1,
+                ));
+            }
+        }
+    }
+    client
+}
+
+fn client_fits_capture([x, y, w, h]: [i32; 4], origin: (i32, i32), size: (u32, u32)) -> bool {
+    w > 0 && h > 0 && untrimmed_client_in_capture(Some([x, y, w, h]), origin, size).map(i64::from)
+        == [i64::from(x) - i64::from(origin.0), i64::from(y) - i64::from(origin.1), i64::from(w), i64::from(h)]
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -281,14 +305,8 @@ pub(crate) fn recalibrate_client_diagnostic(
     let selected = untrimmed_client_in_capture(raw, origin, size);
     let why = match raw {
         None => "no client read",
-        Some([x, y, w, h]) => {
-            let translated = [
-                i64::from(x) - i64::from(origin.0),
-                i64::from(y) - i64::from(origin.1),
-                i64::from(w),
-                i64::from(h),
-            ];
-            if w > 0 && h > 0 && selected.map(i64::from) == translated {
+        Some(rect) => {
+            if client_fits_capture(rect, origin, size) {
                 "client inside the capture"
             } else {
                 "client outside the capture"
@@ -308,7 +326,7 @@ pub(crate) fn recalibrate_client_diagnostic(
 
 #[cfg(windows)]
 mod platform {
-    use super::{client_in_capture, rendered_area, untrimmed_client_in_capture, AffinityLedger, Capture, GameMonitor, GrabTiming, RenderedClientLatch};
+    use super::{client_in_capture, rendered_area, select_client_with_diagnostic, untrimmed_client_in_capture, AffinityLedger, Capture, ClientDiagnostics, GameMonitor, GrabTiming, RenderedClientLatch};
     use std::sync::Mutex;
     use windows::Win32::Foundation::{POINT, RECT};
     use windows::Win32::Graphics::Gdi::ClientToScreen;
@@ -378,6 +396,7 @@ mod platform {
     static GAME_CLIENT: Mutex<(Option<[i32; 4]>, u64)> = Mutex::new((None, 0));
     static RENDERED_CLIENT: LazyLock<Mutex<RenderedClientLatch>> =
         LazyLock::new(|| Mutex::new(RenderedClientLatch::default()));
+    static CLIENT_DIAGNOSTICS: LazyLock<ClientDiagnostics> = LazyLock::new(ClientDiagnostics::default);
 
     pub(super) fn selected_client(raw: Option<[i32; 4]>, origin: (i32, i32), size: (u32, u32)) -> [i32; 4] {
         RENDERED_CLIENT.lock().unwrap_or_else(|e| e.into_inner()).select(raw, origin, size)
@@ -547,15 +566,21 @@ mod platform {
         let size = img.dimensions();
         // Lock order is monitor, raw client, rendered client. No lock spans an
         // overlay event-loop round trip in ExcludedFromCapture.
-        let state = app.state::<crate::AppState>();
-        let current_monitor = state.game_monitor.lock().unwrap_or_else(|e| e.into_inner());
-        let current_client = GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
-        let client = if *current_monitor == target && *current_client == (game_client, revision) {
-            RENDERED_CLIENT.lock().unwrap_or_else(|e| e.into_inner())
-                .observe(game_client, origin, size, || rendered_area(&img))
-        } else {
-            untrimmed_client_in_capture(game_client, origin, size)
-        };
+        let client = select_client_with_diagnostic(
+            &CLIENT_DIAGNOSTICS, game_client, origin, size,
+            || {
+                let state = app.state::<crate::AppState>();
+                let current_monitor = state.game_monitor.lock().unwrap_or_else(|e| e.into_inner());
+                let current_client = GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
+                if *current_monitor == target && *current_client == (game_client, revision) {
+                    RENDERED_CLIENT.lock().unwrap_or_else(|e| e.into_inner())
+                        .observe(game_client, origin, size, || rendered_area(&img))
+                } else {
+                    untrimmed_client_in_capture(game_client, origin, size)
+                }
+            },
+            |msg| crate::app_log(app, msg),
+        );
         timing.call_ms = ms(call_started);
         Ok(Capture { image: DynamicImage::ImageRgba8(img), monitor_id, origin, client, timing })
     }
@@ -687,7 +712,12 @@ mod platform {
         if let Some(mon) = monitor {
             let origin = (mon.x, mon.y);
             let size = (mon.width, mon.height);
-            crate::ssot::drop_if_mismatched(app, size, origin, client_in_capture(Some(abs), origin, size));
+            let client = select_client_with_diagnostic(
+                &CLIENT_DIAGNOSTICS, Some(abs), origin, size,
+                || client_in_capture(Some(abs), origin, size),
+                |msg| crate::app_log(app, msg),
+            );
+            crate::ssot::drop_if_mismatched(app, size, origin, client);
         }
     }
 }
