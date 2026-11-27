@@ -197,6 +197,24 @@ describe('exchange read in the Companion', () => {
 		expect(companion()).toEqual(EMBER_FILLED);
 	});
 
+	it('keep:happy: a null-stock Ember-for-chaos press fills the calculator without a stock segment', async () => {
+		render();
+
+		await press({
+			pressedAtMs: localPress(21, 4),
+			selection: { ...EMBER_FOR_CHAOS, ratio: 346, left: 346, stock: null }
+		});
+
+		expect(companion()).toEqual({
+			mode: 'Selling',
+			currency: 'Chaos',
+			ratio: '346',
+			oneSide: ': 1',
+			amount: '1',
+			status: '21:04 · 346 : 1 · Chaos Orb ⇄ Allflame Ember of the Ethereal'
+		});
+	});
+
 	it('keep:happy: a press read before the Companion mounts fills it on mount', async () => {
 		await press({ pressedAtMs: localPress(21, 4), selection: EMBER_FOR_CHAOS });
 
