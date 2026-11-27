@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { applySnapshot, ssot, type SsotSnapshot } from '$lib/stores/ssot.svelte';
 import { templeSliceDefault, type CaptureRect, type TempleSlice } from '$lib/temple/slice';
+import Page from '../../routes/overlay/temple/+page.svelte';
 
 const calls: [string, unknown][] = [];
 const emissions: [string, unknown][] = [];
@@ -191,7 +192,6 @@ async function settle() {
 async function render(timeoutSeconds: number, query = '', slice?: TempleSlice) {
 	window.history.replaceState(null, '', `/overlay/temple${query}`);
 	seed(timeoutSeconds, slice);
-	const { default: Page } = await import('../../routes/overlay/temple/+page.svelte');
 	const target = document.createElement('div');
 	document.body.appendChild(target);
 	mounted = mount(Page, { target });
