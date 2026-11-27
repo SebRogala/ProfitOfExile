@@ -195,7 +195,7 @@ func seedFontOverview(t *testing.T, repo *Repository, scope league.Scope) {
 			for _, color := range colors {
 				n++
 				fonts = append(fonts, FontResult{Time: latest, Color: color, Variant: variant, Mode: mode,
-					Pool: 10 + n, PricedGems: n, Winners: n % 4, PWin: 0.5, AvgWin: float64(n), EV: fontFixtureFloat(float64(2*n), FontResult{}.EV),
+					Pool: 10 + n, PricedGems: 10 + n, Winners: n % 4, PWin: 0.5, AvgWin: float64(n), EV: fontFixtureFloat(float64(2*n), FontResult{}.EV),
 					InputCost: 5, Profit: fontFixtureFloat(float64((n*37)%101), FontResult{}.Profit), ThinPoolGems: n % 3, LiquidityRisk: "MEDIUM"})
 			}
 		}

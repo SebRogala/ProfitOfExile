@@ -1080,7 +1080,7 @@ func TestLatestFontResults_returnsOnlyScopedLeague(t *testing.T) {
 	tm := futureTime(6)
 	cleanupAtTime(t, pool, tm, "font_snapshots")
 
-	base := FontResult{Time: tm, Color: "RED", Variant: "20/20", Mode: "safe", LiquidityRisk: "LOW"}
+	base := FontResult{Time: tm, Color: "RED", Variant: "20/20", Mode: "safe", Pool: 4, PricedGems: 4, EV: fontFixtureFloat(9, FontResult{}.EV), LiquidityRisk: "LOW"}
 	rowA := base
 	rowA.Profit = fontFixtureFloat(111, FontResult{}.Profit)
 	rowB := base
