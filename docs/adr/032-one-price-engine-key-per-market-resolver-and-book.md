@@ -106,11 +106,17 @@ Grade each market key on the source that priced it:
 - **THIN** — priced but not SOLID.
 - **NONE** — no price.
 
-Adopt the sold-through hold (Desk poe403-smite-hold-1125): a ninja key
-that failed the floor stays SOLID when it was SOLID by the floor (never
-by a hold) within 24 h, and its price is within 2x of that observation.
-The hold covers every ninja-priced key and reads `gem_snapshots` over
-`[asOf-24h, asOf]` (POE-404). Holds do not chain.
+Adopt the sold-through hold (Desk poe403-smite-hold-1125) in the shape
+set by Desk poe404-hold-plain-1125. A ninja key that failed the floor
+stays SOLID for at most 12 h after it was last SOLID by the floor (never
+by a hold). A held key is priced at the lower of its current price and
+that last SOLID-by-floor price. A key priced above 2x that last
+SOLID-by-floor price is not held: it stays THIN and shows CHAOTIC per
+the tier rules (ADR-026). A held key skips the low-confidence depth flag
+(below 0.4x the market's median depth, `tier.lowConfidenceDepth`), so a
+sold-through gem such as Smite counts. The hold covers every
+ninja-priced key and reads `gem_snapshots` over `[asOf-12h, asOf]`
+(POE-404). Holds do not chain.
 
 A non-SOLID key is gated out of tier boundaries, TOP detection and Font
 EV, including Dedication and Double-corrupt (Desk poe403-gate-scope-1125).
