@@ -769,7 +769,7 @@ async fn submit_capture(
     }
 }
 
-pub fn capture_rect(cursor: (i32, i32), screen: (u32, u32)) -> [i32; 4] {
+pub fn capture_rect(cursor: (i32, i32), screen: (u32, u32), _client_height: u32) -> [i32; 4] {
     let (sw, sh) = (screen.0 as i32, screen.1 as i32);
     let scale = screen.1 as f64 / 1080.0;
     let w = ((900.0 * scale).round() as i32).clamp(1, sw.max(1));
@@ -1199,7 +1199,7 @@ mod platform {
         let rect = if owner.preview && foreground {
             cursor()
                 .zip(game)
-                .map(|(cur, g)| capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height)))
+                .map(|(cur, g)| capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height), g.height))
         } else {
             None
         };
@@ -1218,7 +1218,7 @@ mod platform {
             .clone();
         let game = *state.game_monitor.lock().unwrap_or_else(|e| e.into_inner());
         let Some(g) = game else { return };
-        let rect = capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height));
+        let rect = capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height), g.height);
         let league = crate::ssot::league_name(&state).unwrap_or_default();
         // Freeze the area, seed, profile, league and identity BEFORE grabbing/OCR.
         let begin = {
@@ -1251,6 +1251,7 @@ mod platform {
                 let rect = capture_rect(
                     (cur.0 - shot.origin.0, cur.1 - shot.origin.1),
                     (shot.image.width(), shot.image.height()),
+                    shot.image.height(),
                 );
                 let crop = shot.image.crop_imm(
                     rect[0] as u32,
@@ -2269,12 +2270,77 @@ mod shortcut_tests {
     }
     #[test]
     fn loot_geometry_preserves_poc_dimensions_and_clamping() {
-        assert_eq!(capture_rect((960, 540), (1920, 1080)), [510, 40, 900, 750]);
+        assert_eq!(capture_rect((960, 540), (1920, 1080), 1080), [510, 40, 900, 750]);
         assert_eq!(
-            capture_rect((1920, 1080), (3840, 2160)),
+            capture_rect((1920, 1080), (3840, 2160), 2160),
             [1020, 80, 1800, 1500]
         );
-        assert_eq!(capture_rect((10, 1070), (1920, 1080)), [0, 330, 900, 750]);
+        assert_eq!(capture_rect((10, 1070), (1920, 1080), 1080), [0, 330, 900, 750]);
+    }
+}
+
+#[cfg(test)]
+mod keep_regression {
+    use super::capture_rect;
+    use image::{imageops::FilterType, DynamicImage, Rgba, RgbaImage};
+
+    #[test]
+    fn windowed_loot_crop_uses_client_height_within_capture_bounds() {
+        let fixture = image::load_from_memory(include_bytes!(
+            "../tests/fixtures/lab/font-gems-1080p.png"
+        ))
+        .unwrap();
+        let mut wrong_dimensions = Vec::new();
+        for (client_width, client_height, expected) in [
+            (1024, 576, (480, 400)),
+            (1280, 720, (600, 500)),
+            (1366, 768, (640, 533)),
+        ] {
+            let game = fixture
+                .resize_exact(client_width, client_height, FilterType::Lanczos3)
+                .to_rgba8();
+            for screen in [(1920, 1080), (1920, 1440)] {
+                let client = [100, 100, client_width as i32, client_height as i32];
+                let mut canvas = RgbaImage::from_pixel(screen.0, screen.1, Rgba([90, 90, 90, 255]));
+                image::imageops::overlay(&mut canvas, &game, client[0] as i64, client[1] as i64);
+                let frame = crate::capture::Capture {
+                    image: DynamicImage::ImageRgba8(canvas),
+                    monitor_id: 7,
+                    origin: (0, 0),
+                    client,
+                    timing: Default::default(),
+                };
+                for cursor in [
+                    (0, 0),
+                    (screen.0 as i32 - 1, 0),
+                    (0, screen.1 as i32 - 1),
+                    (screen.0 as i32 - 1, screen.1 as i32 - 1),
+                    (screen.0 as i32 / 2, screen.1 as i32 / 2),
+                ] {
+                    let rect = capture_rect(cursor, screen, frame.client[3] as u32);
+                    assert!(
+                        rect[0] >= 0 && rect[1] >= 0 && rect[2] > 0 && rect[3] > 0
+                            && rect[0] + rect[2] <= frame.image.width() as i32
+                            && rect[1] + rect[3] <= frame.image.height() as i32,
+                        "client {client:?}, capture {screen:?}, cursor {cursor:?}: {rect:?}"
+                    );
+                    let crop = frame.image.crop_imm(
+                        rect[0] as u32,
+                        rect[1] as u32,
+                        rect[2] as u32,
+                        rect[3] as u32,
+                    );
+                    let actual = (crop.width(), crop.height());
+                    if actual != expected {
+                        wrong_dimensions.push((client, screen, cursor, actual, expected));
+                    }
+                }
+            }
+        }
+        assert!(
+            wrong_dimensions.is_empty(),
+            "loot crop must scale from client height; (client, capture, cursor, actual, expected): {wrong_dimensions:?}"
+        );
     }
 }
 
