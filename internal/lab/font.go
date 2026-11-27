@@ -4,23 +4,25 @@ import (
 	"math"
 	"sort"
 	"time"
+
+	"profitofexile/internal/price/evidence"
 )
 
 // FontResult holds the computed EV for a single (color, variant) Font of Divine Skill analysis.
 type FontResult struct {
 	Time              time.Time
-	Color             string  // RED, GREEN, BLUE
-	Variant           string  // "1", "1/20", "20", "20/20"
-	Pool              int     // distinct eligible transfigured names of this color in the raw snapshot, priced or not
-	PricedGems        int     // how many of Pool carry a price at THIS variant (Pool counts every possible outcome, priced or not)
-	Winners           int     // count of tier-qualifying gems (LOW+ for safe, MID-HIGH+ for premium, TOP for jackpot)
-	PWin              float64 // probability of seeing at least 1 winner in 3 picks
-	AvgWin            float64 // average risk-adjusted value when you hit (secondary info)
-	AvgWinRaw         float64 // average RAW listed price when you hit (primary display)
-	EV                float64 // expected income per font (risk-adjusted, internal use)
-	EVRaw             float64 // expected income per font using raw listed prices (primary display)
+	Color             string   // RED, GREEN, BLUE
+	Variant           string   // "1", "1/20", "20", "20/20"
+	Pool              int      // distinct eligible transfigured names of this color in the raw snapshot, priced or not
+	PricedGems        int      // pool gems graded SOLID at this variant (ADR-032 § Evidence gate)
+	Winners           int      // count of tier-qualifying gems (LOW+ for safe, MID-HIGH+ for premium, TOP for jackpot)
+	PWin              float64  // probability of seeing at least 1 winner in 3 picks
+	AvgWin            float64  // average risk-adjusted value when you hit (secondary info)
+	AvgWinRaw         float64  // average RAW listed price when you hit (primary display)
+	EV                *float64 // expected income per font (risk-adjusted, internal use), nil when withheld
+	EVRaw             *float64 // expected income per font using raw listed prices (primary display), nil when withheld
 	InputCost         float64
-	Profit            float64                // EVRaw - InputCost
+	Profit            *float64               // EVRaw - InputCost, nil when withheld
 	FontsToHit        float64                // expected fonts until hitting a winner (1/pWin), 0 if pWin=0
 	JackpotGems       []JackpotGemInfo       // TOP gem names+prices (only for jackpot mode, 1-3 gems)
 	Mode              string                 // "safe", "premium", or "jackpot"
@@ -28,6 +30,20 @@ type FontResult struct {
 	LiquidityRisk     string                 // "LOW", "MEDIUM", "HIGH"
 	PoolBreakdown     []TierPoolInfo         `json:"poolBreakdown,omitempty"`     // per-tier gem counts and price ranges
 	LowConfidenceGems []LowConfidenceGemInfo `json:"lowConfidenceGems,omitempty"` // gems excluded from EV due to thin market
+}
+
+// Coverage is the share of the pool graded SOLID at this variant.
+func (r FontResult) Coverage() float64 {
+	if r.Pool <= 0 {
+		return 0
+	}
+	return float64(r.PricedGems) / float64(r.Pool)
+}
+
+func withholdUnderFloor(r *FontResult) {
+	if r.Coverage() < fontCoverageFloorShare {
+		r.EV, r.EVRaw, r.Profit = nil, nil, nil
+	}
 }
 
 // LowConfidenceGemInfo holds basic info for a gem excluded from EV calculations
@@ -206,9 +222,18 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 		"GREEN": {},
 		"BLUE":  {},
 	}
+	type cellKey struct{ color, variant string }
+	solidNames := make(map[cellKey]map[string]struct{})
 	for _, g := range gems {
 		if isFontOutcome(g) && hasAttributeColor(g) {
 			poolNames[g.GemColor][g.Name] = struct{}{}
+			if evidence.Grade(gemDepth(g), GemEvidencePolicy()) == evidence.Solid {
+				key := cellKey{g.GemColor, g.Variant}
+				if solidNames[key] == nil {
+					solidNames[key] = make(map[string]struct{})
+				}
+				solidNames[key][g.Name] = struct{}{}
+			}
 		}
 	}
 
@@ -232,7 +257,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			continue
 		}
 
-		if _, eligible := poolNames[color][f.Name]; !eligible || f.Chaos <= 5 {
+		if _, eligible := poolNames[color][f.Name]; !eligible || f.Chaos <= labTierCutoffChaos {
 			continue
 		}
 
@@ -335,18 +360,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				}
 			}
 
-			// How much of the pool carries a usable price at this variant. Pool stays
-			// variant-independent — every transfigured gem of the colour is a possible
-			// font outcome whether or not poe.ninja lists it at this level/quality — so
-			// a low count means "we can't value most outcomes here", not "the pool is
-			// small". Counted off gemAdjustedPrice, the same map that feeds poolValues,
-			// so it names exactly the gems contributing value: a low-confidence gem is
-			// listed but enters the EV as 0, and counting it as priced would understate
-			// the zero-valued set the UI is explaining.
-			pricedGems := len(gemAdjustedPrice)
-			if pricedGems > pool {
-				pricedGems = pool
-			}
+			pricedGems := len(solidNames[cellKey{color, variant}])
 
 			// Build the full pool value array — one value per pool gem name.
 			// EVERY gem gets its risk-adjusted price (the farmer always picks the best
@@ -425,7 +439,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			if safePWin > 0 {
 				safeFontsToHit = 1.0 / safePWin
 			}
-			analysis.Safe = append(analysis.Safe, FontResult{
+			safeResult := FontResult{
 				Time:              snapTime,
 				Color:             color,
 				Variant:           variant,
@@ -435,17 +449,19 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				PWin:              safePWin,
 				AvgWin:            safeAvgWin,
 				AvgWinRaw:         safeAvgWinRaw,
-				EV:                ev,
-				EVRaw:             evRaw,
+				EV:                &ev,
+				EVRaw:             &evRaw,
 				InputCost:         inputCost,
-				Profit:            profit,
+				Profit:            &profit,
 				FontsToHit:        safeFontsToHit,
 				Mode:              "safe",
 				ThinPoolGems:      safeThinCount,
 				LiquidityRisk:     computeLiquidityRisk(safeThinCount, safeWinnerCount),
 				PoolBreakdown:     poolBreakdown,
 				LowConfidenceGems: lowConfGems,
-			})
+			}
+			withholdUnderFloor(&safeResult)
+			analysis.Safe = append(analysis.Safe, safeResult)
 
 			// Premium mode result.
 			premiumPWin := pWin3Picks(premiumWinnerCount, pool)
@@ -458,7 +474,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			if premiumPWin > 0 {
 				premiumFontsToHit = 1.0 / premiumPWin
 			}
-			analysis.Premium = append(analysis.Premium, FontResult{
+			premiumResult := FontResult{
 				Time:          snapTime,
 				Color:         color,
 				Variant:       variant,
@@ -468,15 +484,17 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				PWin:          premiumPWin,
 				AvgWin:        premiumAvgWin,
 				AvgWinRaw:     premiumAvgWinRaw,
-				EV:            ev,
-				EVRaw:         evRaw,
+				EV:            &ev,
+				EVRaw:         &evRaw,
 				InputCost:     inputCost,
-				Profit:        profit,
+				Profit:        &profit,
 				FontsToHit:    premiumFontsToHit,
 				Mode:          "premium",
 				ThinPoolGems:  premiumThinCount,
 				LiquidityRisk: computeLiquidityRisk(premiumThinCount, premiumWinnerCount),
-			})
+			}
+			withholdUnderFloor(&premiumResult)
+			analysis.Premium = append(analysis.Premium, premiumResult)
 
 			// Jackpot mode result.
 			jackpotPWin := pWin3Picks(jackpotWinnerCount, pool)
@@ -489,7 +507,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			if jackpotPWin > 0 {
 				jackpotFontsToHit = 1.0 / jackpotPWin
 			}
-			analysis.Jackpot = append(analysis.Jackpot, FontResult{
+			jackpotResult := FontResult{
 				Time:          snapTime,
 				Color:         color,
 				Variant:       variant,
@@ -499,16 +517,18 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				PWin:          jackpotPWin,
 				AvgWin:        jackpotAvgWin,
 				AvgWinRaw:     jackpotAvgWinRaw,
-				EV:            ev,
-				EVRaw:         evRaw,
+				EV:            &ev,
+				EVRaw:         &evRaw,
 				InputCost:     inputCost,
-				Profit:        profit,
+				Profit:        &profit,
 				FontsToHit:    jackpotFontsToHit,
 				JackpotGems:   jackpotGems,
 				Mode:          "jackpot",
 				ThinPoolGems:  jackpotThinCount,
 				LiquidityRisk: computeLiquidityRisk(jackpotThinCount, jackpotWinnerCount),
-			})
+			}
+			withholdUnderFloor(&jackpotResult)
+			analysis.Jackpot = append(analysis.Jackpot, jackpotResult)
 		}
 	}
 

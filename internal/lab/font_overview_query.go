@@ -255,7 +255,10 @@ func FilterFont(all []FontResult, variant string, limit int) []FontResult {
 		filtered = append(filtered, r)
 	}
 	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].Profit > filtered[j].Profit
+		if filtered[i].Profit == nil {
+			return false
+		}
+		return filtered[j].Profit == nil || *filtered[i].Profit > *filtered[j].Profit
 	})
 	if len(filtered) > limit {
 		filtered = filtered[:limit]

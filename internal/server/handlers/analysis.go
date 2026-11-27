@@ -321,10 +321,10 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 			PWin              float64                    `json:"pWin"`
 			AvgWin            float64                    `json:"avgWin"`
 			AvgWinRaw         float64                    `json:"avgWinRaw"`
-			EV                float64                    `json:"ev"`
-			EVRaw             float64                    `json:"evRaw"`
+			EV                *float64                   `json:"ev"`
+			EVRaw             *float64                   `json:"evRaw"`
 			InputCost         float64                    `json:"inputCost"`
-			Profit            float64                    `json:"profit"`
+			Profit            *float64                   `json:"profit"`
 			FontsToHit        float64                    `json:"fontsToHit"`
 			JackpotGems       []lab.JackpotGemInfo       `json:"jackpotGems,omitempty"`
 			LowConfidenceGems []lab.LowConfidenceGemInfo `json:"lowConfidenceGems,omitempty"`
@@ -421,7 +421,9 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.Trad
 func bestColor(results []lab.FontResult) string {
 	evByColor := make(map[string]float64)
 	for _, r := range results {
-		evByColor[r.Color] += r.EV
+		if r.EV != nil {
+			evByColor[r.Color] += *r.EV
+		}
 	}
 	var best string
 	var bestEV float64

@@ -11,6 +11,9 @@ import (
 const GemTradeMaxRevisitAge = 6 * time.Hour
 const FontTradeVariantSet = "1,1/20,20,20/20"
 
+// ADR-032 § Evidence gate (Desk poe403-font-coverage-1125).
+const fontCoverageFloorShare = 0.25
+
 const (
 	gemEvidenceTradeListings = 3
 	gemEvidenceTradeSellers  = 2

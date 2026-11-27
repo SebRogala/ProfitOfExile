@@ -216,6 +216,10 @@ func (r *Repository) SaveFontResults(ctx context.Context, scope league.Scope, re
 
 	batch := &pgx.Batch{}
 	for _, r := range results {
+		profit := 0.0 // Deferred D4: NOT NULL profit stores zero for a withheld value; scanFontRows ignores it when ev is NULL.
+		if r.Profit != nil {
+			profit = *r.Profit
+		}
 		batch.Queue(
 			`INSERT INTO font_snapshots
 			 (league, time, color, variant, pool, priced_gems, winners, p_win, avg_win, ev, input_cost, profit,
@@ -223,7 +227,7 @@ func (r *Repository) SaveFontResults(ctx context.Context, scope league.Scope, re
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 			 ON CONFLICT DO NOTHING`,
 			scope.ID(), r.Time, r.Color, r.Variant, r.Pool, r.PricedGems, r.Winners,
-			r.PWin, r.AvgWin, r.EV, r.InputCost, r.Profit,
+			r.PWin, r.AvgWin, r.EV, r.InputCost, profit,
 			r.Mode, r.ThinPoolGems, r.LiquidityRisk,
 		)
 	}
@@ -305,7 +309,7 @@ func (r *Repository) LatestFontResults(ctx context.Context, scope league.Scope, 
 		return nil, fmt.Errorf("lab repo: latest font results: %w", err)
 	}
 	query := `
-		SELECT time, color, variant, pool, COALESCE(priced_gems, pool), winners, p_win, avg_win, ev, input_cost, profit,
+		SELECT time, color, variant, pool, priced_gems, winners, p_win, avg_win, ev, input_cost, profit,
 		       COALESCE(mode, 'safe'), COALESCE(thin_pool_gems, 0), COALESCE(liquidity_risk, 'LOW')
 		FROM font_snapshots
 		WHERE league = $1 AND time = (SELECT MAX(time) FROM font_snapshots WHERE league = $1)`
@@ -340,11 +344,23 @@ func scanFontRows(rows pgx.Rows) ([]FontResult, error) {
 	var results []FontResult
 	for rows.Next() {
 		var fr FontResult
-		if err := rows.Scan(&fr.Time, &fr.Color, &fr.Variant, &fr.Pool, &fr.PricedGems, &fr.Winners,
-			&fr.PWin, &fr.AvgWin, &fr.EV, &fr.InputCost, &fr.Profit,
+		var pricedGems *int
+		var profit float64
+		if err := rows.Scan(&fr.Time, &fr.Color, &fr.Variant, &fr.Pool, &pricedGems, &fr.Winners,
+			&fr.PWin, &fr.AvgWin, &fr.EV, &fr.InputCost, &profit,
 			&fr.Mode, &fr.ThinPoolGems, &fr.LiquidityRisk); err != nil {
 			return nil, fmt.Errorf("lab repo: scan font result: %w", err)
 		}
+		// An unknown legacy count supplies no SOLID evidence under ADR-032.
+		if pricedGems != nil {
+			fr.PricedGems = *pricedGems
+		}
+		if fr.EV != nil {
+			fr.Profit = &profit
+			evRaw := profit + fr.InputCost
+			fr.EVRaw = &evRaw
+		}
+		withholdUnderFloor(&fr)
 		// Derive FontsToHit from PWin (not stored in DB).
 		if fr.PWin > 0 {
 			fr.FontsToHit = 1.0 / fr.PWin
@@ -368,7 +384,7 @@ func (r *Repository) FontOverviewRows(ctx context.Context, scope league.Scope) (
 		SELECT time, color, variant, pool, priced_gems, winners, p_win, avg_win, ev, input_cost, profit,
 		       mode, thin_pool_gems, liquidity_risk
 		FROM (
-			SELECT time, color, variant, COALESCE(priced_gems, pool) AS priced_gems, pool, winners, p_win, avg_win, ev,
+			SELECT time, color, variant, priced_gems, pool, winners, p_win, avg_win, ev,
 			       input_cost, profit, mode, COALESCE(thin_pool_gems, 0) AS thin_pool_gems,
 			       COALESCE(liquidity_risk, 'LOW') AS liquidity_risk,
 			       row_number() OVER (PARTITION BY variant, mode ORDER BY profit DESC) AS rank
