@@ -577,13 +577,17 @@ function wi9BadgeStyles(): HTMLStyleElement {
 	return style;
 }
 
-it.each([false, true])('keep:happy WI-9 Best Plays: lowConfidence=%s renders hollow yellow UNRATED in the row and expansion', async (lowConfidence) => {
+function wi9MountUnratedPlays(lowConfidence: boolean): HTMLElement {
 	history.fetch.mockResolvedValue([]);
-	const target = mountRows([
+	return mountRows([
 		play({ name: 'Ice Nova of Frostbolts', priceTier: 'UNRATED' as GemPlay['priceTier'], lowConfidence, tierAction: 'served action' }),
 		play({ name: 'Smite of Divine Judgement', priceTier: 'TOP' }),
 		play({ name: 'Lacerate of Butchering', priceTier: 'MID' })
 	]);
+}
+
+it.each([false, true])('keep:happy WI-9 Best Plays: lowConfidence=%s renders a hollow yellow UNRATED row badge', async (lowConfidence) => {
+	const target = wi9MountUnratedPlays(lowConfidence);
 	const style = wi9BadgeStyles();
 	try {
 		const rows = target.querySelectorAll<HTMLElement>('tr.play-row');
@@ -597,7 +601,14 @@ it.each([false, true])('keep:happy WI-9 Best Plays: lowConfidence=%s renders hol
 		expect(css.borderTopWidth).toBe('1px');
 		expect(css.borderTopStyle).toBe(lowConfidence ? 'dashed' : 'solid');
 		expect(css.padding).toBe('1px 7px');
-		rows[0].click();
+	} finally { style.remove(); }
+});
+
+it.each([false, true])('keep:happy WI-9 Best Plays: lowConfidence=%s renders a yellow UNRATED expanded badge', async (lowConfidence) => {
+	const target = wi9MountUnratedPlays(lowConfidence);
+	const style = wi9BadgeStyles();
+	try {
+		target.querySelectorAll<HTMLElement>('tr.play-row')[0].click();
 		flushSync();
 		await settle();
 		const expanded = target.querySelector<HTMLElement>('.expanded-row .tier-badge')!;

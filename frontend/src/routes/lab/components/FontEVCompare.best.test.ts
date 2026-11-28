@@ -321,22 +321,37 @@ function wi9FontStyles(): HTMLStyleElement {
 	return style;
 }
 
-it('keep:happy WI-9 Font pools: the served UNRATED variant replaces the rated ladder with counts, ranges and pWin', async () => {
+it('keep:happy WI-9 Font pools: the served UNRATED variant replaces the rated ladder', async () => {
 	const target = await mountUnratedPools();
 	const cards = wi9OpenPool(target);
 	expect(cards).toHaveLength(3);
 	for (const [index, card] of cards.entries()) {
 		expect(cellText(card)).toContain('Tiers: not enough data');
-		expect(cellText(card.querySelector('.pool-count'))).toBe(['1 of 96 priced', '0 of 94 priced', '2 of 88 priced'][index]);
 		expect(wi9TierRows(card).map((row) => cellText(row.querySelector('.pool-tier-name')))).toEqual(index === 1 ? [] : ['UNRATED']);
 		expect(cellText(card.querySelector('.pool-risky-row'))).toContain('RISKY');
 		if (index === 1) continue;
 		const row = wi9TierRows(card)[0];
 		expect(cellText(row.querySelector('.pool-tier-count'))).toBe(index === 0 ? '1' : '2');
-		expect(cellText(row.querySelector('.pool-tier-range'))).toBe(index === 0 ? '35c' : '18c — 42c');
-		expect(cellText(row.querySelector('.pool-tier-pwin'))).toBe(index === 0 ? '3%' : '7%');
 		expect((row.querySelector('.pool-tier-bar-fill') as HTMLElement).style.background).toBe('rgb(234, 179, 8)');
 	}
+});
+
+it('keep:happy WI-9 Font pools: the UNRATED variant header shows the served priced coverage', async () => {
+	const target = await mountUnratedPools();
+	const cards = wi9OpenPool(target);
+	expect(cards.map((card) => cellText(card.querySelector('.pool-count')))).toEqual(['1 of 96 priced', '0 of 94 priced', '2 of 88 priced']);
+});
+
+it('keep:happy WI-9 Font pools: the UNRATED row shows the served price range', async () => {
+	const target = await mountUnratedPools();
+	const cards = wi9OpenPool(target);
+	expect([cards[0], cards[2]].map((card) => cellText(wi9TierRows(card)[0].querySelector('.pool-tier-range')))).toEqual(['35c', '18c — 42c']);
+});
+
+it('keep:happy WI-9 Font pools: the UNRATED row shows its pWin', async () => {
+	const target = await mountUnratedPools();
+	const cards = wi9OpenPool(target);
+	expect([cards[0], cards[2]].map((card) => cellText(wi9TierRows(card)[0].querySelector('.pool-tier-pwin')))).toEqual(['3%', '7%']);
 });
 
 it('keep:happy WI-9 Font pool note: keyboard activation opens the selected variant explanation', async () => {
@@ -360,7 +375,7 @@ it('keep:happy WI-9 cold Font pools: absent topEvaluated retains the six rated r
 	}
 });
 
-it('keep:happy WI-9 Dedication pools: selected 21/20 Transfigured retains gem headers and its divine range', async () => {
+it('keep:happy WI-9 Dedication pools: selected 21/20 Transfigured retains gem headers', async () => {
 	const target = await mountUnratedPools('dedication');
 	const cards = wi9OpenPool(target, true);
 	for (const [index, card] of cards.entries()) {
@@ -368,26 +383,45 @@ it('keep:happy WI-9 Dedication pools: selected 21/20 Transfigured retains gem he
 		expect(cellText(card.querySelector('.pool-count'))).toBe([64, 58, 52][index] + ' gems');
 		expect(wi9TierRows(card).map((row) => cellText(row.querySelector('.pool-tier-name')))).toEqual(index === 1 ? [] : ['UNRATED']);
 		if (index === 1) continue;
-		const row = wi9TierRows(card)[0];
-		expect(cellText(row.querySelector('.pool-tier-count'))).toBe(index === 0 ? '1' : '2');
-		expect(cellText(row.querySelector('.pool-tier-range'))).toBe(index === 0 ? '35c' : '0.16d (40c) — 1.4d');
-		expect(cellText(row.querySelector('.pool-tier-pwin'))).toBe(index === 0 ? '5%' : '11%');
+		expect(cellText(wi9TierRows(card)[0].querySelector('.pool-tier-count'))).toBe(index === 0 ? '1' : '2');
 	}
 });
 
-it('keep:happy WI-9 raw UNRATED list fits its label beside the served count, range and full tooltip', async () => {
+it('keep:happy WI-9 Dedication pools: selected 21/20 Transfigured shows its divine range', async () => {
+	const target = await mountUnratedPools('dedication');
+	const cards = wi9OpenPool(target, true);
+	expect([cards[0], cards[2]].map((card) => cellText(wi9TierRows(card)[0].querySelector('.pool-tier-range')))).toEqual(['35c', '0.16d (40c) — 1.4d']);
+});
+
+it('keep:happy WI-9 Dedication pools: selected 21/20 Transfigured shows its pWin', async () => {
+	const target = await mountUnratedPools('dedication');
+	const cards = wi9OpenPool(target, true);
+	expect([cards[0], cards[2]].map((card) => cellText(wi9TierRows(card)[0].querySelector('.pool-tier-pwin')))).toEqual(['5%', '11%']);
+});
+
+it('keep:happy WI-9 raw UNRATED list shows the served count and range without EV or BEST', async () => {
+	const target = await mountUnratedPools();
+	const cell = fontCell(target, '20/20', 'BLUE');
+	expect(cellText(cell.querySelector('.uf-group'))).toBe('SOLID');
+	expect([...cell.querySelector('.uf-row')!.children].map(cellText).join(' ')).toBe('UNRATED 2 · 18c — 42c');
+	expect(cell.querySelector('.ev, .tier-lines, .tier-low, .tier-mid, .tier-top, .best-blue')).toBeNull();
+});
+
+it('keep:happy WI-9 raw UNRATED label grows from its minimum width to fit', async () => {
 	const target = await mountUnratedPools();
 	const cell = fontCell(target, '20/20', 'BLUE');
 	const style = wi9FontStyles();
 	try {
-		expect(cellText(cell.querySelector('.uf-group'))).toBe('SOLID');
-		expect([...cell.querySelector('.uf-row')!.children].map(cellText).join(' ')).toBe('UNRATED 2 · 18c — 42c');
 		const label = cell.querySelector<HTMLElement>('.uf-tier')!;
 		expect(getComputedStyle(label).minWidth).toBe('42px');
 		expect(getComputedStyle(label).width).toBe('auto');
-		expect(cell.querySelector('.ev, .tier-lines, .tier-low, .tier-mid, .tier-top, .best-blue')).toBeNull();
-		expect(cellText(await openFontInfo(cell))).toContain('UNRATED: 2 gems, 18c — 42c');
 	} finally { style.remove(); }
+});
+
+it('keep:happy WI-9 raw UNRATED tooltip lists the full served tier', async () => {
+	const target = await mountUnratedPools();
+	const cell = fontCell(target, '20/20', 'BLUE');
+	expect(cellText(await openFontInfo(cell))).toContain('UNRATED: 2 gems, 18c — 42c');
 });
 
 it('keep:critical WI-9 raw UNRATED prices stay yellow without a trusted LOW, MID or TOP valuation', async () => {
