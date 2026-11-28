@@ -2,7 +2,7 @@
  * Mercenary rulesets — the declarative data model behind the Mercenaries view page.
  * size-gate: intrinsic — declarative ruleset data transcribed from the guides; its size is the data, asserted against fixtures by rulesets.test.ts
  *
- * SIX sources, and they do not all come from the same kind of thing. Guide-a,
+ * SEVEN sources, and they do not all come from the same kind of thing. Guide-a,
  * guide-b, guide-d and guide-f are transcriptions of GGG trade SAVED SEARCHES:
  * the raw responses live in `__fixtures__/<hash>.json` (see that README for
  * provenance and re-fetch commands) and `rulesets.test.ts` asserts this file
@@ -16,6 +16,8 @@
  * it cannot catch a MISREADING of the guide — only a human re-reading the source
  * can, and the prose is quoted in the group comments below so that re-read is
  * possible without leaving the file.
+ * Guide-g transcribes a supplied Covens q-payload query, independently committed
+ * as an authored fixture; its source URL is provenance rather than a saved hash.
  *
  * The two kinds also point in opposite directions. Guide-a's rulesets are
  * seller-side (its author states price floors), guide-b's, guide-d's and
@@ -128,7 +130,8 @@ export const SOURCE_IDS = [
 	'guide-c',
 	'guide-d',
 	'guide-e',
-	'guide-f'
+	'guide-f',
+	'guide-g'
 ] as const;
 export type MercSourceId = (typeof SOURCE_IDS)[number];
 
@@ -253,7 +256,7 @@ interface MercRulesetFacts {
  * hash GGG issued. Re-fetchable, and the fixture under that hash is the ground
  * truth for every switch below.
  *
- * `authored` — a query this app WROTE from a guide's prose, addressed by the
+ * `authored` — a query transcribed from prose or a supplied q-payload, addressed by the
  * fixture file it is committed as (`MercAuthoredQuery`). There is no saved
  * search to link, so `verdict.ts` reports a null `savedUrl` for these and the
  * page draws no "open saved search" link; the DERIVED link still works, because
@@ -4873,6 +4876,85 @@ const GUIDE_F_KINETIST_EXPENSIVE: MercRuleset = {
 	]
 };
 
+const GUIDE_G_FROST_BLADES: MercRuleset = {
+	id: 'guide-g-frost-blades',
+	label: 'Frost Blades',
+	archetype: 'combatant',
+	authored: { file: 'guide-g-frost-blades' },
+	status: 'available',
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_32807', name: 'Herald of Ice', enabledInSearch: true },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: true },
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'chain',
+			label: 'Chain on Frost Blades',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-supports',
+			label: 'Denied supports',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true },
+				{ id: 'mercenary.support_27970', name: 'Greater Pierce (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Damage on Frost Blades',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{ id: 'mercenary.support_53145', name: 'Greater Hypothermia (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'speed',
+			label: 'Speed on Frost Blades',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_14517',
+					name: 'Greater Faster Projectiles (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		}
+	]
+};
+
 export const MERC_SOURCES: MercSource[] = [
 	{
 		id: 'guide-a',
@@ -4969,6 +5051,14 @@ export const MERC_SOURCES: MercSource[] = [
 			GUIDE_F_KINETIST_CHEAP,
 			GUIDE_F_KINETIST_EXPENSIVE
 		]
+	},
+	{
+		id: 'guide-g',
+		label: 'Covens trade search (2026-11-27)',
+		description: 'Buyer-side Frost Blades query for Covens — no prices, no floors',
+		guideUrl:
+			'https://www.pathofexile.com/trade/search/Covens/H4sIAAAAAAAACrWS7QqCMBiF7-X8lnBfbu5WQmLVgtGaojMI2b2HJUGg1h9_P8_ec96XDeiiiX0HPaBuoqsDNMzdOG-O3iJlL95B7wfER2NHGs7IcHE-2vYN3BkaN9uebDDtY9ddnfcHRlUukbIFXAgu2TKmvGQEqRqFKfej_JNOKcnF7Pi-aeo2HhjJBf0OCHX8MXp6KwpazK82CVSWMt-yPedKFasNFCerAlNCkjVBMMIFUpXhbnxvxw9ycwGapc22KtXqVQkXRM40oilV6QlDYJemyQIAAA',
+		rulesets: [GUIDE_G_FROST_BLADES]
 	}
 ];
 

@@ -180,7 +180,7 @@ import { rulesetQuery } from '$lib/mercenaries/trade-links';
 
 it('rewrites the authored fixtures', () => {
 	for (const ruleset of allRulesets()) {
-		if (ruleset.authored === undefined) continue;
+		if (ruleset.authored === undefined || !/^guide-[ce]-/.test(ruleset.authored.file)) continue;
 		writeFileSync(
 			`src/lib/mercenaries/__fixtures__/${ruleset.authored.file}.json`,
 			JSON.stringify({ id: ruleset.authored.file, query: rulesetQuery(ruleset) })
@@ -255,6 +255,21 @@ Two open items, both recorded rather than resolved: `Gilded Extra Armaments`
 find, so neither could be considered for "gilded +2 proj" on its merits; and the
 transfigured-form mapping (`Alt` → `of <name>`) is an inference, consistent across the
 six cases here.
+
+## Supplied Covens query (guide-g)
+
+Current, 2026-11-27: `guide-g-frost-blades.json` independently transcribes the supplied
+decoded Covens Frost Blades query as `{"id":"guide-g-frost-blades","query":…}`.
+Its public source URL is:
+
+<https://www.pathofexile.com/trade/search/Covens/H4sIAAAAAAAACrWS7QqCMBiF7-X8lnBfbu5WQmLVgtGaojMI2b2HJUGg1h9_P8_ec96XDeiiiX0HPaBuoqsDNMzdOG-O3iJlL95B7wfER2NHGs7IcHE-2vYN3BkaN9uebDDtY9ddnfcHRlUukbIFXAgu2TKmvGQEqRqFKfej_JNOKcnF7Pi-aeo2HhjJBf0OCHX8MXp6KwpazK82CVSWMt-yPedKFasNFCerAlNCkjVBMMIFUpXhbnxvxw9ycwGapc22KtXqVQkXRM40oilV6QlDYJemyQIAAA>
+
+This is q-payload provenance, not a saved-search hash or a re-fetchable saved-search
+response. The committed query is the oracle: do not regenerate it from `rulesetQuery`.
+The prose-fixture regeneration snippet above excludes this supplied query.
+It specifies `available` status, five ordered enabled groups, a speed minimum of 2
+and no item-level filter. The fidelity and URL round-trip sweeps compare the typed
+ruleset to this independent fixture alongside the existing 38 rulesets.
 
 ## Captured-mercenary query parity
 
