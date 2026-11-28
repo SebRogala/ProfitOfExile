@@ -505,16 +505,19 @@ mod tests {
         #[test]
         fn covens_330_skill_names_match_their_exact_ids() {
             let v = MercVocab::load().expect("the compiled-in vocabulary parses");
-            for (name, id) in [
-                ("Herald of Ash", "mercenary.skill_31201"),
-                ("Abyssal Spray", "mercenary.skill_50122"),
-                ("Abyssal Spray Detonation", "mercenary.skill_41822"),
-                ("Power of the Depths", "mercenary.skill_54593"),
-                ("Vaal Smite", "mercenary.skill_40606"),
-            ] {
+            let cases: &[(&str, &[&str])] = &[
+                ("Herald of Ash", &["mercenary.skill_31201", "mercenary.skill_44334"]),
+                ("Abyssal Spray", &["mercenary.skill_50122"]),
+                ("Abyssal Spray Detonation", &["mercenary.skill_41822"]),
+                ("Power of the Depths", &["mercenary.skill_54593"]),
+                ("Vaal Smite", &["mercenary.skill_40606"]),
+            ];
+            for &(name, ids) in cases {
                 let read = v.match_skill(name, &default_thresholds());
+                let mut actual_ids = read.ids.clone();
+                actual_ids.sort();
 
-                assert_eq!(read.ids, vec![id.to_string()], "{name}: {read:?}");
+                assert_eq!(actual_ids, ids, "{name}: {read:?}");
                 assert_eq!(read.state, ReadState::Matched, "{name}: {read:?}");
             }
         }
