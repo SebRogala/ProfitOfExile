@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import uberFixture from './__fixtures__/poelab-prod-2026-08-02-uber.json';
 import mercilessFixture from './__fixtures__/poelab-prod-2026-07-31-merciless.json';
 import type { LabLayout } from './navigation';
+import type { LabNavEvent, LabSession } from './lab-session.svelte';
 
 type Handler = (event: { payload: unknown }) => void;
 
@@ -109,13 +110,14 @@ beforeEach(async () => {
 let app: ReturnType<typeof mount> | null = null;
 let releaseSession: (() => void) | null = null;
 
-afterEach(() => {
-	if (app) unmount(app);
+afterEach(async () => {
+	if (app) await unmount(app);
 	app = null;
 	releaseSession?.();
 	releaseSession = null;
 	document.body.innerHTML = '';
 	globalThis.fetch = originalFetch;
+	vi.clearAllTimers();
 	vi.useRealTimers();
 	ipc.calls.length = 0;
 	ipc.settings = {};
@@ -155,6 +157,141 @@ function pickOption(select: HTMLSelectElement, value: string): void {
 }
 
 const emittedLabNav = () => ipc.calls.filter(([cmd]) => cmd === 'emit_lab_nav').map(([, args]) => (args as { eventJson: unknown }).eventJson);
+
+type Widget = 'compass' | 'path strip' | 'timer';
+type Delivery = 'live' | 'catch-up' | 'late acquisition';
+const widgets: Widget[] = ['compass', 'path strip', 'timer'];
+const deliveries: Delivery[] = ['live', 'catch-up', 'late acquisition'];
+const visibilityRows = widgets.flatMap((widget) => deliveries.map((delivery) => ({ widget, delivery })));
+const plaza: LabNavEvent = { type: 'PlazaEntered' };
+const ordinary: LabNavEvent = { type: 'RoomChanged', name: 'Estate Crossing' };
+const trial: LabNavEvent = { type: 'RoomChanged', name: "AsPiRaNt'S TrIaL" };
+const unknownRoom: LabNavEvent = { type: 'RoomChanged', name: 'Unmapped Garden' };
+
+function publishVisibilityLayout(matchingTrial = true): void {
+	vi.setSystemTime(new Date('2026-11-28T12:00:00Z'));
+	ipc.settings = { difficulty: 'Uber', mode: 'minimap' };
+	PUBLISHED.set('Uber', {
+		difficulty: 'Uber', date: '2026-11-28', weapon: 'Sword', phase1: '', phase2: '', trap1: '', trap2: '',
+		rooms: [
+			{ id: '1', name: 'Estate Crossing', x: '0', y: '0', areacode: '', contents: [], exits: { NE: '2' } },
+			{ id: '2', name: matchingTrial ? "aspirant's trial" : 'Trial Antechamber', x: '1', y: '0', areacode: '', contents: [], exits: { NE: '3' } },
+			{ id: '3', name: 'Basilica Halls', x: '2', y: '0', areacode: '', contents: [], exits: {} }
+		]
+	} satisfies LabLayout);
+}
+
+async function mountVisibilityWidget(widget: Widget, session: LabSession): Promise<void> {
+	const component = widget === 'compass' ? LabCompassWidget
+		: widget === 'path strip' ? (await import('./LabPathstripWidget.svelte')).default
+			: (await import('./LabTimerWidget.svelte')).default;
+	app = mount(component, {
+		target: document.body,
+		props: { configMode: false, label: widget },
+		context: new Map([[labSession.LAB_SESSION, session]])
+	});
+	await settle();
+}
+
+async function deliverVisibilityEvents(events: LabNavEvent[]): Promise<void> {
+	for (const event of events) {
+		emitLabNav(event);
+		await settle();
+	}
+}
+
+async function acquireVisibilityScenario(widget: Widget, delivery: Delivery, events: LabNavEvent[]): Promise<LabSession> {
+	const session = labSession.createLabSession();
+	if (delivery === 'catch-up') {
+		ipc.catchup = { in_lab: true, layout_difficulty: 'Uber', events };
+		await mountVisibilityWidget(widget, session);
+	} else {
+		releaseSession = session.acquire({});
+		await mountVisibilityWidget(widget, session);
+		if (delivery === 'late acquisition') {
+			await unmount(app!);
+			app = null;
+		}
+		await deliverVisibilityEvents(events);
+		if (delivery === 'late acquisition') await mountVisibilityWidget(widget, session);
+	}
+	return session;
+}
+
+function expectWidgetContent(widget: Widget, visible: boolean, roomName: string, timerText = '00:00'): void {
+	const selector = widget === 'compass' ? '.compass-content'
+		: widget === 'path strip' ? '.strip-container svg' : '.timer-text';
+	const surface = document.querySelector(selector);
+	if (!visible) {
+		expect(surface, `${widget} content must stay absent`).toBeNull();
+		return;
+	}
+	expect(surface, `${widget} content must be shown`).not.toBeNull();
+	if (widget === 'compass') {
+		expect(surface?.querySelector('.fallback-name')?.textContent).toBe(roomName);
+	} else if (widget === 'path strip') {
+		expect(surface?.querySelectorAll('circle').length).toBeGreaterThanOrEqual(3);
+	} else {
+		expect(surface?.textContent).toBe(timerText);
+	}
+}
+
+describe('POE-513 lab overlay visibility', () => {
+	it.each(visibilityRows)('keep:regression POE-513 $widget restores content for an unmapped room via $delivery', async ({ widget, delivery }) => {
+		publishVisibilityLayout();
+		const session = await acquireVisibilityScenario(widget, delivery, [plaza, ordinary, trial, unknownRoom]);
+		expect(session.layoutLoaded).toBe(true);
+		expect(session.navState.layout?.difficulty).toBe('Uber');
+		expect(session.navState.inLab).toBe(true);
+		expect(session.navState.currentRoom).toBe('2');
+		expect([...session.navState.roomById.values()].some((room) => room.name === unknownRoom.name)).toBe(false);
+		expectWidgetContent(widget, true, "aspirant's trial");
+	});
+
+	it.each(visibilityRows.flatMap((row) => [true, false].map((matchingTrial) => ({ ...row, matchingTrial }))))(
+		'keep:critical POE-513 $widget hides guidance over the Izaro fight via $delivery (matching trial: $matchingTrial)',
+		async ({ widget, delivery, matchingTrial }) => {
+			publishVisibilityLayout(matchingTrial);
+			const session = await acquireVisibilityScenario(widget, delivery, [plaza, ordinary, trial]);
+			expect(session.layoutLoaded).toBe(true);
+			expect(session.navState.inLab).toBe(true);
+			expect(session.navState.currentRoom).toBe(matchingTrial ? '2' : '1');
+			expectWidgetContent(widget, false, '');
+			for (let poll = 0; poll < 3; poll++) {
+				await vi.advanceTimersByTimeAsync(2000);
+				await settle();
+				expectWidgetContent(widget, false, '');
+			}
+		}
+	);
+
+	it.each(widgets.flatMap((widget) => (['live', 'late acquisition'] as const).map((delivery) => ({ widget, delivery }))))(
+		'keep:happy POE-513 $widget preserves lifecycle visibility via $delivery',
+		async ({ widget, delivery }) => {
+			publishVisibilityLayout();
+			const session = await acquireVisibilityScenario(widget, 'live', []);
+			expectWidgetContent(widget, false, '');
+			const checkpoints: { event: LabNavEvent; visible: boolean; roomName: string }[] = [
+				{ event: plaza, visible: true, roomName: 'Unknown Room' },
+				{ event: ordinary, visible: true, roomName: 'Estate Crossing' },
+				{ event: trial, visible: false, roomName: '' },
+				{ event: { type: 'LabFinished' }, visible: widget === 'timer', roomName: '' },
+				{ event: { type: 'RoomChanged', name: 'Basilica Halls' }, visible: true, roomName: 'Basilica Halls' },
+				{ event: { type: 'LabExited' }, visible: false, roomName: '' }
+			];
+			for (const { event, visible, roomName } of checkpoints) {
+				if (delivery === 'late acquisition') {
+					await unmount(app!);
+					app = null;
+				}
+				await deliverVisibilityEvents([event]);
+				if (delivery === 'late acquisition') await mountVisibilityWidget(widget, session);
+				expectWidgetContent(widget, visible, roomName);
+			}
+			expect(session.navState.inLab).toBe(false);
+		}
+	);
+});
 
 describe('lab difficulty selection', () => {
 	it('keep:regression Uber catch-up renders the North trial exit', async () => {
