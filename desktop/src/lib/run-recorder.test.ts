@@ -137,3 +137,55 @@ describe('run recorder submission', () => {
 		]);
 	});
 });
+
+/**
+ * Start the recorder with Merciless saved in compass settings and the given
+ * catch-up, which replays a plaza entry and one room, then finish the run live.
+ * Returns the submitted run's difficulty.
+ */
+async function submittedDifficultyAfterCatchup(catchup: unknown): Promise<string> {
+	invokeMock.mockImplementation(async (cmd: string) => {
+		if (cmd === 'get_status') return { server_url: STATUS_URL, device_id: 'dev-1', app_version: '9.9.9' };
+		if (cmd === 'get_compass_settings') return { difficulty: 'Merciless', strategy: 'fastest' };
+		if (cmd === 'get_lab_catchup') return catchup;
+		return null;
+	});
+	const { applyServerSlice: seed } = await import('$lib/stores/server-base.svelte');
+	seed({ url: CARRIER, defaultUrl: CARRIER });
+	const { startRunRecorder } = await import('$lib/run-recorder');
+	startRunRecorder();
+	await vi.advanceTimersByTimeAsync(0);
+
+	const nav = (payload: unknown) => handlers['lab-nav']({ payload });
+	await vi.advanceTimersByTimeAsync(5000);
+	nav({ type: 'LabFinished' });
+	nav({ type: 'LabExited' });
+	await vi.advanceTimersByTimeAsync(0);
+
+	const post = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/lab/runs'));
+	expect(post).toBeDefined();
+	return JSON.parse(String((post as [string, RequestInit])[1].body)).difficulty;
+}
+
+const MID_LAB_EVENTS = [
+	{ type: 'PlazaEntered' },
+	{ type: 'RoomChanged', name: 'Estate Walkways' }
+];
+
+describe('run recorder difficulty', () => {
+	it('keep:regression a recorder started mid-lab records the lab detected from Client.txt over the saved difficulty', async () => {
+		const difficulty = await submittedDifficultyAfterCatchup({
+			events: MID_LAB_EVENTS,
+			in_lab: true,
+			layout_difficulty: 'Uber'
+		});
+		expect(difficulty).toBe('Uber');
+	});
+
+	it.each([
+		{ name: 'not in a lab', catchup: { events: MID_LAB_EVENTS, in_lab: false, layout_difficulty: 'Uber' } },
+		{ name: 'in a lab with no detected layout', catchup: { events: MID_LAB_EVENTS, in_lab: true, layout_difficulty: null } }
+	])('keep:critical a catch-up $name records the saved difficulty', async ({ catchup }) => {
+		expect(await submittedDifficultyAfterCatchup(catchup)).toBe('Merciless');
+	});
+});
