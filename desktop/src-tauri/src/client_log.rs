@@ -132,12 +132,11 @@ pub fn arm_at(now_ms: u64, line_ms: Option<u64>) -> u64 {
     }
 }
 
-/// Extract the area name from a "You have entered X." log line.
+/// Extract the area name from a system "You have entered X." log line.
 /// Returns None if the line doesn't match the pattern.
 pub fn parse_entered_area(line: &str) -> Option<&str> {
-    let marker = "You have entered ";
-    let start = line.find(marker)? + marker.len();
-    let rest = &line[start..];
+    let (_, message) = line.split_once("] ")?;
+    let rest = message.strip_prefix(": You have entered ")?;
     let end = rest.find('.')?;
     if end == 0 {
         return None;
