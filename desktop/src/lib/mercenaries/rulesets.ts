@@ -379,7 +379,7 @@ const GUIDE_A_MANYSHOT: MercRuleset = {
 	savedSearch: { league: ALLFLAME, hash: 'WvKGjV8Kfm' },
 	status: 'securable',
 	ilvlMin: 83,
-	floor: '5d+ with just Return on both',
+	floor: 'Allflame price: 5d+ with just Return on both',
 	groups: [
 		{
 			id: 'auras',
@@ -442,7 +442,7 @@ const GUIDE_A_KINETIST_V1: MercRuleset = {
 	savedSearch: { league: ALLFLAME, hash: 'LgkKKmllTn' },
 	status: 'securable',
 	ilvlMin: 83,
-	floor: '15d+ with just Return',
+	floor: 'Allflame price: 15d+ with just Return',
 	groups: [
 		{
 			id: 'auras',
@@ -499,7 +499,7 @@ const GUIDE_A_COMBATANT: MercRuleset = {
 	savedSearch: { league: ALLFLAME, hash: '5nd22GvKCa' },
 	status: 'securable',
 	ilvlMin: 83,
-	floor: '3d+ with just Return, much more with Multistrike/GMP',
+	floor: 'Allflame price: 3d+ with just Return, much more with Multistrike/GMP',
 	groups: [
 		{
 			id: 'auras',
