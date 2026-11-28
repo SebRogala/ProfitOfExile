@@ -1343,7 +1343,7 @@ describe('reasons', () => {
 	it('names the floor and the bonuses that fired on a worth verdict', () => {
 		const verdict = verdictOf(manyshotCapture([GMP]));
 		expect(sourceOf(verdict, 'guide-a').reasons).toEqual([
-			'Manyshot: Floor 5d+ with just Return on both',
+			'Manyshot: Floor Allflame price: 5d+ with just Return on both',
 			'Manyshot: Bonuses fired: Greater Multiple Projectiles (Tier 3)'
 		]);
 	});
