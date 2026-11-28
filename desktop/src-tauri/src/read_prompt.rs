@@ -174,6 +174,7 @@ impl ReadPromptState {
     }
     /// A confirming press found no mechanic and started the recalibration sweep.
     pub fn begin_sweep(&mut self) {
+        if self.accepted <= self.finished { return; }
         self.reading = false;
         self.recalibrating = true;
         self.no_match = false;
@@ -373,6 +374,12 @@ pub fn begin_sweep_in(state: &crate::AppState) -> bool {
 }
 pub fn begin_sweep(app: &AppHandle) {
     emit_if(app, begin_sweep_in(&app.state::<crate::AppState>()));
+}
+pub fn begin_sweep_for(app: &AppHandle, stamp: PressStamp) {
+    let changed = edit_in(&app.state::<crate::AppState>(), |p| {
+        if stamp.id == p.accepted { p.begin_sweep(); }
+    });
+    emit_if(app, changed);
 }
 pub fn accept_press(app: &AppHandle) -> PressStamp {
     let stamp = accept_press_in(&app.state::<crate::AppState>());

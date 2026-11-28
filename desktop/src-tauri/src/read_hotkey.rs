@@ -491,7 +491,7 @@ pub fn spawn_read_hotkey(app: tauri::AppHandle, cancel: std::sync::Arc<std::sync
             accepted(
                 stamp,
                 Box::new(move |outcome| crate::read_prompt::finish_read(&result_app, stamp, outcome)),
-                Box::new(move || crate::read_prompt::begin_sweep(&notice_app)),
+                Box::new(move || crate::read_prompt::begin_sweep_for(&notice_app, stamp)),
             )
         }, &mut |shortcut| crate::overlay_dismiss::publish(&app, shortcut), &mut |_| {
             use tauri::Emitter;
