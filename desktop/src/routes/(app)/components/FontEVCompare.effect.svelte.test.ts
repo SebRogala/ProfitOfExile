@@ -377,7 +377,7 @@ it.each([
 	{ name: 'cold winners', winners: 1, topEvaluated: undefined, expected: '1 in 40 (2%) ~310c', tip: 'Smite of Divine Judgement' }
 ])('keep:happy WI-5 Jackpot: $name shows its evaluation state', async ({ winners, topEvaluated, expected, tip }) => {
 	const safe = fontRow({ color: 'RED', pool: 96, pricedGems: 44, ev: 13, evRaw: 13, profit: 13, coverage: 44 / 96 });
-	const jackpot = { ...safe, winners, topEvaluated, pWin: 2, fontsToHit: 40, avgWinRaw: 310,
+	const jackpot = { ...safe, winners, topEvaluated, pWin: 0.02, fontsToHit: 40, avgWinRaw: 310,
 		jackpotGems: [{ name: 'Smite of Divine Judgement', chaos: 310 }] };
 	const target = await mountFontFixture(safe, '1/20', jackpot);
 	const cell = fontCell(target, '1/20', 'RED');
