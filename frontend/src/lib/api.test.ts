@@ -130,6 +130,18 @@ describe('fetchRankingsPage', () => {
 
 describe('fetchFontEV lens', () => {
 	it.each([
+		{ name: 'absent', fields: {}, expected: undefined },
+		{ name: 'present-empty', fields: { poolBreakdown: [], lowConfidenceGems: [] }, expected: [] }
+	])('keep:happy WI-5 absent lists: $name retains its listed-price availability', async ({ fields, expected }) => {
+		const row = { color: 'BLUE', pool: 88, pricedGems: 0, ev: null, evRaw: null, ...fields };
+		const result = await fetchWith({ safe: [row], premium: [row], jackpot: [row], best: null });
+		for (const rows of [result.safe, result.premium, result.jackpot]) {
+			expect(rows.map(({ poolBreakdown, lowConfidenceGems }) => ({ poolBreakdown, lowConfidenceGems })))
+				.toEqual([{ poolBreakdown: expected, lowConfidenceGems: expected }]);
+		}
+	});
+
+	it.each([
 		{ name: 'null', fields: { ev: null, evRaw: null, profit: null }, expected: null },
 		{ name: 'absent', fields: {}, expected: null },
 		{ name: 'zero', fields: { ev: 0, evRaw: 0, profit: 0 }, expected: 0 },
