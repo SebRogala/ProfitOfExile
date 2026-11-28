@@ -858,7 +858,7 @@ export function startReadPromptStore(): () => void {
 		let presentedSeq: number | null = null;
 		while (current()) {
 			try {
-				const snapshot = await invoke<ReadPromptSnapshot>('poll_read_prompt', { previous, presentedSeq });
+				const snapshot: ReadPromptSnapshot = await invoke<ReadPromptSnapshot>('poll_read_prompt', { previous, presentedSeq });
 				if (!current()) return;
 				ssot.readPrompt = snapshot;
 				await tick();
