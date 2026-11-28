@@ -18,7 +18,7 @@ pub(crate) fn report_read_editable_focus(window: tauri::WebviewWindow, editable:
     {
         let hwnd = window.hwnd().map_err(|e| e.to_string())?;
         let foreground = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
-        let blocked = editable || !active || foreground != hwnd;
+        let blocked = editable || !active || foreground.0 != hwnd.0;
         EDITABLE_FOCUS.lock().unwrap_or_else(|e| e.into_inner()).insert(hwnd.0 as isize, blocked);
     }
     #[cfg(not(windows))]
