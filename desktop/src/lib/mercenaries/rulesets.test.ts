@@ -245,6 +245,18 @@ describe('query transcription', () => {
 });
 
 describe('stat vocabulary', () => {
+	it.each([
+		['Herald of Ash', 'mercenary.skill_31201'],
+		['Abyssal Spray', 'mercenary.skill_50122'],
+		['Abyssal Spray Detonation', 'mercenary.skill_41822'],
+		['Power of the Depths', 'mercenary.skill_54593'],
+		['Vaal Smite', 'mercenary.skill_40606']
+	])('keep:regression resolves the 3.30 skill %s to %s', (name, id) => {
+		expect(
+			mercenaryStats.entries.filter((entry) => entry.text === name).map((entry) => entry.id)
+		).toEqual([id]);
+	});
+
 	it('names every entry with the GGG vocabulary text for its id', () => {
 		const occurrences = allRulesets().flatMap((ruleset) =>
 			ruleset.groups.flatMap((group) =>

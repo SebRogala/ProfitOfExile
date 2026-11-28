@@ -488,15 +488,36 @@ mod tests {
 
     /// The compiled-in fixture is the whole vocabulary and splits into the two
     /// halves the two read paths use. Counts are the committed file's
-    /// (decoded 2026-08-17, league Allflame); a re-fetch that changes them
+    /// (3.30 Covens refresh, POE-524); a re-fetch that changes them
     /// should fail here and be looked at, not absorbed silently.
     #[test]
-    fn the_vocabulary_parses_into_268_skills_and_266_supports() {
+    fn the_vocabulary_parses_into_273_skills_and_266_supports() {
         let v = vocab();
 
-        assert_eq!(v.stats().len(), 534);
-        assert_eq!(v.by_role(MercRole::Skill).count(), 268);
+        assert_eq!(v.stats().len(), 539);
+        assert_eq!(v.by_role(MercRole::Skill).count(), 273);
         assert_eq!(v.by_role(MercRole::Support).count(), 266);
+    }
+
+    mod keep_regression {
+        use super::*;
+
+        #[test]
+        fn covens_330_skill_names_match_their_exact_ids() {
+            let v = MercVocab::load().expect("the compiled-in vocabulary parses");
+            for (name, id) in [
+                ("Herald of Ash", "mercenary.skill_31201"),
+                ("Abyssal Spray", "mercenary.skill_50122"),
+                ("Abyssal Spray Detonation", "mercenary.skill_41822"),
+                ("Power of the Depths", "mercenary.skill_54593"),
+                ("Vaal Smite", "mercenary.skill_40606"),
+            ] {
+                let read = v.match_skill(name, &default_thresholds());
+
+                assert_eq!(read.ids, vec![id.to_string()], "{name}: {read:?}");
+                assert_eq!(read.state, ReadState::Matched, "{name}: {read:?}");
+            }
+        }
     }
 
     /// Family/tier derivation on the named D3 example plus the three grade
