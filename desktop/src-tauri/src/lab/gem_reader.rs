@@ -1608,4 +1608,160 @@ mod tests {
             }
         }
     }
+
+    /// The picker probe against `PendingGemRead::probe_in` through the real
+    /// dispatcher, beside a font options stub whose OCR matches.
+    mod picker_identity {
+        use super::*;
+        use crate::read_hotkey::{dispatch_press, prepare_press, DispatchOutcome, ReaderId};
+        use std::sync::Mutex;
+
+        struct PickerWorld {
+            state: AppState,
+            consumed: Mutex<Vec<ReaderId>>,
+        }
+
+        /// The gem picker reader as `LabGemReader::prepare` builds it: the
+        /// gem read identity captured at prepare.
+        struct GemPickerReader;
+        struct GemPickerPending(PendingGemRead);
+        impl ScreenReader<PickerWorld> for GemPickerReader {
+            fn id(&self) -> ReaderId { ReaderId::Gem }
+            fn prepare(&self, world: &PickerWorld, _press: &Press) -> Option<Box<dyn PendingRead<PickerWorld>>> {
+                Some(Box::new(GemPickerPending(PendingGemRead {
+                    identity: crate::lab::commands::gem_read_identity(&world.state),
+                    generation: 0,
+                    cursor: None,
+                    prompt: None,
+                    lab: None,
+                })))
+            }
+        }
+        impl PendingRead<PickerWorld> for GemPickerPending {
+            fn probe(&mut self, frame: &Arc<Capture>, world: &PickerWorld) -> Result<bool, String> {
+                Ok(self.0.probe_in(frame, &world.state))
+            }
+            fn consume(self: Box<Self>, _frame: Result<&Arc<Capture>, &str>, world: &PickerWorld) {
+                world.consumed.lock().unwrap().push(ReaderId::Gem);
+            }
+        }
+
+        /// The armed font options reader, matching as its OCR would on the
+        /// options list legible behind the picker.
+        struct FontOptionsStub;
+        struct FontOptionsPending;
+        impl ScreenReader<PickerWorld> for FontOptionsStub {
+            fn id(&self) -> ReaderId { ReaderId::Font }
+            fn prepare(&self, _world: &PickerWorld, _press: &Press) -> Option<Box<dyn PendingRead<PickerWorld>>> {
+                Some(Box::new(FontOptionsPending))
+            }
+        }
+        impl PendingRead<PickerWorld> for FontOptionsPending {
+            fn probe(&mut self, _frame: &Arc<Capture>, _world: &PickerWorld) -> Result<bool, String> { Ok(true) }
+            fn consume(self: Box<Self>, _frame: Result<&Arc<Capture>, &str>, world: &PickerWorld) {
+                world.consumed.lock().unwrap().push(ReaderId::Font);
+            }
+        }
+
+        /// POE-517's frame: the transfigure version picker over a legible
+        /// Divine Font options list, at 1080p.
+        fn picker_over_options() -> Capture {
+            Capture {
+                image: image::load_from_memory(include_bytes!("../../tests/fixtures/lab/font-picker-over-options-1080p.png")).unwrap(),
+                monitor_id: 3,
+                origin: (0, 0),
+                client: [0, 0, 1920, 1080],
+                timing: Default::default(),
+            }
+        }
+
+        fn armed_world() -> PickerWorld {
+            let state = test_app_state();
+            arm_gem_context(&state);
+            PickerWorld { state, consumed: Mutex::new(Vec::new()) }
+        }
+
+        /// One press on the picker frame; `between` runs after prepare and
+        /// before the grab.
+        fn press_on_picker(world: &PickerWorld, between: impl FnOnce(&AppState)) -> DispatchOutcome {
+            let prepared = prepare_press(Press { cursor: None }, Duration::ZERO, &[&GemPickerReader, &FontOptionsStub], world);
+            between(&world.state);
+            let mut grab = Some(picker_over_options());
+            dispatch_press(prepared, world, &mut |_| {}, &mut || Ok(grab.take().expect("one grab per press")),
+                &mut |_| panic!("no dismissal to await"))
+        }
+
+        mod keep_regression {
+            use super::*;
+
+            // keep:regression (POE-521): a gem lifecycle bump between prepare and
+            // the grab made `prepare_gem_context` refuse inside the gem reader's
+            // consume, after the dispatcher had already selected it on the picker
+            // probe; the press produced nothing instead of the font options read.
+            #[test]
+            fn a_stale_gem_identity_on_the_picker_frame_leaves_the_press_to_the_font_reader() {
+                let world = armed_world();
+
+                let outcome = press_on_picker(&world, |state| {
+                    state.lab_scan.gem_lifecycle.fetch_add(1, Ordering::SeqCst);
+                });
+
+                assert_eq!(outcome, DispatchOutcome::Selected(ReaderId::Font),
+                    "a gem read its context preparation will refuse must not take the press");
+                assert_eq!(*world.consumed.lock().unwrap(), vec![ReaderId::Font]);
+            }
+        }
+
+        mod keep_critical {
+            use super::*;
+
+            /// Silent consequence: the picker frame read as font options shows
+            /// the options card for a gem choice the player is making (POE-517).
+            #[test]
+            fn a_current_gem_identity_on_the_picker_frame_selects_the_gem_reader() {
+                let world = armed_world();
+
+                let outcome = press_on_picker(&world, |_| {});
+
+                assert_eq!(outcome, DispatchOutcome::Selected(ReaderId::Gem));
+                assert_eq!(*world.consumed.lock().unwrap(), vec![ReaderId::Gem]);
+            }
+
+            /// Silent consequence: a probe that arms, clears or re-mints the gem
+            /// context on a frame another reader then reads drops the held gems
+            /// the comparator shows, or tags later reads with a context the
+            /// player never opened.
+            #[test]
+            fn probing_the_picker_frame_leaves_the_gem_context_and_held_gems_unchanged() {
+                let cases: [(&str, fn(&AppState), fn(&AppState)); 3] = [
+                    ("current identity, armed context", |_| {}, |_| {}),
+                    ("current identity, context closed by FontClosed", |state| { disarm_gem_context(state, false); }, |_| {}),
+                    ("stale identity, armed context", |_| {}, |state| { state.lab_scan.gem_lifecycle.fetch_add(1, Ordering::SeqCst); }),
+                ];
+
+                for (case, before_prepare, after_prepare) in cases {
+                    let state = test_app_state();
+                    with_refs(&state, fixture_refs().clone());
+                    let token = arm_gem_context(&state);
+                    assert!(committed(press(&state, token, &fixture_frame(), None, &[])).is_some(), "{case}: control: a held read");
+                    before_prepare(&state);
+                    let mut read = PendingGemRead {
+                        identity: crate::lab::commands::gem_read_identity(&state),
+                        generation: 0,
+                        cursor: None,
+                        prompt: None,
+                        lab: None,
+                    };
+                    after_prepare(&state);
+                    let snapshot = |state: &AppState| (state.lab_scan.gem_context.load(Ordering::SeqCst), held(state), last(state));
+                    let before = snapshot(&state);
+                    assert!(!before.1.is_empty() && before.2.is_some(), "{case}: control: gems are held");
+
+                    read.probe_in(&picker_over_options(), &state);
+
+                    assert_eq!(snapshot(&state), before, "{case}: a probe changes no gem context state");
+                }
+            }
+        }
+    }
 }
