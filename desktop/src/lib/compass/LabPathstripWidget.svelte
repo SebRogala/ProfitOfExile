@@ -18,7 +18,7 @@
 		visitedRoomIds = [];
 	}
 
-	function onNavEvent(event: LabNavEvent, navAfter: NavState) {
+	function onNavEvent(event: LabNavEvent, navAfter: NavState, inTrial: boolean) {
 		switch (event.type) {
 			case 'PlazaEntered':
 				currentRoomId = null;
@@ -44,8 +44,7 @@
 				}
 				currentRoomId = nextRoomId;
 				// Hide during Izaro fights, show again on regular rooms
-				const room = navAfter.currentRoom ? navAfter.roomById.get(navAfter.currentRoom) : null;
-				hidden = room?.name.toLowerCase() === "aspirant's trial";
+				hidden = inTrial;
 				break;
 			}
 			case 'LabFinished':

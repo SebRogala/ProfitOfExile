@@ -36,7 +36,7 @@
 	function resetTimer() { timer = timerReset_fn(timer); elapsed = 0; }
 
 	// --- Event handling ---
-	function onNavEvent(event: LabNavEvent, navAfter: NavState) {
+	function onNavEvent(event: LabNavEvent, navAfter: NavState, inTrial: boolean) {
 		switch (event.type) {
 			case 'PlazaEntered':
 				resetTimer();
@@ -47,8 +47,7 @@
 					startTimer();
 				}
 				// Hide during Izaro fights
-				const room = navAfter.currentRoom ? navAfter.roomById.get(navAfter.currentRoom) : null;
-				hidden = room?.name.toLowerCase() === "aspirant's trial";
+				hidden = inTrial;
 				break;
 			}
 			case 'LabFinished':

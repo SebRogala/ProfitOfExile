@@ -104,7 +104,7 @@
 		logToApp(`[compass] room=${room?.name} id=${navAfter.currentRoom} route=${navAfter.plannedRoute.slice(0,4).join('>')} navDir=${doorsAfter.exit} targetDir=${doorsAfter.exit} entryDir=${doorsAfter.entry}`);
 	}
 
-	function onNavEvent(event: LabNavEvent, navAfter: NavState) {
+	function onNavEvent(event: LabNavEvent, navAfter: NavState, inTrial: boolean) {
 		logRoom(navAfter);
 
 		switch (event.type) {
@@ -118,8 +118,7 @@
 				}
 				shrineTakenInRoom = false;
 				// Hide during Izaro fights, show again on regular rooms
-				const room = navAfter.currentRoom ? navAfter.roomById.get(navAfter.currentRoom) : null;
-				hidden = room?.name.toLowerCase() === "aspirant's trial";
+				hidden = inTrial;
 				break;
 			}
 			case 'DarkshrineActivated':

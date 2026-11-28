@@ -59,7 +59,7 @@ export type LabSessionPorts = {
 };
 
 export type LabSessionHooks = {
-	onNavEvent?(event: LabNavEvent, navAfter: NavState): void;
+	onNavEvent?(event: LabNavEvent, navAfter: NavState, inTrial: boolean): void;
 	onReset?(): void;
 	onSettings?(settings: CompassSettings): void;
 };
@@ -108,7 +108,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 	let pendingLayoutReset = $state(false);
 	let settings = $state.raw<CompassSettings | null>(null);
 
-	let history: { event: LabNavEvent; navAfter: NavState }[] = [];
+	let history: { event: LabNavEvent; navAfter: NavState; inTrial: boolean }[] = [];
 	const subscribers = new Set<LabSessionHooks>();
 	let refcount = 0;
 	let lifetime = 0;
@@ -198,9 +198,10 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 			setMissingLayout(null);
 		}
 		const next = handleNavEvent(navState, event as NavEvent);
+		const inTrial = event.type === 'RoomChanged' && event.name.toLowerCase() === "aspirant's trial";
 		navState = next;
-		history.push({ event, navAfter: next });
-		for (const hooks of [...subscribers]) hooks.onNavEvent?.(event, next);
+		history.push({ event, navAfter: next, inTrial });
+		for (const hooks of [...subscribers]) hooks.onNavEvent?.(event, next, inTrial);
 		if (event.type === 'LabExited' && pendingLayoutReset) applyLayoutReset();
 	}
 
@@ -369,7 +370,7 @@ export function createLabSession(overrides: Partial<LabSessionPorts> = {}) {
 	 * callers acquire inside `untrack`.
 	 */
 	function acquire(hooks: LabSessionHooks): () => void {
-		for (const { event, navAfter } of history) hooks.onNavEvent?.(event, navAfter);
+		for (const { event, navAfter, inTrial } of history) hooks.onNavEvent?.(event, navAfter, inTrial);
 		if (settings) hooks.onSettings?.(settings);
 		subscribers.add(hooks);
 		refcount++;
