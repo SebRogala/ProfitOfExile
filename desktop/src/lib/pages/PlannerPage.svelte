@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
 	import { getServerUrl } from '$lib/stores/server-base.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import RoomEditor from '$lib/compass/RoomEditor.svelte';
@@ -28,6 +29,10 @@
 	let error = $state('');
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let layoutRequest = 0;
+	let settingsLoaded = $state(false);
+	// False while `difficulty` comes from Rust's lab detection: the overlays
+	// already follow it, and an echo would come back as another LayoutChanged.
+	let announceLayout = true;
 
 	const difficultyOptions = [
 		{ value: 'Uber', label: 'Uber Lab' },
@@ -110,23 +115,44 @@
 	});
 
 	$effect(() => {
-		// Load saved preferences
-		invoke<any>('get_compass_settings')
-			.then((s) => {
-				if (s?.strategy) strategyValue = s.strategy;
-				if (s?.difficulty) difficulty = s.difficulty;
-				if (s?.mode) compassMode = s.mode;
-				if (s?.shrine_warn_enabled !== undefined) shrineEnabled = s.shrine_warn_enabled;
-				if (s?.shrine_warn_size) shrineSize = s.shrine_warn_size;
-				if (s?.shrine_warn_corner) shrineCorner = s.shrine_warn_corner;
-				if (s?.shrine_warn_on_take) shrineOnTake = s.shrine_warn_on_take;
-			})
-			.catch(() => {});
+		// Load saved preferences; the detected lab layout outranks the saved difficulty.
+		Promise.all([
+			invoke<any>('get_compass_settings').catch(() => null),
+			invoke<{ in_lab?: boolean; layout_difficulty?: string | null }>('get_lab_catchup').catch(() => null),
+		]).then(([s, catchup]) => {
+			if (s?.strategy) strategyValue = s.strategy;
+			if (s?.difficulty) difficulty = s.difficulty;
+			if (s?.mode) compassMode = s.mode;
+			if (s?.shrine_warn_enabled !== undefined) shrineEnabled = s.shrine_warn_enabled;
+			if (s?.shrine_warn_size) shrineSize = s.shrine_warn_size;
+			if (s?.shrine_warn_corner) shrineCorner = s.shrine_warn_corner;
+			if (s?.shrine_warn_on_take) shrineOnTake = s.shrine_warn_on_take;
+			if (catchup?.in_lab && catchup.layout_difficulty) applyDetectedDifficulty(catchup.layout_difficulty);
+			settingsLoaded = true;
+		});
 	});
+
+	$effect(() => {
+		const unlistenPromise = listen<{ type?: string; difficulty?: string }>('lab-nav', (event) => {
+			if (event.payload?.type === 'LayoutChanged' && event.payload.difficulty) {
+				applyDetectedDifficulty(event.payload.difficulty);
+			}
+		});
+		return () => {
+			unlistenPromise.then((unlisten) => unlisten());
+		};
+	});
+
+	function applyDetectedDifficulty(detected: string) {
+		const next = detected === 'Eternal' ? 'Uber' : detected;
+		if (next === difficulty) return;
+		announceLayout = false;
+		difficulty = next;
+	}
 
 	// Fetch layout when serverUrl or difficulty changes
 	$effect(() => {
-		if (!serverUrl) return;
+		if (!serverUrl || !settingsLoaded) return;
 		const url = serverUrl;
 		const diff = difficulty;
 		fetchLayout(url, diff);
@@ -134,6 +160,7 @@
 
 	async function fetchLayout(url: string, diff: string) {
 		const request = ++layoutRequest;
+		const announce = announceLayout;
 		loading = true;
 		error = '';
 		try {
@@ -142,7 +169,7 @@
 			if (!res.ok) {
 				if (res.status === 404) {
 					navState = createNavState();
-					invoke('emit_lab_nav', { eventJson: { type: 'LayoutChanged', difficulty: diff } }).catch(() => {});
+					if (announce) invoke('emit_lab_nav', { eventJson: { type: 'LayoutChanged', difficulty: diff } }).catch(() => {});
 					return;
 				}
 				throw new Error(`Server returned ${res.status}`);
@@ -151,7 +178,7 @@
 			if (request !== layoutRequest) return;
 			navState = loadLayout(navState, layout);
 			// Notify overlays that layout changed
-			invoke('emit_lab_nav', { eventJson: { type: 'LayoutChanged', difficulty: diff } }).catch(() => {});
+			if (announce) invoke('emit_lab_nav', { eventJson: { type: 'LayoutChanged', difficulty: diff } }).catch(() => {});
 		} catch (e: any) {
 			if (request !== layoutRequest) return;
 			error = e?.message || 'Failed to fetch layout';
@@ -185,6 +212,7 @@
 	}
 
 	function handleDifficultyChange() {
+		announceLayout = true;
 		invoke('set_compass_difficulty', { difficulty }).catch(() => {});
 		// Effect will refetch and emit LayoutChanged
 	}
