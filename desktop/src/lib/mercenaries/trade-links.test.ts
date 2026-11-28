@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { derivedSearchUrl, rulesetQuery, savedSearchUrl, type TradeQuery } from './trade-links';
+import { derivedSearchUrl, liveSavedSearchUrl, rulesetQuery, savedSearchUrl, type TradeQuery } from './trade-links';
 import {
 	MERC_SOURCES,
 	allRulesets,
@@ -101,6 +101,45 @@ function searchPathSegments(url: string): { league: string; hash: string } {
 	expect(extra).toEqual([]);
 	return { league: decodeURIComponent(league), hash: decodeURIComponent(hash) };
 }
+
+describe('liveSavedSearchUrl', () => {
+	it.each(['Covens', 'Hardcore Covens'])(
+		'keep:regression addresses a surviving hash in the live %s league',
+		(league) => {
+			expect(liveSavedSearchUrl({ league: 'Allflame', hash: 'WvKGjV8Kfm' }, league)).toBe(
+				`https://www.pathofexile.com/trade/search/${encodeURIComponent(league)}/WvKGjV8Kfm`
+			);
+		}
+	);
+
+	it('keep:regression withholds a saved search while the live league is unresolved', () => {
+		expect(liveSavedSearchUrl({ league: 'Allflame', hash: 'WvKGjV8Kfm' }, null)).toBeNull();
+	});
+
+	it('keep:happy an authored ruleset has no saved search', () => {
+		expect(liveSavedSearchUrl(undefined, 'Covens')).toBeNull();
+	});
+
+	it.each(['Kld4gM7yi5', '7nRvBzl2S5'])(
+		'keep:critical suppresses dead %s so a player cannot trust an unusable comp link',
+		(hash) => {
+			expect(liveSavedSearchUrl({ league: 'Allflame', hash }, 'Covens')).toBeNull();
+		}
+	);
+
+	it('keep:regression preserves every saved hash except the two observed dead hashes', () => {
+		const linked = allRulesets().flatMap((ruleset) => {
+			if (!ruleset.savedSearch) return [];
+			return [[ruleset.savedSearch.hash, liveSavedSearchUrl(ruleset.savedSearch, 'Covens')]];
+		});
+		expect(linked).toEqual(allRulesets().flatMap((ruleset) => {
+			if (!ruleset.savedSearch) return [];
+			const { hash } = ruleset.savedSearch;
+			return [[hash, ['Kld4gM7yi5', '7nRvBzl2S5'].includes(hash)
+				? null : `https://www.pathofexile.com/trade/search/Covens/${hash}`]];
+		}));
+	});
+});
 
 describe('savedSearchUrl', () => {
 	it('puts the caller-supplied league in the trade search path', () => {

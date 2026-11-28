@@ -53,6 +53,13 @@ export function savedSearchUrl(savedSearch: MercSavedSearch): string {
 	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(savedSearch.league)}/${savedSearch.hash}`;
 }
 
+export function liveSavedSearchUrl(
+	_savedSearch: MercSavedSearch | undefined,
+	_league: string | null
+): string | null {
+	return null;
+}
+
 /** One stat filter as the trade site serialises it. `disabled` is absent when the filter is on. */
 export interface TradeStatFilter {
 	id: string;

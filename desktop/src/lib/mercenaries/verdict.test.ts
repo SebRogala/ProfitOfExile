@@ -1392,11 +1392,40 @@ describe('reasons', () => {
 });
 
 describe('derived links follow the active league', () => {
-	it('builds the derived search for the league being played, not the league the search was saved in', () => {
+	it('keep:regression builds the derived search for the league being played, not the league the search was saved in', () => {
 		const manyshot = rulesetOf(verdictOf(manyshotCapture()), 'guide-a', 'guide-a-manyshot');
 		expect(new URL(manyshot.derivedUrl as string).pathname).toBe('/trade/search/Mirage');
-		expect(manyshot.savedUrl).toContain('/trade/search/Allflame/WvKGjV8Kfm');
+		expect(manyshot.savedUrl).toContain('/trade/search/Mirage/WvKGjV8Kfm');
 	});
+
+	it.each(['Covens', 'Hardcore Covens'])(
+		'keep:regression returns the surviving saved search in live %s',
+		(league) => {
+			const result = rulesetOf(verdictOf(manyshotCapture(), ALL_SOURCES, league), 'guide-a', 'guide-a-manyshot');
+			expect(result.savedUrl).toBe(`https://www.pathofexile.com/trade/search/${encodeURIComponent(league)}/WvKGjV8Kfm`);
+		}
+	);
+
+	it('keep:regression returns no saved URL without a resolved league', () => {
+		const result = rulesetOf(verdictOf(manyshotCapture(), ALL_SOURCES, null), 'guide-a', 'guide-a-manyshot');
+		expect(result.savedUrl).toBeNull();
+	});
+
+	it.each([
+		['guide-b', 'guide-b-frost-blades-mid', 'Kld4gM7yi5', frostBladesCapture],
+		['guide-b', 'guide-b-kinetist-mv', '7nRvBzl2S5', kinetistCapture],
+		['guide-d', 'guide-d-kinetist-20d', '7nRvBzl2S5', kinetistCapture]
+	] as const)(
+		'keep:critical %s %s suppresses %s so a player cannot trust an unusable comp link',
+		(source, id, _hash, capture) => {
+			const resolved = verdictOf(capture(), ALL_SOURCES, 'Covens');
+			const result = rulesetOf(resolved, source, id);
+			const beforePolicy = rulesetOf(verdictOf(capture(), ALL_SOURCES, 'Mirage'), source, id);
+			expect.soft(result.savedUrl).toBeNull();
+			expect(new URL(result.derivedUrl as string).pathname).toBe('/trade/search/Covens');
+			expect(derivedQueryOf(result.derivedUrl)).toEqual(derivedQueryOf(beforePolicy.derivedUrl));
+		}
+	);
 
 	it('reports no derived link at all while the league is unknown', () => {
 		const manyshot = rulesetOf(
@@ -1758,9 +1787,9 @@ describe('guide C — a ruleset transcribed from prose', () => {
 	// The control for that null: a ruleset in the SAME verdict that does have a
 	// hash still gets its link, so the null is the authored case and not the
 	// engine having stopped building saved links.
-	it('still reports the saved link of a ruleset that has a hash', () => {
+	it('keep:regression still reports the saved link of a ruleset that has a hash', () => {
 		const manyshot = rulesetOf(verdictOf(idealKinetist()), 'guide-a', 'guide-a-manyshot');
-		expect(manyshot.savedUrl).toBe('https://www.pathofexile.com/trade/search/Allflame/WvKGjV8Kfm');
+		expect(manyshot.savedUrl).toBe('https://www.pathofexile.com/trade/search/Mirage/WvKGjV8Kfm');
 	});
 
 	// The derived link is what survives the missing hash — it is built from the
