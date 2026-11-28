@@ -35,6 +35,9 @@ export function readPromptNotice(source: {
 	readPrompt: ReadPromptSnapshot;
 	readHotkey: ReadHotkeySettings | null;
 }): OverlayNoticeProps | null {
+	if (source.readPrompt.reading) return {
+		kind: 'info', header: 'OCR triggered, detecting mechanics', body: '', progress: true
+	};
 	if (source.readPrompt.recalibrating) return {
 		kind: 'info', header: 'No mechanics detected', body: 'Running a recalibration sweep…', progress: true
 	};

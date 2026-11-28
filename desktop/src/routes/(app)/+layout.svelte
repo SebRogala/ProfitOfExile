@@ -2,6 +2,7 @@
 	import '../../app.css';
 	import { onDestroy } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
+	import { reportEditableFocus } from '$lib/read-prompt/editable-focus';
 	import { emitTo, listen } from '@tauri-apps/api/event';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import TopBar from '$lib/components/TopBar.svelte';
@@ -58,6 +59,9 @@
 	import PrivacyGate from '$lib/components/PrivacyGate.svelte';
 
 	let { children } = $props();
+	$effect(() => reportEditableFocus((editable) => {
+		void invoke('report_read_editable_focus', { editable }).catch(console.error);
+	}));
 
 	const bossLootPorts: PagePorts = {
 		profiles: createNativeProfiles(), stats: createNativeStats(), runs: createNativeRuns(),

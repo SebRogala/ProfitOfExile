@@ -1354,6 +1354,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
+            focus::report_read_editable_focus,
             get_status,
             privacy::get_privacy_state,
             privacy::accept_privacy_revision,

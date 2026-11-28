@@ -393,8 +393,9 @@ pub struct Sample {
     pub dismiss: Vec<Shortcut>,
 }
 
-pub(crate) fn read_eligible(_foreground: crate::FocusState, _editable_focus: bool) -> bool {
-    false
+pub(crate) fn read_eligible(foreground: crate::FocusState, editable_focus: bool) -> bool {
+    matches!(foreground, crate::FocusState::Game)
+        || (matches!(foreground, crate::FocusState::OwnWindow) && !editable_focus)
 }
 
 /// The key-sampling side: prepares eligible readers at each press and queues it, so
@@ -414,7 +415,8 @@ pub fn run_sampler<C>(
     let mut dismiss_poll = DismissPoll::default();
     while let Some(s) = sample() {
         let dismissed = dismiss_poll.poll(&s, on_dismiss);
-        if let Some(press) = poll.poll(&s.down, s.foreground, &s.settings.shortcut, cursor) {
+        let eligible = s.foreground_kind.map_or(s.foreground, |kind| read_eligible(kind, s.editable_focus));
+        if let Some(press) = poll.poll(&s.down, eligible, &s.settings.shortcut, cursor) {
             let accepted = on_accept();
             let delay = std::time::Duration::from_millis(u64::from(s.settings.delay_ms));
             let mut armed = prepare_press(press, delay, readers, ctx);
@@ -528,7 +530,8 @@ mod platform {
             })
             .collect();
         let foreground = state.game_in_foreground.load(std::sync::atomic::Ordering::SeqCst);
-        Some(Sample { down, foreground, foreground_kind: None, editable_focus: false, settings, exchange, dismiss })
+        let (kind, editable_focus) = crate::focus::read_focus();
+        Some(Sample { down, foreground, foreground_kind: Some(kind), editable_focus, settings, exchange, dismiss })
     }
     pub fn cursor() -> Option<(i32, i32)> {
         let mut p = windows::Win32::Foundation::POINT::default();

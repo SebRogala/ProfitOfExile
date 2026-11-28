@@ -162,3 +162,18 @@ region. Its placement therefore carries no read-region clearance guard. As
 with the other members, Linux tests do not prove the Windows behavior; the
 OVERLAY-GUIDE smoke item "The read prompt, per mechanic" checks that the
 prompt is absent from a debug frame dump.
+
+## Amendment: reads from our foreground windows (2026-11-28)
+
+Accepted for POE-516 under the Operator's capture guard: the read key may run
+while our main window or an overlay is foreground, but must never read app
+pixels. Membership now also includes `main`, `overlay`, `lab`, `temple` and
+`overlay-region-editor`, alongside the previously excluded windows. The
+`capture_exclusion_labels` function owns the complete membership list.
+
+Every existing app webview must resolve to an excluded HWND before the single
+game-monitor grab. An unknown label, failed HWND lookup or refused affinity
+fails the read; acquired holds are restored on success and error. Affinity
+remains per grab. Native pixel exclusion and ordinary screenshot restoration
+remain Operator Windows UAT; deterministic Linux tests establish refusal and
+hold restoration only.

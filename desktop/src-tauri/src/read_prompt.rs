@@ -91,6 +91,7 @@ pub struct ReadPromptState {
     arm_generation: u64,
     accepted: u64,
     finished: u64,
+    reading: bool,
 }
 
 impl ReadPromptState {
@@ -153,7 +154,7 @@ impl ReadPromptState {
                     .map(|arm| arm.mechanic)
             },
             no_match: self.no_match,
-            reading: false,
+            reading: self.reading,
             recalibrating: self.recalibrating,
             seq: self.seq,
             gem_uncertain: self.gem_uncertain,
@@ -162,6 +163,9 @@ impl ReadPromptState {
     }
     pub fn accept_press(&mut self) -> PressStamp {
         self.accepted += 1;
+        self.reading = true;
+        self.recalibrating = false;
+        self.seq += 1;
         PressStamp {
             id: self.accepted,
             arm_generation: self.arm_generation,
@@ -170,6 +174,7 @@ impl ReadPromptState {
     }
     /// A confirming press found no mechanic and started the recalibration sweep.
     pub fn begin_sweep(&mut self) {
+        self.reading = false;
         self.recalibrating = true;
         self.no_match = false;
         self.recalibrate_offer = false;
@@ -197,9 +202,11 @@ impl ReadPromptState {
     }
     pub fn finish_read(&mut self, stamp: PressStamp, outcome: crate::read_hotkey::DispatchOutcome) {
         use crate::read_hotkey::DispatchOutcome;
-        if std::mem::take(&mut self.recalibrating) { self.seq += 1; }
         if stamp.id <= self.finished { return; }
         self.finished = stamp.id;
+        if stamp.id != self.accepted { return; }
+        self.reading = false;
+        if std::mem::take(&mut self.recalibrating) { self.seq += 1; }
         if stamp.arm_generation != self.arm_generation { return; }
         match outcome {
             DispatchOutcome::NoMatch => {
@@ -368,7 +375,9 @@ pub fn begin_sweep(app: &AppHandle) {
     emit_if(app, begin_sweep_in(&app.state::<crate::AppState>()));
 }
 pub fn accept_press(app: &AppHandle) -> PressStamp {
-    accept_press_in(&app.state::<crate::AppState>())
+    let stamp = accept_press_in(&app.state::<crate::AppState>());
+    emit_if(app, true);
+    stamp
 }
 pub fn finish_read(app: &AppHandle, stamp: PressStamp, outcome: crate::read_hotkey::DispatchOutcome) {
     let state = app.state::<crate::AppState>();

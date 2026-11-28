@@ -338,18 +338,29 @@ pub(crate) fn recalibrate_client_diagnostic(
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
-fn capture_exclusion_labels() -> &'static [&'static str] {
-    &[]
+const fn capture_exclusion_labels() -> &'static [&'static str] {
+    &["main", "overlay", "lab", "temple", "mercenary", "loot", "prompt", "overlay-preview", "overlay-region-editor"]
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
 fn capture_with_exclusions<T>(
-    _windows: &[isize],
-    _acquire: impl FnMut(isize) -> bool,
-    _release: impl FnMut(isize),
-    _grab: impl FnOnce() -> Result<T, String>,
+    windows: &[isize],
+    mut acquire: impl FnMut(isize) -> bool,
+    release: impl FnMut(isize),
+    grab: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
-    Err(String::new())
+    struct ExcludedFromCapture<R: FnMut(isize)> { held: Vec<isize>, release: R }
+    impl<R: FnMut(isize)> Drop for ExcludedFromCapture<R> {
+        fn drop(&mut self) {
+            for hwnd in self.held.drain(..) { (self.release)(hwnd); }
+        }
+    }
+    let mut excluded = ExcludedFromCapture { held: Vec::new(), release };
+    for &hwnd in windows {
+        if !acquire(hwnd) { return Err(format!("Capture refused: cannot exclude app window {hwnd}")); }
+        excluded.held.push(hwnd);
+    }
+    grab()
 }
 
 #[cfg(windows)]
@@ -383,7 +394,7 @@ mod platform {
     /// measured 2026-09-07 through Tauri's `contentProtected`, which sets the
     /// same flag: the strip vanished from the reader's dump AND from the
     /// player's own screenshots. The second half is the cost, so the flag is
-    /// not held permanently: [`ExcludedFromCapture`] sets it just before a
+    /// not held permanently: `capture_with_exclusions` sets it just before a
     /// grab and clears it right after; per window handle, the first of any
     /// overlapping grabs sets it and the last one clears it
     /// ([`AffinityLedger`]). Between grabs
@@ -396,14 +407,7 @@ mod platform {
     /// The read prompt (`prompt`, POE-388) is up exactly when a read key press
     /// is expected, so it is listed rather than placed clear of every module's
     /// read regions (ADR-023).
-    const EXCLUDED_WHILE_GRABBING: &[&str] = &["mercenary", "overlay-preview", "overlay-region-editor", "loot", "prompt"];
-
-    /// The affinity held for one grab. `Drop` releases this guard's hold and
-    /// the last holder clears it, so an error between `hold` and the end of
-    /// the grab cannot leave a listed window out of screenshots.
-    struct ExcludedFromCapture {
-        hwnds: Vec<HWND>,
-    }
+    const EXCLUDED_WHILE_GRABBING: &[&str] = super::capture_exclusion_labels();
 
     /// Reported once per process, not once per grab: the reader grabs every
     /// few seconds, and a failure here is a configuration fact, not news.
@@ -446,64 +450,38 @@ mod platform {
     static CLIENT_READ_FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
     static CLIENT_READ_TIMED: AtomicBool = AtomicBool::new(false);
 
-    impl ExcludedFromCapture {
-        fn hold(app: &AppHandle) -> Self {
-            let mut hwnds = Vec::new();
-            for label in EXCLUDED_WHILE_GRABBING {
-                let Some(window) = app.get_webview_window(label) else { continue };
-                // `hwnd()` is a blocking round-trip to the event loop (see the
-                // click-through setup in `lib.rs`); one per grab is a few
-                // hundred microseconds against a full-monitor copy.
-                let hwnd = match window.hwnd() {
-                    Ok(hwnd) => HWND(hwnd.0 as *mut _),
-                    Err(e) => {
-                        report_once(app, format!("overlay '{label}' HWND lookup failed: {e}"));
-                        continue;
-                    }
-                };
-                // Only the first holder calls the platform; its result is
-                // reported after the ledger lock is released.
-                let mut set_result = None;
-                let held = LEDGER.acquire(hwnd.0 as isize, || {
-                    let result = unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) };
-                    let ok = result.is_ok();
-                    set_result = Some(result);
-                    ok
-                });
-                match set_result {
-                    Some(Ok(())) => {
+    fn capture_excluded<T>(app: &AppHandle, grab: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        let mut hwnds = Vec::new();
+        for (label, window) in app.webview_windows() {
+            if !EXCLUDED_WHILE_GRABBING.contains(&label.as_str()) {
+                return Err(format!("Capture refused: unlisted app window '{label}'"));
+            }
+            let hwnd = window.hwnd().map_err(|e| format!("Capture refused: '{label}' HWND lookup failed: {e}"))?;
+            hwnds.push(hwnd.0 as isize);
+        }
+        super::capture_with_exclusions(&hwnds, |raw| {
+            LEDGER.acquire(raw, || {
+                let hwnd = HWND(raw as *mut _);
+                match unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) } {
+                    Ok(()) => {
                         if !AFFINITY_ARMED_REPORTED.swap(true, Ordering::Relaxed) {
-                            crate::app_log(
-                                app,
-                                format!("capture: overlay '{label}' is excluded from each grab while it is taken"),
-                            );
+                            crate::app_log(app, "capture: app windows excluded while each grab is taken".into());
                         }
+                        true
                     }
-                    Some(Err(e)) => report_once(
-                        app,
-                        format!("overlay '{label}' could not be excluded from capture: {e}"),
-                    ),
-                    None => {}
+                    Err(e) => {
+                        report_once(app, format!("app window exclusion refused: {e}"));
+                        false
+                    }
                 }
-                if held {
-                    hwnds.push(hwnd)
+            })
+        }, |raw| {
+            LEDGER.release(raw, || {
+                if let Err(e) = unsafe { SetWindowDisplayAffinity(HWND(raw as *mut _), WDA_NONE) } {
+                    crate::app_log(app, format!("capture: app window affinity restoration failed: {e}"));
                 }
-            }
-            Self { hwnds }
-        }
-    }
-
-    impl Drop for ExcludedFromCapture {
-        fn drop(&mut self) {
-            for hwnd in &self.hwnds {
-                // A clear that fails leaves the window out of screenshots until
-                // the next grab's clear; there is no `app` here to log with,
-                // and the set half of the same call already reports.
-                LEDGER.release(hwnd.0 as isize, || {
-                    let _ = unsafe { SetWindowDisplayAffinity(*hwnd, WDA_NONE) };
-                });
-            }
-        }
+            });
+        }, grab)
     }
 
     /// Guard 6 of the overlay guide, without a line per grab.
@@ -511,7 +489,7 @@ mod platform {
         if AFFINITY_FAILURE_REPORTED.swap(true, Ordering::Relaxed) {
             return;
         }
-        crate::app_log(app, format!("capture: {msg} — the listed overlay is IN every grab"));
+        crate::app_log(app, format!("capture: {msg} — refusing the grab"));
     }
 
     /// Capture the display the game is on — or the primary one until something
@@ -580,20 +558,19 @@ mod platform {
         let mut timing = GrabTiming::default();
         // Held for exactly this copy — see `EXCLUDED_WHILE_GRABBING`.
         let phase = Instant::now();
-        let excluded = ExcludedFromCapture::hold(app);
-        timing.exclude_ms = ms(phase);
         let (game_client, revision) = *GAME_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
-        let phase = Instant::now();
-        let grabbed = monitor.capture_image();
-        timing.grab_ms = ms(phase);
-        let phase = Instant::now();
-        drop(excluded);
-        timing.restore_ms = ms(phase);
-        let img = grabbed.map_err(|e| format!("Screen capture failed: {}", e))?;
+        let img = capture_excluded(app, || {
+            timing.exclude_ms = ms(phase);
+            let grab_started = Instant::now();
+            let result = monitor.capture_image().map_err(|e| format!("Screen capture failed: {e}"));
+            timing.grab_ms = ms(grab_started);
+            result
+        })?;
+        timing.restore_ms = ms(phase).saturating_sub(timing.exclude_ms + timing.grab_ms);
 
         let size = img.dimensions();
         // Lock order is monitor, raw client, rendered client. No lock spans an
-        // overlay event-loop round trip in ExcludedFromCapture.
+        // overlay event-loop round trip in capture_excluded.
         let client = select_client_with_diagnostic(
             &CLIENT_DIAGNOSTICS, game_client, origin, size,
             || {

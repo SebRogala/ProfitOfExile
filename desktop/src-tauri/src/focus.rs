@@ -8,6 +8,47 @@ use tauri::Emitter;
 use crate::{capture, emit_status, overlay_hook, FocusState};
 use crate::AppState;
 
+#[cfg(windows)]
+static EDITABLE_FOCUS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<isize, bool>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+#[tauri::command]
+pub(crate) fn report_read_editable_focus(window: tauri::WebviewWindow, editable: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        EDITABLE_FOCUS.lock().unwrap_or_else(|e| e.into_inner()).insert(hwnd.0 as isize, editable);
+    }
+    #[cfg(not(windows))]
+    let _ = (window, editable);
+    Ok(())
+}
+
+#[cfg(windows)]
+pub(crate) fn read_focus() -> (FocusState, bool) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId, GetClassNameW};
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        let mut pid = 0;
+        if hwnd.0.is_null() || GetWindowThreadProcessId(hwnd, Some(&mut pid)) == 0 {
+            return (FocusState::Other, true);
+        }
+        if pid == std::process::id() {
+            let editable = EDITABLE_FOCUS.lock().unwrap_or_else(|e| e.into_inner())
+                .get(&(hwnd.0 as isize)).copied().unwrap_or(true);
+            return (FocusState::OwnWindow, editable);
+        }
+        let mut class = [0u16; 256];
+        let len = GetClassNameW(hwnd, &mut class);
+        let kind = if len > 0 && String::from_utf16_lossy(&class[..len as usize]) == "POEWindowClass" {
+            FocusState::Game
+        } else {
+            FocusState::Other
+        };
+        (kind, false)
+    }
+}
+
 #[cfg_attr(not(windows), allow(dead_code))]
 fn refresh_focus_geometry(
     entering: bool,

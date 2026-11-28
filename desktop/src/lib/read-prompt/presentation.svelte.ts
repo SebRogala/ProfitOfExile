@@ -49,7 +49,7 @@ export function createReadPromptPresentation({ source, listen, invoke, frame, mi
 		},
 		get notice() {
 			const current = source();
-			return current.readPrompt.noMatch && dismissal.hidden ? null : readPromptNotice(current);
+			return !current.readPrompt.reading && current.readPrompt.noMatch && dismissal.hidden ? null : readPromptNotice(current);
 		}
 	};
 }
