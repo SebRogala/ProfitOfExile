@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import type { GemPlay, SignalTransition } from '$lib/api';
+import type { TradeListingDetail, TradeLookupResult } from '$lib/trade-types';
 
 const history = vi.hoisted(() => ({ fetch: vi.fn<(name: string, variant: string) => Promise<SignalTransition[]>>() }));
 
@@ -180,18 +181,39 @@ const SPARSE = play({
 
 const mounted: ReturnType<typeof mount>[] = [];
 let releaseHistory: (() => void) | null = null;
+const pendingResponses: (() => void)[] = [];
+const NOW = new Date('2026-11-28T12:00:00Z');
+let lookup: ReturnType<typeof vi.fn<(body: Record<string, unknown>) => Promise<Response>>>;
+let requests: Record<string, unknown>[];
 
 beforeEach(() => {
 	setDivineRate(DIVINE_RATE);
+	vi.useFakeTimers({ toFake: ['Date'] });
+	vi.setSystemTime(NOW);
+	requests = [];
+	lookup = vi.fn(async () => new Response(null, { status: 204 }));
+	vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+		const url = new URL(String(input), window.location.origin);
+		if (url.pathname !== '/api/trade/lookup' || init?.method !== 'POST') {
+			throw new Error(`Unexpected request: ${init?.method} ${url.pathname}`);
+		}
+		const body = JSON.parse(String(init.body));
+		requests.push(body);
+		return lookup(body);
+	}));
 });
 
-afterEach(() => {
-	while (mounted.length > 0) unmount(mounted.pop()!);
+afterEach(async () => {
+	while (mounted.length > 0) await unmount(mounted.pop()!);
 	document.body.innerHTML = '';
 	releaseHistory?.();
 	releaseHistory = null;
+	for (const release of pendingResponses.splice(0)) release();
+	await settle();
 	history.fetch.mockReset();
 	setDivineRate(0);
+	vi.unstubAllGlobals();
+	vi.useRealTimers();
 });
 
 async function settle(): Promise<void> {
@@ -227,7 +249,8 @@ const seq = (...parts: string[]) => flat(parts.join(''));
  */
 function cardsOf(expanded: HTMLElement) {
 	const m = flat(expanded.textContent).match(/^1?Buy(.*?)2?Sell(Transfigured.*?)Market(Liquidity.*?)Signalhistory(.*)$/);
-	return m ? { buy: m[1], sell: m[2], market: m[3], history: m[4] } : null;
+	const historyText = expanded.querySelector('section.history')?.textContent;
+	return m ? { buy: m[1], sell: m[2], market: m[3], history: flat(historyText).replace(/^Signalhistory/, '') } : null;
 }
 
 /** True when the history card shows `rows` in order, each as time, from → to, reason, N listings. */
@@ -284,7 +307,7 @@ describe('BestPlays expanded row (web)', () => {
 			gem: HOLD,
 			rows: HOLD_HISTORY,
 			buy: seq('Base', '20/20', c(110), 'BUY', 'GCP recipe', `saves ${c(31)}`, c(79), '20/0 base', c(35), 'BUY', '+', 'GCPs', c(44)),
-			sell: seq('Transfigured', '20/20', d('5.1'), 'HOLD', 'No strong sell signal — hold and monitor'),
+			sell: seq('Transfigured', '20/20', d('5.1'), c(1173), 'HOLD', 'No strong sell signal — hold and monitor'),
 			market: seq('Liquidity', 'HIGH', 'Color', 'GREEN', 'Sellability', 'GOOD · 65')
 		},
 		{
@@ -293,7 +316,7 @@ describe('BestPlays expanded row (web)', () => {
 			rows: SELL_NOW_HISTORY,
 			buy: seq('Base', '20/20', c(96), 'BUY', 'GCP recipe', `saves ${c(22)}`, c(74), '20/0 base', c(30), 'BUY', '+', 'GCPs', c(44)),
 			sell: seq(
-				'Transfigured', '20/20', d('3.4'), 'SELL NOW', 'Price dropping with rising supply — undercut hard',
+				'Transfigured', '20/20', d('3.4'), c(782), 'SELL NOW', 'Price dropping with rising supply — undercut hard',
 				'Tier', 'TOP', 'SELL IMMEDIATELY'
 			),
 			market: seq('Liquidity', 'MED', 'Color', 'GREEN', 'Sellability', 'SLOW · 31')
@@ -401,5 +424,137 @@ describe('BestPlays expanded row (web)', () => {
 			buy: expect.stringMatching(/^Base20\/20110cBUYGCPrecipesaves31c79c/),
 			sell: expect.stringMatching(/^Transfigured20\/205\.1d/)
 		});
+	});
+});
+
+function listing(chaosPrice: number, minutes: number): TradeListingDetail {
+	return {
+		price: chaosPrice, currency: 'chaos', chaosPrice,
+		indexedAt: new Date(NOW.getTime() - minutes * 60_000).toISOString(),
+		gemLevel: 20, gemQuality: 20, corrupted: false
+	};
+}
+
+const FOUR_LISTINGS = [listing(90, 3), listing(30, 12), listing(60, 25), listing(45, 40)];
+
+function lookupResult(listings: TradeListingDetail[] = FOUR_LISTINGS): TradeLookupResult {
+	return {
+		gem: HOLD.name, variant: HOLD.variant, league: LEAGUE, total: listings.length,
+		priceFloor: 30, priceCeiling: 90, priceSpread: 60, medianTop10: 52.5, medianTop3: 45,
+		listings, divinePrice: DIVINE_RATE, tradeUrl: '', fetchedAt: NOW.toISOString(),
+		signals: { sellerConcentration: 'NORMAL', cheapestStaleness: 'FRESH', priceOutlier: false, uniqueAccounts: 4 }
+	};
+}
+
+function listingsOf(expanded: Element): HTMLElement | undefined {
+	return [...expanded.querySelectorAll<HTMLElement>('section')].find((section) =>
+		/listings/i.test(section.querySelector('.eyebrow, h3, h4')?.textContent ?? '')
+	);
+}
+
+function listingPairs(expanded: Element): string[] {
+	return flat(listingsOf(expanded)?.textContent).match(/\d+(?:\.\d+)?c\d+mago/g) ?? [];
+}
+
+function deferredResponse() {
+	let resolve!: (response: Response) => void;
+	let reject!: (reason: Error) => void;
+	const promise = new Promise<Response>((yes, no) => { resolve = yes; reject = no; });
+	pendingResponses.push(() => resolve(new Response(null, { status: 204 })));
+	return { promise, resolve, reject };
+}
+
+function mountRows(plays: GemPlay[]): HTMLElement {
+	const target = document.body.appendChild(document.createElement('div'));
+	flushSync(() => mounted.push(mount(BestPlays, { target, props: { plays, league: LEAGUE } })));
+	return target;
+}
+
+async function clickRow(target: HTMLElement, index: number): Promise<void> {
+	target.querySelectorAll<HTMLElement>('tr.play-row')[index].click();
+	flushSync();
+	await settle();
+}
+
+describe('POE-519 web expanded cached listings', () => {
+	it('keep:happy: POE-519 expanded divine sale shows its chaos equivalent beside the three cheapest indexed offers', async () => {
+		history.fetch.mockResolvedValue(HOLD_HISTORY);
+		lookup.mockResolvedValue(Response.json(lookupResult()));
+		const expanded = await expand(HOLD);
+		expect(cardsOf(expanded)?.sell, expanded.textContent ?? '').toBe(
+			seq('Transfigured', '20/20', '5.1d', '1173c', 'HOLD', HOLD.sellReason)
+		);
+		expect(listingPairs(expanded), listingsOf(expanded)?.textContent).toEqual(['30c12mago', '45c40mago', '60c25mago']);
+		expect(historyShows(cardsOf(expanded)!.history, HOLD_HISTORY)).toBe(true);
+	});
+
+	it.each([
+		{ source: '204 cache miss', response: () => new Response(null, { status: 204 }) },
+		{ source: '200 empty listings', response: () => Response.json(lookupResult([])) },
+		{ source: '200 null listings', response: () => Response.json({ ...lookupResult([]), listings: null }) }
+	])('keep:critical: POE-519 $source labels missing offers so a silent empty column cannot imply useful prices', async ({ response }) => {
+		history.fetch.mockResolvedValue([]);
+		lookup.mockImplementation(async () => response());
+		const expanded = await expand(HOLD);
+		expect(listingsOf(expanded)?.textContent).toContain('No recent listings');
+		expect(listingPairs(expanded)).toEqual([]);
+		expect(requests).toEqual([{ gem: HOLD.name, variant: HOLD.variant, force: false, cacheOnly: true }]);
+	});
+
+	it.each(['pending', 'error'] as const)('keep:happy: POE-519 %s lookup has an explicit state independent of signal history', async (state) => {
+		history.fetch.mockResolvedValue(HOLD_HISTORY);
+		const pending = deferredResponse();
+		lookup.mockReturnValue(pending.promise);
+		const expanded = await expand(HOLD);
+		if (state === 'error') {
+			pending.resolve(new Response('Unavailable', { status: 503 }));
+			await settle();
+		}
+		const text = listingsOf(expanded)?.textContent;
+		if (state === 'pending') expect(text).toMatch(/Loading(?: listings)?…/i);
+		else expect(text).toContain('Listings unavailable');
+		expect(text).not.toContain('No recent listings');
+		expect(historyShows(cardsOf(expanded)!.history, HOLD_HISTORY)).toBe(true);
+	});
+
+	it.each([
+		['1/0', '1/0'], ['1/20', '1/20'], ['20/0', '20/0'], ['20/20', '20/20'],
+		['1', '1'], ['20', '20'], ['21/20c', '21/20'], ['21/23c', '21/23']
+	])('keep:happy: POE-519 expansion of %s sends trade variant %s in the cache-only POST', async (variant, tradeVariant) => {
+		history.fetch.mockResolvedValue([]);
+		await expand(play({ variant }));
+		expect(requests).toEqual([{ gem: TYPICAL.name, variant: tradeVariant, force: false, cacheOnly: true }]);
+		expect(history.fetch).toHaveBeenCalledWith(TYPICAL.name, variant);
+	});
+
+	it.each([
+		{ transition: 'A to B', late: 'success' },
+		{ transition: 'A to B', late: 'rejection' },
+		{ transition: 'collapse and reopen A', late: 'success' },
+		{ transition: 'collapse and reopen A', late: 'rejection' }
+	])('keep:critical: POE-519 $transition ignores late $late so plausible stale offers cannot guide a sale', async ({ transition, late }) => {
+		history.fetch.mockResolvedValue(HOLD_HISTORY);
+		const old = deferredResponse();
+		const current = deferredResponse();
+		lookup.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+		const target = mountRows([HOLD, SELL_NOW]);
+		await clickRow(target, 0);
+		if (transition === 'A to B') await clickRow(target, 1);
+		else {
+			await clickRow(target, 0);
+			expect(target.querySelector('.expanded-row')).toBeNull();
+			await clickRow(target, 0);
+		}
+		expect(requests.map((body) => body.gem)).toEqual([HOLD.name, transition === 'A to B' ? SELL_NOW.name : HOLD.name]);
+		const expanded = target.querySelector('.expanded-row')!;
+		if (late === 'success') old.resolve(Response.json(lookupResult([listing(999, 7)])));
+		else old.reject(new Error('late lookup failure'));
+		await settle();
+		expect(listingsOf(expanded)?.textContent).toMatch(/Loading(?: listings)?…/i);
+		expect(listingsOf(expanded)?.textContent).not.toMatch(/999|unavailable/i);
+		current.resolve(Response.json(lookupResult([listing(44, 9)])));
+		await settle();
+		expect(listingPairs(expanded)).toEqual(['44c9mago']);
+		expect(listingsOf(expanded)?.textContent).not.toMatch(/999|Loading|unavailable/i);
 	});
 });
