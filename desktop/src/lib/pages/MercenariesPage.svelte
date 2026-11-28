@@ -51,7 +51,7 @@
 	} from '$lib/mercenaries/capture-view';
 	import { enabledSources, withSourceEnabled } from '$lib/mercenaries/merc-prefs';
 	import { evaluateCapture } from '$lib/mercenaries/verdict';
-	import { savedSearchUrl } from '$lib/mercenaries/trade-links';
+	import { liveSavedSearchUrl } from '$lib/mercenaries/trade-links';
 	import {
 		MERC_TRADE_MAX_SEARCHES,
 		tradeHeadline,
@@ -761,14 +761,13 @@
 								<tr>
 									<th class="rule-col" scope="col">rule</th>
 									{#each ladder as rung (rung.id)}
+										{@const savedUrl = liveSavedSearchUrl(rung.savedSearch, ssot.league)}
 										<th class="tier-col" scope="col">
 											<span class="tier-name">{columnLabel(rung)}</span>
-											{#if rung.savedSearch}
-												<!-- Every ladder rung so far is a saved search; a ladder transcribed
-												     from prose would have no hash to link. -->
+											{#if savedUrl}
 												<a
 													class="search-link"
-													href={savedSearchUrl(rung.savedSearch)}
+													href={savedUrl}
 													target="_blank"
 													aria-label="open saved search — {source.label} {rung.label} {columnLabel(
 														rung
@@ -879,6 +878,7 @@
 
 			{#each cards as ruleset (ruleset.id)}
 				{@const result = resultOf(ruleset)}
+				{@const savedUrl = liveSavedSearchUrl(ruleset.savedSearch, ssot.league)}
 				<article class="card">
 					<header class="card-head">
 						<h3 class="card-title">{ruleset.label}</h3>
@@ -887,16 +887,16 @@
 								>{RULESET_OUTCOME_LABEL[result.outcome]}</span
 							>
 						{/if}
-						{#if ruleset.savedSearch}
+						{#if savedUrl}
 							<a
 								class="search-link"
-								href={savedSearchUrl(ruleset.savedSearch)}
+								href={savedUrl}
 								target="_blank"
 								aria-label="open saved search — {source.label} {ruleset.label}"
 							>
 								open saved search ↗
 							</a>
-						{:else}
+						{:else if !ruleset.savedSearch}
 							<!-- Transcribed from prose: this guide published no trade link, so
 							     there is no saved search to open. The derived link still works. -->
 							<span class="meta">no saved search — transcribed from the guide's prose</span>

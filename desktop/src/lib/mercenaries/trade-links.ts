@@ -46,18 +46,24 @@ export interface MercAuthoredQuery {
 /**
  * Build the trade-site URL for a saved search.
  * `league` MUST be a resolved league — there is no default-league fallback here,
- * on purpose: a saved search belongs to the league it was saved in, and guessing
- * would silently point at a different market.
+ * on purpose: guessing would silently point at a different market.
  */
 export function savedSearchUrl(savedSearch: MercSavedSearch): string {
 	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(savedSearch.league)}/${savedSearch.hash}`;
 }
 
+// Anonymous GET /api/trade/search/<league>/<hash> returned "Resource not found"
+// for these hashes under Allflame, Covens and Standard on 2026-11-27.
+const DEAD_SAVED_SEARCH_HASHES = new Set(['Kld4gM7yi5', '7nRvBzl2S5']);
+
 export function liveSavedSearchUrl(
-	_savedSearch: MercSavedSearch | undefined,
-	_league: string | null
+	savedSearch: MercSavedSearch | undefined,
+	league: string | null
 ): string | null {
-	return null;
+	if (savedSearch === undefined || league === null || DEAD_SAVED_SEARCH_HASHES.has(savedSearch.hash)) {
+		return null;
+	}
+	return savedSearchUrl({ league, hash: savedSearch.hash });
 }
 
 /** One stat filter as the trade site serialises it. `disabled` is absent when the filter is on. */

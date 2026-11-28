@@ -41,7 +41,7 @@ import {
 	derivedSearchUrl,
 	flipKey,
 	rulesetQuery,
-	savedSearchUrl,
+	liveSavedSearchUrl,
 	type QueryFlips
 } from './trade-links';
 import type { MercCapture, MercRow, MercSkillRead, MercSupportRead, ReadState } from './capture';
@@ -636,10 +636,7 @@ function evaluateRuleset(
 		notInRules: notInRules(capture, ruleset),
 		reasons,
 		floor: ruleset.floor ?? null,
-		// The saved link stays bound to the league its hash was saved in; the
-		// derived link is a live search, so it belongs to the league being played.
-		savedUrl:
-			ruleset.savedSearch === undefined ? null : savedSearchUrl(ruleset.savedSearch),
+		savedUrl: liveSavedSearchUrl(ruleset.savedSearch, league),
 		derivedUrl:
 			league === null ? null : derivedSearchUrl(league, rulesetQuery(ruleset, flipsFor(groups)))
 	};
