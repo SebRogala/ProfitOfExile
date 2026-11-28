@@ -261,3 +261,132 @@ async function openFontInfo(root: Element): Promise<HTMLElement> {
 async function poolBadgeExplanation(badge: HTMLElement): Promise<string> {
 	return badge.getAttribute('title') ?? '';
 }
+
+import wi9FontSource from './FontEVCompare.svelte?raw';
+
+async function mountUnratedPools(mode: 'normal' | 'dedication' = 'normal', cold = false): Promise<HTMLElement> {
+	setDivineRate(250);
+	vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+		const url = new URL(String(input), window.location.origin);
+		const colors = ['RED', 'GREEN', 'BLUE'] as const;
+		const rows = colors.map((color, index) => {
+			const count = [1, 0, 2][index];
+			return {
+				...fontRow({ color, pool: mode === 'normal' ? [96, 94, 88][index] : [64, 58, 52][index],
+					pricedGems: count, topEvaluated: cold ? undefined : false }),
+				inputCost: 10,
+				poolBreakdown: cold ? [] : [{ tier: 'UNRATED', count,
+					minPrice: color === 'BLUE' ? (mode === 'normal' ? 18 : 40) : 35,
+					maxPrice: color === 'BLUE' ? (mode === 'normal' ? 42 : 340) : 35 }],
+				lowConfidenceGems: [{ name: 'Storm Burst of Repulsion', chaos: 527, listings: 1 }]
+			};
+		});
+		const pool = { safe: rows, premium: rows, jackpot: rows };
+		if (url.pathname.endsWith('/font')) return Response.json({ ...pool, best: null, lens: null });
+		if (url.pathname.endsWith('/dedication')) return Response.json({
+			variant: url.searchParams.get('variant'), entryFee: 0, skills: pool, transfigured: pool
+		});
+		throw new Error('Unexpected request ' + url.pathname);
+	}));
+	const target = document.body.appendChild(document.createElement('div'));
+	flushSync(() => mounted.push(mount(FontEVCompare, { target, props: { league: 'Probe League', labMode: mode } })));
+	await vi.waitFor(() => { flushSync(); expect(target.querySelectorAll('table.ft tbody tr').length).toBeGreaterThan(0); });
+	return target;
+}
+
+function wi9OpenPool(target: HTMLElement, dedication = false): HTMLElement[] {
+	[...target.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Pool Overview'))!.click();
+	flushSync();
+	if (dedication) {
+		const select = target.querySelector<HTMLSelectElement>('.pool-variant-select select');
+		if (select) {
+			select.value = '21/20:transfigured';
+			select.dispatchEvent(new Event('change', { bubbles: true }));
+		} else {
+			[...target.querySelectorAll<HTMLButtonElement>('.pool-variant-select button')].find((button) => button.textContent?.trim() === '21/20 Transfigured')!.click();
+		}
+		flushSync();
+	}
+	return [...target.querySelectorAll<HTMLElement>('.pool-color-card')];
+}
+
+function wi9TierRows(card: Element): Element[] {
+	return [...card.querySelectorAll('.pool-tier-row:not(.pool-risky-row)')];
+}
+
+function wi9FontStyles(): HTMLStyleElement {
+	const style = document.createElement('style');
+	style.textContent = ':root { --color-lab-yellow: #eab308; }' + (wi9FontSource.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] ?? '');
+	document.head.append(style);
+	return style;
+}
+
+it('keep:happy WI-9 Font pools: the served UNRATED variant replaces the rated ladder with counts, ranges and pWin', async () => {
+	const target = await mountUnratedPools();
+	const cards = wi9OpenPool(target);
+	expect(cards).toHaveLength(3);
+	for (const [index, card] of cards.entries()) {
+		expect(cellText(card)).toContain('Tiers: not enough data');
+		expect(cellText(card.querySelector('.pool-count'))).toBe(['1 of 96 priced', '0 of 94 priced', '2 of 88 priced'][index]);
+		expect(wi9TierRows(card).map((row) => cellText(row.querySelector('.pool-tier-name')))).toEqual(index === 1 ? [] : ['UNRATED']);
+		expect(cellText(card.querySelector('.pool-risky-row'))).toContain('RISKY');
+		if (index === 1) continue;
+		const row = wi9TierRows(card)[0];
+		expect(cellText(row.querySelector('.pool-tier-count'))).toBe(index === 0 ? '1' : '2');
+		expect(cellText(row.querySelector('.pool-tier-range'))).toBe(index === 0 ? '35c' : '18c — 42c');
+		expect(cellText(row.querySelector('.pool-tier-pwin'))).toBe(index === 0 ? '3%' : '7%');
+		expect((row.querySelector('.pool-tier-bar-fill') as HTMLElement).style.background).toBe('rgb(234, 179, 8)');
+	}
+});
+
+it('keep:happy WI-9 Font pool note: keyboard activation opens the selected variant explanation', async () => {
+	const target = await mountUnratedPools();
+	const cards = wi9OpenPool(target);
+	const note = [...cards[1].querySelectorAll<HTMLElement>('div')].find((node) => cellText(node).startsWith('Tiers:') && node.querySelector('[role="button"]'))!;
+	const trigger = note?.querySelector<HTMLElement>('[role="button"]');
+	expect(trigger?.tabIndex).toBe(0);
+	trigger!.focus();
+	trigger!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+	flushSync();
+	const panel = trigger!.querySelector('.info-panel');
+	expect(cellText(panel)).toContain('Too few solid gems at 20/20 to rate tiers (needs 4).');
+});
+
+it('keep:happy WI-9 cold Font pools: absent topEvaluated retains the six rated rows', async () => {
+	const target = await mountUnratedPools('normal', true);
+	for (const card of wi9OpenPool(target)) {
+		expect(cellText(card)).not.toContain('Tiers: not enough data');
+		expect(wi9TierRows(card).map((row) => cellText(row.querySelector('.pool-tier-name')))).toEqual(['TOP', 'HIGH', 'MID-HIGH', 'MID', 'LOW', 'FLOOR']);
+	}
+});
+
+it('keep:happy WI-9 Dedication pools: selected 21/20 Transfigured retains gem headers and its divine range', async () => {
+	const target = await mountUnratedPools('dedication');
+	const cards = wi9OpenPool(target, true);
+	for (const [index, card] of cards.entries()) {
+		expect(cellText(card)).toContain('Tiers: not enough data');
+		expect(cellText(card.querySelector('.pool-count'))).toBe([64, 58, 52][index] + ' gems');
+		expect(wi9TierRows(card).map((row) => cellText(row.querySelector('.pool-tier-name')))).toEqual(index === 1 ? [] : ['UNRATED']);
+		if (index === 1) continue;
+		const row = wi9TierRows(card)[0];
+		expect(cellText(row.querySelector('.pool-tier-count'))).toBe(index === 0 ? '1' : '2');
+		expect(cellText(row.querySelector('.pool-tier-range'))).toBe(index === 0 ? '35c' : '0.2d — 1.4d');
+		expect(cellText(row.querySelector('.pool-tier-pwin'))).toBe(index === 0 ? '5%' : '11%');
+	}
+});
+
+it('keep:critical WI-9 raw UNRATED prices stay yellow without a trusted LOW, MID or TOP valuation', async () => {
+	const target = await mountUnratedPools();
+	const cell = fontCell(target, '20/20', 'BLUE');
+	const style = wi9FontStyles();
+	try {
+		expect(cellText(cell.querySelector('.uf-group'))).toBe('SOLID');
+		expect([...cell.querySelector('.uf-row')!.children].map(cellText).join(' ')).toBe('UNRATED 2 · 18c — 42c');
+		const label = cell.querySelector<HTMLElement>('.uf-tier')!;
+		expect(getComputedStyle(label).color).toBe('rgb(234, 179, 8)');
+		expect(getComputedStyle(label).minWidth).toBe('42px');
+		expect(getComputedStyle(label).width).toBe('auto');
+		expect(cell.querySelector('.ev, .tier-lines, .tier-low, .tier-mid, .tier-top, .best-blue')).toBeNull();
+		expect(cellText(await openFontInfo(cell))).toContain('UNRATED: 2 gems, 18c — 42c');
+	} finally { style.remove(); }
+});

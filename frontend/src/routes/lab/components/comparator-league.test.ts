@@ -185,3 +185,46 @@ describe('Comparator league fence', () => {
 		expect(normal).toContain(picker().value);
 	});
 });
+
+import wi9ComparatorSource from './Comparator.svelte?raw';
+
+it.each(
+[
+	{ tag: 'keep:critical', tier: 'UNRATED', color: 'rgb(234, 179, 8)' },
+	{ tag: 'keep:happy', tier: 'MID-HIGH', color: 'rgb(192, 132, 252)' },
+	{ tag: 'keep:happy', tier: 'TOP', color: 'rgb(251, 191, 36)' },
+	{ tag: 'keep:happy', tier: 'FLOOR', color: 'rgb(71, 85, 105)' },
+	{ tag: 'keep:happy', tier: 'CHAOTIC', color: 'rgb(248, 113, 113)' }
+])('$tag WI-9 Comparator: selected $tier preserves its badge instead of a silent LOW valuation', async ({ tier, color }) => {
+	vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+		const url = new URL(String(input), window.location.origin);
+		if (url.pathname.endsWith('/gems/names')) return Response.json({ names: [name] });
+		if (url.pathname.endsWith('/compare')) return Response.json({ data: [{ ...compareRow, priceTier: tier }] });
+		if (url.pathname.endsWith('/trade/lookup')) return cacheMiss();
+		if (url.pathname.includes('history')) return Response.json({ data: [] });
+		throw new Error('Unexpected request ' + url.pathname);
+	}));
+	const { root } = attach('Probe League');
+	await selectGem(root);
+
+		const badge = root.querySelector<HTMLElement>('.compare-card .tier-badge')!;
+		expect(badge?.textContent).toBe(tier);
+		expect(badge?.classList.contains('tier-' + tier.toLowerCase())).toBe(true);
+		expect(badge?.classList.contains('tier-low')).toBe(false);
+		const style = document.createElement('style');
+		style.textContent = ':root { --color-lab-yellow: #eab308; }' + (wi9ComparatorSource.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] ?? '');
+		document.head.append(style);
+		try {
+			expect(getComputedStyle(badge).color).toBe(color);
+			if (tier === 'UNRATED') {
+				const css = getComputedStyle(badge);
+				expect(css.backgroundColor).toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/);
+				expect(css.borderTopWidth).toBe('1px');
+				expect(css.borderTopStyle).toBe('solid');
+				expect(css.borderTopColor).toBe('rgba(234, 179, 8, 0.6)');
+				expect(css.padding).toBe('1px 7px');
+			}
+			if (tier === 'CHAOTIC') expect(getComputedStyle(badge).backgroundColor).toBe('rgba(248, 113, 113, 0.15)');
+		} finally { style.remove(); }
+
+});

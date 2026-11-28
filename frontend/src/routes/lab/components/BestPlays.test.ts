@@ -566,3 +566,57 @@ describe('POE-519 web expanded cached listings', () => {
 		expect(listingsOf(expanded)?.textContent ?? '').not.toMatch(/999|Loading|unavailable/i);
 	});
 });
+
+import wi9BadgeSource from './BestPlays.svelte?raw';
+import { TIER_RULES as wi9Rules } from '$lib/tooltips';
+
+function wi9BadgeStyles(): HTMLStyleElement {
+	const style = document.createElement('style');
+	style.textContent = ':root { --color-lab-yellow: #eab308; }' + (wi9BadgeSource.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] ?? '');
+	document.head.append(style);
+	return style;
+}
+
+it.each([false, true])('keep:happy WI-9 Best Plays: lowConfidence=%s renders hollow yellow UNRATED in the row and expansion', async (lowConfidence) => {
+	history.fetch.mockResolvedValue([]);
+	const target = mountRows([
+		play({ name: 'Ice Nova of Frostbolts', priceTier: 'UNRATED' as GemPlay['priceTier'], lowConfidence, tierAction: 'served action' }),
+		play({ name: 'Smite of Divine Judgement', priceTier: 'TOP' }),
+		play({ name: 'Lacerate of Butchering', priceTier: 'MID' })
+	]);
+	const style = wi9BadgeStyles();
+	try {
+		const rows = target.querySelectorAll<HTMLElement>('tr.play-row');
+		expect([...rows].map((row) => row.querySelector('.tier-badge')?.textContent)).toEqual(['UNRATED', 'TOP', 'MID']);
+		const badge = rows[0].querySelector<HTMLElement>('.tier-badge')!;
+		expect(badge.classList.contains('tier-unrated')).toBe(true);
+		expect(badge.matches('.tier-low, .tier-mid, .tier-top')).toBe(false);
+		const css = getComputedStyle(badge);
+		expect(css.color).toBe('rgb(234, 179, 8)');
+		expect(css.backgroundColor).toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/);
+		expect(css.borderTopWidth).toBe('1px');
+		expect(css.borderTopStyle).toBe(lowConfidence ? 'dashed' : 'solid');
+		expect(css.padding).toBe('1px 7px');
+		rows[0].click();
+		flushSync();
+		await settle();
+		const expanded = target.querySelector<HTMLElement>('.expanded-row .tier-badge')!;
+		expect(expanded.textContent).toBe('UNRATED');
+		expect(expanded.classList.contains('tier-unrated')).toBe(true);
+		expect(expanded.classList.contains('low-conf')).toBe(lowConfidence);
+		expect(getComputedStyle(expanded).color).toBe('rgb(234, 179, 8)');
+	} finally { style.remove(); }
+});
+
+it('keep:happy WI-9 Best Plays Tier tooltip: UNRATED has the shared yellow explanation', () => {
+	const target = mountRows([play({})]);
+	const header = target.querySelector<HTMLElement>('th.col-tier')!;
+	header.querySelector<HTMLElement>('[role="button"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+	flushSync();
+	const tip = header.querySelector<HTMLElement>('.info-panel');
+	expect(tip?.textContent?.toLowerCase()).toContain('unrated');
+	expect(tip?.textContent?.toLowerCase()).toContain('under 4 solid gems');
+	expect(tip?.textContent?.toLowerCase()).toContain((wi9Rules as Record<string, string>).UNRATED);
+	const label = [...(tip?.querySelectorAll<HTMLElement>('span') ?? [])].find((node) => node.textContent === 'UNRATED');
+	expect(label?.style.color).toBe('rgb(234, 179, 8)');
+});
