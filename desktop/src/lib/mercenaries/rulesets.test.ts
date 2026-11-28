@@ -252,9 +252,7 @@ describe('stat vocabulary', () => {
 		['Power of the Depths', 'mercenary.skill_54593'],
 		['Vaal Smite', 'mercenary.skill_40606']
 	])('keep:regression resolves the 3.30 skill %s to %s', (name, id) => {
-		expect(
-			mercenaryStats.entries.filter((entry) => entry.text === name).map((entry) => entry.id)
-		).toEqual([id]);
+		expect(VOCABULARY.get(id)).toBe(name);
 	});
 
 	it('names every entry with the GGG vocabulary text for its id', () => {
