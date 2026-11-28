@@ -481,10 +481,10 @@ describe('POE-519 web expanded cached listings', () => {
 		history.fetch.mockResolvedValue(HOLD_HISTORY);
 		lookup.mockResolvedValue(Response.json(lookupResult()));
 		const expanded = await expand(HOLD);
+		expect(listingPairs(expanded), listingsOf(expanded)?.textContent ?? 'Listings column missing').toEqual(['30c12mago', '45c40mago', '60c25mago']);
 		expect(cardsOf(expanded)?.sell, expanded.textContent ?? '').toBe(
 			seq('Transfigured', '20/20', '5.1d', '1173c', 'HOLD', HOLD.sellReason)
 		);
-		expect(listingPairs(expanded), listingsOf(expanded)?.textContent).toEqual(['30c12mago', '45c40mago', '60c25mago']);
 		expect(historyShows(cardsOf(expanded)!.history, HOLD_HISTORY)).toBe(true);
 	});
 
@@ -496,7 +496,7 @@ describe('POE-519 web expanded cached listings', () => {
 		history.fetch.mockResolvedValue([]);
 		lookup.mockImplementation(async () => response());
 		const expanded = await expand(HOLD);
-		expect(listingsOf(expanded)?.textContent).toContain('No recent listings');
+		expect(listingsOf(expanded)?.textContent ?? '').toContain('No recent listings');
 		expect(listingPairs(expanded)).toEqual([]);
 		expect(requests).toEqual([{ gem: HOLD.name, variant: HOLD.variant, force: false, cacheOnly: true }]);
 	});
@@ -510,7 +510,7 @@ describe('POE-519 web expanded cached listings', () => {
 			pending.resolve(new Response('Unavailable', { status: 503 }));
 			await settle();
 		}
-		const text = listingsOf(expanded)?.textContent;
+		const text = listingsOf(expanded)?.textContent ?? '';
 		if (state === 'pending') expect(text).toMatch(/Loading(?: listings)?…/i);
 		else expect(text).toContain('Listings unavailable');
 		expect(text).not.toContain('No recent listings');
@@ -550,8 +550,8 @@ describe('POE-519 web expanded cached listings', () => {
 		if (late === 'rejection') {
 			old.reject(new Error('late lookup failure'));
 			await settle();
-			expect(listingsOf(expanded)?.textContent).toMatch(/Loading(?: listings)?…/i);
-			expect(listingsOf(expanded)?.textContent).not.toMatch(/999|unavailable/i);
+			expect(listingsOf(expanded)?.textContent ?? '').toMatch(/Loading(?: listings)?…/i);
+			expect(listingsOf(expanded)?.textContent ?? '').not.toMatch(/999|unavailable/i);
 		}
 		current.resolve(Response.json({
 			...lookupResult([listing(44, 9)]), gem: transition === 'A to B' ? SELL_NOW.name : HOLD.name
@@ -563,6 +563,6 @@ describe('POE-519 web expanded cached listings', () => {
 			await settle();
 			expect(listingPairs(expanded)).toEqual(['44c9mago']);
 		}
-		expect(listingsOf(expanded)?.textContent).not.toMatch(/999|Loading|unavailable/i);
+		expect(listingsOf(expanded)?.textContent ?? '').not.toMatch(/999|Loading|unavailable/i);
 	});
 });
