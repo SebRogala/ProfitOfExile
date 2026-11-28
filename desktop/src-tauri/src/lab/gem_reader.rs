@@ -55,7 +55,7 @@ struct PendingGemRead {
 
 impl PendingGemRead {
     fn probe_in(&mut self, frame: &Capture, state: &AppState) -> bool {
-        if !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return false; }
+        if !super::commands::gem_identity_current(state, self.identity) { return false; }
         super::font_reader::seed_empty_screen(state, frame);
         let resolved = crate::ssot::regions::current(state, Some((frame.image.width(), frame.image.height())));
         if resolved.unread.contains(&crate::ssot::regions::RegionKey::LabGemSlots) { return false; }

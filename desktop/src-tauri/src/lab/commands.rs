@@ -120,11 +120,18 @@ pub(crate) fn gem_read_identity(state: &AppState) -> GemReadIdentity {
     }
 }
 
+/// Whether a read with `identity` would still be prepared: no lifecycle or
+/// vocabulary bump since capture, and overlays on. Takes no `detected_gems`
+/// guard, so `prepare_gem_context` can call it under its own.
+pub(crate) fn gem_identity_current(state: &AppState, identity: GemReadIdentity) -> bool {
+    state.lab_scan.gem_lifecycle.load(Ordering::SeqCst) == identity.lifecycle
+        && state.lab_scan.gem_vocab_generation.load(Ordering::SeqCst) == identity.generation
+        && *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub(crate) fn prepare_gem_context(state: &AppState, expected: GemReadIdentity) -> Option<u64> {
     let mut gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
-    if state.lab_scan.gem_lifecycle.load(Ordering::SeqCst) != expected.lifecycle
-        || state.lab_scan.gem_vocab_generation.load(Ordering::SeqCst) != expected.generation
-        || !*state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) { return None; }
+    if !gem_identity_current(state, expected) { return None; }
     let current = super::gem_reader::armed_token(&state.lab_scan).unwrap_or(0);
     if current != 0 { return Some(current); }
     let token = font_session::next_scan_generation(&state.lab_scan.read_token_seq);
