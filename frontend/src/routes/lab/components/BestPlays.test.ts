@@ -547,14 +547,22 @@ describe('POE-519 web expanded cached listings', () => {
 		}
 		expect(requests.map((body) => body.gem)).toEqual([HOLD.name, transition === 'A to B' ? SELL_NOW.name : HOLD.name]);
 		const expanded = target.querySelector('.expanded-row')!;
-		if (late === 'success') old.resolve(Response.json(lookupResult([listing(999, 7)])));
-		else old.reject(new Error('late lookup failure'));
-		await settle();
-		expect(listingsOf(expanded)?.textContent).toMatch(/Loading(?: listings)?…/i);
-		expect(listingsOf(expanded)?.textContent).not.toMatch(/999|unavailable/i);
-		current.resolve(Response.json(lookupResult([listing(44, 9)])));
+		if (late === 'rejection') {
+			old.reject(new Error('late lookup failure'));
+			await settle();
+			expect(listingsOf(expanded)?.textContent).toMatch(/Loading(?: listings)?…/i);
+			expect(listingsOf(expanded)?.textContent).not.toMatch(/999|unavailable/i);
+		}
+		current.resolve(Response.json({
+			...lookupResult([listing(44, 9)]), gem: transition === 'A to B' ? SELL_NOW.name : HOLD.name
+		}));
 		await settle();
 		expect(listingPairs(expanded)).toEqual(['44c9mago']);
+		if (late === 'success') {
+			old.resolve(Response.json(lookupResult([listing(999, 7)])));
+			await settle();
+			expect(listingPairs(expanded)).toEqual(['44c9mago']);
+		}
 		expect(listingsOf(expanded)?.textContent).not.toMatch(/999|Loading|unavailable/i);
 	});
 });
