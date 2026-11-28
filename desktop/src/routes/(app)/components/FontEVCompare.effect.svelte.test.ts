@@ -949,7 +949,7 @@ it('keep:happy WI-9 Dedication pools: selected 21/20 Transfigured retains gem he
 		if (index === 1) continue;
 		const row = wi9TierRows(card)[0];
 		expect(cellText(row.querySelector('.pool-tier-count'))).toBe(index === 0 ? '1' : '2');
-		expect(cellText(row.querySelector('.pool-tier-range'))).toBe(index === 0 ? '35c' : '0.2d — 1.4d');
+		expect(cellText(row.querySelector('.pool-tier-range'))).toBe(index === 0 ? '35c' : '0.16d (40c) — 1.4d');
 		expect(cellText(row.querySelector('.pool-tier-pwin'))).toBe(index === 0 ? '5%' : '11%');
 	}
 });
