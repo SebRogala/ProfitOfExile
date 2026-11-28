@@ -444,23 +444,25 @@ mod tests {
 
     const NOW: u64 = 1_756_800_000_000;
 
-    mod keep_happy {
-        use super::*;
-        use crate::read_hotkey::{DispatchOutcome, ReaderId};
+    mod progress {
+        mod keep_happy {
+            use super::super::*;
+            use crate::read_hotkey::{DispatchOutcome, ReaderId};
 
-        #[test]
-        fn accepted_press_presents_progress_until_its_outcome() {
-            for outcome in [DispatchOutcome::Selected(ReaderId::Font), DispatchOutcome::NoMatch] {
-                let mut prompt = ReadPromptState::default();
-                let before = prompt.snapshot();
-                let stamp = prompt.accept_press();
-                assert!(prompt.snapshot().reading, "progress must precede completion");
-                assert_eq!(prompt.snapshot().seq, before.seq + 1);
-                assert!(!stamp.confirming());
-                prompt.finish_read(stamp, outcome.clone());
-                assert!(!prompt.snapshot().reading);
-                assert_eq!(prompt.snapshot().no_match, outcome == DispatchOutcome::NoMatch);
-                assert_eq!(prompt.snapshot().seq, before.seq + 2);
+            #[test]
+            fn accepted_press_presents_progress_until_its_outcome() {
+                for outcome in [DispatchOutcome::Selected(ReaderId::Font), DispatchOutcome::NoMatch] {
+                    let mut prompt = ReadPromptState::default();
+                    let before = prompt.snapshot();
+                    let stamp = prompt.accept_press();
+                    assert!(prompt.snapshot().reading, "progress must precede completion");
+                    assert_eq!(prompt.snapshot().seq, before.seq + 1);
+                    assert!(!stamp.confirming());
+                    prompt.finish_read(stamp, outcome.clone());
+                    assert!(!prompt.snapshot().reading);
+                    assert_eq!(prompt.snapshot().no_match, outcome == DispatchOutcome::NoMatch);
+                    assert_eq!(prompt.snapshot().seq, before.seq + 2);
+                }
             }
         }
     }
