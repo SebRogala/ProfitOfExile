@@ -182,5 +182,19 @@ mod tests {
             assert!(probe(&frame, &crate::ssot::placements_for(None).lab).is_some(),
                 "the Cruel-height Font window's gem pick must be recognised");
         }
+
+        // keep:regression (POE-517, Operator-reported): the transfigure version picker
+        // open over a Font window whose option rows stay legible around the popup.
+        // Fixture: the Operator's 1026x633 PNG crop pasted at (262, 123) on a black
+        // 1080p canvas, the origin where its title and CONFIRM land on
+        // `font-gems-1080p.png`'s.
+        #[test]
+        fn picker_over_legible_font_options_matches() {
+            let mut frame = frame();
+            frame.image = image::load_from_memory(
+                include_bytes!("../../tests/fixtures/lab/font-picker-over-options-1080p.png")).unwrap();
+            assert!(probe(&frame, &crate::ssot::placements_for(None).lab).is_some(),
+                "the gem picker must be recognised with the options list legible behind it");
+        }
     }
 }

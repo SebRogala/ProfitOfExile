@@ -825,6 +825,61 @@ mod dispatch_tests {
             assert!(!done.reading);
             assert!(!done.no_match);
         }
+
+        // keep:regression (POE-517, Operator-reported): with the transfigure version
+        // picker open over a still-legible Divine Font options list, the read key showed
+        // the options card because the font options reader was tried first.
+        #[test]
+        fn the_gem_picker_reader_is_registered_before_the_font_options_reader() {
+            let ids: Vec<ReaderId> = READERS.iter().map(|reader| reader.id()).collect();
+            let gem = ids.iter().position(|id| *id == ReaderId::Gem).expect("the gem picker reader is registered");
+            let font = ids.iter().position(|id| *id == ReaderId::Font).expect("the font options reader is registered");
+            assert!(gem < font, "the gem picker reader must be tried before the font options reader, got {ids:?}");
+        }
+
+        /// The gem picker reader's own pixel probe on the pressed frame, at the
+        /// default 1080p placements; consuming records `"g"`.
+        struct PanelGemReader;
+        struct PanelGemPending;
+        impl ScreenReader<Arc<World>> for PanelGemReader {
+            fn id(&self) -> ReaderId { ReaderId::Gem }
+            fn prepare(&self, _ctx: &Arc<World>, _press: &Press) -> Option<Box<dyn PendingRead<Arc<World>>>> {
+                Some(Box::new(PanelGemPending))
+            }
+        }
+        impl PendingRead<Arc<World>> for PanelGemPending {
+            fn probe(&mut self, frame: &Arc<Capture>, ctx: &Arc<World>) -> Result<bool, String> {
+                ctx.probes.lock().unwrap().push(("g", frame.monitor_id));
+                Ok(crate::lab::panel_probe::probe(frame, &crate::ssot::placements_for(None).lab).is_some())
+            }
+            fn consume(self: Box<Self>, frame: Result<&Arc<Capture>, &str>, ctx: &Arc<World>) {
+                let frame = frame.map(|c| c.monitor_id).map_err(str::to_string);
+                ctx.consumed.lock().unwrap().push(("g", String::new(), frame));
+            }
+        }
+
+        // keep:regression (POE-517): the Operator's frame, the picker over a legible
+        // options list. The font stub matches as its OCR would on those options; the
+        // press must still go to the gem picker reader.
+        #[test]
+        fn a_press_on_the_gem_picker_over_legible_font_options_selects_the_gem_reader() {
+            let world = Arc::new(World::default());
+            *world.misses.lock().unwrap() = vec!["a", "b"];
+            let frame = Capture {
+                image: image::load_from_memory(include_bytes!("../tests/fixtures/lab/font-picker-over-options-1080p.png")).unwrap(),
+                monitor_id: 3,
+                origin: (0, 0),
+                client: [0, 0, 1920, 1080],
+                timing: GrabTiming::default(),
+            };
+            let prepared = prepare_press(press(), Duration::ZERO, &[&A, &PanelGemReader, &FONT, &B], &world);
+            let mut grab = Some(frame);
+            let outcome = dispatch_press(prepared, &world, &mut |_| {}, &mut || Ok(grab.take().expect("one grab per press")),
+                &mut |_| panic!("no dismissal to await"));
+            assert_eq!(outcome, DispatchOutcome::Selected(ReaderId::Gem));
+            assert_eq!(*world.consumed.lock().unwrap(), vec![("g", String::new(), Ok(3))],
+                "only the gem picker reader reads the picker frame");
+        }
     }
 
     fn assert_ignored_read(kind: crate::FocusState, editable: bool) {
