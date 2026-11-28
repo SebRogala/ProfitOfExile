@@ -1862,7 +1862,7 @@ describe('the overlayDismiss slice', () => {
 describe('the readPrompt slice', () => {
 	it('shows no prompt before Rust answers', async () => {
 		const mod = await import('./ssot.svelte');
-		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: false, recalibrating: false, seq: 0, gemUncertain: [false, false, false], recalibrateOffer: false });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: null, noMatch: false, reading: false, recalibrating: false, seq: 0, gemUncertain: [false, false, false], recalibrateOffer: false });
 	});
 
 	it('takes the armed mechanic and its seq from a snapshot, and its clear', async () => {
@@ -1884,7 +1884,7 @@ describe('the readPrompt slice', () => {
 		const mod = await import('./ssot.svelte');
 		mod.applySnapshot({ league: { name: null }, readPrompt: { mechanic: null, noMatch: true, recalibrating: false, seq: 5 } });
 		mod.applySnapshot({ league: { name: null }, readPrompt: golden.readPrompt as SsotSnapshot['readPrompt'] });
-		expect(mod.ssot.readPrompt).toEqual({ mechanic: 'divineFont', noMatch: false, recalibrating: false, seq: 3, gemUncertain: [false, false, true], recalibrateOffer: false });
+		expect(mod.ssot.readPrompt).toEqual({ mechanic: 'divineFont', noMatch: false, reading: false, recalibrating: false, seq: 3, gemUncertain: [false, false, true], recalibrateOffer: false });
 	});
 });
 
