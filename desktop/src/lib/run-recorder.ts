@@ -212,10 +212,17 @@ export function startRunRecorder(): void {
 			await fetchLayoutFromServer();
 		}
 		// Catch up to current lab state (app may start mid-run)
+		const catchupGeneration = layoutGeneration;
 		const catchup = await invoke<any>('get_lab_catchup').catch((e: any) => {
 			logToApp(`[recorder] catchup failed: ${e}`);
 			return null;
 		});
+		// The lab's detected layout outranks the saved manual difficulty, which
+		// may belong to another lab; replayed rooms must match that layout.
+		if (catchup?.in_lab && catchup.layout_difficulty && catchupGeneration === layoutGeneration) {
+			logToApp(`[recorder] catchup detected layout: ${catchup.layout_difficulty}`);
+			await fetchLayoutFromServer(catchup.layout_difficulty);
+		}
 		const events: NavEvent[] = catchup?.events ?? [];
 		const buffered = liveEvents!;
 		liveEvents = null;
