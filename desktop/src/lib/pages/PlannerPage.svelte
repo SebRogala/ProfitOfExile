@@ -208,6 +208,7 @@
 	function handleEditorSave() {
 		editingRoom = null;
 		// Refetch layout to pick up changes
+		announceLayout = true;
 		if (serverUrl) fetchLayout(serverUrl, difficulty);
 	}
 
