@@ -233,7 +233,7 @@
 	}
 
 	function listedPrices(variant: string, color: string, safe: FontColor) {
-		const tiers = [...getPoolBreakdown(variant, color)]
+		const tiers = getPoolBreakdown(variant, color).filter(t => t.count > 0)
 			.sort((a, b) => ALL_TIERS.indexOf(a.tier) - ALL_TIERS.indexOf(b.tier));
 		const gems = [...(safe.lowConfidenceGems ?? [])].sort((a, b) => b.chaos - a.chaos);
 		let tooltip = `<b>Listed prices, ${color} ${variant}</b>`;
