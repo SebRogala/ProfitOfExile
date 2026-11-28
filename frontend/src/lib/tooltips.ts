@@ -13,6 +13,7 @@ export const TIER_RULES: Record<string, string> = {
 	MID: 'above 17% of the top-5 average',
 	LOW: 'marginal profit above FLOOR',
 	FLOOR: 'below 8% of top-5 average',
+	UNRATED: 'under 4 solid gems',
 };
 
 export const TIER_RULES_NOTE =

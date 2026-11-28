@@ -26,6 +26,7 @@
 	const TIER_COLORS: Record<string, string> = {
 		TOP: '#fbbf24', HIGH: '#fb923c', 'MID-HIGH': '#c084fc',
 		MID: '#94a3b8', LOW: '#64748b', FLOOR: '#475569',
+		UNRATED: '#eab308',
 	};
 
 	const REC_COLORS: Record<string, { color: string; bg: string }> = {

@@ -213,6 +213,7 @@
 	const TIER_COLORS: Record<string, string> = {
 		TOP: '#fbbf24', HIGH: '#fb923c', 'MID-HIGH': '#c084fc',
 		MID: '#94a3b8', LOW: '#64748b', FLOOR: '#475569',
+		UNRATED: '#eab308',
 	};
 
 	function listedPriceRange(tier: NonNullable<FontColor['poolBreakdown']>[number]): string {
@@ -355,11 +356,15 @@
 				<div class="pool-grid">
 					{#each COLORS as color}
 						{@const breakdown = getDedPoolBreakdown(dedPool.variant, dedPool.poolKey, color)}
+						{@const unrated = breakdown.find(t => t.tier === 'UNRATED')}
 						{@const safe = getDedColorData(dedPool.variant, dedPool.poolKey, color, 'safe')}
 						{@const totalGems = safe?.pool || breakdown.reduce((s, t) => s + t.count, 0)}
 						<div class="pool-color-card">
 							<div class="pool-color-header c-{color.toLowerCase()}">{color} <span class="pool-count">{totalGems} gems</span></div>
-							{#each ALL_TIERS as tierName}
+							{#if unrated}
+								<div class="pool-tier-note"><strong>Tiers:</strong> not enough data <InfoTooltip text={`Too few solid gems at ${dedPool.variant} to rate tiers (needs 4).`} /></div>
+							{/if}
+							{#each unrated ? (unrated.count > 0 ? ['UNRATED'] : []) : ALL_TIERS as tierName}
 								{@const tier = breakdown.find(t => t.tier === tierName)}
 								{@const tierPWin = tier ? Math.round(pWin3(tier.count, totalGems) * 100) : 0}
 								<div class="pool-tier-row" class:pool-tier-empty={!tier}>
@@ -550,6 +555,7 @@
 				<div class="pool-grid">
 					{#each COLORS as color}
 						{@const breakdown = getPoolBreakdown(poolVariant, color)}
+						{@const unrated = getColorData(poolVariant, color, 'jackpot')?.topEvaluated === false}
 						{@const safe = getColorData(poolVariant, color, 'safe')}
 						{@const totalGems = safe?.pool || breakdown.reduce((s, t) => s + t.count, 0)}
 						{@const pricedGems = safe?.pricedGems ?? totalGems}
@@ -564,7 +570,10 @@
 									<span class="pool-count">{totalGems} gems</span>
 								{/if}
 							</div>
-							{#each ALL_TIERS as tierName}
+							{#if unrated}
+								<div class="pool-tier-note"><strong>Tiers:</strong> not enough data <InfoTooltip text={`Too few solid gems at ${poolVariant} to rate tiers (needs 4).`} /></div>
+							{/if}
+							{#each unrated ? (breakdown.some(t => t.tier === 'UNRATED' && t.count > 0) ? ['UNRATED'] : []) : ALL_TIERS as tierName}
 								{@const tier = breakdown.find(t => t.tier === tierName)}
 								{@const tierPWin = tier ? Math.round(pWin3(tier.count, totalGems) * 100) : 0}
 								<div class="pool-tier-row" class:pool-tier-empty={!tier}>
@@ -894,7 +903,9 @@
 	.uf-row { display: flex; gap: 6px; font-size: 0.75rem; line-height: 1.45; }
 	.uf-price { font-family: Consolas, Monaco, monospace; font-weight: 600; color: var(--color-lab-text); width: 42px; text-align: right; flex-shrink: 0; }
 	.uf-name { color: var(--color-lab-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-	.uf-tier { font-weight: 700; font-size: 0.6875rem; width: 42px; text-align: right; flex-shrink: 0; }
+	.uf-tier { font-weight: 700; font-size: 0.6875rem; min-width: 42px; width: auto; text-align: right; flex-shrink: 0; }
+	.pool-tier-note { font-size: 0.75rem; color: var(--color-lab-text-secondary); margin-bottom: 6px; }
+	.pool-tier-note strong { color: var(--color-lab-yellow); }
 	.uf-more { font-size: 0.75rem; color: var(--color-lab-text-secondary); }
 	.pool-count.pool-count-under { color: var(--color-lab-yellow); border-bottom-color: var(--color-lab-yellow); }
 	.val-muted { color: var(--color-lab-text-secondary); }

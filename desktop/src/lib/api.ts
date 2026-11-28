@@ -21,7 +21,7 @@ export interface StatusData {
 	divinePrice: number;
 }
 
-export type PriceTier = 'TOP' | 'HIGH' | 'MID' | 'LOW' | '';
+export type PriceTier = 'TOP' | 'HIGH' | 'MID-HIGH' | 'MID' | 'LOW' | 'FLOOR' | 'CHAOTIC' | 'UNRATED' | '';
 export type SellUrgency = 'SELL_NOW' | 'UNDERCUT' | 'HOLD' | 'WAIT' | '';
 export type SellabilityLabel = 'FAST SELL' | 'GOOD' | 'MODERATE' | 'SLOW' | 'UNLIKELY' | '';
 

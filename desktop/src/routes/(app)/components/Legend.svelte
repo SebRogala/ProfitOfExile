@@ -74,6 +74,7 @@
 					<div class="legend-item"><span class="sig silver">MID</span> {TIER_RULES.MID}</div>
 					<div class="legend-item"><span class="sig muted">LOW</span> {TIER_RULES.LOW}</div>
 					<div class="legend-item"><span class="sig dim">FLOOR</span> {TIER_RULES.FLOOR}</div>
+					<div class="legend-item"><span class="sig yellow">UNRATED</span> {TIER_RULES.UNRATED}</div>
 					<div class="legend-note">{TIER_RULES_NOTE}</div>
 
 					<h4 class="legend-heading" style="margin-top: 16px;">Font EV Hit Tiers</h4>

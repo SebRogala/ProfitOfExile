@@ -230,10 +230,7 @@
 	}
 
 	function tierClass(tier: string): string {
-		if (tier === 'TOP') return 'tier-top';
-		if (tier === 'HIGH') return 'tier-high';
-		if (tier === 'MID') return 'tier-mid';
-		return 'tier-low';
+		return 'tier-' + tier.toLowerCase();
 	}
 
 	function urgencyClass(u: string): string {
@@ -952,6 +949,8 @@
 	.tier-mid { color: #94a3b8; background: rgba(148, 163, 184, 0.12); }
 	.tier-low { color: #64748b; background: rgba(100, 116, 139, 0.1); }
 	.tier-floor { color: #475569; background: rgba(71, 85, 105, 0.08); }
+	.tier-chaotic { color: #f87171; background: rgba(248, 113, 113, 0.15); }
+	.tier-unrated { color: var(--color-lab-yellow); background: transparent; border: 1px solid rgba(234, 179, 8, 0.6); padding: 1px 7px; }
 
 	/* Sell urgency slot — always takes space for alignment */
 	.urgency-slot {
