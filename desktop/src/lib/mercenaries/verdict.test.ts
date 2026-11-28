@@ -1068,7 +1068,8 @@ describe('the row anchor of a `mercenary` group', () => {
 			'guide-e-sniper',
 			'guide-e-stormhand',
 			'guide-f-kinetist-cheap',
-			'guide-f-kinetist-expensive'
+			'guide-f-kinetist-expensive',
+			'guide-g-frost-blades'
 		]);
 	});
 
