@@ -375,7 +375,7 @@ it('keep:happy WI-9 Dedication pools: selected 21/20 Transfigured retains gem he
 	}
 });
 
-it('keep:critical WI-9 raw UNRATED prices stay yellow without a trusted LOW, MID or TOP valuation', async () => {
+it('keep:happy WI-9 raw UNRATED list fits its label beside the served count, range and full tooltip', async () => {
 	const target = await mountUnratedPools();
 	const cell = fontCell(target, '20/20', 'BLUE');
 	const style = wi9FontStyles();
@@ -383,10 +383,18 @@ it('keep:critical WI-9 raw UNRATED prices stay yellow without a trusted LOW, MID
 		expect(cellText(cell.querySelector('.uf-group'))).toBe('SOLID');
 		expect([...cell.querySelector('.uf-row')!.children].map(cellText).join(' ')).toBe('UNRATED 2 · 18c — 42c');
 		const label = cell.querySelector<HTMLElement>('.uf-tier')!;
-		expect(getComputedStyle(label).color).toBe('rgb(234, 179, 8)');
 		expect(getComputedStyle(label).minWidth).toBe('42px');
 		expect(getComputedStyle(label).width).toBe('auto');
 		expect(cell.querySelector('.ev, .tier-lines, .tier-low, .tier-mid, .tier-top, .best-blue')).toBeNull();
 		expect(cellText(await openFontInfo(cell))).toContain('UNRATED: 2 gems, 18c — 42c');
 	} finally { style.remove(); }
+});
+
+it('keep:critical WI-9 raw UNRATED prices stay yellow without a trusted LOW, MID or TOP valuation', async () => {
+	const target = await mountUnratedPools();
+	const cell = fontCell(target, '20/20', 'BLUE');
+	const label = cell.querySelector<HTMLElement>('.uf-tier')!;
+	expect(label.textContent).toBe('UNRATED');
+	expect(getComputedStyle(label).color).toBe('rgb(234, 179, 8)');
+	expect(cell.querySelector('.tier-low, .tier-mid, .tier-top, .ev, .tier-lines')).toBeNull();
 });

@@ -23,7 +23,7 @@ afterEach(async () => {
 	setDivineRate(0);
 });
 
-it('keep:critical WI-9 widget: polled UNRATED reads yellow at 11px so an unrated gem cannot silently look MID or TOP', async () => {
+async function pollTiers(): Promise<HTMLElement[]> {
 	vi.useFakeTimers();
 	const results = ['UNRATED', 'MID', 'TOP'].map((priceTier, index) => ({
 		name: ['Ice Nova of Frostbolts', 'Lacerate of Butchering', 'Smite of Divine Judgement'][index],
@@ -48,7 +48,16 @@ it('keep:critical WI-9 widget: polled UNRATED reads yellow at 11px so an unrated
 	style.textContent = widgetSource.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] ?? '';
 	document.head.append(style);
 	const tiers = [...target.querySelectorAll<HTMLElement>('.gem-row .tier')];
+	return tiers;
+}
+
+it('keep:happy WI-9 widget: polling renders literal tier words at the existing 11px size', async () => {
+	const tiers = await pollTiers();
 	expect(tiers.map((node) => node.textContent)).toEqual(['UNRATED', 'MID', 'TOP']);
-	expect(tiers.map((node) => getComputedStyle(node).color)).toEqual(['#eab308', '#94a3b8', '#fbbf24']);
 	expect(getComputedStyle(tiers[0]).fontSize).toBe('11px');
+});
+
+it('keep:critical WI-9 widget: UNRATED stays yellow so an unrated gem cannot silently look MID or TOP', async () => {
+	const tiers = await pollTiers();
+	expect(tiers.map((node) => getComputedStyle(node).color)).toEqual(['#eab308', '#94a3b8', '#fbbf24']);
 });
