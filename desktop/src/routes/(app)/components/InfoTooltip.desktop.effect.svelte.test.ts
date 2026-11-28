@@ -1,6 +1,8 @@
-// @vitest-environment jsdom
+// @vitest-environment happy-dom
 import { afterEach, expect, it } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
+// The app palette, as the main window loads it through app.css: the outline colour is var(--color-lab-blue).
+import '../../../tokens.css';
 import InfoTooltip from './InfoTooltip.svelte';
 
 const mounted: ReturnType<typeof mount>[] = [];
