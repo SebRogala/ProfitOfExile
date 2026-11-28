@@ -4,9 +4,23 @@
  * trade-types.ts and are re-exported here.
  */
 
-import type { TradeListingDetail } from './trade-types';
+import { getApiBase } from './api';
+import type { TradeListingDetail, TradeLookupResult } from './trade-types';
 export type { TradeLookupResult, TradeListingDetail, TradeSignals } from './trade-types';
 export { hasTradeListings } from './trade-types';
+
+export async function fetchRecentListings(gem: string, variant: string): Promise<TradeLookupResult | null> {
+	const base = getApiBase();
+	if (base === null) throw new Error('Trade server unavailable');
+	const response = await fetch(`${base}/trade/lookup`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ gem, variant: variant.replace(/c$/, ''), force: false, cacheOnly: true })
+	});
+	if (response.status === 204) return null;
+	if (response.status !== 200) throw new Error(`Trade lookup failed: ${response.status}`);
+	return response.json();
+}
 
 // --- Mercenary trade result (mirrors Rust MercTradeResult) ---
 // Desktop-only: the server knows nothing about mercenary listings, so unlike
