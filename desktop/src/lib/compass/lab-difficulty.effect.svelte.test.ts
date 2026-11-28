@@ -228,7 +228,7 @@ function expectWidgetContent(widget: Widget, visible: boolean, roomName: string,
 	}
 	expect(surface, `${widget} content must be shown`).not.toBeNull();
 	if (widget === 'compass') {
-		expect(surface?.querySelector('.fallback-name')?.textContent).toBe(roomName);
+		expect(surface?.querySelector('.room-badge, .fallback-name')?.textContent?.trim()).toBe(roomName);
 	} else if (widget === 'path strip') {
 		expect(surface?.querySelectorAll('circle').length).toBeGreaterThanOrEqual(3);
 	} else {
