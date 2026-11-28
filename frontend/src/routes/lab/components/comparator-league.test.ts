@@ -190,7 +190,7 @@ import wi9ComparatorSource from './Comparator.svelte?raw';
 
 it.each(
 [
-	{ tag: 'keep:critical', tier: 'UNRATED', color: 'rgb(234, 179, 8)' },
+	{ tag: 'keep:critical', tier: 'UNRATED', color: 'var(--color-lab-yellow)' },
 	{ tag: 'keep:happy', tier: 'MID-HIGH', color: 'rgb(192, 132, 252)' },
 	{ tag: 'keep:happy', tier: 'TOP', color: 'rgb(251, 191, 36)' },
 	{ tag: 'keep:happy', tier: 'FLOOR', color: 'rgb(71, 85, 105)' },

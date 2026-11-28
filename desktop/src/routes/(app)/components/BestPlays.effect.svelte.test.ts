@@ -630,7 +630,7 @@ it.each([false, true])('keep:happy WI-9 Best Plays: lowConfidence=%s renders hol
 		expect(badge.classList.contains('tier-unrated')).toBe(true);
 		expect(badge.matches('.tier-low, .tier-mid, .tier-top')).toBe(false);
 		const css = getComputedStyle(badge);
-		expect(css.color).toBe('rgb(234, 179, 8)');
+		expect(css.color).toBe('#eab308');
 		expect(css.backgroundColor).toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/);
 		expect(css.borderTopWidth).toBe('1px');
 		expect(css.borderTopStyle).toBe(lowConfidence ? 'dashed' : 'solid');
@@ -642,7 +642,7 @@ it.each([false, true])('keep:happy WI-9 Best Plays: lowConfidence=%s renders hol
 		expect(expanded.textContent).toBe('UNRATED');
 		expect(expanded.classList.contains('tier-unrated')).toBe(true);
 		expect(expanded.classList.contains('low-conf')).toBe(lowConfidence);
-		expect(getComputedStyle(expanded).color).toBe('rgb(234, 179, 8)');
+		expect(getComputedStyle(expanded).color).toBe('#eab308');
 	} finally { style.remove(); }
 });
 
@@ -656,5 +656,5 @@ it('keep:happy WI-9 Best Plays Tier tooltip: UNRATED has the shared yellow expla
 	expect(tip?.textContent?.toLowerCase()).toContain('under 4 solid gems');
 	expect(tip?.textContent?.toLowerCase()).toContain((wi9Rules as Record<string, string>).UNRATED);
 	const label = [...(tip?.querySelectorAll<HTMLElement>('span') ?? [])].find((node) => node.textContent === 'UNRATED');
-	expect(label?.style.color).toBe('rgb(234, 179, 8)');
+	expect(label?.style.color).toBe('#eab308');
 });

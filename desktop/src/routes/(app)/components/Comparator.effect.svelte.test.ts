@@ -23,11 +23,11 @@ afterEach(async () => {
 
 it.each(
 [
-	{ tag: 'keep:critical', tier: 'UNRATED', color: 'rgb(234, 179, 8)' },
-	{ tag: 'keep:happy', tier: 'MID-HIGH', color: 'rgb(192, 132, 252)' },
-	{ tag: 'keep:happy', tier: 'TOP', color: 'rgb(251, 191, 36)' },
-	{ tag: 'keep:happy', tier: 'FLOOR', color: 'rgb(71, 85, 105)' },
-	{ tag: 'keep:happy', tier: 'CHAOTIC', color: 'rgb(248, 113, 113)' }
+	{ tag: 'keep:critical', tier: 'UNRATED', color: '#eab308' },
+	{ tag: 'keep:happy', tier: 'MID-HIGH', color: '#c084fc' },
+	{ tag: 'keep:happy', tier: 'TOP', color: '#fbbf24' },
+	{ tag: 'keep:happy', tier: 'FLOOR', color: '#475569' },
+	{ tag: 'keep:happy', tier: 'CHAOTIC', color: '#f87171' }
 ])('$tag WI-9 Comparator: selected $tier preserves its badge instead of a silent LOW valuation', async ({ tier, color }) => {
 	const name = 'Ice Nova of Frostbolts';
 	vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {

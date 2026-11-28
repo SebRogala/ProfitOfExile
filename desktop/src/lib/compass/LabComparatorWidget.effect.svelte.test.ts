@@ -49,6 +49,6 @@ it('keep:critical WI-9 widget: polled UNRATED reads yellow at 11px so an unrated
 	document.head.append(style);
 	const tiers = [...target.querySelectorAll<HTMLElement>('.gem-row .tier')];
 	expect(tiers.map((node) => node.textContent)).toEqual(['UNRATED', 'MID', 'TOP']);
-	expect(tiers.map((node) => getComputedStyle(node).color)).toEqual(['rgb(234, 179, 8)', 'rgb(148, 163, 184)', 'rgb(251, 191, 36)']);
+	expect(tiers.map((node) => getComputedStyle(node).color)).toEqual(['#eab308', '#94a3b8', '#fbbf24']);
 	expect(getComputedStyle(tiers[0]).fontSize).toBe('11px');
 });

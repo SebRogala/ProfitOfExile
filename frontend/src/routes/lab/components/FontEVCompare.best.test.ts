@@ -281,7 +281,7 @@ async function mountUnratedPools(mode: 'normal' | 'dedication' = 'normal', cold 
 				lowConfidenceGems: [{ name: 'Storm Burst of Repulsion', chaos: 527, listings: 1 }]
 			};
 		});
-		const pool = { safe: rows, premium: rows, jackpot: rows };
+		const pool = { safe: rows.map((row) => ({ ...row, topEvaluated: undefined })), premium: rows, jackpot: rows };
 		if (url.pathname.endsWith('/font')) return Response.json({ ...pool, best: null, lens: null });
 		if (url.pathname.endsWith('/dedication')) return Response.json({
 			variant: url.searchParams.get('variant'), entryFee: 0, skills: pool, transfigured: pool

@@ -857,7 +857,7 @@ async function mountUnratedPools(mode: 'normal' | 'dedication' = 'normal', cold 
 				lowConfidenceGems: [{ name: 'Storm Burst of Repulsion', chaos: 527, listings: 1 }]
 			};
 		});
-		const pool = { safe: rows, premium: rows, jackpot: rows };
+		const pool = { safe: rows.map((row) => ({ ...row, topEvaluated: undefined })), premium: rows, jackpot: rows };
 		if (url.pathname.endsWith('/font')) return Response.json({ ...pool, best: null, lens: null });
 		if (url.pathname.endsWith('/dedication')) return Response.json({
 			variant: url.searchParams.get('variant'), entryFee: 0, skills: pool, transfigured: pool
@@ -871,7 +871,7 @@ async function mountUnratedPools(mode: 'normal' | 'dedication' = 'normal', cold 
 }
 
 function wi9OpenPool(target: HTMLElement, dedication = false): HTMLElement[] {
-	[...target.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Pool Overview'))!.click();
+	if (!target.querySelector('.pool-section')) [...target.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Pool Overview'))!.click();
 	flushSync();
 	if (dedication) {
 		const select = target.querySelector<HTMLSelectElement>('.pool-variant-select select');
@@ -883,7 +883,9 @@ function wi9OpenPool(target: HTMLElement, dedication = false): HTMLElement[] {
 		}
 		flushSync();
 	}
-	return [...target.querySelectorAll<HTMLElement>('.pool-color-card')];
+	const cards = [...target.querySelectorAll<HTMLElement>('.pool-color-card')];
+	expect(cards).toHaveLength(3);
+	return cards;
 }
 
 function wi9TierRows(card: Element): Element[] {
@@ -911,7 +913,7 @@ it('keep:happy WI-9 Font pools: the served UNRATED variant replaces the rated la
 		expect(cellText(row.querySelector('.pool-tier-count'))).toBe(index === 0 ? '1' : '2');
 		expect(cellText(row.querySelector('.pool-tier-range'))).toBe(index === 0 ? '35c' : '18c — 42c');
 		expect(cellText(row.querySelector('.pool-tier-pwin'))).toBe(index === 0 ? '3%' : '7%');
-		expect((row.querySelector('.pool-tier-bar-fill') as HTMLElement).style.background).toBe('rgb(234, 179, 8)');
+		expect((row.querySelector('.pool-tier-bar-fill') as HTMLElement).style.background).toBe('#eab308');
 	}
 });
 
@@ -960,7 +962,7 @@ it('keep:critical WI-9 raw UNRATED prices stay yellow without a trusted LOW, MID
 		expect(cellText(cell.querySelector('.uf-group'))).toBe('SOLID');
 		expect([...cell.querySelector('.uf-row')!.children].map(cellText).join(' ')).toBe('UNRATED 2 · 18c — 42c');
 		const label = cell.querySelector<HTMLElement>('.uf-tier')!;
-		expect(getComputedStyle(label).color).toBe('rgb(234, 179, 8)');
+		expect(getComputedStyle(label).color).toBe('#eab308');
 		expect(getComputedStyle(label).minWidth).toBe('42px');
 		expect(getComputedStyle(label).width).toBe('auto');
 		expect(cell.querySelector('.ev, .tier-lines, .tier-low, .tier-mid, .tier-top, .best-blue')).toBeNull();
