@@ -851,7 +851,8 @@ async function mountUnratedPools(mode: 'normal' | 'dedication' = 'normal', cold 
 				...fontRow({ color, pool: mode === 'normal' ? [96, 94, 88][index] : [64, 58, 52][index],
 					pricedGems: count, topEvaluated: cold ? undefined : false }),
 				inputCost: 10,
-				poolBreakdown: cold ? [] : [{ tier: 'UNRATED', count,
+				// GREEN carries the server's count-0 marker for a colour whose whole group is gated (internal/lab/font.go).
+				poolBreakdown: cold ? [] : [count === 0 ? { tier: 'UNRATED', count, minPrice: 0, maxPrice: 0 } : { tier: 'UNRATED', count,
 					minPrice: color === 'BLUE' ? (mode === 'normal' ? 18 : 40) : 35,
 					maxPrice: color === 'BLUE' ? (mode === 'normal' ? 42 : 340) : 35 }],
 				lowConfidenceGems: [{ name: 'Storm Burst of Repulsion', chaos: 527, listings: 1 }]
@@ -1010,4 +1011,19 @@ it('keep:critical WI-9 raw UNRATED prices stay yellow without a trusted LOW, MID
 	expect(label.textContent).toBe('UNRATED');
 	expect(getComputedStyle(label).color).toBe('#eab308');
 	expect(cell.querySelector('.tier-low, .tier-mid, .tier-top, .ev, .tier-lines')).toBeNull();
+});
+
+it('keep:regression WI-9 count-0 UNRATED marker renders no SOLID row in the raw list', async () => {
+	const target = await mountUnratedPools();
+	const cell = fontCell(target, '20/20', 'GREEN');
+	expect([...cell.querySelectorAll('.uf-row')].map((node) => [...node.children].map(cellText).join(' '))).toEqual(['2.1d Storm Burst of Repulsion']);
+	expect([...cell.querySelectorAll('.uf-group')].map(cellText)).toEqual(['RISKY']);
+});
+
+it('keep:regression WI-9 count-0 UNRATED marker lists no SOLID tier in the listed-prices tooltip', async () => {
+	const target = await mountUnratedPools();
+	const tip = cellText(await openFontInfo(fontCell(target, '20/20', 'GREEN')));
+	expect(tip).toContain('Storm Burst of Repulsion: 2.1d (1 listing)');
+	expect(tip).not.toContain('UNRATED: 0 gems');
+	expect(tip).not.toContain('SOLID');
 });
