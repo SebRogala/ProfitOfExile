@@ -133,7 +133,7 @@ describe('MercenariesPage saved search anchors', () => {
 		['guide-d', 'guide-d-kinetist-20d', '7nRvBzl2S5']
 	] as const)(
 		'keep:critical %s %s hides dead %s so a player cannot trust an unusable comp link',
-		async (sourceId, rulesetId) => {
+		async (sourceId, rulesetId, _hash) => {
 			await mountSource(sourceId, 'Covens');
 			expect.soft(ruleSite(sourceId, rulesetId).saved).toBeNull();
 			derivedQuery(sourceId, rulesetId, 'Covens');
