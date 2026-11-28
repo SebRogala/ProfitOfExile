@@ -225,6 +225,30 @@
 		MID: '#94a3b8', LOW: '#64748b', FLOOR: '#475569',
 	};
 
+	function listedPriceRange(tier: NonNullable<FontColor['poolBreakdown']>[number]): string {
+		return tier.minPrice === tier.maxPrice
+			? formatPrice(tier.minPrice)
+			: `${formatPrice(tier.minPrice)} — ${formatPrice(tier.maxPrice)}`;
+	}
+
+	function listedPrices(variant: string, color: string, safe: FontColor) {
+		const tiers = [...getPoolBreakdown(variant, color)]
+			.sort((a, b) => ALL_TIERS.indexOf(a.tier) - ALL_TIERS.indexOf(b.tier));
+		const gems = [...(safe.lowConfidenceGems ?? [])].sort((a, b) => b.chaos - a.chaos);
+		let tooltip = `<b>Listed prices, ${color} ${variant}</b>`;
+		if (tiers.length) {
+			tooltip += '<br><br><b>SOLID</b> (enough listings to trust):<br>' + tiers.map(t =>
+				`<span style="color:${TIER_COLORS[t.tier]}">${t.tier}</span>: ${t.count} ${t.count === 1 ? 'gem' : 'gems'}, ${listedPriceRange(t)}`
+			).join('<br>');
+		}
+		if (gems.length) {
+			tooltip += '<br><br><b style="color:var(--color-lab-red)">RISKY</b> (too few listings to trust):<br>' + gems.map(g =>
+				`<b>${g.name}</b>: ${formatPrice(g.chaos)} (${g.listings} ${g.listings === 1 ? 'listing' : 'listings'})`
+			).join('<br>');
+		}
+		return { tiers, gems, tooltip };
+	}
+
 	$effect(() => { refreshKey; labMode; loadAll(); });
 
 	let showRecipes = $state(true);
@@ -478,7 +502,7 @@
 		<table class="ft">
 			<thead>
 				<tr>
-					<th class="var-header"><Tooltip text="<b>Font of Divine Skill — Expected Value per usage</b><br><br><b>Nc/font</b>: Your average income each time you use the Font. Based on best-of-3 random draws — you always pick the most valuable gem.<br><br><b>Highlighted cell</b>: The cell with the highest average income among cells with enough priced gems.<br><br><b>Hit tiers</b> (using unified per-variant tier system):<br>• <span style='color:#5eead4'>Safe</span>: Any gem above FLOOR tier. 'X in Y' = probability from 3 picks.<br>• <span style='color:#c084fc'>Premium</span>: HIGH + MID-HIGH + TOP gems. Significant profit when hit.<br>• <span style='color:#fbbf24'>Jackpot</span>: TOP-tier monopoly outliers. Rare but massive payout.<br><br>Low-confidence gems (thin market, unreliable prices) are excluded from EV calculation but counted in pool size.<br><br><b>Pool Overview</b>: Expand below to see per-color tier breakdown with hit probabilities.<br><br><b>Tip</b>: With Gift Lab (8 fonts/run), even low Jackpot hit rates become viable through compound probability.">Font EV</Tooltip></th>
+					<th class="var-header"><Tooltip text="<b>Font of Divine Skill — Expected Value per usage</b><br><br><b>Nc/font</b>: Your average income each time you use the Font. Based on best-of-3 random draws — you always pick the most valuable gem.<br><br><b>n of N priced</b>: pool gems with solid price evidence. With too few, the cell lists raw prices and no EV.<br><br><b>Highlighted cell</b>: The cell with the highest average income among cells with enough priced gems.<br><br><b>Hit tiers</b> (using unified per-variant tier system):<br>• <span style='color:#5eead4'>Safe</span>: Any gem above FLOOR tier. 'X in Y' = probability from 3 picks.<br>• <span style='color:#c084fc'>Premium</span>: HIGH + MID-HIGH + TOP gems. Significant profit when hit.<br>• <span style='color:#fbbf24'>Jackpot</span>: TOP-tier monopoly outliers. Rare but massive payout.<br><br>Low-confidence gems (thin market, unreliable prices) are excluded from EV calculation but counted in pool size.<br><br><b>Pool Overview</b>: Expand below to see per-color tier breakdown with hit probabilities.<br><br><b>Tip</b>: With Gift Lab (8 fonts/run), even low Jackpot hit rates become viable through compound probability.">Font EV</Tooltip></th>
 					{#each COLORS as color}
 						<th><span class="c-{color.toLowerCase()}">{'\u25CF'} {color}</span></th>
 					{/each}
@@ -494,10 +518,11 @@
 							{@const safe = getColorData(variant, color, 'safe')}
 							{@const premium = getColorData(variant, color, 'premium')}
 							{@const jackpot = getColorData(variant, color, 'jackpot')}
-							{@const isW = best?.variant === variant && best.color === color}
+							{@const isW = ev != null && ev > 0 && best?.variant === variant && best.color === color}
 							<td class:w-red={isW && color === 'RED'} class:w-green={isW && color === 'GREEN'} class:w-blue={isW && color === 'BLUE'}>
-								{#if ev != null && ev > 0}
-									<span class="ev" class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>{formatPrice(ev)}/font</span>
+								{#if safe && safe.evRaw !== null}
+									<span class="ev" class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>{formatPrice(safe.evRaw)}/font</span>
+									<span class="cov">{safe.pricedGems} of {safe.pool} priced</span>
 									<div class="tier-lines">
 										<div class="tier-row">
 											<span class="tier-label t-safe">Safe</span>
@@ -532,8 +557,53 @@
 											<span class="tier-val t-jackpot">{tierLine(jackpot)}</span>
 											<InfoTooltip text={gemList} />
 										</div>
+										{:else if jackpot?.topEvaluated === true}
+											<div class="tier-row">
+												<span class="tier-label t-jackpot">Jackpot</span>
+												<span class="tier-val t-jackpot">— none</span>
+											</div>
+										{:else if jackpot?.topEvaluated === false}
+											<div class="tier-row">
+												<span class="tier-label t-jackpot">Jackpot</span>
+												<span class="tier-val val-muted">— not enough data</span>
+												<InfoTooltip text="Too few solid gems at {variant} to look for TOP-tier outliers." />
+											</div>
 										{/if}
 									</div>
+								{:else if safe}
+									{@const prices = listedPrices(variant, color, safe)}
+									{@const tiers = prices.tiers.slice(0, 4)}
+									{@const gems = prices.gems.slice(0, 4 - tiers.length)}
+									{@const hidden = prices.tiers.length + prices.gems.length - tiers.length - gems.length}
+									<span class="uf-head">{safe.pricedGems} of {safe.pool} priced</span>
+									<span class="uf-note">too few for an EV{#if prices.tiers.length + prices.gems.length > 0}<InfoTooltip text={prices.tooltip} />{/if}</span>
+									{#if safe.poolBreakdown === undefined && safe.lowConfidenceGems === undefined}
+										<span class="uf-note">listed prices load on the next update</span>
+									{:else if prices.tiers.length + prices.gems.length === 0}
+										<span class="uf-note">no listed prices</span>
+									{:else}
+										<div class="uf-list">
+											{#if tiers.length}
+												<div class="uf-group">SOLID</div>
+												{#each tiers as tier}
+													<div class="uf-row">
+														<span class="uf-tier" style="color: {TIER_COLORS[tier.tier]}">{tier.tier}</span>
+														<span class="uf-name">{tier.count} · {listedPriceRange(tier)}</span>
+													</div>
+												{/each}
+											{/if}
+											{#if gems.length}
+												<div class="uf-group risky">RISKY</div>
+												{#each gems as gem}
+													<div class="uf-row">
+														<span class="uf-price">{formatPrice(gem.chaos)}</span>
+														<span class="uf-name">{gem.name}</span>
+													</div>
+												{/each}
+											{/if}
+											{#if hidden > 0}<div class="uf-more">+{hidden} more</div>{/if}
+										</div>
+									{/if}
 								{:else}
 									<span class="nil">{'\u2014'}</span>
 								{/if}
@@ -584,10 +654,13 @@
 						{@const safe = getColorData(poolVariant, color, 'safe')}
 						{@const totalGems = safe?.pool || breakdown.reduce((s, t) => s + t.count, 0)}
 						{@const pricedGems = safe?.pricedGems ?? totalGems}
+						{@const coverageTip = safe?.evRaw === null
+							? `${pricedGems === 0 ? 'None of the' : 'Only ' + pricedGems + ' of'} ${totalGems} ${color} gems have solid price evidence at ${poolVariant}: too few for an EV.`
+							: `Only ${pricedGems} of ${totalGems} ${color} gems have solid price evidence at ${poolVariant}; the rest count as 0c, so the EV is a floor.`}
 						<div class="pool-color-card">
 							<div class="pool-color-header c-{color.toLowerCase()}">{color}
 								{#if pricedGems < totalGems}
-									<Tooltip text="Only {pricedGems} of {totalGems} {color} gems have solid price evidence at {poolVariant}; the rest count as 0c, so the EV is a floor."><span class="pool-count pool-count-partial">{pricedGems} / {totalGems} priced</span></Tooltip>
+									<Tooltip text={coverageTip}><span class="pool-count pool-count-partial" class:pool-count-under={safe?.evRaw === null}>{pricedGems} of {totalGems} priced</span></Tooltip>
 								{:else}
 									<span class="pool-count">{totalGems} gems</span>
 								{/if}
@@ -914,4 +987,18 @@
 		height: 2px;
 		background: var(--color-lab-border);
 	}
+
+	.cov { display: block; font-size: 0.8125rem; color: var(--color-lab-text-secondary); margin: -4px 0 6px; }
+	.uf-head { display: block; font-weight: 700; font-size: 1.0625rem; color: var(--color-lab-yellow); }
+	.uf-note { display: block; font-size: 0.75rem; color: var(--color-lab-text-secondary); margin-bottom: 4px; }
+	.uf-list { max-width: 150px; margin: 0 auto; text-align: left; }
+	.uf-group { font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-lab-text-secondary); border-bottom: 1px solid var(--color-lab-border); margin-top: 4px; }
+	.uf-group.risky { color: var(--color-lab-red); }
+	.uf-row { display: flex; gap: 6px; font-size: 0.75rem; line-height: 1.45; }
+	.uf-price { font-family: Consolas, Monaco, monospace; font-weight: 600; color: var(--color-lab-text); width: 42px; text-align: right; flex-shrink: 0; }
+	.uf-name { color: var(--color-lab-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+	.uf-tier { font-weight: 700; font-size: 0.6875rem; width: 42px; text-align: right; flex-shrink: 0; }
+	.uf-more { font-size: 0.75rem; color: var(--color-lab-text-secondary); }
+	.pool-count.pool-count-under { color: var(--color-lab-yellow); border-bottom-color: var(--color-lab-yellow); }
+	.val-muted { color: var(--color-lab-text-secondary); }
 </style>

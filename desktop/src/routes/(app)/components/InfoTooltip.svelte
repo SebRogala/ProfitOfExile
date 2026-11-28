@@ -8,6 +8,10 @@
 </Tooltip>
 
 <style>
+	.icon-circle:focus-visible {
+		outline: 1px solid var(--color-lab-blue);
+		outline-offset: 2px;
+	}
 	.icon-circle {
 		display: inline-flex;
 		align-items: center;

@@ -641,8 +641,8 @@ function mapFontRows(rows: any[]): FontColor[] {
 		thinPoolGems: r.thinPoolGems || 0,
 		liquidityRisk: r.liquidityRisk || 'LOW',
 		mode: r.mode || '',
-		poolBreakdown: r.poolBreakdown || [],
-		lowConfidenceGems: r.lowConfidenceGems || [],
+		poolBreakdown: r.poolBreakdown,
+		lowConfidenceGems: r.lowConfidenceGems,
 	}));
 }
 

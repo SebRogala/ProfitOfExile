@@ -100,6 +100,10 @@
 </span>
 
 <style>
+	.info-icon:focus-visible {
+		outline: 1px solid var(--color-lab-blue);
+		outline-offset: 2px;
+	}
 	.info-icon {
 		cursor: help;
 		color: var(--color-lab-text-secondary);
