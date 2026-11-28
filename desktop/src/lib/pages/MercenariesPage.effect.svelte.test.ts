@@ -4,6 +4,8 @@ import { mercenarySliceDefault, type MercCapture } from '$lib/mercenaries/captur
 import { MERC_SOURCES, SOURCE_IDS, type MercSourceId } from '$lib/mercenaries/rulesets';
 import { columnLabel } from '$lib/mercenaries/ladder-view';
 import { evaluateCapture } from '$lib/mercenaries/verdict';
+import guideGFrostBlades from '$lib/mercenaries/__fixtures__/guide-g-frost-blades.json';
+import mercenaryStats from '$lib/mercenaries/__fixtures__/mercenary-stats.json';
 
 const rust = vi.hoisted(() => ({ snapshot: {} as Record<string, unknown> }));
 vi.mock('@tauri-apps/api/core', () => ({
@@ -101,6 +103,48 @@ const SURVIVING = [
 	['guide-a', 'guide-a-manyshot', 'WvKGjV8Kfm'],
 	['guide-b', 'guide-b-frost-blades-mv', 'Kld4gv0Pi5']
 ] as const;
+
+describe('MercenariesPage Covens source', () => {
+	it('keep:happy selecting the Covens source displays its supplied Frost Blades search', async () => {
+		rust.snapshot = {
+			league: { name: 'Covens', generation: 1 },
+			mercenary: { ...mercenarySliceDefault(), status: 'done', capture: CAPTURE }
+		};
+		app = mount(MercenariesPage, { target: document.body });
+		await fetchSsot('initial');
+		await settle();
+		const label = 'Covens trade search (2026-11-27)';
+		const button = [...document.querySelectorAll<HTMLButtonElement>('.page-head button')]
+			.find((candidate) => candidate.textContent?.trim() === label);
+		expect(button?.textContent?.trim(), 'the supplied source must be selectable').toBe(label);
+		button!.click();
+		await settle();
+
+		const heading = [...document.querySelectorAll<HTMLElement>('.panel-head')]
+			.find((header) => header.querySelector('h2')?.textContent?.trim() === label);
+		expect(heading?.querySelector<HTMLAnchorElement>('a.guide-link')?.href).toBe(
+			'https://www.pathofexile.com/trade/search/Covens/H4sIAAAAAAAACrWS7QqCMBiF7-X8lnBfbu5WQmLVgtGaojMI2b2HJUGg1h9_P8_ec96XDeiiiX0HPaBuoqsDNMzdOG-O3iJlL95B7wfER2NHGs7IcHE-2vYN3BkaN9uebDDtY9ddnfcHRlUukbIFXAgu2TKmvGQEqRqFKfej_JNOKcnF7Pi-aeo2HhjJBf0OCHX8MXp6KwpazK82CVSWMt-yPedKFasNFCerAlNCkjVBMMIFUpXhbnxvxw9ycwGapc22KtXqVQkXRM40oilV6QlDYJemyQIAAA'
+		);
+		const cards = document.querySelectorAll<HTMLElement>('article.card');
+		const rules = [...cards].filter((card) => card.querySelector('a[aria-label^="open derived search"]'));
+		expect(rules).toHaveLength(1);
+		const card = rules[0];
+		expect(card.querySelector('a[aria-label^="open saved search"]')).toBeNull();
+		const href = card.querySelector<HTMLAnchorElement>('a[aria-label^="open derived search"]')!.href;
+		expect(new URL(href).pathname).toBe('/trade/search/Covens');
+		expect(JSON.parse(new URL(href).searchParams.get('q') ?? '')).toEqual({ query: guideGFrostBlades.query });
+
+		const speedNames = ['mercenary.support_987', 'mercenary.support_14517'].map((id) =>
+			mercenaryStats.entries.find((entry) => entry.id === id)!.text
+		);
+		const speed = [...card.querySelectorAll<HTMLElement>('.group')].find((group) =>
+			speedNames.every((name) => [...group.querySelectorAll('.entry-name')]
+				.some((entry) => entry.textContent?.trim() === name))
+		);
+		expect(speed?.querySelector('.off-badge')).toBeNull();
+		expect(speed?.querySelectorAll('.entry-required .entry-name').length).toBe(3);
+	});
+});
 
 describe('MercenariesPage guide-a price floors', () => {
 	it.each([

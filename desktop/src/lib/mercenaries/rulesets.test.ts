@@ -46,6 +46,7 @@ import guideECombatant from './__fixtures__/guide-e-combatant.json';
 import guideEManyshot from './__fixtures__/guide-e-manyshot.json';
 import guideECruelMistress from './__fixtures__/guide-e-cruel-mistress.json';
 import guideEStormhand from './__fixtures__/guide-e-stormhand.json';
+import guideGFrostBlades from './__fixtures__/guide-g-frost-blades.json';
 import n8r8JqonVIV from './__fixtures__/8r8JqonVIV.json';
 import veYJp9gZhE from './__fixtures__/veYJp9gZhE.json';
 import PPGnKVv7UL from './__fixtures__/PPGnKVv7UL.json';
@@ -124,6 +125,7 @@ const FIXTURES: Record<string, RawSavedSearch> = {
 	'guide-e-manyshot': guideEManyshot as unknown as RawSavedSearch,
 	'guide-e-cruel-mistress': guideECruelMistress as unknown as RawSavedSearch,
 	'guide-e-stormhand': guideEStormhand as unknown as RawSavedSearch,
+	'guide-g-frost-blades': guideGFrostBlades as unknown as RawSavedSearch,
 	'8r8JqonVIV': n8r8JqonVIV as unknown as RawSavedSearch,
 	veYJp9gZhE: veYJp9gZhE as unknown as RawSavedSearch,
 	PPGnKVv7UL: PPGnKVv7UL as unknown as RawSavedSearch,
@@ -223,6 +225,12 @@ function flatten(ruleset: MercRuleset): Record<string, unknown> {
 }
 
 describe('query transcription', () => {
+	it('keep:happy transcribes the supplied Covens Frost Blades query from its independent fixture', () => {
+		const ruleset = rulesetById('guide-g-frost-blades');
+		expect(fromRuleset(ruleset)).toEqual(fromFixture(guideGFrostBlades));
+		expect(ruleset.archetype).toBe('combatant');
+	});
+
 	for (const ruleset of allRulesets()) {
 		describe(ruleset.id, () => {
 			it('reads the fixture that carries its own declared oracle name', () => {
@@ -765,7 +773,7 @@ describe('the oracle a ruleset is checked against', () => {
 	 * from being handed a guide-c ruleset and building a trade link to a hash GGG
 	 * never issued — so which rulesets are on which side is pinned, not implied.
 	 */
-	it('gives the four saved-search guides a hash and guide-c and guide-e a fixture file', () => {
+	it('keep:happy gives the four saved-search guides a hash and the eleven authored rulesets a fixture file', () => {
 		const byKind = allRulesets().map(
 			(r) => `${r.id} ${r.savedSearch ? `saved=${r.savedSearch.hash}` : `authored=${r.authored?.file}`}`
 		);
@@ -779,7 +787,8 @@ describe('the oracle a ruleset is checked against', () => {
 			'guide-e-combatant authored=guide-e-combatant',
 			'guide-e-manyshot authored=guide-e-manyshot',
 			'guide-e-cruel-mistress authored=guide-e-cruel-mistress',
-			'guide-e-stormhand authored=guide-e-stormhand'
+			'guide-e-stormhand authored=guide-e-stormhand',
+			'guide-g-frost-blades authored=guide-g-frost-blades'
 		]);
 		expect(byKind.filter((row) => row.includes('saved=')).length).toBe(28);
 	});
@@ -1561,8 +1570,12 @@ describe('author notes', () => {
 });
 
 describe('source registry', () => {
-	it('declares exactly the sources named in SOURCE_IDS, in that order', () => {
+	it('keep:happy declares seven sources ending in guide-g with 39 rulesets', () => {
+		expect([...SOURCE_IDS]).toEqual([
+			'guide-a', 'guide-b', 'guide-c', 'guide-d', 'guide-e', 'guide-f', 'guide-g'
+		]);
 		expect(MERC_SOURCES.map((s) => s.id)).toEqual([...SOURCE_IDS]);
+		expect(allRulesets()).toHaveLength(39);
 	});
 
 	it('gives every ruleset an id of its own', () => {
@@ -1586,14 +1599,15 @@ describe('source registry', () => {
 	// these are and which side of the trade they are written from, because the
 	// sources disagree on purpose and a reader comparing their headlines cannot
 	// otherwise tell a seller's floor from a buyer's shopping list.
-	it('says whose rules each source carries and which side of the trade they take', () => {
+	it('keep:happy says whose rules each source carries and which side of the trade they take', () => {
 		expect(MERC_SOURCES.map((s) => `${s.label}: ${s.description ?? 'none'}`)).toEqual([
 			"ckaiba: ckaiba's seller-side floors — wealthyexile strategy 7062",
 			"Nerotox: Nerotox's tiered saved searches — three videos, four ladders",
 			"CaptainLance: CaptainLance's buyer-side ideal links for a Luminary merc bot — no prices, no floors",
 			"XTheFarmerX: XTheFarmerX's budget life-stacking KB merc — two saved searches, the upper one Nerotox's own link",
 			"sushi: sushi's buyer-side archetype notes for Allflame 3.29 — no prices, no floors",
-			"Path of Evening: Path of Evening's buyer-side saved searches — three archetypes, a cheap and an expensive rung each"
+			"Path of Evening: Path of Evening's buyer-side saved searches — three archetypes, a cheap and an expensive rung each",
+			expect.stringMatching(/^Covens trade search \(2026-11-27\): [^\r\n]+$/)
 		]);
 	});
 });

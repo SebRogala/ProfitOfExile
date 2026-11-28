@@ -623,7 +623,7 @@ describe('denials', () => {
 });
 
 describe('sources are evaluated independently', () => {
-	it('skips a Barrage Kinetist for guide A while guide B calls it worth', () => {
+	it('keep:happy skips a Barrage Kinetist for guide A while guide B calls it worth', () => {
 		const capture = captureOf([
 			row(0, skillRead(KINETIC_BLAST_OF_CLUSTERING), supportsOf([RETURN, GREATER_FORK, CHAIN, GREATER_EDWA, CRITICAL_DAMAGE])),
 			row(1, skillRead(BARRAGE))
@@ -652,7 +652,8 @@ describe('sources are evaluated independently', () => {
 			// mercenary's second skill is Barrage, so all three are missing and
 			// both its rungs fail — a sixth opinion that turns on the buffs
 			// rather than on the links.
-			['guide-f', 'skip']
+			['guide-f', 'skip'],
+			['guide-g', 'skip']
 		]);
 		expect(sourceOf(verdict, 'guide-b').best).toEqual(['guide-b-kinetist-mv']);
 	});

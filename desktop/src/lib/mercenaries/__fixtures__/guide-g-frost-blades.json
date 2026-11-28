@@ -1,0 +1,50 @@
+{
+  "id": "guide-g-frost-blades",
+  "query": {
+    "status": { "option": "available" },
+    "stats": [
+      {
+        "type": "and",
+        "filters": [
+          { "id": "mercenary.skill_32807" },
+          { "id": "mercenary.skill_65473" },
+          { "id": "mercenary.skill_24931" }
+        ]
+      },
+      {
+        "type": "mercenary",
+        "filters": [
+          { "id": "mercenary.skill_22105" },
+          { "id": "mercenary.support_31052" }
+        ]
+      },
+      {
+        "type": "not",
+        "filters": [
+          { "id": "mercenary.support_56267" },
+          { "id": "mercenary.support_27970" }
+        ]
+      },
+      {
+        "type": "mercenary",
+        "filters": [
+          { "id": "mercenary.skill_22105" },
+          { "id": "mercenary.support_44886" },
+          { "id": "mercenary.support_28416" },
+          { "id": "mercenary.support_38571" },
+          { "id": "mercenary.support_53145" }
+        ],
+        "value": { "min": 3 }
+      },
+      {
+        "type": "mercenary",
+        "filters": [
+          { "id": "mercenary.skill_22105" },
+          { "id": "mercenary.support_987" },
+          { "id": "mercenary.support_14517" }
+        ],
+        "value": { "min": 2 }
+      }
+    ]
+  }
+}

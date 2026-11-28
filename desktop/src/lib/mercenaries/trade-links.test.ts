@@ -39,6 +39,7 @@ import guideECombatant from './__fixtures__/guide-e-combatant.json';
 import guideEManyshot from './__fixtures__/guide-e-manyshot.json';
 import guideECruelMistress from './__fixtures__/guide-e-cruel-mistress.json';
 import guideEStormhand from './__fixtures__/guide-e-stormhand.json';
+import guideGFrostBlades from './__fixtures__/guide-g-frost-blades.json';
 import n8r8JqonVIV from './__fixtures__/8r8JqonVIV.json';
 import veYJp9gZhE from './__fixtures__/veYJp9gZhE.json';
 import PPGnKVv7UL from './__fixtures__/PPGnKVv7UL.json';
@@ -79,6 +80,7 @@ const FIXTURES: Record<string, { id: string; query: unknown }> = {
 	'guide-e-manyshot': guideEManyshot,
 	'guide-e-cruel-mistress': guideECruelMistress,
 	'guide-e-stormhand': guideEStormhand,
+	'guide-g-frost-blades': guideGFrostBlades,
 	'8r8JqonVIV': n8r8JqonVIV,
 	veYJp9gZhE,
 	PPGnKVv7UL,
@@ -193,7 +195,7 @@ describe('rulesets transcribed from prose', () => {
 	const AUTHORED = allRulesets().filter((ruleset) => ruleset.authored !== undefined);
 	const SAVED = allRulesets().filter((ruleset) => ruleset.savedSearch !== undefined);
 
-	it('names the ten authored rulesets, and only those', () => {
+	it('keep:happy names the eleven authored rulesets, and only those', () => {
 		expect(AUTHORED.map((r) => r.id)).toEqual([
 			'guide-c-kinetist',
 			'guide-c-manyshot',
@@ -204,7 +206,8 @@ describe('rulesets transcribed from prose', () => {
 			'guide-e-combatant',
 			'guide-e-manyshot',
 			'guide-e-cruel-mistress',
-			'guide-e-stormhand'
+			'guide-e-stormhand',
+			'guide-g-frost-blades'
 		]);
 	});
 
@@ -240,7 +243,7 @@ describe('source guide links', () => {
 	// carries all six of its links but answers 403 to this repo, so its URL is
 	// the only re-check a reader has and a stale one would leave six searches
 	// unattributable.
-	it('points each source at the page its rules were taken from', () => {
+	it('keep:happy points each source at the page its rules were taken from', () => {
 		expect(MERC_SOURCES.map((s) => [s.id, s.guideUrl])).toEqual([
 			['guide-a', 'https://wealthyexile.com/strategies/7062/alchgo_astrolabe__merc_boss_rushing'],
 			['guide-b', 'https://www.youtube.com/channel/UCqIRIXItoDOlET2oeFn6WKA'],
@@ -253,6 +256,10 @@ describe('source guide links', () => {
 			[
 				'guide-f',
 				'https://mobalytics.gg/poe/builds/mercenary-support-luminary-path-of-evening'
+			],
+			[
+				'guide-g',
+				'https://www.pathofexile.com/trade/search/Covens/H4sIAAAAAAAACrWS7QqCMBiF7-X8lnBfbu5WQmLVgtGaojMI2b2HJUGg1h9_P8_ec96XDeiiiX0HPaBuoqsDNMzdOG-O3iJlL95B7wfER2NHGs7IcHE-2vYN3BkaN9uebDDtY9ddnfcHRlUukbIFXAgu2TKmvGQEqRqFKfej_JNOKcnF7Pi-aeo2HhjJBf0OCHX8MXp6KwpazK82CVSWMt-yPedKFasNFCerAlNCkjVBMMIFUpXhbnxvxw9ycwGapc22KtXqVQkXRM40oilV6QlDYJemyQIAAA'
 			]
 		]);
 	});
@@ -291,9 +298,9 @@ describe('per-ruleset guide URLs', () => {
 	// repeating it per ruleset. Guide E is six archetypes in one screenshot and
 	// guide F six searches on one page — the most this can carry and still be
 	// true.
-	it('leaves a one-page source’s rulesets without a URL of their own', () => {
-		const onePage = ['guide-a', 'guide-c', 'guide-d', 'guide-e', 'guide-f'].flatMap(
-			(id) => (MERC_SOURCES.find((s) => s.id === id) as MercSource).rulesets
+	it('keep:happy leaves a one-page source’s rulesets without a URL of their own', () => {
+		const onePage = ['guide-a', 'guide-c', 'guide-d', 'guide-e', 'guide-f', 'guide-g'].flatMap(
+			(id) => MERC_SOURCES.find((s) => s.id === id)?.rulesets ?? []
 		);
 		expect(onePage.map((r) => `${r.id} ${r.guideUrl ?? 'inherits the source URL'}`)).toEqual([
 			'guide-a-manyshot inherits the source URL',
@@ -316,7 +323,8 @@ describe('per-ruleset guide URLs', () => {
 			'guide-f-combatant-cheap inherits the source URL',
 			'guide-f-combatant-expensive inherits the source URL',
 			'guide-f-kinetist-cheap inherits the source URL',
-			'guide-f-kinetist-expensive inherits the source URL'
+			'guide-f-kinetist-expensive inherits the source URL',
+			'guide-g-frost-blades inherits the source URL'
 		]);
 	});
 });
