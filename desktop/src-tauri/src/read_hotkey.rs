@@ -812,6 +812,7 @@ mod dispatch_tests {
             assert!(pending.reading, "accepted press must present progress before delay/capture");
             assert_eq!(pending.seq, 1, "acceptance has its own presentation identity");
             assert!(world.probes.lock().unwrap().is_empty(), "completion is held in the queue");
+            assert!(world.consumed.lock().unwrap().is_empty(), "triggered progress precedes read results");
             let mut grabs = 0;
             run_dispatcher(&world, queued, &mut |delay| assert_eq!(delay, Duration::from_millis(300)),
                 &mut || { grabs += 1; Ok(capture(9)) }, &mut |_| panic!("no dismissal"));
@@ -826,6 +827,7 @@ mod dispatch_tests {
     fn assert_ignored_read(kind: crate::FocusState, editable: bool) {
         let world = Arc::new(World::default());
         let state = Arc::new(crate::settings::tests::test_app_state());
+        state.read_prompt.lock().unwrap().arm(crate::read_prompt::Mechanic::Mercenary);
         let before = state.read_prompt.lock().unwrap().snapshot();
         let (tx, rx) = mpsc::channel();
         let mut input = sample(PRESSED, false);

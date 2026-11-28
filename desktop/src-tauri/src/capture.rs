@@ -337,6 +337,21 @@ pub(crate) fn recalibrate_client_diagnostic(
     )
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
+fn capture_exclusion_labels() -> &'static [&'static str] {
+    &[]
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn capture_with_exclusions<T>(
+    _windows: &[isize],
+    _acquire: impl FnMut(isize) -> bool,
+    _release: impl FnMut(isize),
+    _grab: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    Err(String::new())
+}
+
 #[cfg(windows)]
 mod platform {
     use super::{client_in_capture, refresh_changed_client, rendered_area, select_client_with_diagnostic, untrimmed_client_in_capture, AffinityLedger, Capture, ClientDiagnostics, GameMonitor, GrabTiming, RenderedClientLatch};
@@ -1807,6 +1822,71 @@ mod affinity_ledger_tests {
         let (_, after) = two_threads_overlapping();
         assert_eq!(after.iter().filter(|e| **e == (1, "clear")).count(), 1, "{after:?}");
         assert_eq!(after.last(), Some(&(1, "clear")), "{after:?}");
+    }
+}
+
+#[cfg(test)]
+mod capture_exclusion_keep_critical {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[test]
+    fn every_app_surface_is_excluded_to_prevent_silently_reading_our_ui() {
+        let labels = capture_exclusion_labels();
+        for label in ["main", "lab", "temple", "mercenary", "loot", "prompt",
+            "overlay-preview", "overlay-region-editor"] {
+            assert!(labels.contains(&label), "{label} may overlap the PoE read rectangle");
+        }
+    }
+
+    #[test]
+    fn exclusion_refusal_prevents_silent_ui_capture_and_restores_acquired_holds() {
+        for refused in [1, 2] {
+            let acquired = RefCell::new(Vec::new());
+            let restored = RefCell::new(Vec::new());
+            let result = capture_with_exclusions(&[1, 2], |hwnd| {
+                if hwnd == refused { return false; }
+                acquired.borrow_mut().push(hwnd);
+                true
+            }, |hwnd| restored.borrow_mut().push(hwnd), || {
+                panic!("a refused exclusion must never expose app pixels to a reader")
+            });
+            let result: Result<(), String> = result;
+            assert!(result.is_err(), "exclusion refusal must fail the read");
+            assert!(!result.unwrap_err().is_empty(), "refusal needs a diagnostic");
+            let expected = if refused == 1 { vec![] } else { vec![1] };
+            assert_eq!(*acquired.borrow(), expected);
+            assert_eq!(*restored.borrow(), expected, "earlier holds leaked after refusal");
+        }
+    }
+
+    #[test]
+    fn grab_completion_restores_all_holds_so_later_screenshots_are_not_silently_changed() {
+        for failed in [false, true] {
+            let held = RefCell::new(Vec::new());
+            let acquired = RefCell::new(Vec::new());
+            let restored = RefCell::new(Vec::new());
+            let mut grabs = 0;
+            let result = capture_with_exclusions(&[1, 2], |hwnd| {
+                held.borrow_mut().push(hwnd);
+                acquired.borrow_mut().push(hwnd);
+                true
+            }, |hwnd| {
+                held.borrow_mut().retain(|h| *h != hwnd);
+                restored.borrow_mut().push(hwnd);
+            }, || {
+                grabs += 1;
+                assert_eq!(*held.borrow(), vec![1, 2], "capture began before exclusion");
+                if failed { Err("grab failed".into()) } else { Ok(37) }
+            });
+            assert_eq!(result, if failed { Err("grab failed".into()) } else { Ok(37) });
+            assert_eq!(grabs, 1, "keep the existing single game-monitor grab");
+            assert_eq!(*acquired.borrow(), vec![1, 2]);
+            let mut released = restored.into_inner();
+            released.sort();
+            assert_eq!(released, vec![1, 2], "success and failure must both restore holds");
+            assert!(held.borrow().is_empty());
+        }
     }
 }
 
