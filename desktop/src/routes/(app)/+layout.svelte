@@ -59,8 +59,8 @@
 	import PrivacyGate from '$lib/components/PrivacyGate.svelte';
 
 	let { children } = $props();
-	$effect(() => reportEditableFocus((editable) => {
-		void invoke('report_read_editable_focus', { editable }).catch(console.error);
+	$effect(() => reportEditableFocus((editable, active) => {
+		void invoke('report_read_editable_focus', { editable, active }).catch(console.error);
 	}));
 
 	const bossLootPorts: PagePorts = {

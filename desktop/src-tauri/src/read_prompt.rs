@@ -7,13 +7,13 @@
 //! no-match presentation. Nothing here grabs the screen; a read happens only on the read key
 //! (`crate::read_hotkey`). Policy: docs/OVERLAY-GUIDE.md § "Screen reading
 //! (GGG policy)".
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::temple::trigger::LineEvent;
 
 /// A mechanic the read key can read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Mechanic {
     DivineFont,
@@ -36,7 +36,7 @@ pub enum Change {
 }
 
 /// The SSOT presentation; each arm or completed result has a fresh identity.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadPromptSnapshot {
     pub mechanic: Option<Mechanic>,
@@ -92,6 +92,8 @@ pub struct ReadPromptState {
     accepted: u64,
     finished: u64,
     reading: bool,
+    // A fast completion must not erase a press before the prompt has painted it.
+    unpresented: std::collections::VecDeque<ReadPromptSnapshot>,
 }
 
 impl ReadPromptState {
@@ -166,6 +168,7 @@ impl ReadPromptState {
         self.reading = true;
         self.recalibrating = false;
         self.seq += 1;
+        self.unpresented.push_back(self.snapshot());
         PressStamp {
             id: self.accepted,
             arm_generation: self.arm_generation,
@@ -230,6 +233,43 @@ impl ReadPromptState {
     pub fn last_client_mechanic(&self) -> Option<Mechanic> {
         self.last_client_mechanic
     }
+
+    fn presentation(&mut self, presented_seq: Option<u64>) -> ReadPromptSnapshot {
+        if self.unpresented.front().is_some_and(|s| Some(s.seq) == presented_seq) {
+            self.unpresented.pop_front();
+        }
+        self.unpresented.front().copied().unwrap_or_else(|| self.snapshot())
+    }
+}
+
+static PRESENTATION_CHANGED: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// The prompt keeps one command outstanding, independent of WebView2 eager events.
+#[tauri::command]
+pub async fn poll_read_prompt(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    presented_seq: Option<u64>,
+    previous: Option<ReadPromptSnapshot>,
+) -> Result<ReadPromptSnapshot, String> {
+    if window.label() != "prompt" {
+        return Err("Only the prompt window can acknowledge read presentation".into());
+    }
+    let changed = PRESENTATION_CHANGED.notified();
+    tokio::pin!(changed);
+    changed.as_mut().enable();
+    let current = {
+        let state = app.state::<crate::AppState>();
+        let mut prompt = state.read_prompt.lock().unwrap_or_else(|e| e.into_inner());
+        prompt.presentation(presented_seq)
+    };
+    if Some(current) != previous {
+        return Ok(current);
+    }
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), changed).await;
+    let state = app.state::<crate::AppState>();
+    let mut prompt = state.read_prompt.lock().unwrap_or_else(|e| e.into_inner());
+    Ok(prompt.presentation(None))
 }
 
 /// What a temple Client.txt line does to the prompt. `event` is `classify`'s
@@ -419,6 +459,7 @@ pub fn area_changed_in(state: &crate::AppState) -> bool {
 
 fn emit_if(app: &AppHandle, changed: bool) {
     if changed {
+        PRESENTATION_CHANGED.notify_waiters();
         crate::ssot::emit_ssot(app);
     }
 }

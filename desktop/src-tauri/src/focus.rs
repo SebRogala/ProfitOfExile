@@ -13,14 +13,16 @@ static EDITABLE_FOCUS: std::sync::LazyLock<std::sync::Mutex<std::collections::Ha
     std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 #[tauri::command]
-pub(crate) fn report_read_editable_focus(window: tauri::WebviewWindow, editable: bool) -> Result<(), String> {
+pub(crate) fn report_read_editable_focus(window: tauri::WebviewWindow, editable: bool, active: bool) -> Result<(), String> {
     #[cfg(windows)]
     {
         let hwnd = window.hwnd().map_err(|e| e.to_string())?;
-        EDITABLE_FOCUS.lock().unwrap_or_else(|e| e.into_inner()).insert(hwnd.0 as isize, editable);
+        let foreground = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+        let blocked = editable || !active || foreground != hwnd;
+        EDITABLE_FOCUS.lock().unwrap_or_else(|e| e.into_inner()).insert(hwnd.0 as isize, blocked);
     }
     #[cfg(not(windows))]
-    let _ = (window, editable);
+    let _ = (window, editable, active);
     Ok(())
 }
 

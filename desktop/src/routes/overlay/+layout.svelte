@@ -7,14 +7,17 @@
 	// out here. `src/lib/overlay/overlay-tokens.test.ts` fails if this import
 	// goes away.
 	import '../../tokens.css';
-	import { startSsotStore } from '$lib/stores/ssot.svelte';
+	import { startReadPromptStore, startSsotStore } from '$lib/stores/ssot.svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { reportEditableFocus } from '$lib/read-prompt/editable-focus';
 
 	let { children } = $props();
-	$effect(() => reportEditableFocus((editable) => {
-		void invoke('report_read_editable_focus', { editable }).catch(console.error);
+	$effect(() => reportEditableFocus((editable, active) => {
+		void invoke('report_read_editable_focus', { editable, active }).catch(console.error);
 	}));
+	$effect(() => {
+		if (window.location.pathname === '/overlay/prompt') return startReadPromptStore();
+	});
 
 	// Overlay windows deliver SSOT by polling get_ssot (WebView2 cross-window
 	// events are unreliable). onMount is unreliable in overlay windows, so start

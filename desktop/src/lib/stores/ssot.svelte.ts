@@ -40,6 +40,7 @@
  *   //   cleanup (onMount is unreliable in overlay windows).
  */
 import { applyServerSlice } from '$lib/stores/server-base.svelte';
+import { tick } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { DEDICATION_VARIANTS, VARIANTS } from '$lib/api';
@@ -824,7 +825,7 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	if (snap.readHotkey !== undefined) ssot.readHotkey = snap.readHotkey;
 	if (snap.exchangeRead !== undefined) ssot.exchangeRead = snap.exchangeRead;
 	if (snap.overlayDismiss !== undefined) ssot.overlayDismiss = snap.overlayDismiss;
-	if (snap.readPrompt !== undefined) ssot.readPrompt = snap.readPrompt;
+	if (snap.readPrompt !== undefined && !readPromptDelivery) ssot.readPrompt = snap.readPrompt;
 	if (snap.ocrRegions !== undefined) ssot.ocrRegions = snap.ocrRegions;
 	applyMercenary(snap.mercenary);
 	applyTemple(snap.temple);
@@ -845,6 +846,41 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let unlistenSsot: UnlistenFn | null = null;
+let readPromptDelivery: object | null = null;
+
+export function startReadPromptStore(): () => void {
+	const delivery = {};
+	readPromptDelivery = delivery;
+	let retry: ReturnType<typeof setTimeout> | undefined;
+	const current = () => readPromptDelivery === delivery;
+	void (async () => {
+		let previous: ReadPromptSnapshot | null = null;
+		let presentedSeq: number | null = null;
+		while (current()) {
+			try {
+				const snapshot = await invoke<ReadPromptSnapshot>('poll_read_prompt', { previous, presentedSeq });
+				if (!current()) return;
+				ssot.readPrompt = snapshot;
+				await tick();
+				if (snapshot.reading) {
+					// Two frames leave a paint between applying the prompt and acknowledging it.
+					await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+					await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+				}
+				previous = snapshot;
+				presentedSeq = snapshot.reading ? snapshot.seq : null;
+			} catch (error) {
+				console.warn('[ssot] poll_read_prompt failed:', error);
+				if (!current()) return;
+				await new Promise<void>((resolve) => { retry = setTimeout(resolve, POLL_INTERVAL_MS); });
+			}
+		}
+	})();
+	return () => {
+		if (current()) readPromptDelivery = null;
+		clearTimeout(retry);
+	};
+}
 
 /**
  * What prompted a `get_ssot` fetch — the measurement the temple overlay logs
