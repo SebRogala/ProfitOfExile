@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { fetchSignalHistory, type GemPlay, type RankingsSort, type SignalTransition } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
-	import { formatPrice } from '$lib/price.svelte';
+	import { formatPrice, formatPriceParts } from '$lib/price.svelte';
+	import { fetchRecentListings, type TradeListingDetail } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS, TIER_RULES, TIER_RULES_NOTE } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
@@ -48,6 +50,33 @@
 
 	let expandedHistory = $state<SignalTransition[]>([]);
 	let historyLoading = $state(false);
+	let expandedListings = $state<TradeListingDetail[]>([]);
+	let listingsLoading = $state(false);
+	let listingsError = $state(false);
+	let expandedIdentity = $state<{ name: string; variant: string } | null>(null);
+	let requestGeneration = 0;
+
+	$effect.pre(() => {
+		const gem = expandedRow === null ? null : plays[expandedRow];
+		if (expandedIdentity && (gem?.name !== expandedIdentity.name || gem?.variant !== expandedIdentity.variant)) {
+			requestGeneration++;
+			expandedRow = null;
+			expandedIdentity = null;
+			expandedListings = [];
+			expandedHistory = [];
+		}
+	});
+
+	onDestroy(() => { requestGeneration++; });
+
+	function listingAge(indexedAt: string): string {
+		const minutes = Math.max(0, Math.floor((Date.now() - new Date(indexedAt).getTime()) / 60000));
+		if (!Number.isFinite(minutes)) return 'Age unavailable';
+		if (minutes < 60) return `${minutes}m ago`;
+		const hours = Math.floor(minutes / 60);
+		if (hours < 24) return `${hours}h ago`;
+		return `${Math.floor(hours / 24)}d ago`;
+	}
 
 	function velocityStr(v: number): string {
 		if (v > 0) return `↑${v}`;
@@ -57,10 +86,13 @@
 
 	let historyError = $state(false);
 
-	async function toggleRow(i: number) {
+	function toggleRow(i: number) {
+		const generation = ++requestGeneration;
 		if (expandedRow === i) {
 			expandedRow = null;
+			expandedIdentity = null;
 			expandedHistory = [];
+			expandedListings = [];
 			return;
 		}
 		expandedRow = i;
@@ -68,14 +100,29 @@
 		historyLoading = true;
 		historyError = false;
 		const gem = plays[i];
-		try {
-			expandedHistory = await fetchSignalHistory(gem.name, gem.variant);
-		} catch (err) {
-			console.warn(`[BestPlays] Signal history failed for ${gem.name}:`, err);
+		const { name, variant } = gem;
+		expandedIdentity = { name, variant };
+		expandedListings = [];
+		listingsLoading = true;
+		listingsError = false;
+		const isCurrent = () => generation === requestGeneration && expandedRow === i
+			&& plays[i]?.name === name && plays[i]?.variant === variant;
+		void fetchSignalHistory(name, variant).then((history) => {
+			if (isCurrent()) expandedHistory = history;
+		}).catch((err) => {
+			if (!isCurrent()) return;
+			console.warn(`[BestPlays] Signal history failed for ${name}:`, err);
 			historyError = true;
-		} finally {
-			historyLoading = false;
-		}
+		}).finally(() => {
+			if (isCurrent()) historyLoading = false;
+		});
+		void fetchRecentListings(name, variant).then((result) => {
+			if (isCurrent()) expandedListings = [...(result?.listings ?? [])].sort((a, b) => a.chaosPrice - b.chaosPrice).slice(0, 3);
+		}).catch(() => {
+			if (isCurrent()) listingsError = true;
+		}).finally(() => {
+			if (isCurrent()) listingsLoading = false;
+		});
 	}
 </script>
 
@@ -202,7 +249,11 @@
 									<div class="eyebrow"><span class="step">2</span> Sell</div>
 									<div class="fact two">
 										<span class="fact-label">Transfigured <span class="var">{gem.variant}</span></span>
-										<span class="amt big">{formatPrice(gem.transPrice)}</span>
+										<span class="sell-price"><span class="amt big">{formatPrice(gem.transPrice)}</span>
+											{#if formatPriceParts(gem.transPrice).unit === 'd'}
+												<span class="amt muted">{formatPrice(gem.transPrice, 'chaos')}</span>
+											{/if}
+										</span>
 									</div>
 									{#if gem.sellUrgency}
 										<span class="urgency urgency-{gem.sellUrgency.toLowerCase().replace('_', '-')}">{gem.sellUrgency.replace('_', ' ')}</span>
@@ -219,6 +270,7 @@
 									<div class="fact two"><span class="fact-label">Sellability</span><span class="val sell-{gem.sellabilityLabel.toLowerCase().replace(' ', '-')}">{gem.sellabilityLabel} · {gem.sellability}</span></div>
 								</section>
 							</div>
+							<div class="history-listings">
 							<section class="history">
 								<div class="eyebrow">Signal history
 									{#if historyLoading}<span class="hist-none">Loading…</span>
@@ -238,6 +290,21 @@
 									</div>
 								{/if}
 							</section>
+							<section class="recent-listings">
+								<div class="eyebrow">Recent listings</div>
+								{#if listingsLoading}
+									<div class="listing-state">Loading listings…</div>
+								{:else if listingsError}
+									<div class="listing-state">Listings unavailable</div>
+								{:else if expandedListings.length === 0}
+									<div class="listing-state">No recent listings</div>
+								{:else}
+									{#each expandedListings as listing}
+										<div class="listing-row"><span class="amt">{listing.price}{listing.currency === 'chaos' ? 'c' : listing.currency === 'divine' ? 'd' : ` ${listing.currency}`}</span><span>{listingAge(listing.indexedAt)}</span></div>
+									{/each}
+								{/if}
+							</section>
+							</div>
 						</div>
 					</td>
 				</tr>
@@ -441,6 +508,7 @@
 	.var { color: var(--color-lab-text-secondary); font-size: 0.75rem; margin-left: 4px; }
 	.amt { display: inline-flex; align-items: center; gap: 3px; color: var(--color-lab-text); font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
 	.amt.big { font-size: 1rem; font-weight: 700; }
+	.sell-price { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 	.amt.muted { color: var(--color-lab-text-secondary); }
 	.sub { border-top: 1px dashed var(--color-lab-border); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 	.gcp-label { color: #fbbf24; font-weight: 600; font-size: 0.8125rem; white-space: nowrap; }
@@ -460,7 +528,12 @@
 	.val { font-weight: 600; white-space: nowrap; }
 	.val:not([class*='color-']):not([class*='sell-']) { color: var(--color-lab-text); }
 	.color-dot { width: 10px; height: 10px; display: inline-block; border-radius: 50%; margin-right: 6px; background: currentColor; }
-	.history { background: var(--color-lab-surface); border: 1px solid var(--color-lab-border); padding: 10px 14px; }
+	.history-listings { display: grid; grid-template-columns: minmax(0, 2fr) minmax(180px, 1fr); gap: 10px; }
+	.history, .recent-listings { background: var(--color-lab-surface); border: 1px solid var(--color-lab-border); padding: 10px 14px; min-width: 0; }
+	.history { overflow-x: auto; }
+	.listing-row { display: flex; justify-content: space-between; gap: 14px; margin-top: 8px; font-size: 0.8125rem; }
+	.listing-state { margin-top: 8px; font-size: 0.8125rem; font-style: italic; }
+	@container (max-width: 640px) { .history-listings { grid-template-columns: minmax(0, 1fr); } }
 	.hist-grid { display: grid; grid-template-columns: 52px auto 18px auto 1fr auto; column-gap: 10px; row-gap: 6px; align-items: center; margin-top: 8px; }
 	.hist-time { color: var(--color-lab-text); font-weight: 600; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
 	.hist-arrow { font-size: 1.125rem; text-align: center; }

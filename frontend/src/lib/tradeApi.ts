@@ -98,6 +98,10 @@ export async function lookupTrade(gem: string, variant: string, force = false, c
 	throw new Error(`Trade lookup failed: ${resp.status} ${resp.statusText} ${text}`);
 }
 
+export async function fetchRecentListings(gem: string, variant: string): Promise<TradeLookupResult | null> {
+	return (await lookupTrade(gem, variant.replace(/c$/, ''), false, true)).immediate;
+}
+
 /**
  * Poll for a trade lookup result by retrying the same request until cache is hit.
  * Used as fallback when Mercure SSE is not available.
