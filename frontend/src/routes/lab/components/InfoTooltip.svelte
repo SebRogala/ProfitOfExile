@@ -101,6 +101,9 @@
 
 <style>
 	.info-icon:focus-visible {
+		outline: none;
+	}
+	.info-icon:focus-visible .icon-circle {
 		outline: 1px solid var(--color-lab-blue);
 		outline-offset: 2px;
 	}
@@ -153,6 +156,7 @@
 		white-space: normal;
 		text-transform: none;
 		letter-spacing: normal;
+		text-align: left;
 	}
 	.align-right {
 		right: 0;
