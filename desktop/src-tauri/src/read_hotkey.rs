@@ -714,16 +714,17 @@ mod dispatch_tests {
     fn armed_font_wins_before_client_recency() {
         let world = Arc::new(World::default());
         *world.recent.lock().unwrap() = Some(crate::read_prompt::Mechanic::Mercenary);
+        *world.misses.lock().unwrap() = vec!["g"];
         assert_eq!(route(&world, &[&A, &FONT, &GEM, &B]), DispatchOutcome::Selected(ReaderId::Font));
-        assert_eq!(*world.probes.lock().unwrap(), vec![("f", 42)]);
+        assert_eq!(*world.probes.lock().unwrap(), vec![("g", 42), ("f", 42)]);
     }
     #[test]
     fn font_miss_falls_through_to_recent_mechanic() {
         let world = Arc::new(World::default());
         *world.recent.lock().unwrap() = Some(crate::read_prompt::Mechanic::Mercenary);
-        *world.misses.lock().unwrap() = vec!["f"];
+        *world.misses.lock().unwrap() = vec!["g", "f"];
         assert_eq!(route(&world, &[&A, &FONT, &GEM, &B]), DispatchOutcome::Selected(ReaderId::Mercenary));
-        assert_eq!(*world.probes.lock().unwrap(), vec![("f", 42), ("b", 42)]);
+        assert_eq!(*world.probes.lock().unwrap(), vec![("g", 42), ("f", 42), ("b", 42)]);
         assert_eq!(*world.consumed.lock().unwrap(), vec![("b", String::new(), Ok(42))]);
     }
     #[test]
