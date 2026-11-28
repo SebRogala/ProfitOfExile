@@ -1115,7 +1115,7 @@ fn app_log_from_frontend(msg: String, app: AppHandle) {
 }
 
 /// Focus poller result: where the foreground window belongs.
-#[cfg(windows)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum FocusState {
     /// Path of Exile is the foreground window.
     Game,

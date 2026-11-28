@@ -3756,6 +3756,7 @@ mod tests {
         snapshot.read_prompt = crate::read_prompt::ReadPromptSnapshot {
             mechanic: Some(crate::read_prompt::Mechanic::DivineFont),
             no_match: false,
+            reading: false,
             recalibrating: false,
             seq: 3,
             gem_uncertain: [false, false, true],
@@ -3810,7 +3811,7 @@ mod tests {
     fn ssot_snapshot_contract_default_read_prompt() {
         let state = crate::settings::tests::test_app_state();
         let wire = serde_json::to_value(build_snapshot(&state)).unwrap();
-        assert_eq!(wire["readPrompt"], serde_json::json!({ "mechanic": null, "noMatch": false, "recalibrating": false, "seq": 0, "gemUncertain": [false, false, false], "recalibrateOffer": false }));
+        assert_eq!(wire["readPrompt"], serde_json::json!({ "mechanic": null, "noMatch": false, "reading": false, "recalibrating": false, "seq": 0, "gemUncertain": [false, false, false], "recalibrateOffer": false }));
     }
 
     #[test]
@@ -3819,6 +3820,6 @@ mod tests {
         let stamp = crate::read_prompt::accept_press_in(&state);
         crate::read_prompt::finish_read_in(&state, stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
         let wire = serde_json::to_value(build_snapshot(&state)).unwrap();
-        assert_eq!(wire["readPrompt"], serde_json::json!({ "mechanic": null, "noMatch": true, "recalibrating": false, "seq": 1, "gemUncertain": [false, false, false], "recalibrateOffer": true }));
+        assert_eq!(wire["readPrompt"], serde_json::json!({ "mechanic": null, "noMatch": true, "reading": false, "recalibrating": false, "seq": 2, "gemUncertain": [false, false, false], "recalibrateOffer": true }));
     }
 }

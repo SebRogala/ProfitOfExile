@@ -10,6 +10,20 @@ function notice(mechanic: ReadPromptMechanic | null, readHotkey: ReadHotkeySetti
 }
 
 describe('readPromptNotice', () => {
+	it('keep:regression triggered press words "OCR triggered, detecting mechanics"', () => {
+		for (const prior of [
+			{ mechanic: null, noMatch: false },
+			{ mechanic: 'mercenary', noMatch: false },
+			{ mechanic: null, noMatch: true }
+		] as const) {
+			const notice = readPromptNotice({
+				readPrompt: { ...prior, reading: true, recalibrating: false, seq: 8, gemUncertain: [true, false, false] },
+				readHotkey: CTRL_A
+			});
+			expect(notice?.header).toBe('OCR triggered, detecting mechanics');
+			expect(notice?.progress).toBe(true);
+		}
+	});
 	// keep:happy
 	it.each([
 		[null, false],

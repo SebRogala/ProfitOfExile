@@ -347,6 +347,7 @@ export type ReadPromptMechanic = 'divineFont' | 'incursion' | 'mercenary';
 export interface ReadPromptSnapshot {
 	mechanic: ReadPromptMechanic | null;
 	noMatch: boolean;
+	reading?: boolean;
 	/** A recalibration sweep is running for the newest press. */
 	recalibrating: boolean;
 	seq: number;
@@ -484,7 +485,7 @@ export const ssot = $state({
 	exchangeRead: null as ExchangeReadSettings | null,
 	overlayDismiss: null as DismissSnapshot | null,
 	/** No prompt until Rust answers. */
-	readPrompt: { mechanic: null, noMatch: false, recalibrating: false, seq: 0, gemUncertain: [false, false, false], recalibrateOffer: false } as ReadPromptSnapshot,
+	readPrompt: { mechanic: null, noMatch: false, reading: false, recalibrating: false, seq: 0, gemUncertain: [false, false, false], recalibrateOffer: false } as ReadPromptSnapshot,
 	/** Unknown until Rust answers. */
 	ocrRegions: null as OcrRegionsSnapshot | null,
 });

@@ -60,6 +60,13 @@ function setup(loaded = true) {
 }
 
 describe('read prompt presentation', () => {
+	it('keep:critical a dismissed no-match cannot silently hide triggered progress', async () => {
+		const h = setup(); await settle(); h.deliver(1); await settle();
+		expect(h.presentation.notice).toBeNull();
+		h.input.readPrompt = { ...h.input.readPrompt, reading: true, seq: 2 };
+		await settle();
+		expect(h.presentation.notice?.header).toBe('OCR triggered, detecting mechanics');
+	});
 	it('leaves the no-match lifetime to Rust: no view timer hides it', () => {
 		const h = setup();
 		vi.advanceTimersByTime(60000); expect(h.presentation.notice).toEqual(MESSAGE);

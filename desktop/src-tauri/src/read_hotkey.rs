@@ -386,9 +386,15 @@ pub fn dispatch<C>(
 pub struct Sample {
     pub down: std::collections::BTreeSet<u16>,
     pub foreground: bool,
+    pub(crate) foreground_kind: Option<crate::FocusState>,
+    pub editable_focus: bool,
     pub settings: ReadHotkeySettings,
     pub exchange: crate::exchange_read::ExchangeReadSettings,
     pub dismiss: Vec<Shortcut>,
+}
+
+pub(crate) fn read_eligible(_foreground: crate::FocusState, _editable_focus: bool) -> bool {
+    false
 }
 
 /// The key-sampling side: prepares eligible readers at each press and queues it, so
@@ -522,7 +528,7 @@ mod platform {
             })
             .collect();
         let foreground = state.game_in_foreground.load(std::sync::atomic::Ordering::SeqCst);
-        Some(Sample { down, foreground, settings, exchange, dismiss })
+        Some(Sample { down, foreground, foreground_kind: None, editable_focus: false, settings, exchange, dismiss })
     }
     pub fn cursor() -> Option<(i32, i32)> {
         let mut p = windows::Win32::Foundation::POINT::default();
@@ -534,7 +540,7 @@ mod platform {
 mod platform {
     use super::*;
     pub fn sample(_app: &tauri::AppHandle) -> Option<Sample> {
-        Some(Sample { down: Default::default(), foreground: false, settings: ReadHotkeySettings::default(), exchange: Default::default(), dismiss: Vec::new() })
+        Some(Sample { down: Default::default(), foreground: false, foreground_kind: None, editable_focus: false, settings: ReadHotkeySettings::default(), exchange: Default::default(), dismiss: Vec::new() })
     }
     pub fn cursor() -> Option<(i32, i32)> {
         None
@@ -664,28 +670,28 @@ mod dispatch_tests {
     fn dispatched_all_miss_frame_publishes_no_match_after_one_capture() {
         let (grabs, snapshot) = result_pipeline(false, true, None);
         assert_eq!(grabs, 1);
-        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: true });
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: None, no_match: true, reading: false, seq: 3, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: true });
     }
 
     #[test]
     fn failed_hide_handshake_preserves_prompt_without_capture() {
         let (grabs, snapshot) = result_pipeline(false, false, None);
         assert_eq!(grabs, 0);
-        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Mercenary), no_match: false, seq: 1, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Mercenary), no_match: false, reading: false, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     #[test]
     fn dispatched_selected_frame_does_not_publish_no_match() {
         let (grabs, snapshot) = result_pipeline(true, true, None);
         assert_eq!(grabs, 1);
-        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Mercenary), no_match: false, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Mercenary), no_match: false, reading: false, seq: 3, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     #[test]
     fn dispatched_capture_failure_preserves_prompt() {
         let (grabs, snapshot) = result_pipeline(false, true, Some(CaptureError::Failed("no monitor".into())));
         assert_eq!(grabs, 1);
-        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Mercenary), no_match: false, seq: 1, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(snapshot, crate::read_prompt::ReadPromptSnapshot { mechanic: Some(crate::read_prompt::Mechanic::Mercenary), no_match: false, reading: false, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     fn route(world: &Arc<World>, readers: &[&dyn ScreenReader<Arc<World>>]) -> DispatchOutcome {
@@ -769,6 +775,8 @@ mod dispatch_tests {
         Sample {
             down: keys.iter().copied().collect(),
             foreground,
+            foreground_kind: None,
+            editable_focus: false,
             settings: ReadHotkeySettings::default(),
             exchange: crate::exchange_read::ExchangeReadSettings::default(),
             dismiss: crate::overlay_dismiss::DismissSettings::default().shortcuts(),
@@ -781,6 +789,82 @@ mod dispatch_tests {
 
     fn no_exchange(_: &Press) -> ExchangePress<Arc<World>> {
         panic!("no exchange press expected")
+    }
+
+    mod keep_regression {
+        use super::*;
+
+        #[test]
+        fn keep_regression_read_key_press_while_own_overlay_focused_reads_and_triggers_prompt() {
+            let world = Arc::new(World::default());
+            let state = Arc::new(crate::settings::tests::test_app_state());
+            let (tx, rx) = mpsc::channel();
+            let mut own = sample(PRESSED, false);
+            own.foreground_kind = Some(crate::FocusState::OwnWindow);
+            own.settings.delay_ms = 300;
+            let mut samples = vec![own].into_iter();
+            run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx,
+                &mut || accept_in(&state), &mut |_| panic!("own-window read must not widen dismiss"), &mut no_exchange);
+            drop(tx);
+            let queued: Vec<_> = rx.into_iter().collect();
+            assert_eq!(queued.len(), 1, "OwnWindow Ctrl+A must queue a read before dispatch");
+            let pending = state.read_prompt.lock().unwrap().snapshot();
+            assert!(pending.reading, "accepted press must present progress before delay/capture");
+            assert_eq!(pending.seq, 1, "acceptance has its own presentation identity");
+            assert!(world.probes.lock().unwrap().is_empty(), "completion is held in the queue");
+            let mut grabs = 0;
+            run_dispatcher(&world, queued, &mut |delay| assert_eq!(delay, Duration::from_millis(300)),
+                &mut || { grabs += 1; Ok(capture(9)) }, &mut |_| panic!("no dismissal"));
+            assert_eq!(grabs, 1);
+            assert_eq!(*world.consumed.lock().unwrap(), vec![("a", String::new(), Ok(9))]);
+            let done = state.read_prompt.lock().unwrap().snapshot();
+            assert!(!done.reading);
+            assert!(!done.no_match);
+        }
+    }
+
+    fn assert_ignored_read(kind: crate::FocusState, editable: bool) {
+        let world = Arc::new(World::default());
+        let state = Arc::new(crate::settings::tests::test_app_state());
+        let before = state.read_prompt.lock().unwrap().snapshot();
+        let (tx, rx) = mpsc::channel();
+        let mut input = sample(PRESSED, false);
+        input.foreground_kind = Some(kind);
+        input.editable_focus = editable;
+        let mut samples = vec![input].into_iter();
+        run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx,
+            &mut || accept_in(&state), &mut |_| panic!("no dismissal"), &mut no_exchange);
+        drop(tx);
+        let queued: Vec<_> = rx.into_iter().collect();
+        assert!(queued.is_empty(), "silent unwanted OCR read was queued");
+        run_dispatcher(&world, queued, &mut |_| panic!("no delay"),
+            &mut || panic!("silent unwanted capture"), &mut |_| panic!("no dismissal"));
+        assert!(world.armed_order.lock().unwrap().is_empty());
+        assert!(world.consumed.lock().unwrap().is_empty());
+        assert_eq!(state.read_prompt.lock().unwrap().snapshot(), before);
+    }
+
+    mod focus_keep_critical {
+        use super::*;
+
+        #[test]
+        fn keep_critical_read_key_press_in_own_text_input_does_not_read() {
+            assert_ignored_read(crate::FocusState::OwnWindow, true);
+        }
+
+        #[test]
+        fn keep_critical_read_key_press_while_other_app_focused_does_not_read() {
+            assert_ignored_read(crate::FocusState::Other, false);
+        }
+
+        #[test]
+        fn keep_critical_foreground_decision_prevents_silent_unwanted_capture() {
+            use crate::FocusState::*;
+            for (kind, editable, expected) in [(Game, false, true), (Game, true, true),
+                (OwnWindow, false, true), (OwnWindow, true, false), (Other, false, false), (Other, true, false)] {
+                assert_eq!(read_eligible(kind, editable), expected, "{kind:?}, editable={editable}");
+            }
+        }
     }
 
     /// What the sampler and dispatcher did with a run of samples when the
@@ -1013,7 +1097,7 @@ mod dispatch_tests {
             let mut f = sample(&[70], true);
             f.settings.shortcut = Shortcut { key: 70, shift: false, ctrl: false, alt: false };
             f.dismiss = vec![f.settings.shortcut.clone(), crate::overlay_dismiss::DismissSettings::default().shortcut];
-            let esc = Sample { down: [27].into_iter().collect(), foreground: true, settings: f.settings.clone(), exchange: f.exchange.clone(), dismiss: f.dismiss.clone() };
+            let esc = Sample { down: [27].into_iter().collect(), foreground: true, foreground_kind: None, editable_focus: false, settings: f.settings.clone(), exchange: f.exchange.clone(), dismiss: f.dismiss.clone() };
             let (tx, rx) = mpsc::channel();
             let mut samples = vec![f, esc].into_iter();
             run_sampler(&world, &[&A], &mut || samples.next(), &mut || None, &tx, &mut Accepted::default, &mut |s| ledger.publish(s).gen, &mut no_exchange);

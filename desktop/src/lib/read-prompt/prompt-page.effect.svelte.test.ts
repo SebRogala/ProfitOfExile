@@ -41,6 +41,23 @@ function render(): HTMLElement {
 }
 
 describe('read prompt page', () => {
+	it.each(['Selected', 'NoMatch'] as const)('keep:happy pending read renders progress until %s replaces it', (outcome) => {
+		ssot.readPrompt = { mechanic: null, noMatch: false, reading: true, recalibrating: false, seq: 10 };
+		const target = render();
+		expect(target.querySelector('[data-part="header"]')?.textContent).toBe('OCR triggered, detecting mechanics');
+		expect(target.querySelector('.spinner')).not.toBeNull();
+		ssot.readPrompt = {
+			mechanic: null, noMatch: outcome === 'NoMatch', reading: false,
+			recalibrating: false, recalibrateOffer: outcome === 'NoMatch', seq: 11
+		};
+		flushSync();
+		expect(target.textContent).not.toContain('OCR triggered, detecting mechanics');
+		if (outcome === 'Selected') expect(target.querySelector('[data-kind]')).toBeNull();
+		else {
+			expect(target.querySelector('[data-part="header"]')?.textContent).toBe('No mechanics detected');
+			expect(target.querySelector('[data-part="body"]')?.textContent).toBe('Press Ctrl + A within 5 s to recalibrate');
+		}
+	});
 	it('keep:happy splits the recalibrate offer into a warning header and a body with Ctrl and A key chips', () => {
 		ssot.readPrompt = {
 			mechanic: null, noMatch: true, recalibrateOffer: true, recalibrating: false, seq: 5,

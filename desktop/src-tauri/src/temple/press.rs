@@ -375,7 +375,7 @@ mod tests {
     }
 
     fn sample(keys: &[u16]) -> Sample {
-        Sample { down: keys.iter().copied().collect(), foreground: true, settings: ReadHotkeySettings::default(), exchange: Default::default(), dismiss: Vec::new() }
+        Sample { down: keys.iter().copied().collect(), foreground: true, foreground_kind: None, editable_focus: false, settings: ReadHotkeySettings::default(), exchange: Default::default(), dismiss: Vec::new() }
     }
     /// Ctrl+A, the default read key.
     const PRESSED: &[u16] = &[17, 65];

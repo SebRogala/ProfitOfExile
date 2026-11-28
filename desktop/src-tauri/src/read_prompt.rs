@@ -41,6 +41,7 @@ pub enum Change {
 pub struct ReadPromptSnapshot {
     pub mechanic: Option<Mechanic>,
     pub no_match: bool,
+    pub reading: bool,
     /// A recalibration sweep is running for the newest press.
     pub recalibrating: bool,
     pub seq: u64,
@@ -152,6 +153,7 @@ impl ReadPromptState {
                     .map(|arm| arm.mechanic)
             },
             no_match: self.no_match,
+            reading: false,
             recalibrating: self.recalibrating,
             seq: self.seq,
             gem_uncertain: self.gem_uncertain,
@@ -442,6 +444,46 @@ mod tests {
 
     const NOW: u64 = 1_756_800_000_000;
 
+    mod keep_happy {
+        use super::*;
+        use crate::read_hotkey::{DispatchOutcome, ReaderId};
+
+        #[test]
+        fn accepted_press_presents_progress_until_its_outcome() {
+            for outcome in [DispatchOutcome::Selected(ReaderId::Font), DispatchOutcome::NoMatch] {
+                let mut prompt = ReadPromptState::default();
+                let before = prompt.snapshot();
+                let stamp = prompt.accept_press();
+                assert!(prompt.snapshot().reading, "progress must precede completion");
+                assert_eq!(prompt.snapshot().seq, before.seq + 1);
+                assert!(!stamp.confirming());
+                prompt.finish_read(stamp, outcome.clone());
+                assert!(!prompt.snapshot().reading);
+                assert_eq!(prompt.snapshot().no_match, outcome == DispatchOutcome::NoMatch);
+                assert_eq!(prompt.snapshot().seq, before.seq + 2);
+            }
+        }
+    }
+
+    mod progress_keep_critical {
+        use super::*;
+        use crate::read_hotkey::{DispatchOutcome, ReaderId};
+
+        #[test]
+        fn keep_critical_stale_completion_cannot_silently_hide_a_newer_triggered_read() {
+            let mut prompt = ReadPromptState::default();
+            let old = prompt.accept_press();
+            let new = prompt.accept_press();
+            let pending = prompt.snapshot();
+            prompt.finish_read(old, DispatchOutcome::Selected(ReaderId::Font));
+            assert!(prompt.snapshot().reading, "older result hid newer in-flight progress");
+            assert_eq!(prompt.snapshot().seq, pending.seq);
+            prompt.finish_read(new, DispatchOutcome::NoMatch);
+            assert!(!prompt.snapshot().reading);
+            assert!(prompt.snapshot().no_match);
+        }
+    }
+
     #[test]
     fn no_match_projects_a_result_over_retained_arms() {
         let mut prompt = ReadPromptState::default();
@@ -449,7 +491,7 @@ mod tests {
         let arm = prompt.armed_id(Mechanic::Mercenary);
         let stamp = prompt.accept_press();
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: true });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: true, reading: false, seq: 3, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: true });
         assert_eq!(prompt.armed_id(Mechanic::Mercenary), arm);
         assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Mercenary));
     }
@@ -461,7 +503,7 @@ mod tests {
         prompt.finish_read(first, crate::read_hotkey::DispatchOutcome::NoMatch);
         let second = prompt.accept_press();
         prompt.finish_read(second, crate::read_hotkey::DispatchOutcome::NoMatch);
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: true, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: true, reading: false, seq: 4, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     #[test]
@@ -472,7 +514,7 @@ mod tests {
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
         let stamp = prompt.accept_press();
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Mercenary));
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, seq: 3, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, reading: false, seq: 5, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
         assert_eq!(prompt.last_client_mechanic(), Some(Mechanic::Mercenary));
     }
 
@@ -483,8 +525,9 @@ mod tests {
             prompt.arm(Mechanic::Mercenary);
             let before = prompt.snapshot();
             let stamp = prompt.accept_press();
+            assert!(prompt.snapshot().reading);
             prompt.finish_read(stamp, outcome);
-            assert_eq!(prompt.snapshot(), before);
+            assert_eq!(prompt.snapshot(), ReadPromptSnapshot { seq: before.seq + 1, ..before });
         }
     }
 
@@ -495,7 +538,7 @@ mod tests {
         let newer = prompt.accept_press();
         prompt.finish_read(newer, crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Temple));
         prompt.finish_read(older, crate::read_hotkey::DispatchOutcome::NoMatch);
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: false, seq: 1, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: false, reading: false, seq: 3, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     #[test]
@@ -504,7 +547,7 @@ mod tests {
         let stamp = prompt.accept_press();
         prompt.arm(Mechanic::Mercenary);
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, seq: 1, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, reading: false, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     #[test]
@@ -516,8 +559,8 @@ mod tests {
         prompt.arm(Mechanic::Mercenary);
         prompt.read_done(Mechanic::Mercenary, arm);
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::Selected(crate::read_hotkey::ReaderId::Mercenary));
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
-        assert_eq!(prompt.armed_id(Mechanic::Mercenary), Some(2));
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, reading: false, seq: 3, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(prompt.armed_id(Mechanic::Mercenary), Some(3));
     }
 
     #[test]
@@ -526,7 +569,7 @@ mod tests {
         let stamp = prompt.accept_press();
         prompt.finish_read(stamp, crate::read_hotkey::DispatchOutcome::NoMatch);
         prompt.arm(Mechanic::Mercenary);
-        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, seq: 2, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
+        assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: Some(Mechanic::Mercenary), no_match: false, reading: false, seq: 3, recalibrating: false, gem_uncertain: [false; 3], recalibrate_offer: false });
     }
 
     #[test]
@@ -916,7 +959,7 @@ mod tests {
             prompt.arm(Mechanic::Mercenary);
             let stamp = prompt.accept_press();
             prompt.begin_sweep();
-            assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: false, recalibrating: true, seq: 2, gem_uncertain: [false; 3], recalibrate_offer: false });
+            assert_eq!(prompt.snapshot(), ReadPromptSnapshot { mechanic: None, no_match: false, reading: false, recalibrating: true, seq: 3, gem_uncertain: [false; 3], recalibrate_offer: false });
             prompt.finish_read(stamp, DispatchOutcome::NoMatch);
             let done = prompt.snapshot();
             assert!(!done.recalibrating && done.no_match && done.mechanic.is_none(), "{done:?}");

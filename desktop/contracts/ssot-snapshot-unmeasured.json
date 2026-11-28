@@ -425,6 +425,7 @@
   "readPrompt": {
     "mechanic": "divineFont",
     "noMatch": false,
+    "reading": false,
     "recalibrating": false,
     "seq": 3,
     "gemUncertain": [
