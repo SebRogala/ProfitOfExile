@@ -413,6 +413,14 @@ describe('required-versus-denied invariant', () => {
 });
 
 describe('guide-a rulesets', () => {
+	it.each([
+		['guide-a-manyshot', 'Allflame price: 5d+ with just Return on both'],
+		['guide-a-kinetist-v1', 'Allflame price: 15d+ with just Return'],
+		['guide-a-combatant', 'Allflame price: 3d+ with just Return, much more with Multistrike/GMP']
+	])('keep:happy %s attributes its unchanged floor to Allflame prices', (id, floor) => {
+		expect(rulesetById(id).floor).toBe(floor);
+	});
+
 	const GUIDE_A_GROUP_IDS: Record<string, string[]> = {
 		'guide-a-manyshot': ['auras', 'core', 'secondary', 'deny'],
 		'guide-a-kinetist-v1': ['auras', 'core', 'deny'],

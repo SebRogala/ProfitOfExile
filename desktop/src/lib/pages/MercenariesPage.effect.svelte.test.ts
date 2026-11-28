@@ -102,6 +102,22 @@ const SURVIVING = [
 	['guide-b', 'guide-b-frost-blades-mv', 'Kld4gv0Pi5']
 ] as const;
 
+describe('MercenariesPage guide-a price floors', () => {
+	it.each([
+		['guide-a-manyshot', 'Allflame price: 5d+ with just Return on both'],
+		['guide-a-kinetist-v1', 'Allflame price: 15d+ with just Return'],
+		['guide-a-combatant', 'Allflame price: 3d+ with just Return, much more with Multistrike/GMP']
+	])('keep:happy %s displays its unchanged floor as an Allflame price', async (id, floor) => {
+		await mountSource('guide-a', 'Covens');
+		const rule = MERC_SOURCES.find((source) => source.id === 'guide-a')!
+			.rulesets.find((candidate) => candidate.id === id)!;
+		const article = [...document.querySelectorAll<HTMLElement>('article.card')].find(
+			(candidate) => candidate.querySelector('h3')?.textContent?.trim() === rule.label
+		);
+		expect(article?.querySelector('.floor')?.textContent?.trim()).toBe(`Floor: ${floor}`);
+	});
+});
+
 describe('MercenariesPage saved search anchors', () => {
 	for (const [sourceId, rulesetId, hash] of SURVIVING) {
 		it.each(['Covens', 'Hardcore Covens'])(
