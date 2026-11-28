@@ -209,8 +209,8 @@ pub trait PendingRead<C>: Send {
 /// Every reader the read key serves, in dispatch order.
 pub const READERS: &[&dyn ScreenReader<tauri::AppHandle>] = &[
     &crate::temple::press::TEMPLE_READER,
-    &crate::lab::font_reader::LabFontReader,
     &crate::lab::gem_reader::LabGemReader,
+    &crate::lab::font_reader::LabFontReader,
     &crate::mercenary::press::MERC_READER,
 ];
 
@@ -265,7 +265,13 @@ pub fn prepare_press<C>(
         if pendings.iter().any(|(existing, _)| *existing == id) { continue; }
         if let Some(pending) = reader.prepare(ctx, &press) { pendings.push((id, pending)); }
     }
-    pendings.sort_by_key(|(id, _)| if *id == ReaderId::Font { 0 } else if recent.is_some() && id.mechanic() == recent { 1 } else { 2 });
+    let font_armed = pendings.iter().any(|(id, _)| *id == ReaderId::Font);
+    pendings.sort_by_key(|(id, _)| match id {
+        ReaderId::Gem if font_armed => 0,
+        ReaderId::Font => 1,
+        _ if recent.is_some() && id.mechanic() == recent => 2,
+        _ => 3,
+    });
     PreparedPress { delay, pendings, dismissed: Vec::new(), finish: None, log: None, sweep: None }
 }
 

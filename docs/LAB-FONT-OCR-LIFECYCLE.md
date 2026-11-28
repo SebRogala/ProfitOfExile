@@ -21,9 +21,11 @@ Two readers are registered on the read key (`read_hotkey::READERS`):
 `LabFontReader` reads the options panel (`lab.font`) and `LabGemReader` reads
 the gem-choice screen: the three slot icons (`lab.gem_slots`) and, for the
 hovered slot only, the gem tooltip band (`lab.gem`). Client.txt events arm and
-disarm their contexts. The router tries an armed font reader first; it wins only
-when its existing OCR parses an active options panel. The gem probe instead
-matches the title plate plus lit CONFIRM without OCR. A selected gem read may
+disarm their contexts. When the font reader is armed, the router tries the gem
+picker reader first and then the font reader, both before client recency; the
+font reader wins only when no picker matches and its existing OCR parses an
+active options panel. The gem probe matches the title plate plus lit CONFIRM
+without OCR. A selected gem read may
 prepare a missing context under the existing lifecycle fence; losing probes
 create no context. There is no lab capture loop.
 
